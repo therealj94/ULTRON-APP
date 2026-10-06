@@ -57,6 +57,11 @@ export type SttEngine = 'turbo' | 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
+  /**
+   * De qué sesión de la app es el silencio (lib/silencioMesa.ts SESION_APP): solo vale en ella. Un silencio guardado
+   * sin esto (de antes de la 5.5.1) o de otra sesión no se arrastra al arrancar (José, 6-oct: «el micrófono falla»).
+   */
+  micMutedSesion?: string | null;
   visionEnabled: boolean;
   gazeEnabled: boolean;
   /** Oído: Scribe v2 Realtime Turbo en vivo, el reconocimiento del teléfono o grabación + Scribe en el servidor. */

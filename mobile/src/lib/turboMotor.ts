@@ -61,6 +61,12 @@ export type DepsTurbo = {
    * lib/asentir.ts: el «mjm» suena mientras la persona habla).
    */
   abrirMic(alTrozo: (t: TrozoAudio) => void, alFallo: (motivo: string) => void, conEco?: boolean, ecoAlEscuchar?: boolean): Promise<(() => void) | null>;
+  /**
+   * ¿El micrófono abierto ahora lleva el cancelador de eco activo? (lib/auraMic.ts micEcoActivo). Si se pidió con el de
+   * las muletillas y el nativo lo abrió sin él (modules/aura-mic: AcousticEchoCanceler.create devolvió null o lanzó, y
+   * la grabación siguió sin él), se anota como fallo: queda en las migas y no se insiste.
+   */
+  ecoActivo?: () => boolean;
   permiso(): Promise<{ url: string } | null>;
   transcribirWav(wavB64: string, confirmar: boolean): Promise<string>;
   crearWs(url: string): WsTurbo;
@@ -125,6 +131,11 @@ export type CallbacksTurbo = {
   onError?: (motivo: string) => void;
   /** El micrófono crudo no abre: que el oído vuelva al reconocedor del teléfono. */
   onUnavailable?: (motivo: string) => void;
+  /**
+   * Algo que el oído resolvió solo y conviene ver en las migas (sin contenido): p. ej. el micrófono con el cancelador
+   * de eco de las muletillas no abrió o quedó sordo y se volvió a abrir con la fuente de antes.
+   */
+  onAviso?: (texto: string) => void;
 };
 
 export const TIEMPOS = {
@@ -152,6 +163,17 @@ export const TIEMPOS = {
   textoQuietoMs: 2_000,
   /** Mientras AU-RA habla, la voz tiene que pasar el umbral por esto más (su eco no abre frases). */
   margenEncimaDb: 6,
+  /**
+   * Mientras suena un sonido de trabajo de la mesa (tecleo, papel, el murmullo; compa/trabajoMesa.ts), igual: lo poco que
+   * se cuela por el cancelador de eco no abre frases ni sube el ruido del cuarto (`setFondoPropio`).
+   */
+  margenFondoDb: 6,
+  /**
+   * El micrófono con el cancelador de eco pegado (las muletillas) que solo entrega silencio digital (-100 dBFS, ceros)
+   * durante esto desde que abrió: quedó sordo (en algunos teléfonos el cancelador no se lleva con la fuente de dictado).
+   * Se vuelve a abrir con la fuente de antes. Un micrófono de verdad nunca da ceros exactos (el cuarto suena a -70/-50).
+   */
+  sordoConEcoMs: 2_500,
   /**
    * En el tramo de una muletilla, lo que cuenta como la persona retomando encima: este margen sobre el umbral y, si ya
    * se le midió la voz, no más de `bajoVozTramoDb` por debajo de ella (lo que se cuela de la bocina, bajito y con el
@@ -210,6 +232,16 @@ export class MotorTurbo {
   /** Las muletillas: la fuente de dictado con el cancelador de eco pegado (y el micrófono abierto ahora, ¿así?). */
   private ecoAlEscuchar = false;
   private micEcoEscucha = false;
+  /**
+   * El micrófono con el cancelador pegado falló en este teléfono (no abrió, se cayó o quedó sordo): desde aquí se abre
+   * con la fuente de dictado de siempre (sin cancelador: las muletillas no suenan, `micEcoActivo` da false) hasta que se
+   * vuelvan a encender. Antes reintentaba tres veces la misma fuente y el oído Turbo se rendía (o quedaba sordo).
+   */
+  private ecoRoto = false;
+  /** Desde cuándo el micrófono con el cancelador solo entrega ceros (0: dio audio de verdad o no aplica). */
+  private ceroDesde = 0;
+  /** Suena un sonido de trabajo de la mesa: margen en el umbral y el ruido del cuarto quieto (`setFondoPropio`). */
+  private fondoPropio = false;
   /** Hasta cuándo se ignora lo que entra (el «mjm» sonando por la bocina: `ignorarTramo`). 0 = sin tramo. */
   private tramoHasta = 0;
   /** Cómo suena la persona (dBFS, promedio de sus trozos con voz): el tramo se corta si retoma encima. */
@@ -390,12 +422,43 @@ export class MotorTurbo {
   setEcoAlEscuchar(on: boolean) {
     if (this.ecoAlEscuchar === on) return;
     this.ecoAlEscuchar = on;
+    // Volverlas a encender es volver a probar el cancelador (un fallo de antes pudo ser de una vez).
+    if (on) this.ecoRoto = false;
     this.reabrirSiCambioFuente();
+  }
+
+  /** ¿Abre con el cancelador de las muletillas? (sin oír encima, con ellas encendidas y sin que haya fallado aquí). */
+  private quiereEcoEscucha() {
+    return !this.oirEncima && this.ecoAlEscuchar && !this.ecoRoto;
+  }
+
+  /** El micrófono con el cancelador falló: se marca y se abre ya con la fuente de antes (sin gastar un reintento). */
+  private ecoFallo(motivo: string) {
+    if (this.ecoRoto) return;
+    this.ecoRoto = true;
+    this.cb.onAviso?.(`oído: el micrófono con cancelador de eco ${motivo}; sigue con la fuente de antes (sin muletillas)`);
+  }
+
+  /**
+   * Suena (o calló) un sonido de trabajo de la mesa (compa/trabajoMesa.ts): mientras suena, la voz tiene que pasar el
+   * umbral por `margenFondoDb` más y el ruido del cuarto no se mide con él (como con su voz sonando encima).
+   */
+  setFondoPropio(on: boolean) {
+    this.fondoPropio = on;
+  }
+
+  /**
+   * ¿Cuando oye, oye con un cancelador de eco? (el de «Interrumpir hablando» o el de las muletillas, si no falló aquí ni
+   * el nativo lo abrió sin él). Vale también con el micrófono cerrado un momento por su voz (la pausa): es lo que tendrá
+   * al reabrir. Los sonidos de trabajo de la mesa solo suenan con el micrófono abierto si esto es sí.
+   */
+  escuchaConCancelador(): boolean {
+    return this.quiere && (this.oirEncima || (this.ecoAlEscuchar && !this.ecoRoto));
   }
 
   private reabrirSiCambioFuente() {
     if (!this.cerrarMic) return;
-    if (this.micConEco !== this.oirEncima || this.micEcoEscucha !== (!this.oirEncima && this.ecoAlEscuchar)) {
+    if (this.micConEco !== this.oirEncima || this.micEcoEscucha !== this.quiereEcoEscucha()) {
       this.pararMic();
       void this.arrancarMic();
     }
@@ -478,7 +541,7 @@ export class MotorTurbo {
     this.abriendoMic = true;
     this.micDesde = this.ahora();
     const conEco = this.oirEncima;
-    const ecoEscucha = !conEco && this.ecoAlEscuchar;
+    const ecoEscucha = this.quiereEcoEscucha();
     let cerrar: (() => void) | null = null;
     try {
       cerrar = await this.deps.abrirMic(
@@ -492,6 +555,12 @@ export class MotorTurbo {
     }
     this.abriendoMic = false;
     if (!cerrar) {
+      // Con el cancelador pegado no abrió: se abre YA con la fuente de antes, sin gastar uno de los tres intentos.
+      if (ecoEscucha) {
+        this.ecoFallo('no abrió');
+        void this.arrancarMic();
+        return;
+      }
       this.fallosMic++;
       if (this.fallosMic >= 3) {
         this.fallosMic = 0;
@@ -508,12 +577,19 @@ export class MotorTurbo {
       cerrar();
       return;
     }
+    // Se pidió con el cancelador y el nativo lo abrió sin él (su respaldo): queda así, y que se sepa.
+    let conCancelador = ecoEscucha;
+    if (ecoEscucha && this.deps.ecoActivo && !this.deps.ecoActivo()) {
+      this.ecoFallo('no se dejó pegar (el teléfono lo abrió sin él)');
+      conCancelador = false;
+    }
     this.cerrarMic = cerrar;
     this.micConEco = conEco;
-    this.micEcoEscucha = ecoEscucha;
+    this.micEcoEscucha = conCancelador;
     this.fallosMic = 0;
     this.historial = [];
     this.ultimoTrozoEn = this.ahora();
+    this.ceroDesde = conCancelador ? this.ahora() : 0;
     this.cb.onListeningChange?.(true);
     // La fuente cambió mientras abría (las muletillas se encienden al arrancar la mesa, Ajustes): con la de ahora.
     this.reabrirSiCambioFuente();
@@ -537,10 +613,17 @@ export class MotorTurbo {
   }
 
   private falloMic(motivo: string) {
+    const conCancelador = !!this.cerrarMic && this.micEcoEscucha;
     this.cb.onError?.(motivo);
     this.pararMic();
     this.olvidarFrase();
     if (!this.quiere || (this.pausado && !this.encima)) return;
+    // Se cayó el que llevaba el cancelador pegado: se vuelve a abrir ya con la fuente de antes (sin gastar intento).
+    if (conCancelador) {
+      this.ecoFallo('se cayó');
+      void this.arrancarMic();
+      return;
+    }
     this.fallosMic++;
     if (this.fallosMic >= 3) {
       this.fallosMic = 0;
@@ -559,6 +642,18 @@ export class MotorTurbo {
     const ahora = this.ahora();
     this.ultimoTrozoEn = ahora;
     const crudo = typeof t.db === 'number' && Number.isFinite(t.db) ? t.db : -100;
+    // Con el cancelador pegado, solo ceros desde que abrió: quedó sordo. Se vuelve a abrir con la fuente de antes.
+    if (this.ceroDesde) {
+      if (crudo > -99) this.ceroDesde = 0;
+      else if (ahora - this.ceroDesde >= this.t.sordoConEcoMs) {
+        this.ceroDesde = 0;
+        this.ecoFallo('quedó sordo (solo silencio digital)');
+        this.pararMic();
+        this.olvidarFrase();
+        void this.arrancarMic();
+        return;
+      }
+    }
     if (!this.historial.length) this.ruido = ruidoInicial(crudo);
     const tramo = this.mirarTramo(crudo, ahora);
     // El tramo de una muletilla: lo que suena es AU-RA diciendo «mjm» por la bocina. Ni voz, ni ruido del cuarto, ni
@@ -570,12 +665,14 @@ export class MotorTurbo {
     const audio = enTramo ? this.silencioComo(t.audio) : t.audio;
     // Con su voz sonando, el ruido del cuarto no se mide (su eco lo subiría) y la voz tiene que pasar
     // el umbral por un margen: el eco que deja la cancelación no abre frases a cada rato.
-    if (!this.encima && !enTramo) {
+    // Igual con un sonido de trabajo de la mesa sonando (`setFondoPropio`): ni ruido del cuarto ni frases por él.
+    if (!this.encima && !enTramo && !this.fondoPropio) {
       this.historial.push(db);
       if (this.historial.length > VENTANA_RUIDO_TROZOS) this.historial.shift();
       this.ruido = seguirRuido(this.ruido, this.historial);
     }
-    const hayVoz = !enTramo && db >= umbralVoz(this.ruido) + (this.encima ? this.t.margenEncimaDb : 0);
+    const margen = (this.encima ? this.t.margenEncimaDb : 0) + (this.fondoPropio && !this.encima ? this.t.margenFondoDb : 0);
+    const hayVoz = !enTramo && db >= umbralVoz(this.ruido) + margen;
     if (hayVoz && !this.encima) this.vozPersonaDb = this.vozPersonaDb <= -99 ? db : this.vozPersonaDb * 0.9 + db * 0.1;
     const nivel = nivelDeDb(db, this.ruido);
     if (Math.abs(nivel - this.ultimoNivel) > 0.08 || (nivel === 0 && this.ultimoNivel !== 0)) {

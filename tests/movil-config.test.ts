@@ -18,9 +18,29 @@ const { exigirMesa, limitar } = await import('../server/seguridad');
 const { configCamaraValida, ritmoNativo } = await import('../mobile/src/lib/camaraNativa');
 const { configVozValida } = await import('../mobile/src/lib/vozNativa');
 const { asentirRemotoValido } = await import('../mobile/src/lib/asentir');
+const { ambienteRemotoValido, decidirAmbiente } = await import('../mobile/src/compa/sonidosTrabajo');
 
-test('sin variables: la cámara nueva encendida y sin ajustes (los de fábrica del teléfono); la voz en streaming encendida; las muletillas permitidas', () => {
-  assert.deepEqual(configMovil({}), { camaraRapida: { activa: true }, vozStream: { activa: true }, asentir: { activo: true } });
+test('sin variables: la cámara nueva encendida y sin ajustes (los de fábrica del teléfono); la voz en streaming encendida; las muletillas y los sonidos de trabajo permitidos', () => {
+  assert.deepEqual(configMovil({}), { camaraRapida: { activa: true }, vozStream: { activa: true }, asentir: { activo: true }, ambiente: { activo: true } });
+});
+
+test('AURA_AMBIENTE=0 apaga los sonidos de trabajo (mesa y llamada) para todos sin APK; el teléfono lo entiende y no toca lo demás', () => {
+  for (const v of ['0', 'no', 'false', 'OFF', ' apagado ']) {
+    const r = configMovil({ AURA_AMBIENTE: v });
+    assert.equal(r.ambiente.activo, false, v);
+    assert.equal(ambienteRemotoValido({ ...r, honesto: true }), false, v);
+    assert.equal(r.asentir.activo, true, 'las muletillas siguen');
+    assert.equal(r.camaraRapida.activa, true, 'la cámara sigue');
+    assert.deepEqual(decidirAmbiente({ efectos: true, ajuste: true, remoto: ambienteRemotoValido(r) }), { encendidos: false, motivo: 'apagados_por_el_servidor' });
+  }
+  for (const v of ['1', 'si', '', 'true']) assert.equal(ambienteRemotoValido(configMovil({ AURA_AMBIENTE: v })), true, v);
+  assert.equal(ambienteRemotoValido(null), true, 'sin dato (servidor viejo, sin red): permitidos');
+  assert.equal(ambienteRemotoValido({ asentir: { activo: false } }), true, 'un servidor de antes de los sonidos de trabajo');
+  assert.equal(ambienteRemotoValido({ ambiente: { activo: 'no' } }), true, 'basura: lo de fábrica');
+  // Los tres tienen que dejarlo: el servidor, el ajuste de la persona y los efectos de sonido de la app.
+  assert.deepEqual(decidirAmbiente({ efectos: true, ajuste: null, remoto: true }), { encendidos: true, motivo: 'encendidos' });
+  assert.deepEqual(decidirAmbiente({ efectos: true, ajuste: false, remoto: true }), { encendidos: false, motivo: 'apagados_por_la_persona' });
+  assert.deepEqual(decidirAmbiente({ efectos: false, ajuste: true, remoto: true }), { encendidos: false, motivo: 'sin_efectos' });
 });
 
 test('AURA_VOZ_STREAM=0 (o no/false/off) apaga la voz en streaming para todos; no toca la cámara; el teléfono lo entiende', () => {
@@ -81,7 +101,7 @@ test('GET /api/movil/config: con la clave de mesa contesta, sin caché; sin sesi
   const con = await fetch(`${base}/api/movil/config`, { headers: { 'x-ultron-mesa': process.env.ULTRON_MESA_CLAVE! } });
   assert.equal(con.status, 200);
   assert.equal(con.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await con.json(), { camaraRapida: { activa: false }, vozStream: { activa: true }, asentir: { activo: true }, honesto: true });
+  assert.deepEqual(await con.json(), { camaraRapida: { activa: false }, vozStream: { activa: true }, asentir: { activo: true }, ambiente: { activo: true }, honesto: true });
 });
 
 test('server.ts monta la ruta', () => {

@@ -46,17 +46,23 @@ import {
   isMicPaused,
   micWatchdogOk,
   muteMic,
+  oidoAguantaFondo,
   oidoEscuchando,
   oidoVivoDeVerdad,
   pauseMicForTts,
   reabrirMic,
   restartMic,
+  setFondoPropio,
   setOirEncima,
   setSpeechCallbacks,
   setSttEngine,
   unmuteMic,
   volverANativoSiToca,
 } from '../lib/speech';
+import { SESION_APP, arranqueDelMicrofono, migaArranqueMic } from '../lib/silencioMesa';
+import { sesionesDeEsteArranque } from '../lib/silencioHeredado';
+import { GraciaFondo } from '../lib/appDelante';
+import { REFRESCO_AMBIENTE_MS, ambienteActivo, leerAmbiente, refrescarAmbienteRemoto, suscribirAmbiente } from '../lib/ambienteAjuste';
 import { TOPE_CORTADA } from '../lib/interrupcion';
 import {
   addLongFact,
@@ -70,7 +76,7 @@ import {
   type AppSettings,
   type SttEngine,
 } from '../lib/storage';
-import { playSfx, preloadSfx, setSfxEnabled, sfxActivos } from '../lib/sfx';
+import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
 import { useMuletillasMesa } from '../lib/muletillasMesa';
 import { StreamSpeaker, cuandoSuene, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
@@ -377,6 +383,20 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [progresoMesa, setProgresoMesa] = useState('');
   /** Las frases del narrador de esta mesa: ninguna se repite entre turnos (compa/narrador.ts). */
   const memoriaNarrador = useRef(new MemoriaNarrador());
+  /** El trabajo del turno en curso (sus sonidos): la persona que habla o un ajuste que cambia le avisan. */
+  const trabajoActual = useRef<TrabajoMesa | null>(null);
+  // Los sonidos de trabajo: lo guardado al entrar, lo del servidor (AURA_AMBIENTE) al entrar y cada 10 min, y un
+  // cambio (Ajustes, el servidor) se aplica al sonido del turno en curso al momento.
+  useEffect(() => {
+    void leerAmbiente().then(() => trabajoActual.current?.revisar());
+    void refrescarAmbienteRemoto(true);
+    const quitar = suscribirAmbiente(() => trabajoActual.current?.revisar());
+    const tic = setInterval(() => AppState.currentState === 'active' && void refrescarAmbienteRemoto(), REFRESCO_AMBIENTE_MS);
+    return () => {
+      quitar();
+      clearInterval(tic);
+    };
+  }, []);
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
   const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx' | 'interrumpir'>>({ sttEngine: 'turbo', proactive: true, sfx: true, interrumpir: false });
@@ -426,8 +446,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** La app está delante (con la app detrás la mesa no oye, no mira ni mueve sensores). */
   const [appActiva, setAppActiva] = useState(AppState.currentState !== 'background');
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (st) => setAppActiva(st !== 'background'));
-    return () => sub.remove();
+    // Un parpadeo de segundo plano (~0,1 s al bloquear la orientación en el Samsung de José) no suelta el oído: solo
+    // cuenta si dura más de GRACIA_FONDO_MS (lib/appDelante.ts).
+    const gracia = new GraciaFondo({ alCambiar: setAppActiva, miga }, AppState.currentState !== 'background');
+    const sub = AppState.addEventListener('change', (st) => gracia.estado(st));
+    return () => {
+      sub.remove();
+      gracia.soltar();
+    };
   }, []);
   /**
    * La mesa está viva: se ve y la app está delante. Los sensores (acelerómetro), la mirada errante, el
@@ -1147,11 +1173,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             hastaQue: corte,
             onAudioStart: () => {
               trabajo?.yaSeDijo();
+              // Su voz suena: el sonido de trabajo se va (y vuelve al terminar si sigue trabajando).
+              trabajo?.vozEmpieza();
               pauseMicForTts(true);
             },
             // «Suena» cuando el reproductor lo confirma, no al pedir play (auditoría 6-oct §7.1).
             onSuena: () => trazaTurno.marcar('rellenoSuena'),
-            onEnd: () => !speakingRef.current && pauseMicForTts(false),
+            onEnd: () => {
+              trabajo?.vozTermina();
+              if (!speakingRef.current) pauseMicForTts(false);
+            },
           }).then((sono) => !sono && trazaTurno.marcar('rellenoTirado'));
         },
       });
@@ -1198,18 +1229,30 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               void speak(texto, {
                 emocion: 'neutral',
                 hastaQue: corte,
-                onAudioStart: () => pauseMicForTts(true),
-                onEnd: () => !speakingRef.current && pauseMicForTts(false),
+                onAudioStart: () => {
+                  trabajo?.vozEmpieza();
+                  pauseMicForTts(true);
+                },
+                onEnd: () => {
+                  trabajo?.vozTermina();
+                  if (!speakingRef.current) pauseMicForTts(false);
+                },
               }),
             alLinea: (l) => {
               setProgresoMesa(l);
               setToolHint(l);
             },
-            // El tecleo solo con el micrófono de la mesa en silencio: abierto, lo oiría el propio oído.
+            // Los sonidos de trabajo (José, 6-oct): tecleo, papel, clics y el murmullo de «pensando», por el canal de
+            // efectos. Con el micrófono de la mesa abierto solo si el oído graba con el cancelador de eco (si no, el
+            // tecleo podría abrirle una frase); mientras suenan, el oído sube su umbral (setFondoPropio).
             ambiente: reproductorAmbiente,
-            sonido: () => micMutedRef.current && sfxActivos() && !conversandoRef.current && !enLlamadaRef.current,
+            sonido: () => ambienteActivo() && !conversandoRef.current && !enLlamadaRef.current && (micMutedRef.current || oidoAguantaFondo()),
+            pensando: true,
+            alFondo: setFondoPropio,
+            miga,
           });
           const trabajoTurno = trabajo;
+          trabajoActual.current = trabajoTurno;
           try {
             trazaTurno.marcar('envio');
             const st = streamDelTurno(base, {
@@ -1255,6 +1298,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             let result = await st.promise.finally(() => {
               abortTurno.current = null;
               trabajoTurno.terminar();
+              if (trabajoActual.current === trabajoTurno) trabajoActual.current = null;
             });
             cancelMmm();
             if (turnoCancelado.current) {
@@ -2078,6 +2122,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       onEspeculativa: (t) => intentarEspecular(t),
       onEspeculativaCancelada: () => especulativo.cancelar(),
       onSpeechStart: () => {
+        // La persona habla: el sonido de trabajo del turno en curso se va y ya no vuelve en ese turno.
+        trabajoActual.current?.personaHabla();
         if (!speakingRef.current && !handling.current) setFace('LISTENING');
       },
       onPartial: (t) => {
@@ -2136,8 +2182,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     let alive = true;
     (async () => {
       const s = await loadSettings();
-      micMutedRef.current = s.micMuted;
-      setMicMuted(s.micMuted);
+      // El silencio vale solo en la sesión en que se puso (lib/silencioMesa.ts; José, 6-oct: «el micrófono falla»). Una
+      // recarga por OTA hereda la sesión de antes (lib/silencioHeredado.ts): no abre sola un micrófono que se cerró.
+      const arranqueMic = arranqueDelMicrofono(s, await sesionesDeEsteArranque());
+      const silenciada = arranqueMic.silenciada;
+      micMutedRef.current = silenciada;
+      setMicMuted(silenciada);
+      if (arranqueMic.motivo === 'otra-sesion') void saveSettings({ micMuted: false, micMutedSesion: null });
+      else if (silenciada && s.micMutedSesion !== SESION_APP) void saveSettings({ micMutedSesion: SESION_APP });
       // La cámara arranca apagada salvo que esta persona haya elegido «siempre» (y haya permiso).
       camara.arrancar(prefiereSiempre(s.camaraSiempre, user.correo) && !!camPerm?.granted);
       setLadoCamara(ladoValido(s.camaraLado));
@@ -2164,22 +2216,23 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       const micOk = await ensureSpeechPermissions();
       if (!alive) return;
-      if (micOk && !s.micMuted) {
+      if (micOk && !silenciada) {
         await enableAlwaysOnMic();
         oidoListo.current = true;
         // Si mientras tanto el audio pasó a otro (la conversación, una llamada, otra pantalla), se suelta.
         if (!oidoMesa.current?.oye()) void muteMic();
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
-      // El silencio se guarda entre sesiones (a propósito: una recarga no abre sola un micrófono que la persona
-      // cerró); que quede en las migas y que el saludo lo diga, para que no parezca que no oye.
-      if (micOk && s.micMuted) miga('micrófono: arranca silenciado (la persona lo dejó así en otra sesión)');
+      // Un silencio de otra sesión ya no se arrastra (antes sí, y José lo vivía como «el micrófono falla»); uno de esta
+      // sesión se queda, se ve tachado y el saludo lo dice en voz alta. Los dos quedan en las migas.
+      const migaMic = micOk ? migaArranqueMic(arranqueMic) : '';
+      if (migaMic) miga(migaMic);
 
       // El avatar se eligió al entrar (App): si es recién elegido, se presenta él mismo con su voz.
       handling.current = true;
       const saludo = saludoConNombre(user.name);
       const conPresentacion = recienElegido ? `${saludo} ${de(avatarPorId(s.avatar).presentacion)}` : saludo;
-      await say(saludoArranque(conPresentacion, { micSilenciado: micOk && s.micMuted, en: idiomaActual() === 'en' }), 'HAPPY', { emocion: 'feliz' });
+      await say(saludoArranque(conPresentacion, { micSilenciado: micOk && silenciada, en: idiomaActual() === 'en' }), 'HAPPY', { emocion: 'feliz' });
       handling.current = false;
       // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat
       // (Claudio se pone de pie).
@@ -2583,7 +2636,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
       setMicMuted(true);
       setStatus('muted');
-      await saveSettings({ micMuted: true });
+      // Con la sesión: el silencio sigue si la mesa se vuelve a montar sin cerrar la app, no en el próximo arranque.
+      await saveSettings({ micMuted: true, micMutedSesion: SESION_APP });
       await say(tr('Micrófono en silencio.', 'Microphone muted.'), 'IDLE');
     } else {
       const ok = await ensureSpeechPermissions();
@@ -2593,7 +2647,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       micMutedRef.current = false;
       setMicMuted(false);
       setStatus('listening');
-      await saveSettings({ micMuted: false });
+      await saveSettings({ micMuted: false, micMutedSesion: null });
       await say(tr('Te escucho de nuevo.', 'I’m listening again.'), 'HAPPY', { emocion: 'feliz' });
     }
   };
@@ -2639,6 +2693,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const toggleSfx = async () => {
     const next = !settings.sfx;
     setSfxEnabled(next);
+    // Sin efectos tampoco suenan los de trabajo: el del turno en curso se va ya.
+    trabajoActual.current?.revisar();
     setSettings((p) => ({ ...p, sfx: next }));
     await saveSettings({ sfx: next });
     if (next) playSfx('tap');

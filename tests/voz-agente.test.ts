@@ -1728,3 +1728,148 @@ test('Windows por voz: un «replace» del harness tampoco dice la marca y su ord
     await m.cerrar();
   }
 });
+
+/* ── 6-oct, APK 5.5.0 (José: «la llamada fue fluida pero de repente falló»; «si está pensando, que se escuche algo») ── */
+
+test('una petición SIN PALABRAS («(ruido)», «...», vacía) no corta el turno que está pensando: se engancha y la respuesta llega', async () => {
+  const { sinPalabrasDeLaPersona } = await import('../server/voz-agente');
+  for (const m of ['', '   ', '...', '(ruido)', '[tecleo]', '(sonido de teclado) …', '*clic*']) assert.equal(sinPalabrasDeLaPersona(m), true, JSON.stringify(m));
+  for (const m of ['sí', 'ok', '5', '(ruido) hola', '[[llamada]]', '[[sigues]]', '[[lectura:abc]] hola']) assert.equal(sinPalabrasDeLaPersona(m), false, JSON.stringify(m));
+  let abortado = false;
+  const s = await montar(
+    async (t) => {
+      t.senal.addEventListener('abort', () => (abortado = true));
+      await dormir(400);
+      if (t.senal.aborted) return;
+      t.enviar('delta', { text: 'Te llegaron dos correos de Ana.', voz: 'Te llegaron dos correos de Ana.' });
+      t.enviar('done', { reply: 'Te llegaron dos correos de Ana.' });
+    },
+    { puenteMs: 0, graciaReintentoMs: 1_500 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-ruido');
+    const ctrl = new AbortController();
+    // El turno de verdad empieza a pensar; ElevenLabs lo suelta (como al oír algo) y manda una «frase» sin palabras.
+    const primera = llm(s.base, pase, [{ role: 'user', content: '¿Qué hay en mi correo?' }], {}, ctrl.signal).catch(() => null);
+    await dormir(80);
+    ctrl.abort();
+    await primera;
+    const r = await llm(s.base, pase, [
+      { role: 'user', content: '¿Qué hay en mi correo?' },
+      { role: 'user', content: '(sonido de teclado)' },
+    ]);
+    const dicho = dichoDe(await r.text());
+    assert.equal(dicho, 'Te llegaron dos correos de Ana.', 'la respuesta del turno en curso llega por la petición sin palabras');
+    assert.equal(abortado, false, 'el cerebro no recibió ningún corte');
+    assert.equal(s.vistos.length, 1, 'la petición sin palabras no fue al cerebro');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('una petición sin palabras sin turno en curso: no va al cerebro, contesta nada y no gasta el cupo', async () => {
+  const s = await montar(async (t) => {
+    t.enviar('delta', { text: 'Hola.', voz: 'Hola.' });
+    t.enviar('done', { reply: 'Hola.' });
+  });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es');
+    const r = await llm(s.base, pase, [{ role: 'user', content: '...' }]);
+    assert.equal(r.status, 200);
+    const cuerpo = await r.text();
+    assert.equal(dichoDe(cuerpo), '');
+    assert.match(cuerpo, /"finish_reason":"stop"/);
+    assert.match(cuerpo, /data: \[DONE\]/);
+    assert.equal(s.vistos.length, 0);
+    // El turno de verdad que sigue contesta normal.
+    assert.equal(dichoDe(await (await llm(s.base, pase, [{ role: 'user', content: 'hola' }])).text()), 'Hola.');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('la charla que tarda sin herramienta: al puente suena el murmullo de «pensando» y se quita al contestar; lo rápido, nada', async () => {
+  const s = await montar(
+    async (t) => {
+      await dormir(Number(String(t.body.message).match(/\d+/)?.[0] || 0));
+      t.enviar('delta', { text: 'Pues mira, yo creo que sí.', voz: 'Pues mira, yo creo que sí.' });
+      t.enviar('done', { reply: 'Pues mira, yo creo que sí.' });
+    },
+    { puenteMs: 300 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-piensa');
+    await (await llm(s.base, pase, [{ role: 'user', content: '¿tú qué opinas de eso? 800' }])).text();
+    assert.deepEqual(
+      s.ambientes.map((a) => [a.aparato, a.sonido, a.on]),
+      [
+        ['tel-piensa', 'pensando', true],
+        ['tel-piensa', null, false],
+      ]
+    );
+    assert.ok(s.ambientes[0].ms >= 250, `al puente, no antes: ${s.ambientes[0].ms} ms`);
+    const antes = s.ambientes.length;
+    await (await llm(s.base, pase, [{ role: 'user', content: '¿y lo otro? 50' }])).text();
+    assert.equal(s.ambientes.length, antes, 'contestó antes del puente: ningún sonido');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('AURA_AMBIENTE=0: ningún sonido de trabajo en la llamada (ni tecleo ni «pensando»), aunque el teléfono sea viejo', async () => {
+  const antes = process.env.AURA_AMBIENTE;
+  process.env.AURA_AMBIENTE = '0';
+  const s = await montar(
+    async (t) => {
+      t.enviar('tarea', { herramienta: 'web' });
+      await dormir(500);
+      t.enviar('delta', { text: 'Encontré esto.', voz: 'Encontré esto.' });
+      t.enviar('done', { reply: 'Encontré esto.' });
+    },
+    { puenteMs: 200, esperaTareaMs: 50 }
+  );
+  try {
+    const dicho = dichoDe(await (await llm(s.base, paseDe(persona(), 'aura', 'es', 'tel-apagado'), [{ role: 'user', content: 'busca el clima de mañana' }])).text());
+    assert.match(dicho, /Encontré esto\.$/);
+    assert.deepEqual(
+      s.ambientes.filter((a) => a.on),
+      [],
+      'ningún sonido empieza'
+    );
+  } finally {
+    if (antes === undefined) delete process.env.AURA_AMBIENTE;
+    else process.env.AURA_AMBIENTE = antes;
+    await s.cerrar();
+  }
+});
+
+test('la ráfaga del turno especulativo (5 frases a medias en <1 s, como el 6-oct a las 17:11:28): queda en la línea del turno que contesta', async () => {
+  const s = await montar(async (t) => {
+    await dormir(String(t.body.message).endsWith('mañana?') ? 50 : 2_000);
+    if (t.senal.aborted) return;
+    t.enviar('delta', { text: 'Sí, mañana llueve.', voz: 'Sí, mañana llueve.' });
+    t.enviar('done', { reply: 'Sí, mañana llueve.' });
+  });
+  const lineas: string[] = [];
+  const log = console.log;
+  console.log = (...a: unknown[]) => {
+    lineas.push(a.map(String).join(' '));
+    log(...a);
+  };
+  try {
+    const pase = paseDe(persona(), 'aura', 'es');
+    const partes = ['¿Va', '¿Va a', '¿Va a llover', '¿Va a llover mañana', '¿Va a llover mañana en', '¿Va a llover mañana?'];
+    const pendientes: Promise<unknown>[] = [];
+    for (const p of partes.slice(0, -1)) {
+      pendientes.push(llm(s.base, pase, [{ role: 'user', content: p }]).then((r) => r.text()).catch(() => ''));
+      await dormir(120);
+    }
+    const dicho = dichoDe(await (await llm(s.base, pase, [{ role: 'user', content: partes.at(-1)! }])).text());
+    await Promise.all(pendientes);
+    assert.equal(dicho, 'Sí, mañana llueve.');
+    assert.ok(lineas.some((l) => /\[voz\] turno .* · tras 5 frases a medias \(seguía hablando\)/.test(l)), lineas.filter((l) => l.includes('[voz]')).join('\n'));
+  } finally {
+    console.log = log;
+    await s.cerrar();
+  }
+});

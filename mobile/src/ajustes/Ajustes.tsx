@@ -12,7 +12,8 @@
  *                 vibración
  *   Voz y oído    la voz del avatar y cómo convierte tu voz en texto (el teléfono o la nube); «Interrumpir hablando»
  *                 y «Muletillas al escuchar» (el «mjm» mientras hablas largo, ajustes/Muletillas.tsx)
- *   La mesa       «comenta lo que ve», los efectos de sonido y, con AU-RA, su cara (el orbe o los anillos)
+ *   La mesa       «comenta lo que ve», los efectos de sonido, «Sonidos mientras trabaja» (tecleo, papel, clics y el
+ *                 murmullo de pensar; ajustes/SonidosTrabajo.tsx) y, con AU-RA, su cara (el orbe o los anillos)
  *   Memoria       cuántos hechos guarda de ti y «Olvidar» (pregunta antes; borra aquí y en el servidor)
  *                 (José, 2-oct: estaban al final del menú de la mesa, en una columna angosta y cortada;
  *                 usan las mismas acciones de la mesa, que las publica en app/mesaAjustes.ts)
@@ -58,6 +59,7 @@ import type { SttEngine } from '../lib/storage';
 import { FilaCamaraRapida } from './CamaraRapida';
 import { FilaVozEnVivo } from './VozEnVivo';
 import { FilaMuletillas } from './Muletillas';
+import { FilaSonidosTrabajo } from './SonidosTrabajo';
 
 /** Lo que corre: la OTA (o el JS de la APK), cuándo se publicó y la huella nativa. */
 function lineaOta(idioma: Idioma): string {
@@ -517,6 +519,8 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
           icono="musica"
           derecha={<Interruptor valor={datos.sfx} onCambiar={(v) => v !== datos.sfx && acciones.alternarEfectos()} etiqueta={tr('Efectos de sonido', 'Sound effects')} />}
         />
+        {/* Los sonidos mientras trabaja o piensa (compa/sonidosTrabajo.ts), en la mesa y en la llamada. */}
+        <FilaSonidosTrabajo efectos={datos.sfx} />
         {datos.avatar === 'aura' ? (
           <View style={s.segmento}>
             <Texto v="chica" color="texto2" style={s.etiquetaSegmento}>

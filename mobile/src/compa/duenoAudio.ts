@@ -356,15 +356,14 @@ export function motivoFalloVoz(detalle?: string, en = false): string {
 }
 
 /**
- * El saludo al abrir la mesa. Si la persona dejó el micrófono en silencio en otra sesión, sigue en silencio
- * (se guarda a propósito: una recarga por OTA o un cierre no le abre solo un micrófono que ella cerró), pero
- * se DICE: antes arrancaba sorda sin avisar y solo lo decía la etiqueta «Silenciado» de abajo (José, 5-oct:
- * «micrófono, hay algo no está bien»).
+ * El saludo al abrir la mesa. Si el micrófono sigue en silencio (desde el 6-oct, solo si se silenció en ESTA sesión
+ * o antes de una recarga por OTA: lib/silencioMesa.ts), se DICE: antes arrancaba sorda sin avisar y solo lo decía la
+ * etiqueta «Silenciado» de abajo (José, 5-oct: «micrófono, hay algo no está bien»).
  */
 export function saludoArranque(saludo: string, o: { micSilenciado: boolean; en: boolean }): string {
   if (!o.micSilenciado) return saludo;
   const aviso = o.en
-    ? 'Heads up: my microphone is still muted from last time. Tap the microphone and I’ll hear you.'
-    : 'Ojo: tengo el micrófono en silencio desde la última vez. Toca el micrófono y te oigo.';
+    ? 'Heads up: my microphone is still muted, as you left it. Tap the microphone and I’ll hear you.'
+    : 'Ojo: sigo con el micrófono en silencio, como lo dejaste. Toca el micrófono y te oigo.';
   return `${saludo} ${aviso}`;
 }

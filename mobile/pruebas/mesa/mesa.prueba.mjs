@@ -518,11 +518,16 @@ prueba('turno sin respuesta: la mesa deja la miga y la MANDA ya en los dos camin
   for (const m of src.matchAll(/migaFalloTurno\(\{[^}]*\}\)/g)) assert.ok(!/\bcmd\b|\bbase\b|message/.test(m[0]), m[0]);
 });
 
-prueba('micrófono silenciado de otra sesión (José, 5-oct): se guarda, pero al abrir la mesa se DICE y queda en las migas', () => {
+// El 5-oct se decidió guardar el silencio entre sesiones y DECIRLO al arrancar; el 6-oct (APK 5.5.0) José lo siguió
+// viviendo como «a veces el micrófono falla» (migas: «arranca silenciado (la persona lo dejó así en otra sesión)»). Desde
+// entonces el silencio vale solo en su sesión (lib/silencioMesa.ts; tests/microfono-sesion-movil.test.ts): uno de otra
+// sesión no se arrastra; uno de esta sesión se queda, se DICE y queda en las migas.
+prueba('micrófono silenciado (José, 5 y 6-oct): solo vale en su sesión; si sigue, la mesa lo DICE y queda en las migas', () => {
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
-  assert.match(src, /micMutedRef\.current = s\.micMuted;/, 'el silencio guardado se respeta (una recarga no abre sola el micrófono)');
-  assert.match(src, /await say\(saludoArranque\([^)]*micSilenciado: micOk && s\.micMuted/, 'el saludo lo dice');
-  assert.match(src, /miga\('micrófono: arranca silenciado/, 'y queda en las migas');
+  assert.match(src, /const arranqueMic = arranqueDelMicrofono\(s, await sesionesDeEsteArranque\(\)\);/, 'el silencio guardado solo vale en su sesión (o tras una OTA)');
+  assert.match(src, /micMutedRef\.current = silenciada;/);
+  assert.match(src, /await say\(saludoArranque\([^)]*micSilenciado: micOk && silenciada/, 'el saludo lo dice');
+  assert.match(src, /const migaMic = micOk \? migaArranqueMic\(arranqueMic\) : '';\s*if \(migaMic\) miga\(migaMic\);/, 'y queda en las migas');
   assert.match(src, /silenciadoPorPersona: \(\) => micMutedRef\.current/, 'la miga del oído distingue el silencio de la persona del oído sin abrir');
 });
 
