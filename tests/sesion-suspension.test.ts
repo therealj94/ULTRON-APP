@@ -33,6 +33,9 @@ process.env.ULTRON_SESION_SECRETO = SECRETO;
 process.env.ULTRON_SESIONES_CERRADAS_ARCHIVO = path.join(tmp, 'cerradas.json');
 process.env.ULTRON_MEMORIA_BUCKET = '';
 process.env.ULTRON_PADRON = 'junta | Junta Prueba | junta.prueba@ordenglobal.org | | ultron=mando';
+// La mesa cerrada como en producción: con NODE_ENV=test (el CI) y sin clave, mesaAutorizada abre el hueco de desarrollo
+// a quien no trae sesión, y «el token quedó cerrado» se veía como un 200 anónimo (no es lo que se prueba aquí).
+process.env.ULTRON_MESA_CLAVE = 'clave-de-mesa-de-prueba-sec04-larga';
 const NODE_ENV_ANTES = process.env.NODE_ENV;
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
