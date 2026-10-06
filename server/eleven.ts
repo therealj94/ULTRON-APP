@@ -63,11 +63,6 @@ export function modeloPrimera(): string | null {
   return !v || v === 'no' ? null : v;
 }
 
-/** ¿Este modelo entiende las etiquetas de audio ([warmly], [laughs]…)? Solo los expresivos (v3, v4). */
-export function aceptaEtiquetas(modelo: string): boolean {
-  return /_v[34]\b|_v[34]_/.test(modelo);
-}
-
 /** El modelo para esta locución: el rápido si es la primera frase de AU-RA, corta y sin etiquetas; si no, el de siempre. */
 export function modeloDeLocucion(o: { texto: string; previo?: string; plataforma: 'ultron' | 'electrum' }): string {
   const rapido = modeloPrimera();
