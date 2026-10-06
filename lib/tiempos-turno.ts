@@ -44,6 +44,8 @@ export type MedidaTurno = {
   modelo?: string;
   /** Contestó el de respaldo porque el principal no dio su primera señal a tiempo (o falló). */
   respaldo?: boolean;
+  /** `charla`: la charla hablada fue primero al cerebro rápido (lib/cerebro-rapido.ts planDeModelos). */
+  ruta?: 'charla' | 'manos';
 };
 
 /**
@@ -87,7 +89,7 @@ export function lineaTiemposTurno(id: string, m: MedidaTurno, ahora = Date.now()
     const herr = m.prompt.herramientas ? ` (${m.prompt.herramientas} herr. ${m.prompt.herramientasCar || 0} car.)` : '';
     partes.push(`prompt ${total} car. ~${fichasEstimadas(total)} fichas${herr}`);
   }
-  if (m.proveedor || m.modelo) partes.push(`por ${[m.proveedor, nombreModelo(m.modelo)].filter(Boolean).join(' ')}${m.respaldo ? ' (respaldo)' : ''}`);
+  if (m.proveedor || m.modelo) partes.push(`por ${[m.proveedor, nombreModelo(m.modelo)].filter(Boolean).join(' ')}${m.ruta === 'charla' ? ' (charla)' : ''}${m.respaldo ? ' (respaldo)' : ''}`);
   partes.push(`total ${ms(ahora - m.inicio)}`);
   return `[${m.camino || 'mesa'}] turno ${String(id || '').slice(0, 8)}${m.hablado ? ' (hablado)' : ''}: ${partes.join(' · ')}`;
 }

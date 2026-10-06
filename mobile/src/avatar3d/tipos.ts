@@ -135,7 +135,12 @@ export type AlaEscena =
   | { tipo: 'camara'; camara: Camara }
   /** ¿Qué zona hay en (x, y)? Coordenadas 0..1 dentro de la vista. */
   | { tipo: 'zona'; id: number; x: number; y: number }
-  | { tipo: 'pausa'; valor: boolean };
+  | { tipo: 'pausa'; valor: boolean }
+  /**
+   * CAM-A: la mirada ya alisada (lib/miradaAvatar.ts), ~30 por segundo mientras cambia. Mientras `activa`, manda
+   * sobre `estado.mirar`; `soltar` devuelve la mirada a `estado.mirar` para siempre (el cuerpo dejó de leerla).
+   */
+  | { tipo: 'mirar'; x: number; y: number; activa: boolean; soltar?: boolean };
 
 /** Lo que la escena contesta con `ReactNativeWebView.postMessage`. */
 export type DeLaEscena =

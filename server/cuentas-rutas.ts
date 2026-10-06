@@ -164,10 +164,12 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     if (problema) return res.status(400).json({ ok: false, error: problema, code: 'clave_debil' });
     const e = await usarEnlace(String(req.body?.token || ''));
     if (!e) return res.status(410).json({ ok: false, error: 'El enlace ya se usó o venció.', code: 'enlace_vencido' });
-    const { nombre, rol } = d.nombreYRol(e.correo, (await cuentaDe(e.correo))?.nombre);
+    const cuenta = await cuentaDe(e.correo);
+    const { nombre, rol } = d.nombreYRol(e.correo, cuenta?.nombre);
     await fijarClave(e.correo, clave, nombre);
-    // La clave queda guardada igual, pero la sesión solo se abre si esta plataforma le corresponde.
-    const s = puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }, { comunidad: esDeComunidad(e.correo, d.plataforma) }) : null;
+    // La clave queda guardada igual, pero la sesión solo se abre si esta plataforma le corresponde y la cuenta no
+    // está suspendida (revisión 7, G3: alguien del padrón con la cuenta suspendida recuperaba la clave y entraba).
+    const s = cuenta?.estado !== 'suspendida' && puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }, { comunidad: esDeComunidad(e.correo, d.plataforma) }) : null;
     const aviso = plantilla({
       plataforma: d.plataforma,
       saludo: `Hola, ${nombre}:`,

@@ -1,0 +1,72 @@
+{
+  "nota": "scripts/eval-humano.ts sobre evals/humano.json (40 turnos, server.ts real, GLM-5 en Bedrock; juez Qwen3 235B). Dos corridas por versión: el juez varía ±0,2 entre corridas. antes = 0304147; despues = lib/habla-natural.ts.",
+  "corridas": [
+    {
+      "version": "antes",
+      "fecha": "2026-10-06",
+      "notaJuez": 3.93,
+      "sinProblemas": 0.78,
+      "porProblema": {
+        "varias-preguntas": 4,
+        "repite-la-pregunta": 3,
+        "markdown": 1,
+        "etiqueta-en-turno-serio": 1,
+        "muchas-frases": 1
+      },
+      "honestidad": {
+        "casos": 2,
+        "bien": 2
+      },
+      "caracteresMedia": 118.28
+    },
+    {
+      "version": "antes",
+      "fecha": "2026-10-06",
+      "notaJuez": 3.7,
+      "sinProblemas": 0.78,
+      "porProblema": {
+        "repite-la-pregunta": 2,
+        "markdown": 3,
+        "muchas-frases": 2,
+        "varias-preguntas": 1,
+        "etiqueta-en-turno-serio": 1
+      },
+      "honestidad": {
+        "casos": 2,
+        "bien": 2
+      },
+      "caracteresMedia": 124
+    },
+    {
+      "version": "despues",
+      "fecha": "2026-10-06",
+      "notaJuez": 4.13,
+      "sinProblemas": 0.95,
+      "porProblema": {
+        "varias-preguntas": 2
+      },
+      "honestidad": {
+        "casos": 2,
+        "bien": 2
+      },
+      "caracteresMedia": 125.03
+    },
+    {
+      "version": "despues",
+      "fecha": "2026-10-06",
+      "notaJuez": 3.9,
+      "sinProblemas": 0.9,
+      "porProblema": {
+        "varias-preguntas": 2,
+        "largo": 1,
+        "muchas-frases": 2,
+        "sin-cerebro": 1
+      },
+      "honestidad": {
+        "casos": 2,
+        "bien": 2
+      },
+      "caracteresMedia": 113.1
+    }
+  ]
+}

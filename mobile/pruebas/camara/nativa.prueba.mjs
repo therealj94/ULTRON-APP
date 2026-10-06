@@ -197,18 +197,20 @@ prueba('coordenadas: con la frontal la caja de la izquierda del cuadro sale a la
 
 const reco = (id, nombre, d = 0.3) => ({ id, nombre, relacion: 'conocido', distancia: d, margen: 0.3 });
 
-prueba('seguimiento con ids: el nombre se queda con SU trackingId aunque las caras se crucen', () => {
+prueba('seguimiento con ids: la pista sigue a SU trackingId; si el id brinca de lugar (ML Kit pudo cambiarlos), el nombre se borra en las dos y se mira ya', () => {
   const s = new Seguidor();
   const [a, b] = s.actualizar([{ x: 0.1, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.6, y: 0.3, w: 0.2, h: 0.2 }], 1000, [11, 22]);
   s.votar(a.id, reco('ana', 'Ana'), 1000);
   s.votar(a.id, reco('ana', 'Ana'), 1100);
   assert.equal(a.identidad?.nombre, 'Ana');
-  // Se cruzan: en el cuadro siguiente la caja de Ana está donde estaba la otra (el IoU las habría cambiado).
+  s.tomarNueva();
+  // En el cuadro siguiente la caja del id 11 está donde estaba la otra: los ids pudieron cambiarse (revisión 7, M5).
   const [p22, p11] = s.actualizar([{ x: 0.1, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.6, y: 0.3, w: 0.2, h: 0.2 }], 1200, [22, 11]);
-  assert.equal(p11.id, a.id, 'el id 11 sigue siendo la pista de Ana');
-  assert.equal(p11.identidad?.nombre, 'Ana');
+  assert.equal(p11.id, a.id, 'el id 11 sigue siendo la misma pista');
   assert.equal(p22.id, b.id);
-  assert.equal(p22.identidad, null, 'el nombre no salta a la otra persona');
+  assert.equal(p11.identidad, null, 'pero el nombre de Ana ya no se le da a esa caja sin volver a mirar');
+  assert.equal(p22.identidad, null, 'ni salta a la otra persona');
+  assert.ok(s.hayNueva(), 'y se vuelve a mirar enseguida');
 });
 
 prueba('seguimiento con ids: un id nuevo es otra persona aunque aparezca en el mismo lugar; sin id, por solapamiento', () => {
@@ -388,13 +390,14 @@ prueba('costuras: la mesa elige con CamaraMesa (mismas props) y la de fotos sigu
 
 prueba('costuras: la marca «montando» se escribe y se ESPERA antes de montar la vista nativa; sin cuadros o con error → respaldo', () => {
   const v = leer('src/components/CamaraVivo.tsx');
-  assert.match(v, /void camaraMontando\(\)\.then\(\(\) => \{\n\s+if \(vivo\) \{\n\s+ultimoEvento\.current = Date\.now\(\);\n\s+setMontable\(true\);/);
+  // CAM-D: solo con la marca ESCRITA (ok); si no quedó en el disco, a la de fotos (onFallo) sin montar.
+  assert.match(v, /void camaraMontando\(\)\.then\(\(ok\) => \{\n\s+if \(!vivo\) return;\n(\s+\/\/.*\n)?\s+if \(!ok\) return fallar\([^)]*\);\n\s+ultimoEvento\.current = Date\.now\(\);\n\s+setMontable\(true\);/);
   assert.match(v, /if \(!activa \|\| !montable\) return null;/, 'la vista nativa solo con la marca escrita');
   assert.match(v, /camaraSana\(evento\.current\?\.fps\);\n\s+\}, GUARDIA\.sanoTrasMs\)/);
   assert.match(v, /camaraSoltada\(\);/);
   assert.match(v, /SIN_CUADROS_MS = 8000/);
   const g = leer('src/lib/guardiaCamara.ts');
-  assert.match(g, /export async function camaraMontando\(\): Promise<void> \{\n\s+await escribirGuardia/);
+  assert.match(g, /export async function camaraMontando\(\): Promise<boolean> \{\n\s+const ok = await escribirGuardia/);
   assert.match(g, /murioLaVezAnterior\(\)/);
   const a = leer('src/lib/auraCamara.ts');
   assert.match(a, /requireOptionalNativeModule<ModuloCamara>\('AuraCamara'\)/, 'sin el módulo (APK vieja), null: nada se rompe');

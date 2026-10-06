@@ -541,6 +541,79 @@ prueba('turno hablado (José, 6-oct: ~6 s con la cámara): la traza marca cada t
   assert.match(tts, /Mientras termina lo que suena \(el relleno\), la primera frase ya se prepara/, 'el locutor prepara la primera mientras espera');
 });
 
+/* ── revisión 7 (G1): lo local privado pasa por «¿quién habla?» ───────────────────────────── */
+
+prueba('G1: «¿qué sabes de mí?», «recuerda que…», «aprende mi voz», «conóceme», «¿a quién conoces?», «olvida…», «cierra sesión» son privados; la hora o «¿quién habla?», no', async () => {
+  const { interpretar } = await import('../../src/lib/intenciones.ts');
+  const PL = await import('../../src/lib/privadoLocal.ts');
+  const tipo = (f) => interpretar(f, { dormido: false, enConocer: false }).tipo;
+  for (const f of ['¿qué sabes de mí?', '¿qué recuerdas de mí?', 'recuerda que José me debe 500']) assert.ok(PL.intencionPrivada(tipo(f)), `${f} → ${tipo(f)}`);
+  for (const f of ['¿qué hora es?', 'cuéntame un chiste']) assert.ok(!PL.intencionPrivada(tipo(f)), f);
+  for (const f of ['aprende mi voz', 'olvida la voz de Ana', '¿qué voces conoces?', 'conóceme', 'te presento a mi esposa Ana', 'olvida a Ana', '¿a quién conoces?']) assert.ok(PL.pedidoLocalPrivado(f), f);
+  assert.ok(!PL.pedidoLocalPrivado('¿quién está hablando?'), '«¿quién habla?» contesta quién dijo esa frase');
+  assert.ok(!PL.pedidoLocalPrivado('¿qué hora es?'));
+});
+
+prueba('G1: con la voz de la dueña guardada, una frase local privada sin su voz confirmada se niega («No reconocí tu voz…»); con su voz, escrita o sin voz guardada, pasa', async () => {
+  const PL = await import('../../src/lib/privadoLocal.ts');
+  const VT = await import('../../src/voces/voces.ts');
+  let ahora = 5_000_000;
+  const respuestas = new Map();
+  const ident = new VT.IdentificadorVoz(async (t) => respuestas.get(t[0]), undefined, { reloj: () => ahora });
+  let n = 0;
+  const frase = async (r, dt = 1000) => {
+    ahora += dt;
+    const k = `p${++n}`;
+    respuestas.set(k, r);
+    ident.oir(n, [k]);
+    ident.entregada(n, ahora);
+    await new Promise((ok) => setTimeout(ok, 5));
+    return ahora;
+  };
+  // Lo que hace useVoces.paraTurno con la voz de la dueña guardada.
+  const paraTurno = (oidaEn, o) => VT.quienHablaDelTurno(ident, oidaEn, 'Marta', false, true, o);
+  const corta = await frase({ persona: null, motivo: 'muy_corta' });
+  const d = await PL.decidirPrivadoLocal({ oidaEn: corta, paraTurno });
+  assert.equal(d.permitido, false, '«¿qué sabes de mí?» corta y sin continuidad: no');
+  assert.equal(PL.fraseNegarLocal(d.quienHabla), 'No reconocí tu voz; dímelo con una frase un poco más larga.');
+  const otra = await frase({ persona: { id: 'a', nombre: 'Ana', relacion: 'conocido' }, motivo: 'reconocida' }, 30_000);
+  const dOtra = await PL.decidirPrivadoLocal({ oidaEn: otra, paraTurno });
+  assert.equal(dOtra.permitido, false, 'Ana no lee la memoria de Marta');
+  assert.doesNotMatch(PL.fraseNegarLocal(dOtra.quienHabla), /Marta|Ana/, 'sin nombres');
+  const ella = await frase({ persona: { id: 'y', nombre: 'Marta', relacion: 'yo' }, motivo: 'reconocida' }, 30_000);
+  assert.equal((await PL.decidirPrivadoLocal({ oidaEn: ella, paraTurno })).permitido, true, 'su voz: sí');
+  assert.equal((await PL.decidirPrivadoLocal({ oidaEn: await frase({ persona: null, motivo: 'muy_corta' }), paraTurno })).permitido, true, 'su «sí» corto enseguida (continuidad)');
+  assert.equal((await PL.decidirPrivadoLocal({ oidaEn: 0, paraTurno })).permitido, true, 'escrito: la sesión');
+  assert.equal((await PL.decidirPrivadoLocal({ oidaEn: corta, paraTurno: (o) => VT.quienHablaDelTurno(ident, o, 'Marta', false, false) })).permitido, true, 'sin su voz guardada: la sesión, como siempre');
+  assert.equal((await PL.decidirPrivadoLocal({ oidaEn: corta, paraTurno: async () => { throw new Error('x'); } })).permitido, false, 'si la consulta falla, no');
+});
+
+prueba('G1 (costura): la mesa decide ANTES de leer/escribir la memoria y antes de voces/caras; la escena sin nombres si no es la dueña', () => {
+  const d = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const gate = d.indexOf('if (intencionPrivada(intent.tipo))');
+  const gateVoces = d.indexOf('if (pedidoLocalPrivado(cmd))');
+  assert.ok(gate > 0 && gateVoces > 0, 'las dos puertas están');
+  assert.ok(gateVoces < d.indexOf('if (await vocesRef.current?.manejar(cmd)) return;'), 'antes de las voces');
+  assert.ok(gateVoces < d.indexOf('if (await caras.manejar(cmd)) return;'), 'antes de las caras');
+  for (const c of ["case 'recordar':", "case 'que_recuerdas':", "case 'olvidar':", "case 'conocer':", "case 'logout':"]) assert.ok(gate < d.indexOf(c), `antes de ${c}`);
+  assert.match(d, /voz\.quienHabla\s*\?\s*escenaDelTurno\(\{ camara:/, 'si no es la dueña, la escena va sin caras ni voces');
+  assert.match(d, /paraTurno\(oidaEn, \{ caraDuenaEn:/, 'la cara de la dueña cuenta para la continuidad');
+});
+
+prueba('voz (auditoría 6-oct): la traza mide cuando el reproductor confirma; el stream roto se recupera con el MISMO idTurno y el locutor cancelado', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  assert.match(src, /if \(oida\) cuandoSuene\(\(\) => \{/, '«contestó con voz» se mide en el comienzo real (cuandoSuene), no al pedir play');
+  assert.match(src, /onAudioBajado: \(\) => trazaTurno\.marcar\('audio'\)/, '«tts» es el audio bajado, con su nombre');
+  assert.match(src, /onSuena: \(\) => trazaTurno\.marcar\('rellenoSuena'\)/, 'el relleno «suena» cuando el reproductor lo confirma');
+  // El catch del stream cancela el locutor (lib/tts.ts: inmediato, sin audio preparado que reviva) y el JSON sale
+  // con `base`, que lleva el idTurno del stream: el servidor devuelve ese turno sin repetir herramientas.
+  const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('));
+  const catchStream = cuerpo.slice(cuerpo.indexOf('} catch (e) {'), cuerpo.indexOf('// 2) JSON clásico'));
+  assert.match(catchStream, /if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);/);
+  assert.match(cuerpo, /^\s+idTurno,$/m, 'el idTurno va en base');
+  assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await turno\(base, genTurno\);/);
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

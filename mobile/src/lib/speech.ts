@@ -37,6 +37,13 @@ export type SpeechCallbacks = {
    * Lo que siga diciendo llega como siempre por onPartial y onFinal.
    */
   onBargeIn?: (parcial: string) => void;
+  /**
+   * Solo con Turbo (fin de turno semántico, lib/finDeTurno.ts): la idea parece cerrada pero el oído todavía espera su
+   * silencio. Con el texto exacto, para empezar el turno especulativo (lib/turnoEspeculativo.ts); si la persona sigue
+   * hablando llega `onEspeculativaCancelada`. La frase de verdad llega igual por onFinal.
+   */
+  onEspeculativa?: (text: string) => void;
+  onEspeculativaCancelada?: () => void;
 };
 
 /**
@@ -126,6 +133,12 @@ function wire() {
       const texto = eco ? quitarEco(t, eco) : t;
       if (texto) callbacks.onFinal?.(texto);
     },
+    // Lo mismo que onFinal (sin el eco de su voz si la cortó): así la frase final y la especulada se comparan bien.
+    onEspeculativa: (t) => {
+      const texto = ecoAlCortar ? quitarEco(t, ecoAlCortar) : t;
+      if (texto) callbacks.onEspeculativa?.(texto);
+    },
+    onEspeculativaCancelada: () => callbacks.onEspeculativaCancelada?.(),
     onMedida: (m) => miga(`oído: frase de ${(m.vozMs / 1000).toFixed(1)} s lista ${m.trasCallarMs} ms tras callar (${m.via})`),
     onSpeechStart: () => {
       // Una frase nueva oída sin interrupción de por medio ya no lleva el eco de antes.

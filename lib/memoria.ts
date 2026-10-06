@@ -27,7 +27,9 @@ export type Almacen = {
   cambios: CambioMem[];
 };
 
-const FILE = path.join(process.cwd(), 'data', 'memoria-junta.json');
+const FILE_POR_OMISION = path.join(process.cwd(), 'data', 'memoria-junta.json');
+/** El archivo de disco (ULTRON_MEMORIA_JUNTA_FILE lo cambia: las pruebas no tocan el data/ del repo). */
+const archivo = () => process.env.ULTRON_MEMORIA_JUNTA_FILE || FILE_POR_OMISION;
 const S3_KEY = 'ultron/memoria-junta.json';
 const MAX_CORTA = 120;
 const MAX_LARGA = 80;
@@ -94,7 +96,7 @@ function migrar(raw: any): Almacen {
 
 function leerDisco(): Almacen {
   try {
-    return migrar(JSON.parse(fs.readFileSync(FILE, 'utf8')));
+    return migrar(JSON.parse(fs.readFileSync(archivo(), 'utf8')));
   } catch {
     try {
       return migrar(JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'memoria.json'), 'utf8')));
@@ -105,6 +107,7 @@ function leerDisco(): Almacen {
 }
 
 function escribirDisco(a: Almacen) {
+  const FILE = archivo();
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
   const tmp = FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(a));
@@ -126,9 +129,25 @@ export function juntarAlmacen(base: Almacen, extra: Almacen): Almacen {
   return out;
 }
 
+/**
+ * Revisión 7 (G4): la primera carga (tras un reinicio) va a S3 UNA vez aunque la pidan varios a la vez. Antes cada uno
+ * leía por su lado: «olvídalo todo» leía, borraba y guardaba, y un turno cuya lectura empezó antes y volvió después
+ * ponía en la caché el almacén de ANTES del olvido y lo guardaba encima: lo borrado reaparecía.
+ */
+let cargando: Promise<Almacen> | null = null;
+
 export async function cargarMemoria(): Promise<Almacen> {
   if (loaded && cache) return cache;
   if (s3SinLeer && cache && Date.now() < reintentoS3) return cache;
+  if (cargando) return cargando;
+  const p = cargarDeVerdad().finally(() => {
+    if (cargando === p) cargando = null;
+  });
+  cargando = p;
+  return p;
+}
+
+async function cargarDeVerdad(): Promise<Almacen> {
   const disco = leerDisco();
   if (s3Listo()) {
     const r = await s3GetJson(S3_KEY).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
@@ -456,6 +475,7 @@ export function quienVerificado(body: any, sesion?: { nombre?: string; correo?: 
 /** Tests: como recién arrancado (nada leído todavía). */
 export function _olvidarCargaTest() {
   cache = null;
+  cargando = null;
   loaded = false;
   s3SinLeer = false;
   reintentoS3 = 0;

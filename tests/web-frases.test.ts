@@ -30,9 +30,13 @@ test('al final del turno sale todo', () => {
 
 test('los tres cortadores usan el mismo umbral de coma: servidor, mesa web y app', () => {
   assert.equal(MIN_CORTE_COMA, COMA_PRIMERA);
-  // La app no puede importar lib/ (Metro no sale de mobile/): se lee la constante de su archivo.
+  // La app no puede importar lib/ (Metro no sale de mobile/): el número vive en su archivo del contrato
+  // (mobile/src/lib/cortesVoz.ts), que el servidor importa; el locutor de la app lo toma de ahí.
+  const contrato = fs.readFileSync(path.join(import.meta.dirname, '../mobile/src/lib/cortesVoz.ts'), 'utf8');
+  assert.equal(Number(contrato.match(/export const COMA_PRIMERA = (\d+);/)?.[1]), COMA_PRIMERA);
   const movil = fs.readFileSync(path.join(import.meta.dirname, '../mobile/src/lib/tts.ts'), 'utf8');
-  assert.equal(Number(movil.match(/export const COMA_PRIMERA = (\d+);/)?.[1]), COMA_PRIMERA);
+  assert.match(movil, /export const COMA_PRIMERA = COMA_PRIMERA_CORTES;/);
+  assert.match(movil, /from '\.\/cortesVoz'/);
 });
 
 test('lo que el servidor suelta en una coma, la web lo dice ya (antes un tramo de 28-39 esperaba)', () => {

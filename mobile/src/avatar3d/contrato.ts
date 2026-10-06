@@ -18,6 +18,7 @@ import { expresion, hablando, estaDormida, type Animo, type Efecto, type EventoA
 import { canal } from '../compa/canales';
 import type { AvatarId } from '../avatares/catalogo';
 import { ESTADO_INICIAL, type Camara, type EstadoAvatar, type ExpresionAvatar, type GestoAvatar, type ToqueAvatar, type ZonaToque } from './tipos';
+import type { FuenteMirada } from '../lib/miradaAvatar';
 
 export * from './tipos';
 
@@ -45,6 +46,11 @@ export type PropsCuerpo = {
   alto: number;
   /** Tope de cuadros por segundo (la compañera chiquita no necesita 60). */
   fpsMax?: number;
+  /**
+   * La mirada hacia la persona leída en el cuadro del cuerpo (lib/miradaAvatar.ts, CAM-A), sin pasar por el estado
+   * de React. Sin esto, la de `estado.mirar` como siempre.
+   */
+  fuenteMirada?: FuenteMirada;
 };
 
 /* ── del ánimo al estado del cuerpo ──────────────────────────────────────────────────────── */

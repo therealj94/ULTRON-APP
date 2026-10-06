@@ -28,6 +28,7 @@ import { senalVoz } from './senalVoz';
 import type { ModeloAvatar3D } from './modelo';
 import type { PropsCuerpo } from './contrato';
 import type { AlaEscena, Calidad, DeLaEscena, InfoModelo, ZonaToque } from './tipos';
+import { poseCambio, type PoseMirada } from '../lib/miradaAvatar';
 
 /** Bytes por pedazo: múltiplo de 3, así cada pedazo es base64 completo (sin relleno en medio). */
 const PASO = 3 * 65536;
@@ -38,6 +39,8 @@ const PASO = 3 * 65536;
 const BOCA_CADA_MS = 33;
 /** Lo que se espera la respuesta de un raycast antes de tratar el toque como uno cualquiera. */
 const ESPERA_ZONA_MS = 180;
+/** CAM-A: cada cuánto se lee la mirada del controlador (la escena interpola a 60 fps entre medio). */
+const MIRADA_CADA_MS = 33;
 
 export type ControlAvatar3D = {
   /** ¿Qué zona hay en (x, y)? En px dentro de la vista. null: ninguna (o no contestó a tiempo). */
@@ -59,7 +62,7 @@ type Props = PropsCuerpo & {
 };
 
 export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
-  { modelo, camara, estado, ancho, alto, fpsMax = 60, dprMax = 2, reducido = false, calidad = 'alta', onListo, onFallo, onCalidad },
+  { modelo, camara, estado, ancho, alto, fpsMax = 60, dprMax = 2, reducido = false, calidad = 'alta', fuenteMirada, onListo, onFallo, onCalidad },
   ref
 ) {
   const web = useRef<WebView>(null);
@@ -161,6 +164,32 @@ export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
       soltar();
     };
   }, [enviar]);
+
+  // CAM-A: la mirada de la cámara, leída del controlador cada ~33 ms (no del estado de React, que iba a ~4 Hz) y
+  // mandada solo si cambió algo que se vea. La escena la interpola con deltaTime a sus cuadros.
+  useEffect(() => {
+    if (!fuenteMirada) return;
+    // Lector conectado solo con la escena lista y viva: mientras tanto (o si cae) la mesa sigue alimentando las caras 2D.
+    let soltarLector: (() => void) | null = null;
+    let previa: PoseMirada | null = null;
+    const t = setInterval(() => {
+      if (!listo.current || caida.current) {
+        soltarLector?.();
+        soltarLector = null;
+        return;
+      }
+      soltarLector ??= fuenteMirada.conectar();
+      const p = fuenteMirada.paso(Date.now(), { reducido });
+      if (!poseCambio(previa, p)) return;
+      previa = p;
+      enviar({ tipo: 'mirar', x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000, activa: p.activa });
+    }, MIRADA_CADA_MS);
+    return () => {
+      clearInterval(t);
+      soltarLector?.();
+      enviar({ tipo: 'mirar', x: 0, y: 0, activa: false, soltar: true });
+    };
+  }, [enviar, fuenteMirada, reducido]);
 
   // Detrás, sin cuadros.
   useEffect(() => {

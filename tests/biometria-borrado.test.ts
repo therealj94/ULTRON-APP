@@ -277,6 +277,89 @@ for (const t of TIPOS) {
   });
 }
 
+/* ── con el camino de dos instancias (revisión 7 M3): lectura con ETag y guardado con If-Match / If-None-Match ── */
+
+const etags = new Map<string, string>();
+let nEtag = 0;
+const s3GetEtag = async (k: string) => {
+  const r = await s3Get(k);
+  return { ...r, etag: s3.datos.has(k) ? etags.get(k) || null : null };
+};
+const s3PutCond = async (k: string, j: unknown, cond: { siNoExiste?: boolean; siCoincide?: string }) => {
+  if (s3.ponerCae) return { ok: false, etag: null, conflicto: false, status: 503, detalle: 'S3 503' };
+  if ((cond.siNoExiste && s3.datos.has(k)) || (cond.siCoincide && etags.get(k) !== cond.siCoincide)) return { ok: false, etag: null, conflicto: true, status: 412, detalle: 'S3 412' };
+  s3.datos.set(k, JSON.parse(JSON.stringify(j)));
+  const etag = `"e${++nEtag}"`;
+  etags.set(k, etag);
+  return { ok: true, etag, conflicto: false, status: 200, detalle: 'ok' };
+};
+function conCAS(t: Tipo) {
+  const correo = preparar(t);
+  etags.clear();
+  t.m._s3DePrueba({ listo: () => true, put: async (k: string, j: unknown) => { const r = await s3Put(k, j); if (r.ok) etags.set(k, `"e${++nEtag}"`); return r; }, putCond: s3PutCond });
+  t.m._s3LecturaDePrueba({ listo: () => true, get: s3Get, getEtag: s3GetEtag });
+  return correo;
+}
+
+for (const t of TIPOS) {
+  test(`SEC-03 + M3 ${t.nombre}: con ETag, el borrado con la copia local atascada es DEGRADADO y no resucita al recargar`, async () => {
+    const correo = conCAS(t);
+    try {
+      const ana = await t.agregar(correo, 'Ana', 30);
+      await t.agregar(correo, 'Beto', 31);
+      D._discoBiometriaDePrueba({
+        writeFileSync: () => {
+          throw new Error('EIO');
+        },
+        unlinkSync: () => {
+          throw new Error('EROFS');
+        },
+      });
+      const e = await silencio(() => t.olvidar(correo, ana.id).then(() => null, (x) => x));
+      assert.ok(e instanceof D.BorradoDegradado, String(e));
+      D._discoBiometriaDePrueba(null);
+      t.olvidarCache();
+      assert.deepEqual(await nombres(t, correo), ['Beto']);
+    } finally {
+      limpiar(t);
+    }
+  });
+
+  test(`SEC-03 + M3 ${t.nombre}: un respaldo viejo restaurado en S3 y un cambio después (con ETag) no resucitan a Ana`, async () => {
+    const correo = conCAS(t);
+    try {
+      const ana = await t.agregar(correo, 'Ana', 32);
+      await t.agregar(correo, 'Beto', 33);
+      const [clave] = [...s3.datos.keys()];
+      const respaldo = JSON.parse(JSON.stringify(s3.datos.get(clave)));
+      await t.olvidar(correo, ana.id);
+      s3.datos.set(clave, respaldo);
+      etags.set(clave, '"restaurado"');
+      t.olvidarCache();
+      // Un cambio partiendo de lo restaurado: lee S3 (con Ana) + la lápida del disco, y guarda sin Ana.
+      await t.agregar(correo, 'Carla', 34);
+      t.olvidarCache();
+      assert.deepEqual(await nombres(t, correo), ['Beto', 'Carla']);
+      assert.equal(JSON.stringify(s3.datos.get(clave)).includes('"Ana"'), false);
+    } finally {
+      limpiar(t);
+    }
+  });
+
+  test(`SEC-03 + M3 ${t.nombre}: con S3 configurado y caído, ni leer ni cambiar usan el disco solo (falla cerrado)`, async () => {
+    const correo = conCAS(t);
+    try {
+      await t.agregar(correo, 'Ana', 35);
+      t.olvidarCache();
+      s3.leerCae = true;
+      await assert.rejects(t.cargar(correo), (e: unknown) => e instanceof t.noDisponibles);
+      await assert.rejects(t.agregar(correo, 'Beto', 36), (e: unknown) => e instanceof t.noDisponibles);
+    } finally {
+      limpiar(t);
+    }
+  });
+}
+
 test('SEC-03 rutas: DELETE /api/caras/:id y /api/voces/:id con la copia local atascada → 202 completo:false (no «borrada»)', async () => {
   const express = (await import('express')).default;
   const { montarRutasCaras } = await import('../server/caras-rutas');

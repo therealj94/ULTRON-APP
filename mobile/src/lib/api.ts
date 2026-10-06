@@ -23,6 +23,7 @@ import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
 import { campoQuienHabla, type QuienHablaTurno } from '../voces/voces';
 import { campoParaTurno, type CampoDecisionVista } from './decisionVista';
+import { eventoProgresoValido, type EventoProgreso } from '../compa/narrador';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -351,6 +352,24 @@ export async function olvidarMemoriaServidor(usuario: string): Promise<boolean> 
   }
 }
 
+/**
+ * El «sí» del turno especulativo (server/turno-especulativo.ts): la frase final es la especulada, sus acciones y su
+ * memoria pueden correr. true solo si el servidor lo confirmó.
+ */
+export async function confirmarTurnoEspeculativo(idTurno: string): Promise<boolean> {
+  try {
+    const r = await api<{ estado?: string }>('/api/turno/confirmar', { method: 'POST', body: JSON.stringify({ idTurno }) }, 5_000);
+    return r?.estado === 'confirmado';
+  } catch {
+    return false;
+  }
+}
+
+/** Tirar el turno especulativo (cortar su stream ya lo tira; esto es por si el corte no llega al servidor). */
+export function cancelarTurnoEspeculativo(idTurno: string): void {
+  void api('/api/turno/confirmar', { method: 'POST', body: JSON.stringify({ idTurno, cancelar: true }) }, 5_000).catch(() => undefined);
+}
+
 export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 
 export type ChatResult = {
@@ -394,7 +413,7 @@ export type ChatResult = {
   codigo?: string;
 };
 
-type TurnoOpts = {
+export type TurnoOpts = {
   message: string;
   mode: Mode;
   userName: string;
@@ -446,6 +465,11 @@ type TurnoOpts = {
    * con un «sí» dicho solo si el borrador que espera tiene exactamente esa huella.
    */
   decisionVista?: CampoDecisionVista | null;
+  /**
+   * TURNO ESPECULATIVO (lib/turnoEspeculativo.ts, server/turno-especulativo.ts): empezó antes de que el oído diera la frase
+   * por terminada. El servidor piensa y escribe, pero no hace nada con efecto hasta confirmarTurnoEspeculativo(idTurno).
+   */
+  especulativo?: boolean;
 };
 
 /**
@@ -499,6 +523,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.soloRapido ? { soloRapido: true } : {}),
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
     ...(opts.soloRepetir && opts.idTurno ? { soloRepetir: true } : {}),
+    ...(opts.especulativo && opts.idTurno ? { especulativo: true } : {}),
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
     ...(campoQuienHabla(opts.quienHabla) ? { quienHabla: campoQuienHabla(opts.quienHabla) } : {}),
     ...(campoParaTurno(opts.hablado, opts.decisionVista) ? { decisionVista: campoParaTurno(opts.hablado, opts.decisionVista) } : {}),
@@ -560,6 +585,11 @@ export type StreamHandlers = {
    */
   onReplace?: (texto: string) => void;
   onTools?: (tools: string[]) => void;
+  /**
+   * Lo que está haciendo de verdad mientras trabaja (`event: progreso`, lib/progreso-trabajo.ts del servidor), ya
+   * validado: la línea de la mesa y lo que dice el narrador (compa/narrador.ts). Una mesa vieja no lo escucha.
+   */
+  onProgreso?: (e: EventoProgreso) => void;
 };
 
 /**
@@ -635,7 +665,10 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
         full = corregido;
         h.onReplace?.(full);
       } else if (ev === 'tools' && Array.isArray(data.tools)) h.onTools?.(data.tools);
-      else if (ev === 'done') {
+      else if (ev === 'progreso') {
+        const p = eventoProgresoValido(data);
+        if (p) h.onProgreso?.(p);
+      } else if (ev === 'done') {
         if (data.emocion) setEmocion(data.emocion);
         done = {
           reply: quitarExpresiones(pelarEtiqueta(String(data.reply || full)).texto),

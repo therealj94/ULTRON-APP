@@ -44,6 +44,34 @@ export function modeloEleven(): string {
   return String(process.env.ELEVENLABS_MODELO || '').trim() || MODELO_ELEVEN;
 }
 
+/* ── latencia de la voz: la PRIMERA frase con el modelo rápido (José, 6-oct) ─────────────────────────────────────── */
+
+/**
+ * El teléfono pide la voz frase por frase y espera el audio ENTERO de cada una (con sus tiempos para la boca) antes de
+ * sonarla. Medido el 6-oct (scripts/voz/latencia-voz.ts voz, 3 frases × 4, con tiempos): eleven_v4_turbo 625 ms de
+ * mediana (p75 665), eleven_turbo_v2_5 208 ms (p75 256), eleven_flash_v2_5 209 ms (p75 227). La PRIMERA frase de una
+ * respuesta (sin `previo`), corta y sin etiquetas de expresión, va con turbo v2.5: la misma voz, ~0,4 s antes, y mejor
+ * calidad que flash con la misma espera. Las demás frases y toda frase con etiquetas (solo v4 las entiende; turbo v2.5
+ * las leería en voz alta), con el modelo expresivo. ELEVENLABS_MODELO_PRIMERA lo cambia; «no» lo apaga.
+ */
+export const MODELO_PRIMERA_OMISION = 'eleven_turbo_v2_5';
+/** Más larga que esto ya no es «la primera frase» que se corta para empezar a hablar (lib/trozos: coma a los 28). */
+export const PRIMERA_MAX_CARACTERES = 140;
+
+export function modeloPrimera(): string | null {
+  const v = String(process.env.ELEVENLABS_MODELO_PRIMERA ?? MODELO_PRIMERA_OMISION).trim();
+  return !v || v === 'no' ? null : v;
+}
+
+/** El modelo para esta locución: el rápido si es la primera frase de AU-RA, corta y sin etiquetas; si no, el de siempre. */
+export function modeloDeLocucion(o: { texto: string; previo?: string; plataforma: 'ultron' | 'electrum' }): string {
+  const rapido = modeloPrimera();
+  const texto = String(o.texto || '');
+  if (rapido && o.plataforma === 'ultron' && !String(o.previo || '').trim() && texto.length <= PRIMERA_MAX_CARACTERES && !/\[[^\]\n]{1,80}\]/.test(texto)) return rapido;
+  return modeloEleven();
+}
+/* ── fin de la primera frase rápida ── */
+
 /**
  * Las voces de AU-RA FP (29-sep): cuatro avatares, cada uno con su voz de ElevenLabs en español y en
  * inglés, dichas con el modelo v4 (MODELO_ELEVEN). El idioma lo elige la persona al entrar.
@@ -311,6 +339,15 @@ export function etiquetaV4(marca: string): string | null {
   return esEtiquetaIngles(k) ? k : null;
 }
 
+/**
+ * ¿El modelo actúa las etiquetas de audio ([laughs], [whispers])? Solo v3 y v4 (MODELO_ELEVEN, verificado el 1-oct). Con
+ * ELEVENLABS_MODELO en uno de antes (flash, turbo v2.5, multilingual v2) se leían en voz alta: `guionEleven` las quita
+ * (lib/habla-natural.ts, 6-oct).
+ */
+export function aceptaEtiquetas(modelo = modeloEleven()): boolean {
+  return /^eleven_v[3-9](_|$)/i.test(String(modelo || '').trim());
+}
+
 /** Cuántas etiquetas como mucho por trozo: más de eso suena a actor sobreactuando. */
 const MAX_ETIQUETAS = 4;
 
@@ -328,9 +365,10 @@ export function guionEleven(
    * (auditoría externa, 1-oct; ElevenLabs recomienda 1-2 etiquetas por línea). Quien tiene `previo`
    * (hay frase antes) no lo pone.
    */
-  o: { tono?: boolean } = {}
+  o: { tono?: boolean; modelo?: string } = {}
 ): string {
   const crudo = String(texto || '');
+  const conEtiquetas = aceptaEtiquetas(o.modelo ?? modeloEleven());
   const partes = crudo.split(/\[([^\]\n]{1,80})\]/);
   const salida: string[] = [];
   let etiquetas = 0;
@@ -350,7 +388,7 @@ export function guionEleven(
       }
       v4 = esEtiquetaIngles(k) ? k : '';
     }
-    if (!v4 || etiquetas >= MAX_ETIQUETAS) continue;
+    if (!v4 || !conEtiquetas || etiquetas >= MAX_ETIQUETAS) continue;
     etiquetas++;
     salida.push(`[${v4}]`);
   }
@@ -360,7 +398,7 @@ export function guionEleven(
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!/[\p{L}\p{N}]/u.test(guion.replace(/\[[^\]]*\]/g, ''))) return '';
-  const tono = o.tono === false ? undefined : TONO_V4[emocion];
+  const tono = o.tono === false || !conEtiquetas ? undefined : TONO_V4[emocion];
   if (tono && !guion.startsWith('[')) guion = `[${tono}] ${guion}`;
   return guion;
 }
@@ -426,6 +464,8 @@ type PedidoEleven = {
   estabilidad?: number;
   /** En qué idioma se dice (la voz ya es la de ese idioma). Español si no se dice. */
   idioma?: Idioma;
+  /** El modelo de ElevenLabs (modeloDeLocucion); sin él, el de siempre. */
+  modelo?: string;
 };
 
 /**
@@ -449,7 +489,7 @@ export function estabilidadDe(emocion: string | undefined): number {
 export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
   const cuerpo: Record<string, unknown> = {
     text: opts.texto,
-    model_id: modeloEleven(),
+    model_id: opts.modelo || modeloEleven(),
     language_code: opts.idioma === 'en' ? 'en' : 'es',
     // Estabilidad media: deja que la emoción se note sin que cada frase suene a otra persona.
     voice_settings: { stability: Math.min(0.9, Math.max(0.2, opts.estabilidad ?? 0.5)), similarity_boost: 0.8 },
@@ -516,7 +556,7 @@ export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.no
   const key = clave('elevenlabs');
   if (!key || !elevenListo()) return null;
   if (opts.reloj && !opts.reloj.alcanza()) return null;
-  const modelo = modeloEleven();
+  const modelo = opts.modelo || modeloEleven();
   if (!tiemposDisponibles(modelo, ahora)) return 'sin-tiempos';
   const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
   try {

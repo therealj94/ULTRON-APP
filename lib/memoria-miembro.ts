@@ -21,6 +21,7 @@ import path from 'node:path';
 import type { VistaTexto } from './conocer-persona';
 import { capasHilo, type HiloMemoria } from './conversacion';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { filaPorCuenta, Generaciones } from './fila-por-cuenta';
 
 export type TurnoMiembro = { rol: 'user' | 'ultron'; texto: string; t: number; canal: 'mesa' | 'telegram' | 'sistema' };
 export type HechoMiembro = { hecho: string; t: number };
@@ -33,6 +34,14 @@ const MAX_EN_CACHE = 2000;
 
 const cache = new Map<string, CajonMiembro>();
 const colas = new Map<string, Promise<void>>();
+/**
+ * Revisión 7 (G4): «olvida todo» volvía. Un turno que fue a S3 (caché y disco vacíos tras un reinicio) y tardó
+ * volvía con el cajón de ANTES del olvido, lo ponía en la caché y lo guardaba encima. Como voces, caras y el cerebro
+ * común (lib/fila-por-cuenta.ts): los cambios de un correo van de a uno (leer → cambiar → guardar) y una lectura que
+ * empezó antes de un cambio no entra a la caché ni al disco.
+ */
+const unoALaVez = filaPorCuenta();
+const generaciones = new Generaciones();
 
 /**
  * ¿Es algo que la persona quiere que se recuerde? Solo lo explícito o lo suyo («recuerda que…»,
@@ -120,7 +129,10 @@ export async function cargarMiembro(correo: string): Promise<CajonMiembro> {
   }
   let cajon = leerDeDisco(c);
   if (!cajon && s3Listo()) {
+    const g = generaciones.de(c);
     const r = await s3GetJson(claveS3(c)).catch(() => ({ ok: false, json: null }) as { ok: boolean; json: unknown });
+    // Hubo un cambio mientras S3 contestaba (un «olvida todo», un hecho): lo leído es viejo, manda la caché.
+    if (generaciones.cambioDesde(c, g)) return cache.get(c) || cargarMiembro(c);
     if (r.ok && r.json) {
       cajon = sanear(r.json);
       escribirEnDisco(c, cajon);
@@ -133,6 +145,13 @@ export async function cargarMiembro(correo: string): Promise<CajonMiembro> {
   const final = cajon || vacio();
   enCache(c, final);
   return final;
+}
+
+/** Un cambio: a la caché ya, la generación sube (las lecturas en vuelo se descartan) y el guardado a la cola. */
+function cambiar(c: string, cajon: CajonMiembro): { guardado: Promise<boolean> } {
+  enCache(c, cajon);
+  generaciones.cambio(c);
+  return { guardado: guardar(c, cajon) };
 }
 
 /** Guarda en orden, un correo a la vez: disco y S3. Resuelve false si S3 está configurado y no guardó. */
@@ -166,19 +185,22 @@ export async function recordarTurnoMiembro(o: { correo: string; rol: 'user' | 'u
   const c = correoNormal(o.correo);
   const texto = String(o.texto || '').trim().slice(0, 4000);
   if (!c || !texto) return;
-  const cajon = await cargarMiembro(c);
-  // S3 no se pudo leer: este turno no se anota (mejor perder un turno que borrar toda su memoria).
-  if (sinLeer.has(cajon)) {
-    console.warn('[memoria miembro] S3 no se pudo leer; no anoto el turno para no pisar su memoria');
-    return;
-  }
-  const t = Date.now();
-  cajon.corta = [...cajon.corta, { rol: o.rol, texto, t, canal: o.canal || 'mesa' }].slice(-MAX_CORTA_MIEMBRO);
-  if (o.rol === 'user' && esHechoDeMiembro(texto)) {
-    cajon.larga = [{ hecho: texto.slice(0, 400), t }, ...cajon.larga.filter((h) => h.hecho !== texto)].slice(0, MAX_LARGA_MIEMBRO);
-  }
-  enCache(c, cajon);
-  const guardado = guardar(c, cajon);
+  const r = await unoALaVez(c, async () => {
+    const previo = await cargarMiembro(c);
+    // S3 no se pudo leer: este turno no se anota (mejor perder un turno que borrar toda su memoria).
+    if (sinLeer.has(previo)) {
+      console.warn('[memoria miembro] S3 no se pudo leer; no anoto el turno para no pisar su memoria');
+      return null;
+    }
+    const t = Date.now();
+    const cajon: CajonMiembro = { version: 1, corta: [...previo.corta, { rol: o.rol, texto, t, canal: o.canal || 'mesa' }].slice(-MAX_CORTA_MIEMBRO), larga: previo.larga };
+    if (o.rol === 'user' && esHechoDeMiembro(texto)) {
+      cajon.larga = [{ hecho: texto.slice(0, 400), t }, ...previo.larga.filter((h) => h.hecho !== texto)].slice(0, MAX_LARGA_MIEMBRO);
+    }
+    return cambiar(c, cajon);
+  });
+  if (!r) return;
+  const guardado = r.guardado;
   if (o.esperar === false) {
     guardado.catch((e) => console.warn('[memoria miembro] no se guardó el turno', String(e?.message || e).slice(0, 120)));
     return;
@@ -191,22 +213,24 @@ export async function guardarHechoMiembro(correo: string, hecho: string): Promis
   const c = correoNormal(correo);
   const h = String(hecho || '').trim().slice(0, 400);
   if (!c || !h) return;
-  const cajon = await cargarMiembro(c);
-  if (sinLeer.has(cajon)) throw new Error('No pude leer tu memoria guardada en este momento; no guardé nada. Prueba otra vez en un rato.');
-  // Ya guardado: no se reescribe (lib/memoria.ts guardarHechoQuien, el mismo motivo).
-  if (cajon.larga.some((x) => x.hecho === h)) return;
-  cajon.larga = [{ hecho: h, t: Date.now() }, ...cajon.larga.filter((x) => x.hecho !== h)].slice(0, MAX_LARGA_MIEMBRO);
-  enCache(c, cajon);
-  await guardar(c, cajon);
+  const r = await unoALaVez(c, async () => {
+    const previo = await cargarMiembro(c);
+    if (sinLeer.has(previo)) throw new Error('No pude leer tu memoria guardada en este momento; no guardé nada. Prueba otra vez en un rato.');
+    // Ya guardado: no se reescribe (lib/memoria.ts guardarHechoQuien, el mismo motivo).
+    if (previo.larga.some((x) => x.hecho === h)) return null;
+    return cambiar(c, { version: 1, corta: previo.corta, larga: [{ hecho: h, t: Date.now() }, ...previo.larga.filter((x) => x.hecho !== h)].slice(0, MAX_LARGA_MIEMBRO) });
+  });
+  if (r) await r.guardado;
 }
 
 /** Borra todo lo del miembro (su hilo y sus hechos). Solo lo suyo. `durable`: false si S3 no lo borró. */
 export async function olvidarMiembro(correo: string): Promise<{ durable: boolean }> {
   const c = correoNormal(correo);
   if (!c) return { durable: true };
-  const cajon = vacio();
-  enCache(c, cajon);
-  return { durable: await guardar(c, cajon) };
+  // La generación sube YA (antes de esperar la fila): una lectura de S3 en vuelo no puede volver a poner lo olvidado.
+  generaciones.cambio(c);
+  const r = await unoALaVez(c, async () => cambiar(c, vacio()));
+  return { durable: await r.guardado };
 }
 
 /** Lo que va al prompt: con quién habla, lo que pidió recordar y su hilo. Nada de nadie más. */

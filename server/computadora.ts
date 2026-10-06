@@ -47,6 +47,7 @@ import { clave } from '../lib/boveda';
 import { almacenDurable, claveDe, crearUnaVez, leerDurable, modificarDurable, PROCESO_DURABLE, renovarLease, soltarLease, tomarLease, type Lease } from '../lib/durable';
 import type { MisionComputadoraMin } from '../lib/tareas-durables';
 import { evaluarEntrega, requisitosCombinados, SOLO_RESPONDI, SOLO_RESPONDI_EN, type ArchivoNodo, type Entrega, type ItemEntrega, type PedidoEntrega } from '../lib/tareas-durables';
+import { fraseSigoEnComputadora } from '../lib/progreso-trabajo';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -1492,7 +1493,9 @@ function narrar(e: Encargo, t: Tarea, ahora = Date.now()) {
     e.porAccion[nuevo.accion] = vez + 1;
     texto = fraseDePaso(nuevo, e.idioma, vez);
   } else if (ahora - Math.max(e.ultimaVoz, e.soltada) >= TIEMPOS_SEGUIR.trabajandoCadaMs) {
-    texto = e.idioma === 'en' ? "I'm still working on my computer." : 'Sigo trabajando en mi computadora.';
+    // Sin paso nuevo: «sigo», con el avance REAL del plan (los pasos con recibo del nodo) si lo hay, y variado
+    // (lib/progreso-trabajo.ts). Nunca un porcentaje ni más de lo que se hizo.
+    texto = fraseSigoEnComputadora({ idioma: e.idioma, hechos: Object.keys(e.mision.recibos || {}).length, total: e.mision.plan.length, vez: e.dichas });
   }
   if (!texto || texto === e.ultimaFrase) return;
   e.ultimaFrase = texto;

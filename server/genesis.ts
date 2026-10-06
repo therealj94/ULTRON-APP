@@ -27,6 +27,7 @@
  */
 import type { Express, RequestHandler } from 'express';
 import { recogerVuelta, registrarIntentoWeb, VIDA_INTENTO_MS } from './sso-web';
+import { comprobarSuspension, TOPE_SUSPENSION_MS } from './veta-entrar';
 
 const RETO = /^[A-Za-z0-9_-]{43}$/;
 const GID = /^GEN-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]$/;
@@ -129,8 +130,10 @@ export type DepsGenesis = {
    * aquí no impide entrar: la sesión de miembro no depende de la fila.
    */
   registrarMiembro?: (m: { correo: string; nombre: string; gid: string }) => Promise<unknown>;
-  /** ¿La cuenta está suspendida? Una suspendida no entra por Genesis. */
+  /** ¿La cuenta está suspendida? Una suspendida no entra por Genesis; si la consulta falla o tarda, tampoco (503). */
   suspendida?: (correo: string) => Promise<boolean>;
+  /** Lo más que se espera la consulta de suspensión (TOPE_SUSPENSION_MS; las pruebas lo acortan). */
+  topeSuspensionMs?: number;
   /** Deja la solicitud de acceso para que la apruebe José. Devuelve false si no se pudo guardar. */
   pedirAcceso: (s: { nombre: string; correo: string; motivo: string }) => Promise<boolean>;
   /**
@@ -212,8 +215,14 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
     }
     const correo = d.normalizarCorreo(v.correo);
     // Una cuenta suspendida no entra por Genesis (con Genesis abierto entraba como miembro).
-    if (d.suspendida && (await d.suspendida(correo).catch(() => false))) {
-      return { status: 403, body: { ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' } };
+    // Revisión 7 (G3): si la consulta falla o tarda NO se entra (antes un error contaba como «no suspendida»).
+    if (d.suspendida) {
+      const comprobado = await comprobarSuspension(d.suspendida, [correo], d.topeSuspensionMs ?? TOPE_SUSPENSION_MS);
+      if (comprobado === 'sin_comprobar') {
+        console.error('[genesis] no pude comprobar si la cuenta está suspendida: no entra');
+        return { status: 503, body: { ok: false, codigo: 'CUENTA_SIN_COMPROBAR', error: 'No pude comprobar tu cuenta. Intenta de nuevo.' } };
+      }
+      if (comprobado === 'suspendida') return { status: 403, body: { ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' } };
     }
     const enPadron = d.tieneAcceso(correo);
     // Miembro: fuera del padrón, con la puerta abierta, y que el padrón no lo tenga apartado de AU-RA.

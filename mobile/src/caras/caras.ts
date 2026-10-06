@@ -80,7 +80,7 @@ export function promediar(vs: number[][]): number[] {
  * `margen`: cuánto le gana al segundo más parecido (de otra persona); 1 si no hay segundo.
  * `parentesco`: el de la persona guardada, si lo tiene.
  */
-export type Reconocida = { id: string; nombre: string; relacion: Relacion; distancia: number; margen?: number; parentesco?: string };
+export type Reconocida = { id: string; nombre: string; relacion: Relacion; distancia: number; margen?: number; parentesco?: string; unica?: true };
 
 /**
  * ¿De quién es este vector? La distancia a una persona es la menor a cualquiera de sus muestras.
@@ -103,6 +103,8 @@ export function identificar(vector: number[], conocidas: CaraConocida[]): Recono
     distancia: r3(primero.d),
     margen: segundo ? r3(segundo.d - primero.d) : 1,
     ...(primero.c.parentesco ? { parentesco: primero.c.parentesco } : {}),
+    // Revisión 7 (M5): con menos de 2 personas guardadas el margen no dice nada (no hay segunda con quién comparar).
+    ...(new Set(conocidas.map((c) => c.id)).size < 2 ? { unica: true as const } : {}),
   };
 }
 

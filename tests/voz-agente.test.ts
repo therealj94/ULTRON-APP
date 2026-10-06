@@ -1138,6 +1138,59 @@ test('tarea muy lenta: después de la frase de espera, hasta dos de seguimiento 
   }
 });
 
+test('con progreso real (event: progreso): tras la frase de espera, el avance de verdad («hay 2 de Ana») a su ritmo, sin el «ya casi» genérico', async () => {
+  const { frasesDe } = await import('../mobile/src/compa/frasesEstado');
+  const { PASO_NARRADOR } = await import('../mobile/src/compa/narrador');
+  const s = await montar(
+    async (t) => {
+      await dormir(50);
+      t.enviar('tarea', { herramienta: 'correo' });
+      t.enviar('progreso', { fase: 'empece', herramienta: 'correo', detalle_seguro: 'Ana', ronda: 1 });
+      await dormir(350);
+      t.enviar('progreso', { fase: 'encontre', herramienta: 'correo', detalle_seguro: 'Ana', n: 2, ronda: 1 });
+      t.enviar('progreso', { fase: 'listo', herramienta: 'correo' });
+      await dormir(PASO_NARRADOR.cadaMinMs + 500);
+      t.enviar('delta', { text: 'Son la factura y un saludo.', voz: 'Son la factura y un saludo.' });
+      t.enviar('done', { reply: 'Son la factura y un saludo.' });
+    },
+    // El seguimiento genérico a los 400 ms: con progreso no debe salir ninguno.
+    { esperaTareaMs: 100, seguimientoMs: 400, puenteMs: 3_000 }
+  );
+  try {
+    const t0 = Date.now();
+    const trozos = await trozosConTiempo(await llm(s.base, paseDe(persona(), 'aura', 'es', 'tel-5'), [{ role: 'user', content: 'busca lo de Ana en mi correo' }]), t0);
+    const textos = trozos.map((x) => x.texto.replace(/^\[[a-z -]+\] /, '').trim());
+    assert.equal(textos.length, 3, JSON.stringify(trozos));
+    assert.ok(frasesDe('leyendo', 'aura', 'es').includes(textos[0]), `la frase de espera de siempre: ${textos[0]}`);
+    assert.match(textos[1], /2 de Ana/, 'el avance real, con su número y su tema');
+    assert.ok(trozos[1].ms - trozos[0].ms >= PASO_NARRADOR.cadaMinMs - 100, `a su ritmo: ${trozos[1].ms - trozos[0].ms} ms`);
+    for (const x of textos) assert.ok(!frasesDe('seguimiento', 'aura', 'es').includes(x), `sin «ya casi» genérico: ${x}`);
+    assert.equal(textos[2], 'Son la factura y un saludo.');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('con progreso y respuesta rápida: el narrador no dice nada encima (un `nada` lo cuenta la respuesta honesta)', async () => {
+  const s = await montar(async (t) => {
+    await dormir(50);
+    t.enviar('tarea', { herramienta: 'web' });
+    t.enviar('progreso', { fase: 'empece', herramienta: 'web', ronda: 1 });
+    await dormir(200);
+    t.enviar('progreso', { fase: 'nada', herramienta: 'web', ronda: 1 });
+    t.enviar('progreso', { fase: 'listo', herramienta: 'web' });
+    await dormir(300);
+    t.enviar('delta', { text: 'No encontré nada de eso.', voz: 'No encontré nada de eso.' });
+    t.enviar('done', { reply: 'No encontré nada de eso.' });
+  });
+  try {
+    const dicho = dichoDe(await (await llm(s.base, paseDe(persona(), 'aura', 'es', 'tel-6'), [{ role: 'user', content: 'busca el cometa verde de ayer' }])).text());
+    assert.equal(dicho, 'No encontré nada de eso.');
+  } finally {
+    await s.cerrar();
+  }
+});
+
 test('tarea que se sabe tarde (después del relleno del agente): la frase no empieza con otra muletilla ni se repite', async () => {
   const { frasesDe, empiezaConMuletilla } = await import('../mobile/src/compa/frasesEstado');
   // Relleno del agente a los 200 ms (como 2,5 s en producción) y puente a los 300 ms: la tarea llega a

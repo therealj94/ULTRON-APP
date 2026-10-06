@@ -350,6 +350,31 @@ export async function paginasDePptx(datos: Buffer): Promise<PaginaLeida[]> {
   return out.filter((p) => p.texto);
 }
 
+/* -------------------------------------------------------------------------------- .docx */
+
+/**
+ * Un .docx en una sola página (Word no guarda dónde corta cada página: eso lo decide quien lo abre). Párrafos, saltos
+ * de línea y celdas de tabla separan; lo demás es el texto de `w:t` tal cual. Lo usa también la validación de lo que
+ * genera AU-RA (lib/oficina/validar.ts): lo que se pidió tiene que poder leerse de vuelta.
+ */
+export async function paginasDeDocx(datos: Buffer): Promise<PaginaLeida[]> {
+  const zip = await abrirZip(datos);
+  const doc = zip.file('word/document.xml');
+  if (!doc) return [];
+  const xml = await doc.async('text');
+  const texto = limpio(
+    desescapar(
+      xml
+        .replace(/<w:p[ >]/g, '\n<w:p ')
+        .replace(/<w:br\b[^>]*\/?>/g, '\n')
+        .replace(/<w:tab\/>/g, '\t')
+        .replace(/<\/w:tc>/g, '\t')
+        .replace(/<[^>]+>/g, '')
+    )
+  );
+  return texto ? [{ pagina: 1, texto }] : [];
+}
+
 /* -------------------------------------------------------------------------------- .xlsx */
 
 function columnaANumero(ref: string): number {

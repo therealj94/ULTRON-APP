@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import androidx.camera.core.ImageProxy
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -30,9 +31,15 @@ class AlmacenCuadros {
   private var giro = 0
   private var caras: List<CaraCuadro> = emptyList()
   private var ts = 0L
+  private var epoca = 0
+  private var cuadro = 0
+  private var lado = "frontal"
 
-  /** Copia el YUV del cuadro (NV21) y lo publica junto con sus caras. Llamar antes de cerrar el ImageProxy. */
-  fun guardar(img: ImageProxy, rotacion: Int, lista: List<CaraCuadro>, cuando: Long) {
+  /**
+   * Copia el YUV del cuadro (NV21) y lo publica junto con sus caras. Llamar antes de cerrar el ImageProxy.
+   * `cuando`: hora de CAPTURA (pared, ms); `epoca`/`cuadro`/`lado`: su origen (lo devuelven `recorte` y `foto`).
+   */
+  fun guardar(img: ImageProxy, rotacion: Int, lista: List<CaraCuadro>, cuando: Long, epocaCuadro: Int, numero: Int, ladoCuadro: String) {
     val w = img.width
     val h = img.height
     val buf = aNv21(img, detras)
@@ -44,6 +51,9 @@ class AlmacenCuadros {
       giro = rotacion
       caras = lista
       ts = cuando
+      epoca = epocaCuadro
+      cuadro = numero
+      lado = ladoCuadro
     }
   }
 
@@ -68,18 +78,18 @@ class AlmacenCuadros {
       val salida = ByteArrayOutputStream(ancho * alto / 4)
       val yuv = YuvImage(datos, ImageFormat.NV21, ancho, alto, null)
       if (!yuv.compressToJpeg(Rect(0, 0, ancho, alto), calidad, salida)) return null
-      return Captura(salida.toByteArray(), giro, cara, ts)
+      return Captura(salida.toByteArray(), giro, cara, ts, epoca, cuadro, lado)
     }
   }
 
-  private class Captura(val jpeg: ByteArray, val giro: Int, val cara: CaraCuadro?, val ts: Long)
+  private class Captura(val jpeg: ByteArray, val giro: Int, val cara: CaraCuadro?, val ts: Long, val epoca: Int, val cuadro: Int, val lado: String)
 
   /** El cuadro entero derecho, en JPEG. */
   fun foto(calidad: Int): Resultado? {
     val c = jpegDelCuadro(95, null) ?: return null
     val derecho = derecho(c.jpeg, c.giro) ?: return null
     try {
-      return Resultado(comprimir(derecho, calidad), derecho.width, derecho.height, null, c.ts, null)
+      return Resultado(comprimir(derecho, calidad), derecho.width, derecho.height, null, c.ts, null, c.epoca, c.cuadro, c.lado)
     } finally {
       derecho.recycle()
     }
@@ -110,7 +120,7 @@ class AlmacenCuadros {
       val final = if (ow != sw || oh != sh) Bitmap.createScaledBitmap(trozo, ow, oh, true) else trozo
       try {
         val caja = floatArrayOf((cara.x - sx) / sw, (cara.y - sy) / sh, cara.w / sw, cara.h / sh)
-        return Resultado(comprimir(final, calidad), ow, oh, caja, c.ts, cara.h / H)
+        return Resultado(comprimir(final, calidad), ow, oh, caja, c.ts, cara.h / H, c.epoca, c.cuadro, c.lado)
       } finally {
         if (final !== trozo) final.recycle()
         trozo.recycle()
@@ -120,7 +130,17 @@ class AlmacenCuadros {
     }
   }
 
-  class Resultado(val jpeg: ByteArray, val w: Int, val h: Int, val caja: FloatArray?, val ts: Long, val tam: Float?)
+  class Resultado(
+    val jpeg: ByteArray,
+    val w: Int,
+    val h: Int,
+    val caja: FloatArray?,
+    val ts: Long,
+    val tam: Float?,
+    val epoca: Int,
+    val cuadro: Int,
+    val lado: String
+  )
 
   companion object {
     fun comprimir(b: Bitmap, calidad: Int): ByteArray {
@@ -185,6 +205,26 @@ class AlmacenCuadros {
       return out
     }
   }
+}
+
+/**
+ * La hora de CAPTURA de un cuadro (master §25.5, CAM-C). `ImageInfo.getTimestamp()` está en NANOSEGUNDOS del reloj
+ * del sensor: con SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME es elapsedRealtimeNanos; con _UNKNOWN suele ser el monótono
+ * (System.nanoTime, sin el tiempo dormido). Se toma la edad en el reloj que quede más cerca y se pasa a
+ * elapsedRealtime. null si ninguno da una edad creíble (de −5 ms a `maxEdadNs`): entonces vale la hora de llegada.
+ */
+object Reloj {
+  fun capturaRealtimeNs(sensorNs: Long, realtimeNs: Long, monoNs: Long, maxEdadNs: Long = 2_000_000_000L): Long? {
+    if (sensorNs <= 0L) return null
+    val edadRt = realtimeNs - sensorNs
+    val edadMono = monoNs - sensorNs
+    val edad = if (abs(edadRt) <= abs(edadMono)) edadRt else edadMono
+    if (edad < -5_000_000L || edad > maxEdadNs) return null
+    return realtimeNs - max(0L, edad)
+  }
+
+  /** elapsedRealtime (ms) de una captura → hora de pared (ms), con los dos relojes leídos ahora. */
+  fun aPared(capturaRealtimeMs: Long, paredAhoraMs: Long, realtimeAhoraMs: Long): Long = paredAhoraMs - max(0L, realtimeAhoraMs - capturaRealtimeMs)
 }
 
 /**
