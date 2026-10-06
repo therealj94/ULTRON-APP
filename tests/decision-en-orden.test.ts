@@ -454,6 +454,53 @@ test('G3 (revisión): lo mismo con el correo (mismos destinatarios en otro orden
   });
 });
 
+test('MENOR 1 (revisión 7.5): un correo nuevo a la MISMA persona sobre OTRO asunto no tira el apartado (quedan los dos, con su tarjeta)', async () => {
+  await conEntorno(async ({ mandados }) => {
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Va el informe.', 'tel');
+    const informe = C.borradorDe(JOSE, 'tel')!;
+    await turno('otra cosa'); // el informe queda apartado para el panel
+    const r = await C.correrCorreo(JOSE, 'escribir ana@example.test | Cena del sábado | ¿Vienes a cenar el sábado?', 'tel');
+    assert.doesNotMatch(r, /REEMPLAZA/, 'otro asunto no es una versión nueva');
+    const ana = [C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.asunto);
+    assert.deepEqual(ana.sort(), ['Cena del sábado', 'Informe'], 'antes el informe desaparecía (y su tarjeta quedaba muerta)');
+    // Su tarjeta todavía lo manda.
+    const desdePanel = await T.resolverBorradorDesdePanel(JOSE, 'correo', 'tel', informe.intento, 'sí', informe.huella);
+    assert.notEqual(desdePanel.estado, 'stale', desdePanel.resumen);
+    assert.ok(await esperar(() => mandados.length === 1));
+    assert.equal(mandados[0].asunto, 'Informe');
+  });
+});
+
+test('MENOR 1 (revisión 7.5): el mismo asunto (con o sin «Re:»), la respuesta en el mismo hilo o «rehacer» sí son la versión nueva', async () => {
+  await conEntorno(async ({ mandados }) => {
+    // Mismo asunto (otra mayúscula, con «Re:»): reemplaza.
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Versión 1.', 'tel');
+    await turno('otra cosa');
+    const r = await C.correrCorreo(JOSE, 'escribir ana@example.test | RE: informe | Versión 2.', 'tel');
+    assert.match(r, /REEMPLAZA/);
+    assert.deepEqual([C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto), ['Versión 2.']);
+    // «Rehaz el correo para Ana» (la ventana de decisión): el modelo lo rehace aunque cambie el asunto: reemplaza.
+    await turno('otra cosa más');
+    const r2 = await C.correrCorreo(JOSE, 'rehacer ana@example.test | Informe de octubre | Versión 3.', 'tel');
+    assert.match(r2, /REEMPLAZA/);
+    assert.deepEqual([C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto), ['Versión 3.']);
+    assert.equal(mandados.length, 0);
+  });
+});
+
+test('MENOR 1 (revisión 7.5): WhatsApp: el mismo chat es la misma conversación (la versión nueva reemplaza); otro chat, quedan los dos', async () => {
+  await conEntorno(async ({ enviados }) => {
+    await waParaBruno('Llego a las 5.');
+    await turno('otra cosa');
+    assert.match(await waParaBruno('Y llevo el pastel.'), /REEMPLAZA/);
+    await turno('otra cosa más');
+    await waParaTigo();
+    const todos = [W.borradorWhatsappDe(JOSE, 'tel'), ...W.apartadosWhatsappDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto);
+    assert.deepEqual(todos.sort(), ['Mañana pago la factura.', 'Y llevo el pastel.']);
+    assert.equal(enviados.length, 0);
+  });
+});
+
 test('M2 (revisión): un turno de voz que se descarta deshace el cambio de lugar del apartado a la vista (el otro sigue esperando en el chat)', async () => {
   await conEntorno(async ({ enviados }) => {
     await waParaBruno();

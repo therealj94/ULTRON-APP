@@ -13,6 +13,7 @@
  *   PEDIR_HERRAMIENTA: correo responder <número, remitente o nada> | <texto>
  *   PEDIR_HERRAMIENTA: correo responder-todos <…> | <texto>
  *   PEDIR_HERRAMIENTA: correo escribir <para> | <asunto> | <texto>
+ *   PEDIR_HERRAMIENTA: correo rehacer <para> | <asunto> | <texto>   (la versión nueva del que ya armó para <para>)
  *
  * Revisar numera los correos (remitente con nombre y dirección, asunto, fecha y hora de Honduras,
  * adjuntos y el principio del texto) y abre la TAREA EN CURSO (lib/tarea-en-curso.ts): AU-RA los lleva
@@ -682,7 +683,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   return extra ? { ...borrador, texto: `${borrador.texto}\n${extra}` } : borrador;
 }
 
-async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<ResultadoHerramienta> {
+async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string, o: { rehacer?: boolean } = {}): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
   if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   let destinos = para.split(/[,;\s]+/).filter(Boolean);
@@ -709,7 +710,7 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
     }
   }
   if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
-  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}), ...(proveedorDeCuenta(cuentas[0]) ? { proveedorCuenta: proveedorDeCuenta(cuentas[0]) } : {}) });
+  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}), ...(proveedorDeCuenta(cuentas[0]) ? { proveedorCuenta: proveedorDeCuenta(cuentas[0]) } : {}) }, '', o);
 }
 
 /**
@@ -733,8 +734,31 @@ export function reemplazoPendiente(
   return { reemplazoDe: para, huellaAnterior: previo.huella };
 }
 
+/** El asunto para comparar versiones: sin «Re:» / «Fwd:» delante, sin mayúsculas, tildes ni espacios de más. */
+export const asuntoCanon = (a: string | undefined) =>
+  String(a || '')
+    .replace(/^(\s*(re|fw|fwd|rv|res|reenviar|tr)\s*:\s*)+/i, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+/**
+ * ¿El borrador `x` (uno que esperaba) es una versión anterior de `b`? Revisión 7.5 (MENOR 1): no basta con ir a los
+ * mismos destinatarios —a Ana se le pueden escribir dos correos distintos y cada uno tiene su tarjeta—. Además: la
+ * respuesta en el mismo hilo, el mismo asunto (con o sin «Re:»), o que el modelo lo REHAGA a propósito (`correo rehacer`,
+ * el «Rehaz el correo para Ana» de la ventana de decisión), aunque cambie el asunto.
+ */
+function esVersionDe(x: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, b: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, rehacer = false): boolean {
+  if (JSON.stringify(direccionesCanon(x.para)) !== JSON.stringify(direccionesCanon(b.para))) return false;
+  if (rehacer) return true;
+  if (x.enRespuestaA && b.enRespuestaA) return x.enRespuestaA === b.enRespuestaA;
+  return asuntoCanon(x.asunto) === asuntoCanon(b.asunto);
+}
+
 /** El borrador queda esperando su «sí»: el recibo es `borrador` con su id de intento (nada salió todavía). */
-function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): ResultadoHerramienta {
+function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = '', o: { rehacer?: boolean } = {}): ResultadoHerramienta {
   if (!b.texto.trim()) return fallo('CORREO: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
   const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
   const k = llave(quien, ambito);
@@ -743,15 +767,16 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''):
   // Se arma desde cero: nada del de antes (ni su aceptación de repetir, que era de ESE destinatario) pasa a este.
   const reemplazo = reemplazoPendiente(previo, huella, quien, previo ? `${previo.para.join(', ')} — «${previo.asunto}»` : '');
   // Lo que quedó atrás (José, 5-oct): un apartado para el panel (siguió con otra cosa) ya no se pisa en silencio. Si va a
-  // OTROS destinatarios, espera en orden con los apartados; si va a los mismos, este es su versión nueva y se le dice.
+  // OTROS destinatarios (o a los mismos sobre otra cosa: revisión 7.5, MENOR 1), espera en orden con los apartados; si es
+  // el mismo correo (esVersionDe), este es su versión nueva y se le dice.
   let version = '';
-  const mismos = (x: { para: string[] }) => JSON.stringify(direccionesCanon(x.para)) === JSON.stringify(direccionesCanon(b.para));
+  const mismos = (x: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>) => esVersionDe(x, b, !!o.rehacer);
   if (previo && previo.soloPanel && !motivoBorrador(previo, quien)) {
     if (mismos(previo)) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(previo.asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
     else APARTADOS.apartar(k, previo);
   }
-  // Revisión independiente (G3): las versiones viejas para los MISMOS destinatarios que esperaban entre los apartados
-  // también quedan reemplazadas (antes seguían ahí y podían salir las dos).
+  // Revisión independiente (G3): las versiones viejas de ESTE correo que esperaban entre los apartados también quedan
+  // reemplazadas (antes seguían ahí y podían salir las dos). Un correo distinto a la misma persona se queda.
   const viejas = APARTADOS.quitarDonde(k, mismos);
   if (viejas.length && !version) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(viejas[viejas.length - 1].asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
@@ -1295,7 +1320,13 @@ export async function correrCorreoConEstado(quien: string, arg: string, ambito =
       const [asunto = '', ...texto] = partes;
       return await escribir(quien, ambito, resto, asunto, texto.join(' | '));
     }
-    return fallo(`CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos o escribir.`, 'no-entiendo');
+    // Revisión 7.5 (MENOR 1): rehacer el que ya armó para esos destinatarios (reemplaza al que esperaba aunque cambie el
+    // asunto). `escribir` a la misma persona sobre otra cosa deja los dos.
+    if (/^(rehacer|rehaz|reescribir|reescribe)$/.test(verbo)) {
+      const [asunto = '', ...texto] = partes;
+      return await escribir(quien, ambito, resto, asunto, texto.join(' | '), { rehacer: true });
+    }
+    return fallo(`CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos, escribir o rehacer.`, 'no-entiendo');
   } catch (e: any) {
     // Lo que lanza aquí (leer sus cuentas, el IMAP) pasa antes de dejar un borrador: no hubo efecto.
     return fallo(`CORREO: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
