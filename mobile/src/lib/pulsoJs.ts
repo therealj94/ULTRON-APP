@@ -14,15 +14,17 @@ export class PulsoJs {
   private marcas: { t: number; atraso: number }[] = [];
   constructor(private pasoMs = PULSO_MS) {}
 
-  /** Un tic del reloj en `ahora`. */
-  tic(ahora: number) {
+  /** Un tic del reloj en `ahora`. Devuelve cuánto llegó tarde (0 en el primero). */
+  tic(ahora: number): number {
+    let atraso = 0;
     if (this.antes) {
-      const atraso = Math.max(0, ahora - this.antes - this.pasoMs);
+      atraso = Math.max(0, ahora - this.antes - this.pasoMs);
       this.marcas.push({ t: ahora, atraso });
       const corte = ahora - GUARDA_MS;
       if (this.marcas.length > 50 && this.marcas[0].t < corte) this.marcas = this.marcas.filter((m) => m.t >= corte);
     }
     this.antes = ahora;
+    return atraso;
   }
 
   /** Lo más que se trabó entre `t0` y `t1`. */
@@ -52,15 +54,53 @@ export class PulsoJs {
   }
 }
 
+/**
+ * ¿Este atraso es un BLOQUEO que hay que contar ya? (José, 6-oct: «se traba… y al tocar la pantalla se cierra»): con el
+ * hilo de JS trabado ≥ `umbralMs` la app no contesta toques; con ≥ `graveMs` Android puede mostrar «no responde». Uno
+ * por `separacionMs` (salvo que sea peor que el último contado), para no llenar las migas con cada tic tardío.
+ */
+export class DetectorBloqueo {
+  private ultimo = 0;
+  private ultimoMs = 0;
+  constructor(private o = { umbralMs: 1500, graveMs: 5000, separacionMs: 10_000 }) {}
+
+  revisar(atraso: number, ahora: number): { ms: number; grave: boolean } | null {
+    if (!(atraso >= this.o.umbralMs)) return null;
+    if (ahora - this.ultimo < this.o.separacionMs && atraso <= this.ultimoMs) return null;
+    this.ultimo = ahora;
+    this.ultimoMs = atraso;
+    return { ms: Math.round(atraso), grave: atraso >= this.o.graveMs };
+  }
+}
+
 /** El pulso de la app (uno solo). */
 export const pulsoJs = new PulsoJs();
+const detector = new DetectorBloqueo();
+let avisoBloqueo: ((b: { ms: number; grave: boolean }) => void) | null = null;
 let usuarios = 0;
 let reloj: ReturnType<typeof setInterval> | null = null;
+
+/** Quién se entera de un bloqueo del hilo de JS (la mesa: una miga, y con uno grave el reporte enseguida). */
+export function ponerAvisoBloqueo(f: ((b: { ms: number; grave: boolean }) => void) | null) {
+  avisoBloqueo = f;
+}
 
 /** Enciende el reloj mientras alguien lo quiera (la mesa a la vista). Devuelve cómo soltarlo. */
 export function arrancarPulso(): () => void {
   usuarios += 1;
-  if (!reloj) reloj = setInterval(() => pulsoJs.tic(Date.now()), PULSO_MS);
+  if (!reloj)
+    reloj = setInterval(() => {
+      const ahora = Date.now();
+      const atraso = pulsoJs.tic(ahora);
+      const b = detector.revisar(atraso, ahora);
+      if (b && avisoBloqueo) {
+        try {
+          avisoBloqueo(b);
+        } catch {
+          /* el aviso nunca rompe el pulso */
+        }
+      }
+    }, PULSO_MS);
   let suelto = false;
   return () => {
     if (suelto) return;

@@ -1,5 +1,8 @@
 package expo.modules.auracamara
 
+import android.app.ActivityManager
+import android.content.Context
+import android.os.Build
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -20,11 +23,33 @@ class AuraCamaraModule : Module() {
   private val cache: File
     get() = appContext.cacheDirectory
 
+  /** ApplicationExitInfo.REASON_* en palabras (los números por si el SDK de compilación no trae alguno). */
+  private fun motivoDeSalida(r: Int): String =
+    when (r) {
+      1 -> "salio-sola"
+      2 -> "senal"
+      3 -> "memoria"
+      4 -> "crash"
+      5 -> "crash-nativo"
+      6 -> "anr"
+      7 -> "fallo-al-iniciar"
+      8 -> "permiso-cambiado"
+      9 -> "exceso-de-recursos"
+      10 -> "la-persona"
+      11 -> "detenida-por-la-persona"
+      12 -> "dependencia"
+      13 -> "otro"
+      14 -> "congelada"
+      15, 16 -> "actualizada"
+      else -> "desconocido-$r"
+    }
+
   override fun definition() = ModuleDefinition {
     Name("AuraCamara")
 
     Function("disponible") { true }
-    Function("version") { 1 }
+    // 2: `salidas()` y el vigía del hilo principal (evento onEstado «lento»).
+    Function("version") { 2 }
 
     AsyncFunction("recorte") { id: Int, margen: Double?, lado: Int?, archivo: Boolean? ->
       val v = AuraCamaraView.actual?.get() ?: return@AsyncFunction null
@@ -51,6 +76,32 @@ class AuraCamaraModule : Module() {
         }
       }
       if (!ok) promesa.resolve(null)
+    }
+
+    /**
+     * Cómo terminaron las últimas veces que Android cerró la app (Android 11+, ApplicationExitInfo): «anr» (no respondía
+     * y se cerró, p. ej. al tocar la pantalla), «crash», «crash-nativo», «memoria»… Sin esto, una app trabada que
+     * Android mata no deja rastro: no es un crash de JS y la marca de «viva» no distingue (José, 6-oct: «hasta tocar la
+     * pantalla se cierra»). Lo lee src/lib/reporte.ts al arrancar. Una lista vacía si el sistema no lo da.
+     */
+    Function("salidas") { max: Int? ->
+      try {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return@Function emptyList<Map<String, Any>>()
+        val ctx = appContext.reactContext ?: return@Function emptyList<Map<String, Any>>()
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return@Function emptyList<Map<String, Any>>()
+        am.getHistoricalProcessExitReasons(ctx.packageName, 0, (max ?: 5).coerceIn(1, 16)).map { i ->
+          mapOf(
+            "motivo" to motivoDeSalida(i.reason),
+            "codigo" to i.reason,
+            "ts" to i.timestamp.toDouble(),
+            "descripcion" to (i.description ?: "").take(160),
+            "importancia" to i.importance,
+            "rssKb" to i.rss.toDouble()
+          )
+        }
+      } catch (_: Throwable) {
+        emptyList<Map<String, Any>>()
+      }
     }
 
     /** Borra los archivos que dejó `archivo: true` (al salir de la mesa). */

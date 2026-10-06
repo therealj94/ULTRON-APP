@@ -10,7 +10,12 @@
  *  · Un voto a favor y falta otro para confirmar (2 de 3, seguimiento.ts): otra vez enseguida, apenas
  *    termine el análisis anterior. Así el nombre sale tras dos análisis (~0,4-0,8 s) en vez de segundos.
  *  · «No sé quién es» (sin voto a favor): hasta `intentosRapidos` veces cada `reintentoMs` (la primera toma
- *    puede salir movida o de perfil), luego cada `desconocidoMs` (más seguido con «Lo que veo» abierto).
+ *    puede salir movida o de perfil), luego hasta `intentosAtentos` cada `atentoMs` (el mismo ~2,5 s que la cámara
+ *    de fotos da a «alguien sin nombre», seguimiento.ts RECONOCER.atentoMs) y después cada `desconocidoMs` (más
+ *    seguido con «Lo que veo» abierto). José, 6-oct: «primer nombre 95376 ms después de ver la cara»; con 5 s entre
+ *    tomas desde la cuarta, cada «no sé» (cara de lado, movida, lejos) costaba 5 s y hacen falta 2 votos iguales.
+ *    Quien no está guardado pasa a la calma de 5 s tras ~30 s; `DiagnosticoReconocer` deja en las migas por qué no
+ *    salía el nombre (sin cara en el recorte o «no sé» con qué distancia).
  *  · Ya confirmada: un repaso cada `confirmadaMs`, o cada `dudosaMs` si ganó por poco (distancia cerca del
  *    umbral). Un repaso «no sé» no le quita el nombre (seguimiento.ts decidirIdentidad).
  *  · Caras muy chicas (menos de `minPx` de alto en el cuadro) se esperan: el recorte saldría borroso.
@@ -25,6 +30,8 @@ export const RECONOCER_VIVO = {
   confirmarMax: 5,
   reintentoMs: 700,
   intentosRapidos: 3,
+  atentoMs: 2500,
+  intentosAtentos: 12,
   desconocidoMs: 5000,
   desconocidoVistaMs: 2500,
   confirmadaMs: 12_000,
@@ -37,7 +44,8 @@ export const RECONOCER_VIVO = {
   esperaMaxMs: 4000,
 };
 
-export type IntentoPista = { ultimo: number; n: number };
+/** `nVoto`: cuántos intentos llevaba cuando apareció el primer voto a favor (anotarVotos): el tope de confirmar cuenta desde ahí. */
+export type IntentoPista = { ultimo: number; n: number; nVoto?: number };
 
 /** ¿Por qué toca mirar esta pista? (menor = antes) o null si no toca todavía. */
 export function prioridadPista(p: Pick<Pista, 'votos' | 'identidad'>, i: IntentoPista | undefined, ahora: number, vistaAbierta: boolean): number | null {
@@ -49,8 +57,9 @@ export function prioridadPista(p: Pick<Pista, 'votos' | 'identidad'>, i: Intento
     if (!p.votos.length && n === 0) return 0;
     // Un voto a favor: confirmar enseguida (con tope: si el motor no encuentra la cara en el recorte no hay
     // voto, y no se le puede pedir sin fin; pasado el tope, al ritmo de «no sé quién es»).
-    if (p.votos.some((v) => v.id) && n < R.confirmarMax) return desde >= R.confirmarMs ? 1 : null;
+    if (p.votos.some((v) => v.id) && n - (i?.nVoto ?? 0) < R.confirmarMax) return desde >= R.confirmarMs ? 1 : null;
     if (n < R.intentosRapidos) return desde >= R.reintentoMs ? 2 : null;
+    if (n < R.intentosAtentos) return desde >= Math.min(R.atentoMs, R.desconocidoVistaMs) ? 3 : null;
     return desde >= (vistaAbierta ? R.desconocidoVistaMs : R.desconocidoMs) ? 3 : null;
   }
   const cada = p.identidad.distancia > R.dudosaDistancia ? R.dudosaMs : R.confirmadaMs;
@@ -79,8 +88,56 @@ export function elegirPistaParaReconocer(
   return mejor?.p ?? null;
 }
 
+/**
+ * El tope de «confirmar enseguida» (`confirmarMax`) cuenta los intentos DESDE el primer voto a favor, no desde que
+ * llegó la persona: antes, si las 4 primeras tomas salían sin cara o «no sé», el voto bueno de la 5.ª ya no tenía
+ * confirmación rápida y el nombre esperaba otra toma a ritmo lento (José, 6-oct). Se llama antes de elegir.
+ */
+export function anotarVotos(intentos: Map<number, IntentoPista>, vivas: Pick<Pista, 'id' | 'votos'>[]) {
+  for (const p of vivas) {
+    const i = intentos.get(p.id);
+    if (i && i.nVoto === undefined && p.votos.some((v) => v.id)) i.nVoto = Math.max(0, i.n - 1);
+  }
+}
+
 /** Las pistas que ya no existen se olvidan (sin esto el mapa crecería con cada persona que pasa). */
 export function podarIntentos(intentos: Map<number, IntentoPista>, vivas: Pista[]) {
   const ids = new Set(vivas.map((p) => p.id));
   for (const k of [...intentos.keys()]) if (!ids.has(k)) intentos.delete(k);
+}
+
+/** Lo que pasó con los recortes de UNA pista mientras no tuvo nombre (para la miga de «sin nombre»). */
+type CuentaPista = { analizados: number; sinCara: number; noSe: number; mejorD: number };
+
+/**
+ * Por qué no sale el nombre: cuántos recortes se analizaron de esa pista, en cuántos el motor no encontró la cara y
+ * en cuántos dijo «no sé» y con qué distancia la más cercana (umbral caras.ts UMBRAL). Con esto la próxima miga dice
+ * si era la toma (sin cara: lejos, de lado, oscuro) o el parecido (la distancia por encima del umbral).
+ */
+export class DiagnosticoReconocer {
+  private cuentas = new Map<number, CuentaPista>();
+
+  analizado(pista: number, r: { cara: boolean; reconocida: boolean; distancia?: number }) {
+    const c = this.cuentas.get(pista) || { analizados: 0, sinCara: 0, noSe: 0, mejorD: Infinity };
+    c.analizados += 1;
+    if (!r.cara) c.sinCara += 1;
+    else if (!r.reconocida) {
+      c.noSe += 1;
+      if (typeof r.distancia === 'number' && r.distancia < c.mejorD) c.mejorD = r.distancia;
+    }
+    this.cuentas.set(pista, c);
+  }
+
+  linea(pista: number, umbral: number): string {
+    const c = this.cuentas.get(pista);
+    if (!c) return 'ningún recorte analizado';
+    const d = Number.isFinite(c.mejorD) ? ` (la más parecida a ${c.mejorD.toFixed(2)}; umbral ${umbral.toFixed(2)})` : '';
+    return `${c.analizados} recortes: ${c.sinCara} sin cara, ${c.noSe} «no sé»${d}`;
+  }
+
+  /** Las pistas que ya no se ven se olvidan. */
+  podar(vivas: { id: number }[]) {
+    const ids = new Set(vivas.map((p) => p.id));
+    for (const k of [...this.cuentas.keys()]) if (!ids.has(k)) this.cuentas.delete(k);
+  }
 }

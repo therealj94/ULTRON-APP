@@ -38,6 +38,12 @@ export const MINIMO_UTIL_MS = 1500;
 export const PRESUPUESTO_OIDO_MS = 15_000;
 export const PRESUPUESTO_VISION_MS = 33_000;
 /**
+ * La foto que viaja DENTRO de un turno hablado (la app no tuvo la vista a tiempo y manda la foto con la
+ * pregunta, mobile/src/lib/vistaTurno.ts): la persona espera la voz, con el relleno sonando. Alcanza para el
+ * nodo del ojo con el pedido corto (≤ 9 s) y Bedrock detrás (~2 s); pasado esto, se contesta sin la vista.
+ */
+export const PRESUPUESTO_VISION_TURNO_MS = 14_000;
+/**
  * Un turno de AU-RA entero (auditoría 3-oct, EXEC04): el teléfono corta el turno a los 70 s. Antes cada
  * pieza tenía su tope (Bedrock, cada llamada a Qwen de 60 s, la herramienta, la vuelta) y nadie miraba el
  * total: con dos vueltas el turno podía seguir minutos para nadie y empezar efectos que ya nadie esperaba.

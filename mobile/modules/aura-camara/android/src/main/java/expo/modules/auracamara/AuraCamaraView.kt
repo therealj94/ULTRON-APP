@@ -55,6 +55,8 @@ import kotlin.math.abs
 import kotlin.math.max
 
 private const val TAG = "AuraCamara"
+private const val VIGIA_PASO_MS = 500L
+private const val VIGIA_AVISO_MS = 1500L
 
 /**
  * LA CÁMARA EN VIVO DE AU-RA (Android): CameraX con la vista previa + un análisis de cuadros con ML Kit
@@ -151,6 +153,39 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
   @Volatile private var fpsMedido = 0.0
 
   private val alActividad = LifecycleEventObserver { _, _ -> actualizarCiclo() }
+
+  // ---- vigía del hilo principal (solo con la cámara corriendo)
+  /**
+   * Un tic cada VIGIA_PASO_MS en el hilo principal: si llega tarde ≥ VIGIA_AVISO_MS, ese hilo estuvo trabado (CameraX
+   * enlazando, un dibujo pesado, la WebView del motor de caras…) y se avisa a JS con onEstado { tipo: 'lento', ms }.
+   * Con ≥ 5 s Android muestra «no responde» y un toque cierra la app: así queda en las migas cuánto y cuándo.
+   */
+  private val principal = Handler(Looper.getMainLooper())
+  private var vigiaEsperado = 0L
+  private var vigiaCorriendo = false
+  private val vigia = object : Runnable {
+    override fun run() {
+      if (destruida || !vigiaCorriendo) return
+      val ahora = SystemClock.elapsedRealtime()
+      val tarde = if (vigiaEsperado > 0L) ahora - vigiaEsperado else 0L
+      if (tarde >= VIGIA_AVISO_MS) emitirEstado(mapOf("tipo" to "lento", "hilo" to "principal", "ms" to tarde.toDouble()))
+      vigiaEsperado = ahora + VIGIA_PASO_MS
+      principal.postDelayed(this, VIGIA_PASO_MS)
+    }
+  }
+
+  private fun arrancarVigia() {
+    if (vigiaCorriendo || destruida) return
+    vigiaCorriendo = true
+    vigiaEsperado = 0L
+    principal.post(vigia)
+  }
+
+  private fun pararVigia() {
+    vigiaCorriendo = false
+    vigiaEsperado = 0L
+    principal.removeCallbacks(vigia)
+  }
 
   private val alPantalla = object : DisplayManager.DisplayListener {
     override fun onDisplayAdded(displayId: Int) = Unit
@@ -311,12 +346,14 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
         }
         registro.currentState = Lifecycle.State.RESUMED
         corriendo = true
+        arrancarVigia()
         if (necesitaRearmar || camara == null) armar()
       } else if (registro.currentState.isAtLeast(Lifecycle.State.STARTED)) {
         registro.currentState = Lifecycle.State.CREATED
         corriendo = false
+        pararVigia()
         emitirEstado(mapOf("tipo" to "detenida"))
-      }
+      } else pararVigia()
     } catch (t: Throwable) {
       avisarError("ciclo", t.message ?: t.toString())
     }
@@ -783,6 +820,7 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
     if (destruida) return
     destruida = true
     corriendo = false
+    pararVigia()
     try {
       estadoObservado?.removeObservers(this)
     } catch (_: Throwable) {

@@ -87,6 +87,13 @@ export type Reconocida = { id: string; nombre: string; relacion: Relacion; dista
  * null si nadie está bajo el umbral o si dos personas distintas quedan demasiado parejas (dudar es
  * mejor que llamar a alguien por otro nombre).
  */
+/** La distancia a la persona guardada más parecida (Infinity sin nadie): para la miga de «no sé» (pistaNativa.ts). */
+export function distanciaMasCercana(vector: number[], conocidas: CaraConocida[]): number {
+  let d = Infinity;
+  for (const c of conocidas) for (const v of c.vectores) if (vectorValido(v)) d = Math.min(d, distancia(vector, v));
+  return d;
+}
+
 export function identificar(vector: number[], conocidas: CaraConocida[]): Reconocida | null {
   const filas = conocidas
     .map((c) => ({ c, d: Math.min(...c.vectores.filter(vectorValido).map((v) => distancia(vector, v))) }))

@@ -334,7 +334,7 @@ prueba('identificar da el margen sobre el segundo y el parentesco; el parentesco
 prueba('costuras (José, 6-oct: «se queda atrasado con la voz»): pensando o hablando la cámara afloja, no reconoce (salvo a quien llega) ni sube; aprender pide 2 votos', () => {
   const cv = leer('src/components/CamaraVision.tsx');
   assert.match(cv, /ritmoFotos\(\{ dormida, conPersona, vista: vistaAbiertaRef\.current, ocupada, identificados \}\)/, 'el ritmo del bucle sale de ritmoFotos');
-  assert.match(cv, /intervaloServidor\(\{[^}]*ocupada \}\)/, 'sin subidas con la mesa ocupada');
+  assert.match(cv, /intervaloServidor\(\{[^}]*\bocupada\b[^}]*\}\)/, 'sin subidas con la mesa ocupada');
   assert.match(cv, /estadisticaCamara\.(foto|mlkit|lectura)\(/, 'mide cada paso');
   assert.match(cv, /if \(estadisticaCamara\.toca\(ahora\)\)[\s\S]{0,200}miga\(l\)/, 'una miga por minuto');
   const uc = leer('src/caras/useCaras.tsx');

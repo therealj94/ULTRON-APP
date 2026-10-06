@@ -56,6 +56,7 @@ import { ritmoFotos } from '../lib/camaraModo';
 import { RESUMEN_CAMARA_MS, estadisticaCamara } from '../lib/estadisticaCamara';
 import { pulsoJs } from '../lib/pulsoJs';
 import { etiquetasDeVista, intervaloServidor, mismaEscena, type VistaCamara } from '../lib/vistaCamara';
+import { vistaFresca } from '../lib/vistaTurno';
 import { miga, reportarEstado } from '../lib/reporte';
 import { idiomaActual, tr } from '../i18n';
 import { T } from '../tema';
@@ -295,8 +296,9 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
   // El bucle: foto chica → ML Kit (si está) → a veces el servidor → borrar → esperar según haga falta.
   useEffect(() => {
     if (!activa) {
-      // La cámara se desmonta: la próxima tiene que volver a avisar que está lista.
+      // La cámara se desmonta: la próxima tiene que volver a avisar que está lista, y lo visto ya no vale.
       listaRef.current = false;
+      vistaFresca.invalidar();
       return;
     }
     let vivo = true;
@@ -311,6 +313,11 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
     let vistaAntes: VistaCamara | null = null;
     /** Una subida a la vez: con 35 s de tope y 20 s de ritmo podían ir dos juntas. */
     let subiendo = false;
+    /** Subidas seguidas sin vista (el servidor no pudo ver): espacian la siguiente (intervaloServidor). */
+    let fallosVista = 0;
+    /** Cuándo cambió la gente a la vista y cuándo se sacó la última foto que el servidor vio (la subida en vivo). */
+    let cambioEn = 0;
+    let vistaEn = 0;
     const servidor = async (b64: string, origen: { ts: number; lado: Lado }) => {
       subiendo = true;
       try {
@@ -318,10 +325,14 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
         avisarUnaVez('buena', `cámara: primera foto al servidor (${b64.length} car. base64)`);
         estadisticaCamara.subida();
         const r = await verCamara(b64, 'escena');
+        fallosVista = r?.vista ? 0 : fallosVista + 1;
         // CAM-E: la respuesta de la cámara anterior no se aplica a la nueva.
         if (!vivo || !r?.vista || origen.lado !== ladoRef.current) return;
         sinCambios = mismaEscena(vistaAntes, r.vista) ? sinCambios + 1 : 0;
         vistaAntes = r.vista;
+        vistaEn = origen.ts;
+        // La vista fresca de «¿qué ves?» (lib/vistaTurno.ts), con su foto para «Lo que vi».
+        vistaFresca.guardar({ vista: r.vista, visto: r.estructurada ? r.visto : '', ts: origen.ts, lado: origen.lado, personas: Math.max(0, personasAntes), foto: b64 });
         cb.current.onVista(r.vista, origen);
       } catch {
         /* sin vista esta vez */
@@ -361,7 +372,10 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
               conPersona = personas > 0;
               identificados = r.identificados;
               // Llegó o se fue alguien: la escena cambió, la próxima subida vuelve al ritmo de base.
-              if (personasAntes >= 0 && personas !== personasAntes) sinCambios = 0;
+              if (personasAntes >= 0 && personas !== personasAntes) {
+                sinCambios = 0;
+                cambioEn = Date.now();
+              }
               personasAntes = personas;
             } catch (e) {
               fallos += 1;
@@ -374,7 +388,7 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
           } else pedir = cb.current.onFotoRespaldo(Date.now());
           const dormida = dormidoRef.current;
           const ocupada = !!cb.current.mesaOcupada();
-          const cadaServidor = intervaloServidor({ mlkit: mlOk.current, dormida, conPersona, necesitaEscena: observarRef.current, sinCambios, ocupada });
+          const cadaServidor = intervaloServidor({ mlkit: mlOk.current, dormida, conPersona, necesitaEscena: observarRef.current, sinCambios, ocupada, cambio: !vistaEn || cambioEn > vistaEn, fallos: fallosVista });
           const subir = !subiendo && Date.now() - ultimoServidor >= cadaServidor;
           if (subir) ultimoServidor = Date.now();
           // La foto se lee UNA vez (si el servidor o el motor de caras la quieren) y se borra siempre.

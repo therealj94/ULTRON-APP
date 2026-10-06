@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
 import type { CamaraVisionProps, FrameGrabber } from './CamaraVision';
-import { verCamara } from '../lib/api';
+import { verCamara, type RespuestaVista } from '../lib/api';
 import { MIN_CARA_MLKIT, MaquinaEscena, escenaApagada, type Escena, type MotorVision } from '../lib/escena';
 import { GUARDIA, UMBRALES_VIVO, eventoValido, observacionNativa, rectDeCara, ritmoNativo, tamEquivalente, type ConfigCamaraRemota, type EventoCaras } from '../lib/camaraNativa';
 import { CercoCamara, ORIGEN, type VistaFechada } from '../lib/cercoCamara';
@@ -37,8 +37,9 @@ import { VistaCamaraNativa, fotoNativa, recorteNativo } from '../lib/auraCamara'
 import { camaraMontando, camaraSana, camaraSoltada } from '../lib/guardiaCamara';
 import { etiquetasDeVista, type VistaCamara } from '../lib/vistaCamara';
 import { cajaEnPantalla, etiquetaCara, lineaEstado, marcasEnVivo, marcoParaFoto } from '../lib/vistaEnVivo';
-import { elegirPistaParaReconocer, podarIntentos, type IntentoPista } from '../caras/pistaNativa';
+import { anotarVotos, elegirPistaParaReconocer, podarIntentos, type IntentoPista } from '../caras/pistaNativa';
 import { miga, reportarEstado } from '../lib/reporte';
+import { vistaFresca } from '../lib/vistaTurno';
 import { idiomaActual, tr } from '../i18n';
 import { T } from '../tema';
 
@@ -52,9 +53,11 @@ const MINIMO_FOTO = 4000;
 const VISTA_TIC_MS = 500;
 /** Mientras se reconoce, cada cuánto se mira si toca otro recorte (además de con cada evento). */
 const RECONOCER_TIC_MS = 200;
+/** Una cara a la vista sin nombre todavía así de tiempo: una miga con el porqué (useCaras.diagnosticoPista). */
+const SIN_NOMBRE_AVISO_MS = 30_000;
 const CALIDAD = { normal: 0.6, leer: 0.85, servidor: 0.5 } as const;
 
-type CarasVivo = NonNullable<CamaraVisionProps['caras']> & { ocupado?: () => boolean; mesaOcupada?: () => boolean };
+type CarasVivo = NonNullable<CamaraVisionProps['caras']> & { ocupado?: () => boolean; mesaOcupada?: () => boolean; diagnosticoPista?: (pista: number) => string };
 
 export type CamaraVivoProps = Omit<CamaraVisionProps, 'caras'> & {
   caras?: CarasVivo;
@@ -116,7 +119,13 @@ export function CamaraVivo({
   const pidiendo = useRef(false);
   const ultimoPedido = useRef(0);
   const nombreMedido = useRef(false);
+  /** Pistas de las que ya se dejó la miga de «sin nombre». */
+  const sinNombreAvisado = useRef(new Set<number>()).current;
   const vistaServidor = useRef<VistaFechada<VistaCamara> | null>(null);
+  /** La última respuesta del servidor (su `visto` es el hecho para el cerebro de esa vista). */
+  const respuestaServidor = useRef<RespuestaVista | null>(null);
+  /** Cuándo vio ML Kit que la escena cambió (llegó o se fue alguien, otra cantidad de personas): la subida en vivo. */
+  const cambioEn = useRef(0);
   /** CAM-C/E: de qué cámara y época es cada cosa. Cambiar de lado sube la época al momento (también aquí, al dibujar). */
   const cerco = useRef(new CercoCamara(lado)).current;
   cerco.poner(lado);
@@ -142,6 +151,8 @@ export function CamaraVivo({
   }, []);
 
   const emitir = useCallback((e: Escena) => {
+    // Otra cantidad de gente, o alguien que llega o se va: la vista del servidor ya no es de esta escena.
+    if (e.personas !== (ultimaEscena.current?.personas ?? -1) || e.eventos.some((x) => x === 'llego' || x === 'se_fue')) cambioEn.current = Date.now();
     ultimaEscena.current = e;
     const now = Date.now();
     if (e.eventos.length || now - ultimaEmision.current >= ESCENA_CADA_MS) {
@@ -168,6 +179,7 @@ export function CamaraVivo({
     maquina.reiniciar();
     seguidor?.reiniciar();
     vistaServidor.current = null;
+    vistaFresca.invalidar();
     evento.current = null;
     anunciarMotor('ninguno');
     const e = escenaApagada(Date.now());
@@ -186,6 +198,7 @@ export function CamaraVivo({
     intentos.clear();
     evento.current = null;
     vistaServidor.current = null;
+    vistaFresca.invalidar();
     soltarMirada();
   }, [lado, intentos, maquina, seguidor, soltarMirada]);
 
@@ -240,6 +253,7 @@ export function CamaraVivo({
     const ocupado = c.ocupado ? c.ocupado() : ahora - ultimoPedido.current < 800;
     const vis = s.visibles(ahora);
     podarIntentos(intentos, vis);
+    anotarVotos(intentos, vis);
     const p = elegirPistaParaReconocer(vis, intentos, ahora, { ocupado, reconoce: true, vistaAbierta: vistaRef.current, alto: (x) => x.caja.h * e.ih });
     if (!p) return;
     // Mientras la mesa piensa o habla, solo se reconoce a quien llega: los repasos de quien ya tiene nombre esperan
@@ -249,7 +263,7 @@ export function CamaraVivo({
     if (p.ext === undefined && vis.length > 1) return;
     pidiendo.current = true;
     const i = intentos.get(p.id);
-    intentos.set(p.id, { ultimo: ahora, n: (i?.n ?? 0) + 1 });
+    intentos.set(p.id, { ...i, ultimo: ahora, n: (i?.n ?? 0) + 1 });
     const sello = cerco.sello();
     try {
       const r = await recorteNativo(p.ext ?? -1);
@@ -320,12 +334,22 @@ export function CamaraVivo({
           e.ts,
           e.caras.map((c) => c.id)
         );
-        // Lo que tardó en salir el primer nombre (medido en el teléfono, una vez por sesión).
+        // Lo que tardó en salir el primer nombre (medido en el teléfono, una vez por sesión) y, si tardó, por qué.
+        const diag = cb.current.caras?.diagnosticoPista;
         if (!nombreMedido.current) {
           const p = s.visibles(e.ts).find((x) => x.identidad);
           if (p) {
             nombreMedido.current = true;
-            reportarEstado(`cámara nueva: primer nombre ${p.identidad!.desde - p.nacio} ms después de ver la cara (ML Kit ${e.ms} ms, ${e.fps} cuadros/s)`);
+            const tardo = p.identidad!.desde - p.nacio;
+            reportarEstado(`cámara nueva: primer nombre ${tardo} ms después de ver la cara (ML Kit ${e.ms} ms, ${e.fps} cuadros/s)${tardo > 10_000 && diag ? ` · ${diag(p.id)}` : ''}`);
+          }
+        }
+        // Una cara que lleva rato sin nombre (con alguien guardado): la toma o el parecido, en una miga por pista.
+        if (cb.current.caras?.reconoce && diag) {
+          for (const p of s.visibles(e.ts)) {
+            if (p.identidad || sinNombreAvisado.has(p.id) || e.ts - p.nacio < SIN_NOMBRE_AVISO_MS) continue;
+            sinNombreAvisado.add(p.id);
+            miga(`cámara nueva: ${Math.round((e.ts - p.nacio) / 1000)} s sin nombre · ${diag(p.id)}`);
           }
         }
         if (cb.current.caras?.reconoce) void intentarReconocer();
@@ -337,8 +361,16 @@ export function CamaraVivo({
 
   const onEstadoNativo = useCallback(
     (ev: { nativeEvent: unknown }) => {
-      const m = (ev?.nativeEvent || {}) as { tipo?: string; codigo?: string; motivo?: string };
+      const m = (ev?.nativeEvent || {}) as { tipo?: string; codigo?: string; motivo?: string; ms?: number; hilo?: string };
       if (m.tipo === 'lista') miga(`cámara nueva: abierta (${ladoRef.current})`);
+      else if (m.tipo === 'lento') {
+        // El vigía del nativo (AuraCamaraView): el hilo principal de Android no atendió en `ms`. Con ≥ 5 s Android
+        // muestra «no responde» y un toque la cierra: se manda ya, por si después no hay otra oportunidad.
+        const ms = Math.round(Number(m.ms) || 0);
+        const linea = `cámara nueva: hilo ${m.hilo || 'principal'} de Android trabado ${ms} ms`;
+        if (ms >= 4000) reportarEstado(linea);
+        else miga(linea);
+      }
       else if (m.tipo === 'error') {
         const codigo = String(m.codigo || '');
         // Los del estado de la cámara (otra app la usa…) los reintenta CameraX solo; si no vuelve, lo ve el «sin cuadros».
@@ -374,15 +406,24 @@ export function CamaraVivo({
       {
         ahora: Date.now,
         foto: () => conTope(fotoNativa(CALIDAD.servidor, true), FOTO_MAX_MS),
-        ver: async (b64) => (await verCamara(b64, 'escena'))?.vista ?? null,
+        ver: async (b64) => {
+          const r = await verCamara(b64, 'escena');
+          respuestaServidor.current = r;
+          return r?.vista ?? null;
+        },
         estado: () => ({
           dormida: dormidoRef.current,
           personas: ultimaEscena.current?.personas ?? 0,
           necesitaEscena: observarRef.current,
           ocupada: !!(cb.current.ocupada?.() || cb.current.caras?.mesaOcupada?.()),
+          // Moverse el teléfono también cambia lo que se ve (CAM-G).
+          cambioEn: Math.max(cambioEn.current, cb.current.movida?.() ?? 0),
         }),
         aplicar: (vs) => {
           vistaServidor.current = vs;
+          // La vista fresca de «¿qué ves?» (lib/vistaTurno.ts): con su hecho para el cerebro y su foto para «Lo que vi».
+          const r = respuestaServidor.current;
+          vistaFresca.guardar({ vista: vs.v, visto: r?.vista === vs.v && r.estructurada ? r.visto : '', ts: vs.ts, lado: vs.lado, personas: ultimaEscena.current?.personas ?? 0, foto: vs.foto });
           const labels = etiquetasDeVista(vs.v);
           if (labels.length) cb.current.onObjects?.(labels);
           cb.current.onVista?.(vs.v);

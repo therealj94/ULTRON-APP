@@ -19,11 +19,14 @@ import { AppState, Platform, type AppStateStatus } from 'react-native';
 import Constants from 'expo-constants';
 import { API_BASE } from '../config';
 import { sanearTexto } from './saneador';
+import { lineaSalida, salidasNuevas } from './salidasPrevias';
 
 const CLAVE = 'ultron_migas_v1';
 /** '1' mientras la app está en primer plano; '0' al irse a segundo plano. Si al abrir sigue en '1', murió. */
 const CLAVE_VIVA = 'ultron_migas_viva_v1';
 const MAX = 40;
+/** Hasta qué salida de Android (ApplicationExitInfo.timestamp) ya se contó (lib/salidasPrevias.ts). */
+const CLAVE_SALIDAS = 'ultron_salidas_contadas_v1';
 
 let migas: string[] = [];
 let sesionId = '';
@@ -133,6 +136,8 @@ export async function iniciarReporte() {
   guardar();
   marcarViva(AppState.currentState !== 'background');
   miga('arranque');
+  // Lo que Android sabe de cómo terminó antes (un «no responde», memoria, crash nativo): después del arranque.
+  setTimeout(() => void revisarSalidasPrevias(), 1500);
 
   // Segundo plano = cierre normal. Al volver, la sesión vuelve a estar abierta.
   try {
@@ -193,6 +198,26 @@ export async function iniciarReporte() {
     }
   } catch {
     /* */
+  }
+}
+
+/**
+ * Las salidas de la app que Android anotó y aún no se contaron (APK con el módulo de la cámara versión 2; con una
+ * anterior no hay nada que leer). Cada una va como estado, con su motivo: «anr», «memoria», «crash-nativo»…
+ */
+async function revisarSalidasPrevias() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { salidasNativas } = require('./auraCamara') as typeof import('./auraCamara');
+    const lista = salidasNativas(8);
+    if (!lista.length) return;
+    const contado = Number((await AsyncStorage.getItem(CLAVE_SALIDAS)) || 0) || 0;
+    const ahora = Date.now();
+    const { nuevas, hasta } = salidasNuevas(lista, contado, ahora);
+    if (hasta > contado) await AsyncStorage.setItem(CLAVE_SALIDAS, String(hasta));
+    for (const s of nuevas.reverse()) reportarEstado(lineaSalida(s, ahora));
+  } catch {
+    /* el diagnóstico jamás rompe la app */
   }
 }
 

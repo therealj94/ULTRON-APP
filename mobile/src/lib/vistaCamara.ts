@@ -352,6 +352,14 @@ export const SUBIDA = {
   /** Respaldo sin ML Kit: el servidor es el único que sabe si hay alguien. */
   respaldoMs: 12_000,
   respaldoDormidaMs: 30_000,
+  /**
+   * «En vivo» sin «Comenta lo que ve» (José, 6-oct: «no se siente en vivo, tarda en saber qué hay»): una vista
+   * solo cuando ML Kit vio que la escena cambió (llegó o se fue alguien, se movió el teléfono) o no hay ninguna, y
+   * como mucho cada esto. Así «¿qué ves?» casi siempre tiene una vista fresca y contesta al instante.
+   */
+  vivoMs: 15_000,
+  /** Con el servidor fallando, cada fallo seguido duplica la espera hasta este techo (antes: cada 20 s sin fin). */
+  fallosMaxMs: 120_000,
 };
 
 /**
@@ -360,12 +368,25 @@ export const SUBIDA = {
  * `ocupada`: la mesa piensa o habla (José, 6-oct): con ML Kit no se sube nada mientras tanto (el servidor está con el
  * turno y el comentario se callaría igual); sin ML Kit el respaldo sigue, es lo único que dice si hay alguien.
  */
-export function intervaloServidor(o: { mlkit: boolean; dormida: boolean; conPersona: boolean; necesitaEscena: boolean; sinCambios: number; ocupada?: boolean }): number {
-  if (!o.mlkit) return o.dormida ? SUBIDA.respaldoDormidaMs : SUBIDA.respaldoMs;
-  if (o.dormida || !o.necesitaEscena || o.ocupada) return Infinity;
+export function intervaloServidor(o: {
+  mlkit: boolean;
+  dormida: boolean;
+  conPersona: boolean;
+  necesitaEscena: boolean;
+  sinCambios: number;
+  ocupada?: boolean;
+  /** ML Kit vio que la escena cambió desde la última vista (o todavía no hay ninguna): ver SUBIDA.vivoMs. */
+  cambio?: boolean;
+  /** Subidas seguidas que el servidor no pudo ver (503, sin red): espacian la siguiente. */
+  fallos?: number;
+}): number {
+  const conFallos = (ms: number) => (o.fallos && o.fallos > 0 ? Math.max(ms, Math.min(SUBIDA.fallosMaxMs, ms * 2 ** Math.min(o.fallos, 4))) : ms);
+  if (!o.mlkit) return conFallos(o.dormida ? SUBIDA.respaldoDormidaMs : SUBIDA.respaldoMs);
+  if (o.dormida || o.ocupada) return Infinity;
+  if (!o.necesitaEscena) return o.cambio ? conFallos(SUBIDA.vivoMs) : Infinity;
   const base = o.conPersona ? SUBIDA.conPersonaMs : SUBIDA.sinPersonaMs;
   const techo = o.conPersona ? SUBIDA.conPersonaMaxMs : SUBIDA.sinPersonaMaxMs;
-  return Math.min(techo, base * 2 ** Math.min(Math.max(0, o.sinCambios), 4));
+  return conFallos(Math.min(techo, base * 2 ** Math.min(Math.max(0, o.sinCambios), 4)));
 }
 
 /* ── dibujar ────────────────────────────────────────────────────────────────────────────── */

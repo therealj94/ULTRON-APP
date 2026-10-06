@@ -3,7 +3,7 @@ import { miga, reportarEstado } from '../lib/reporte';
 import { TrazaTurno } from '../lib/trazaTurno';
 import { ControladorMirada } from '../lib/miradaAvatar';
 import { seMovioTelefono } from '../lib/cercoCamara';
-import { arrancarPulso, pulsoJs } from '../lib/pulsoJs';
+import { arrancarPulso, ponerAvisoBloqueo, pulsoJs } from '../lib/pulsoJs';
 import { RellenoTurno, esperaDeRelleno } from '../lib/relleno';
 // ── latencia de la voz: el turno especulativo (lib/turnoEspeculativo.ts) ──
 import { TurnoEspeculativo } from '../lib/turnoEspeculativo';
@@ -118,7 +118,8 @@ import { decidirPrivadoLocal, fraseNegarLocal, intencionPrivada, pedidoLocalPriv
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
-import { COMENTARIOS, Comentarista, resumenVista, type FocoVision, type VistaCamara } from '../lib/vistaCamara';
+import { COMENTARIOS, Comentarista, etiquetasDeVista, resumenVista, type FocoVision, type VistaCamara } from '../lib/vistaCamara';
+import { vistaFresca, vistaParaTurno, type VistaTurno } from '../lib/vistaTurno';
 import { ladoValido, pedidoDeVista, type Lado } from '../lib/vistaEnVivo';
 import { VisorCamara, type EstadoVisor } from '../components/VisorCamara';
 import { HojaComputadora } from '../ajustes/Computadora';
@@ -438,6 +439,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // El pulso del hilo de JS (lib/pulsoJs.ts) mientras la mesa está viva: la traza del turno y el resumen de la cámara
   // dicen cuánto se trabó (José, 6-oct: ¿la cámara traba la voz?).
   useEffect(() => (mesaActiva ? arrancarPulso() : undefined), [mesaActiva]);
+  // Un bloqueo del hilo de JS (≥ 1,5 s sin atender toques) va a las migas con lo que pasaba; uno grave (≥ 5 s, cuando
+  // Android ya puede decir «no responde» y cerrarla al tocar) se manda enseguida (José, 6-oct: «al tocar se cierra»).
+  useEffect(() => {
+    ponerAvisoBloqueo(({ ms, grave }) => {
+      const que = [visionOnRef.current ? `cámara${carasRef.current?.reconoce ? '+caras' : ''}` : 'sin cámara', handling.current ? 'pensando' : '', speakingRef.current ? 'hablando' : ''].filter(Boolean).join(', ');
+      const linea = `JS bloqueado ${ms} ms (${que})`;
+      if (grave) reportarEstado(linea);
+      else miga(linea);
+    });
+    return () => ponerAvisoBloqueo(null);
+  }, []);
 
   // Las tareas durables (AUR08): el indicador mínimo y el panel. Cerrar el panel no cancela nada; el
   // servidor es la fuente de verdad y, al volver, la misma tarea (mismo id) sigue con su estado.
@@ -1415,10 +1427,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   useEffect(() => () => void (cerrarVisorTimer.current && clearTimeout(cerrarVisorTimer.current)), []);
 
   /**
-   * «¿Qué ves?», «léeme esto», «¿cuánto dice el precio?», «¿qué es esto?». Una foto (con más calidad si
-   * hay que leer), el servidor la mira CON ORDEN según el foco (/api/vision/analyze estructurado) y el
-   * turno recibe lo visto como texto: la foto sube una sola vez. Mientras, «Lo que vi» muestra la foto
-   * con lo reconocido. Para leer o reconocer algo, la vista de la cámara se ve un momento para apuntar.
+   * «¿Qué ves?», «léeme esto», «¿cuánto dice el precio?», «¿qué es esto?». El turno NUNCA espera a la visión más de
+   * ~1,5 s (lib/vistaTurno.ts; José, 6-oct: «toma como una foto y se traba, queda pensando»): «¿qué ves?» usa la vista
+   * fresca de la subida continua al instante; si no la hay, una foto (con más calidad si hay que leer) y, si el
+   * servidor no la ve a tiempo, el turno sale con la foto y «Lo que vi» se completa cuando vuelva. Para leer o
+   * reconocer algo, la vista de la cámara se ve un momento para apuntar.
    */
   const whatDoYouSee = useCallback(async (foco: FocoVision = 'escena') => {
     const apuntar = foco !== 'escena';
@@ -1428,12 +1441,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       return g ? () => g({ calidad }) : null;
     };
     let frame: string | null = null;
+    let vt: VistaTurno | null = null;
+    const io = (foto: () => Promise<string | null>) => ({ ahora: Date.now, foto, ver: (b64: string, f: FocoVision) => verCamara(b64, f) });
+    const opciones = { lado: ladoCamaraRef.current, personas: escenaFresca(escenaRef.current) ? escenaRef.current.personas : undefined };
     if (apuntar) setPreviaCamara(true);
     try {
       // Con la cámara ya prendida y algo que mostrar: un momento para ponerlo delante y que enfoque.
       if (apuntar && grabFrame.current) await new Promise((r) => setTimeout(r, 900));
-      frame = grabFrame.current ? await grabFrame.current({ calidad }) : null;
-      if (!frame) {
+      const g = grabFrame.current;
+      if (g) vt = await vistaParaTurno(io(() => g({ calidad })), foco, opciones);
+      if (!vt || vt.tipo === 'sin_foto') {
         // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
         // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
         // nada» sin prenderla (José, 2-oct: «una foto… no lo hace»).
@@ -1450,32 +1467,41 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         } finally {
           setToolHint('');
         }
+        // La foto ya está: lo que diga el servidor tampoco traba el turno más de ~1,5 s.
+        const listo = frame;
+        if (listo) vt = await vistaParaTurno(io(async () => listo), foco, { ...opciones, lado: ladoCamaraRef.current });
       }
     } finally {
       setPreviaCamara(false);
     }
-    if (frame) {
+    if (vt && vt.tipo !== 'sin_foto') {
       const [es, en] = PEDIDO_VISTA[foco];
-      setVisor({ foto: frame, vista: null, foco, mirando: true });
+      const pedido = tr(es, en);
       setFace('SCAN');
-      setToolHint(tr('mirando con la cámara', 'looking with the camera'));
-      let r: Awaited<ReturnType<typeof verCamara>> = null;
-      try {
-        r = await verCamara(frame, foco);
-      } finally {
-        setToolHint('');
-      }
-      if (r) {
-        setVisor({ foto: frame, vista: r.vista, foco, mirando: false });
-        if (r.etiquetas.length) setObjects(r.etiquetas);
-        // Con la vista ya armada, el turno lleva el texto; con un servidor anterior (sin modo
-        // estructurado), el camino de siempre: la foto en el turno.
-        await askBrain(tr(es, en), r.estructurada && r.visto ? { visto: r.visto, foco } : { image: `data:image/jpeg;base64,${frame}`, foco });
-        cerrarVisorEn(VISOR_MS);
+      miga(`vista del turno: ${vt.tipo === 'fresca' ? `fresca de hace ${Math.round(vt.edadMs / 1000)} s` : vt.tipo === 'vista' ? `vista en ${vt.esperaMs} ms` : `foto al turno (${vt.motivo} a los ${vt.esperaMs} ms)`}`);
+      if (vt.tipo === 'fresca' || vt.tipo === 'vista') {
+        if (vt.foto) setVisor({ foto: vt.foto, vista: vt.vista, foco, mirando: false });
+        const etiquetas = etiquetasDeVista(vt.vista);
+        if (etiquetas.length) setObjects(etiquetas);
+        // Solo la de «¿qué ves?» queda como vista fresca: el hecho de «léeme esto» lleva otra instrucción.
+        if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0, foto: vt.foto });
+        await askBrain(pedido, { visto: vt.visto, foco });
+        if (vt.foto) cerrarVisorEn(VISOR_MS);
         return;
       }
-      cerrarVisor();
-      await say(tr('Ahora mismo no me está entrando bien la imagen. Dame un segundo y vuelve a preguntarme.', 'The picture isn’t coming through right now. Give me a second and ask me again.'), 'CONFUSED', { emocion: 'preocupado' });
+      // El servidor no la vio a tiempo: el turno sale YA con la foto (el servidor la mira dentro del turno) y «Lo que vi»
+      // se completa cuando vuelva el primer pedido; si no vuelve nada, se cierra solo (nada de una foto congelada).
+      const foto = vt.foto;
+      const tomadaEn = Date.now() - vt.esperaMs;
+      setVisor({ foto, vista: null, foco, mirando: true });
+      void vt.tarde.then((r) => {
+        setVisor((v) => (v && v.foto === foto ? (r?.vista ? { foto, vista: r.vista, foco, mirando: false } : null) : v));
+        if (!r?.vista) return;
+        if (r.etiquetas.length) setObjects(r.etiquetas);
+        if (foco === 'escena') vistaFresca.guardar({ vista: r.vista, visto: r.estructurada ? r.visto : '', ts: tomadaEn, lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0, foto });
+      });
+      await askBrain(pedido, { image: `data:image/jpeg;base64,${foto}`, foco });
+      cerrarVisorEn(VISOR_MS);
       return;
     }
     // Sin frame: lo que la detección local ya sabe (persona, lado, gesto) y las etiquetas del servidor.
@@ -1487,7 +1513,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       return;
     }
     await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('La cámara no me dio imagen todavía. Apúntala hacia ti y pregúntame otra vez «¿qué ves?».', 'The camera hasn’t given me a picture yet. Point it at yourself and ask me again “what do you see?”.'), 'SCAN');
-  }, [askBrain, camara, cerrarVisor, cerrarVisorEn, encenderCamara, escenaFresca, say]);
+  }, [askBrain, camara, cerrarVisorEn, encenderCamara, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
