@@ -20,12 +20,17 @@
  */
 import type { CajaN, Identidad, Pista } from '../caras/seguimiento';
 import type { VistaCamara } from './vistaCamara';
+import { VISTA_SERVIDOR_MS, vistaVigente, type VistaFechada } from './cercoCamara';
 
 export type Lado = 'frontal' | 'trasera';
 export type Rect = { left: number; top: number; width: number; height: number };
 
-/** Los objetos del servidor se dibujan mientras la vista tenga menos que esto. */
-export const VISTA_FRESCA_MS = 20_000;
+/**
+ * Los objetos del servidor se dibujan mientras su FOTO tenga menos que esto (desde la captura, no desde que llegó la
+ * respuesta), con la misma cámara y el teléfono quieto (lib/cercoCamara.ts vistaVigente; CAM-G). Antes: 20 s desde
+ * la llegada, como si siguieran ahí.
+ */
+export const VISTA_FRESCA_MS = VISTA_SERVIDOR_MS;
 
 export function ladoValido(v: unknown): Lado {
   return v === 'trasera' ? 'trasera' : 'frontal';
@@ -85,7 +90,7 @@ export function etiquetaCara(i: Identidad | null, lado: Lado, en = false): strin
  * Lo que se dibuja: las caras a la vista (la más grande es la principal: lleva «mirando» si mira la
  * pantalla, solo con la frontal) y los objetos con caja de la última vista del servidor, si es fresca.
  */
-export function marcasEnVivo(o: { pistas: Pista[]; mirando: boolean; lado: Lado; vista: { v: VistaCamara; ts: number } | null; ahora: number; en?: boolean }): MarcaViva[] {
+export function marcasEnVivo(o: { pistas: Pista[]; mirando: boolean; lado: Lado; vista: VistaFechada<VistaCamara> | null; ahora: number; en?: boolean; epoca?: number; movidaEn?: number }): MarcaViva[] {
   const m: MarcaViva[] = [];
   const principal = o.pistas.reduce<Pista | null>((a, p) => (!a || p.caja.h > a.caja.h ? p : a), null);
   for (const p of o.pistas) {
@@ -93,9 +98,12 @@ export function marcasEnVivo(o: { pistas: Pista[]; mirando: boolean; lado: Lado;
     m.push({ clave: `c${p.id}`, caja: p.caja, etiqueta: etiquetaCara(p.identidad, o.lado, o.en), tipo: 'cara', conocida: !!p.identidad, ...(mira ? { detalle: o.en ? 'looking' : 'mirando' } : {}) });
   }
   const v = o.vista;
-  if (v && o.ahora - v.ts <= VISTA_FRESCA_MS && v.v.cajasFiables) {
+  if (v && v.v.cajasFiables && vistaVigente(v, { ahora: o.ahora, lado: o.lado, epoca: o.epoca, movidaEn: o.movidaEn })) {
+    // Son de una foto, no un seguimiento: se dice de cuándo.
+    const s = Math.max(0, Math.round((o.ahora - v.ts) / 1000));
+    const detalle = o.en ? `photo · ${s} s ago` : `foto · hace ${s} s`;
     v.v.objetos.forEach((x, i) => {
-      if (x.caja) m.push({ clave: `o${i}-${x.nombre}`, caja: x.caja, etiqueta: x.nombre, tipo: 'objeto' });
+      if (x.caja) m.push({ clave: `o${i}-${x.nombre}`, caja: x.caja, etiqueta: x.nombre, tipo: 'objeto', detalle });
     });
   }
   return m;

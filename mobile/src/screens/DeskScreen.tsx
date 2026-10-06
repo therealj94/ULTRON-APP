@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
 import { TrazaTurno } from '../lib/trazaTurno';
+import { ControladorMirada } from '../lib/miradaAvatar';
+import { seMovioTelefono } from '../lib/cercoCamara';
 import { arrancarPulso, pulsoJs } from '../lib/pulsoJs';
 import { RellenoTurno } from '../lib/relleno';
 import { guardarPerfil } from '../lib/perfil';
@@ -553,8 +555,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const lastGreetAt = useRef(0);
   const lastSonrisaAt = useRef(0);
   const acompanaDicho = useRef(false);
-  const gazeCamAt = useRef(0);
+  /** CAM-A: la mirada de la cámara, fuera del estado de React (el cuerpo 3D la lee en su cuadro). */
+  const miradaCam = useRef(new ControladorMirada()).current;
   const gazeCamLast = useRef({ x: 0, y: 0 });
+  /** CAM-G: la última vez que el teléfono se movió (los objetos de una foto anterior dejan de dibujarse). */
+  const telefonoMovidoEn = useRef(0);
+  const movidaTelefono = useCallback(() => telefonoMovidoEn.current, []);
   const sonrisaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * Un solo dueño del audio (compa/duenoAudio.ts): la mesa oye y habla solo si se la ve y no hay
@@ -1907,8 +1913,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (!mesaActiva) return;
     let last = 0;
     let lastShakeAt = 0;
+    let antes: { x: number; y: number; z: number } | null = null;
     Accelerometer.setUpdateInterval(90);
     const sub = Accelerometer.addListener(({ x, y, z }) => {
+      // CAM-G: girar o mover el teléfono deja vieja la foto de la escena (sus recuadros se van).
+      if (seMovioTelefono(antes, { x, y, z })) telefonoMovidoEn.current = Date.now();
+      antes = { x, y, z };
       const g = Math.sqrt(x * x + y * y + z * z);
       const jerk = Math.abs(g - last);
       last = g;
@@ -2214,19 +2224,34 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     [playClip, restFace, say, user.name, wakeUp]
   );
 
-  /** Mirada suavizada hacia la persona: ≤ 4 cambios/s y solo si se movió, para no re-renderizar a 10 Hz. */
-  const onGazeCam = useCallback((x: number, y: number, activa: boolean) => {
-    if (dragging.current || touchGazeTimer.current) return;
-    if (!activa) return; // la mirada errante retoma sola 5 s después de perder a la persona
-    const now = Date.now();
-    const nx = x * 0.9;
-    const ny = y * 0.7;
-    const moved = Math.abs(nx - gazeCamLast.current.x) > 0.04 || Math.abs(ny - gazeCamLast.current.y) > 0.04;
-    if (now - gazeCamAt.current < 250 || !moved) return;
-    gazeCamAt.current = now;
-    gazeCamLast.current = { x: nx, y: ny };
-    setGaze({ x: nx, y: ny });
-  }, []);
+  /**
+   * CAM-A: la mirada hacia la persona en CADA evento de la cámara (hasta 15/s), sin estado de React: solo deja el
+   * objetivo en el controlador (lib/miradaAvatar.ts). El cuerpo 3D lo lee en su cuadro (alisado con deltaTime,
+   * zona muerta, límites, velocidad acotada, sostener y volver al centro). Con el dedo encima, el dedo manda.
+   */
+  const onGazeCam = useCallback(
+    (x: number, y: number, activa: boolean) => {
+      if (dragging.current || touchGazeTimer.current) return miradaCam.soltar(Date.now());
+      miradaCam.objetivo(x * 0.9, y * 0.7, activa, Date.now());
+    },
+    [miradaCam]
+  );
+
+  // Las caras 2D (gazeX/gazeY por props) no leen el controlador por su cuenta: ≤ 4 veces/s su valor YA alisado, y solo
+  // si ningún cuerpo lo lee directo. Sin persona (activa false) retoma la mirada errante.
+  useEffect(() => {
+    if (!mesaActiva) return;
+    const id = setInterval(() => {
+      if (miradaCam.conectados() > 0 || dragging.current || touchGazeTimer.current) return;
+      const p = miradaCam.paso(Date.now());
+      if (!p.activa) return;
+      const moved = Math.abs(p.x - gazeCamLast.current.x) > 0.04 || Math.abs(p.y - gazeCamLast.current.y) > 0.04;
+      if (!moved) return;
+      gazeCamLast.current = { x: p.x, y: p.y };
+      setGaze({ x: p.x, y: p.y });
+    }, 250);
+    return () => clearInterval(id);
+  }, [mesaActiva, miradaCam]);
 
   useEffect(
     () => () => {
@@ -2905,6 +2930,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // piensa mientras el turno sigue (o la voz se prepara); si no, la cara decide (escucha, reposo…).
         voz={{ sonando: audioMesa.sonando, agenteHabla: conversando && estadoConv === 'hablando', pensando: status === 'thinking' || audioMesa.preparando }}
         mirada={{ x: gaze.x, y: gaze.y, activa: verPersona && ladoCamara === 'frontal' }}
+        fuenteMirada={miradaCam}
         respaldo={fotosCara}
         onTap={() => onTap('face', 0, 0)}
         onLongPress={onLongPress}
@@ -3082,6 +3108,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         caras={caras}
         onMotor={setVisionMotor}
         ocupada={mesaOcupada}
+        movida={movidaTelefono}
       />
       {/* Con el chat, el botón de «Lo que veo» va arriba a la izquierda del cuadro del avatar. */}
       {enCuadro ? botonVista : null}

@@ -388,13 +388,14 @@ prueba('costuras: la mesa elige con CamaraMesa (mismas props) y la de fotos sigu
 
 prueba('costuras: la marca «montando» se escribe y se ESPERA antes de montar la vista nativa; sin cuadros o con error → respaldo', () => {
   const v = leer('src/components/CamaraVivo.tsx');
-  assert.match(v, /void camaraMontando\(\)\.then\(\(\) => \{\n\s+if \(vivo\) \{\n\s+ultimoEvento\.current = Date\.now\(\);\n\s+setMontable\(true\);/);
+  // CAM-D: solo con la marca ESCRITA (ok); si no quedó en el disco, a la de fotos (onFallo) sin montar.
+  assert.match(v, /void camaraMontando\(\)\.then\(\(ok\) => \{\n\s+if \(!vivo\) return;\n(\s+\/\/.*\n)?\s+if \(!ok\) return fallar\([^)]*\);\n\s+ultimoEvento\.current = Date\.now\(\);\n\s+setMontable\(true\);/);
   assert.match(v, /if \(!activa \|\| !montable\) return null;/, 'la vista nativa solo con la marca escrita');
   assert.match(v, /camaraSana\(evento\.current\?\.fps\);\n\s+\}, GUARDIA\.sanoTrasMs\)/);
   assert.match(v, /camaraSoltada\(\);/);
   assert.match(v, /SIN_CUADROS_MS = 8000/);
   const g = leer('src/lib/guardiaCamara.ts');
-  assert.match(g, /export async function camaraMontando\(\): Promise<void> \{\n\s+await escribirGuardia/);
+  assert.match(g, /export async function camaraMontando\(\): Promise<boolean> \{\n\s+const ok = await escribirGuardia/);
   assert.match(g, /murioLaVezAnterior\(\)/);
   const a = leer('src/lib/auraCamara.ts');
   assert.match(a, /requireOptionalNativeModule<ModuloCamara>\('AuraCamara'\)/, 'sin el módulo (APK vieja), null: nada se rompe');

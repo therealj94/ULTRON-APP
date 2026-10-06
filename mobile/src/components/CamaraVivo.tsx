@@ -18,7 +18,12 @@
  *    takePictureAsync.
  *  · Red de seguridad: antes de montar la vista nativa se anota «montando» en el disco y se espera a que
  *    quede escrito (lib/guardiaCamara.ts); con el primer cuadro sano y 10 s más se borra. Si el nativo
- *    avisa un error o no llega ningún cuadro en 8 s, `onFallo` y la mesa vuelve a la cámara de fotos.
+ *    avisa un error o no llega ningún cuadro en 8 s, `onFallo` y la mesa vuelve a la cámara de fotos. Si la
+ *    marca NO se pudo escribir, tampoco se monta: `onFallo` (CAM-D).
+ *  · Origen y tiempo (master §25.5, lib/cercoCamara.ts): cada evento, recorte y foto lleva la hora de CAPTURA y
+ *    la época/lado de la cámara que lo produjo; se cerca antes de aplicarlo (CAM-C, CAM-E). La subida de escena
+ *    respeta la voz (`ocupada`, CAM-B) y sus objetos se dibujan solo sobre esa foto (CAM-G; lib/subidaEscena.ts).
+ *  · La mirada va cruda a la mesa en cada evento: la alisa lib/miradaAvatar.ts en el cuadro del cuerpo (CAM-A).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
@@ -26,9 +31,11 @@ import type { CamaraVisionProps, FrameGrabber } from './CamaraVision';
 import { verCamara } from '../lib/api';
 import { MIN_CARA_MLKIT, MaquinaEscena, escenaApagada, type Escena, type MotorVision } from '../lib/escena';
 import { GUARDIA, UMBRALES_VIVO, eventoValido, observacionNativa, rectDeCara, ritmoNativo, tamEquivalente, type ConfigCamaraRemota, type EventoCaras } from '../lib/camaraNativa';
+import { CercoCamara, ORIGEN, type VistaFechada } from '../lib/cercoCamara';
+import { SubidaEscena } from '../lib/subidaEscena';
 import { VistaCamaraNativa, fotoNativa, recorteNativo } from '../lib/auraCamara';
 import { camaraMontando, camaraSana, camaraSoltada } from '../lib/guardiaCamara';
-import { etiquetasDeVista, intervaloServidor, mismaEscena, type VistaCamara } from '../lib/vistaCamara';
+import { etiquetasDeVista, type VistaCamara } from '../lib/vistaCamara';
 import { cajaEnPantalla, etiquetaCara, lineaEstado, marcasEnVivo, marcoParaFoto } from '../lib/vistaEnVivo';
 import { elegirPistaParaReconocer, podarIntentos, type IntentoPista } from '../caras/pistaNativa';
 import { miga, reportarEstado } from '../lib/reporte';
@@ -86,11 +93,13 @@ export function CamaraVivo({
   onCerrarVista,
   seguidor,
   caras,
+  ocupada,
+  movida,
   remota,
   onFallo,
 }: CamaraVivoProps) {
-  const cb = useRef({ onEscena, onGaze, onObjects, onVista, onMotor, caras, onFallo, seguidor });
-  cb.current = { onEscena, onGaze, onObjects, onVista, onMotor, caras, onFallo, seguidor };
+  const cb = useRef({ onEscena, onGaze, onObjects, onVista, onMotor, caras, onFallo, seguidor, ocupada, movida });
+  cb.current = { onEscena, onGaze, onObjects, onVista, onMotor, caras, onFallo, seguidor, ocupada, movida };
   const Vista = VistaCamaraNativa();
   const appActiva = useAppActiva();
   const activa = enabled && appActiva && !!Vista;
@@ -107,7 +116,12 @@ export function CamaraVivo({
   const pidiendo = useRef(false);
   const ultimoPedido = useRef(0);
   const nombreMedido = useRef(false);
-  const vistaServidor = useRef<{ v: VistaCamara; ts: number } | null>(null);
+  const vistaServidor = useRef<VistaFechada<VistaCamara> | null>(null);
+  /** CAM-C/E: de qué cámara y época es cada cosa. Cambiar de lado sube la época al momento (también aquí, al dibujar). */
+  const cerco = useRef(new CercoCamara(lado)).current;
+  cerco.poner(lado);
+  /** Eventos del nativo descartados seguidos por viejos (el reloj del nativo no cuadra): una miga, sin caer. */
+  const viejos = useRef(0);
   const dormidoRef = useRef(dormido);
   dormidoRef.current = dormido;
   const observarRef = useRef(observar);
@@ -150,6 +164,7 @@ export function CamaraVivo({
   // Cámara apagada / sin permiso: una sola escena 'ninguno' y mirada libre.
   useEffect(() => {
     if (enabled) return;
+    cerco.invalidar();
     maquina.reiniciar();
     seguidor?.reiniciar();
     vistaServidor.current = null;
@@ -159,7 +174,7 @@ export function CamaraVivo({
     ultimaEscena.current = e;
     cb.current.onEscena?.(e);
     soltarMirada();
-  }, [enabled, anunciarMotor, maquina, seguidor, soltarMirada]);
+  }, [enabled, anunciarMotor, cerco, maquina, seguidor, soltarMirada]);
 
   // Otra cámara: lo visto con la anterior no vale.
   const ladoVisto = useRef(lado);
@@ -180,20 +195,23 @@ export function CamaraVivo({
     let vivo = true;
     // Cada vez que se monta, el «sano» se vuelve a medir desde el primer cuadro de ESTA vez.
     evento.current = null;
-    void camaraMontando().then(() => {
-      if (vivo) {
-        ultimoEvento.current = Date.now();
-        setMontable(true);
-      }
+    cerco.montada();
+    void camaraMontando().then((ok) => {
+      if (!vivo) return;
+      // CAM-D: sin la marca en el disco, un cierre al montar no se detectaría: no se monta, a la de fotos.
+      if (!ok) return fallar('sin-disco: no pude anotar la guardia antes de montar');
+      ultimoEvento.current = Date.now();
+      setMontable(true);
     });
     return () => {
       vivo = false;
+      cerco.invalidar();
       setMontable(false);
       if (sanoTimer.current) clearTimeout(sanoTimer.current);
       sanoTimer.current = null;
       camaraSoltada();
     };
-  }, [activa]);
+  }, [activa, cerco, fallar]);
 
   // Sin cuadros en 8 s (el latido del nativo es de ≤1 s): no anda, a la cámara de fotos.
   useEffect(() => {
@@ -232,15 +250,19 @@ export function CamaraVivo({
     pidiendo.current = true;
     const i = intentos.get(p.id);
     intentos.set(p.id, { ultimo: ahora, n: (i?.n ?? 0) + 1 });
+    const sello = cerco.sello();
     try {
       const r = await recorteNativo(p.ext ?? -1);
       if (!r?.b64 || !r.caja) return;
+      // CAM-C: un recorte de otra cámara/época, o de un cuadro demasiado viejo, no se reconoce.
+      if (cerco.admitirResultado(r, sello, Date.now(), ORIGEN.recorteMaxMs) !== 'ok') return;
       ultimoPedido.current = Date.now();
-      cb.current.caras?.recibirFoto({ b64: r.b64, cajas: [{ pista: p.id, caja: r.caja, tam: tamEquivalente(r.tam ?? p.caja.h, ladoCortoRef.current) }], ts: Date.now() });
+      // La hora del CUADRO (no la de llegada) y una cerca que useCaras mira al volver del motor.
+      cb.current.caras?.recibirFoto({ b64: r.b64, cajas: [{ pista: p.id, caja: r.caja, tam: tamEquivalente(r.tam ?? p.caja.h, ladoCortoRef.current) }], ts: r.ts > 0 ? r.ts : e.ts, vigente: () => cerco.vigente(sello) });
     } finally {
       pidiendo.current = false;
     }
-  }, [intentos]);
+  }, [cerco, intentos]);
 
   useEffect(() => {
     if (!activa || !montable || !caras?.reconoce) return;
@@ -255,7 +277,19 @@ export function CamaraVivo({
       if (!e) return;
       // Un evento de la cámara anterior (se cambió y el nativo aún no rearmó) no vale.
       if (e.lado !== ladoRef.current) return;
-      ultimoEvento.current = Date.now();
+      const ahora = Date.now();
+      // La cámara anda (aunque el evento se descarte por viejo: la salud no depende de la frescura).
+      ultimoEvento.current = ahora;
+      // CAM-C: época vieja del nativo, cuadro fuera de orden o captura vieja → no se aplica.
+      const adm = cerco.admitirEvento(e, ahora);
+      if (adm !== 'ok') {
+        if (adm === 'viejo' || adm === 'futuro') {
+          viejos.current += 1;
+          if (viejos.current === 30) miga(`cámara nueva: 30 eventos seguidos descartados (${adm}, ${Math.round(ahora - e.ts)} ms)`);
+        }
+        return;
+      }
+      viejos.current = 0;
       const primero = !evento.current;
       evento.current = e;
       anunciarMotor('mlkit');
@@ -269,10 +303,9 @@ export function CamaraVivo({
       const esc = maquina.procesar(observacionNativa(e, { trasera }), { inmediato: dormidoRef.current });
       const g = gaze.current;
       if (esc.principal && !trasera) {
-        // Con el flujo (hasta 15 por segundo) se alisa más que con fotos.
-        const a = g.activa ? 0.35 : 1;
-        g.x += (esc.principal.x - g.x) * a;
-        g.y += (esc.principal.y - g.y) * a;
+        // CAM-A: cruda, en cada evento; la alisa con deltaTime quien dibuja (lib/miradaAvatar.ts).
+        g.x = esc.principal.x;
+        g.y = esc.principal.y;
         g.activa = true;
         cb.current.onGaze?.(g.x, g.y, true);
       } else if (g.activa && (esc.personas === 0 || trasera)) {
@@ -299,7 +332,7 @@ export function CamaraVivo({
       }
       if (vistaRef.current) setTic((n) => n + 1);
     },
-    [anunciarMotor, emitir, intentarReconocer, maquina]
+    [anunciarMotor, cerco, emitir, intentarReconocer, maquina]
   );
 
   const onEstadoNativo = useCallback(
@@ -333,48 +366,37 @@ export function CamaraVivo({
     };
   }, [activa, montable, grabRef]);
 
-  // Lo que hay en la mesa (servidor): el mismo ritmo que la cámara de fotos con ML Kit.
+  // Lo que hay en la mesa (servidor): el mismo ritmo que la cámara de fotos con ML Kit, con la voz primero (CAM-B) y
+  // cercado por cámara (CAM-E): cambiar de lado reinicia la subida y lo que vuelva de la anterior no se aplica.
   useEffect(() => {
     if (!activa || !montable) return;
-    let vivo = true;
-    let ultimo = 0;
-    let sinCambios = 0;
-    let personasAntes = -1;
-    let vistaAntes: VistaCamara | null = null;
-    let subiendo = false;
-    const t = setInterval(() => {
-      if (!vivo || subiendo) return;
-      const personas = ultimaEscena.current?.personas ?? 0;
-      if (personasAntes >= 0 && personas !== personasAntes) sinCambios = 0;
-      personasAntes = personas;
-      const cada = intervaloServidor({ mlkit: true, dormida: dormidoRef.current, conPersona: personas > 0, necesitaEscena: observarRef.current, sinCambios });
-      if (!(Date.now() - ultimo >= cada)) return;
-      ultimo = Date.now();
-      subiendo = true;
-      void (async () => {
-        try {
-          const f = await conTope(fotoNativa(CALIDAD.servidor, true), FOTO_MAX_MS);
-          if (!vivo || !f?.b64 || f.b64.length < MINIMO_FOTO) return;
-          const r = await verCamara(f.b64, 'escena');
-          if (!vivo || !r?.vista) return;
-          sinCambios = mismaEscena(vistaAntes, r.vista) ? sinCambios + 1 : 0;
-          vistaAntes = r.vista;
-          vistaServidor.current = { v: r.vista, ts: Date.now() };
-          const labels = etiquetasDeVista(r.vista);
+    const subida = new SubidaEscena(
+      {
+        ahora: Date.now,
+        foto: () => conTope(fotoNativa(CALIDAD.servidor, true), FOTO_MAX_MS),
+        ver: async (b64) => (await verCamara(b64, 'escena'))?.vista ?? null,
+        estado: () => ({
+          dormida: dormidoRef.current,
+          personas: ultimaEscena.current?.personas ?? 0,
+          necesitaEscena: observarRef.current,
+          ocupada: !!(cb.current.ocupada?.() || cb.current.caras?.mesaOcupada?.()),
+        }),
+        aplicar: (vs) => {
+          vistaServidor.current = vs;
+          const labels = etiquetasDeVista(vs.v);
           if (labels.length) cb.current.onObjects?.(labels);
-          cb.current.onVista?.(r.vista);
-        } catch {
-          /* sin vista esta vez */
-        } finally {
-          subiendo = false;
-        }
-      })();
-    }, 1000);
+          cb.current.onVista?.(vs.v);
+        },
+        descartada: (m) => miga(`cámara nueva: escena descartada (${m})`),
+      },
+      cerco
+    );
+    const t = setInterval(() => void subida.tic(), 1000);
     return () => {
-      vivo = false;
+      subida.detener();
       clearInterval(t);
     };
-  }, [activa, montable]);
+  }, [activa, montable, lado, cerco]);
 
   if (!enabled || !Vista) return null;
 
@@ -390,7 +412,7 @@ export function CamaraVivo({
     const en = idiomaActual() === 'en';
     const visibles = seguidor?.visibles(ahora) || [];
     const mirando = !!ultimaEscena.current?.principal?.mirando;
-    const marcas = marcasEnVivo({ pistas: visibles, mirando, lado, vista: vistaServidor.current, ahora, en });
+    const marcas = marcasEnVivo({ pistas: visibles, mirando, lado, vista: vistaServidor.current, ahora, en, epoca: cerco.epocaActual, movidaEn: movida?.() });
     const porPista = new Map(visibles.map((p) => [`c${p.id}`, p]));
     const estado = lineaEstado({
       lado,

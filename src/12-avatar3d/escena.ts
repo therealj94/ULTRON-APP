@@ -590,6 +590,11 @@ function terminoGesto(a: THREE.AnimationAction) {
 
 let mirX = 0;
 let mirY = 0;
+/**
+ * CAM-A: la mirada que manda el teléfono ya alisada (mobile/src/lib/miradaAvatar.ts: zona muerta, límites, velocidad,
+ * sostener y volver). Mientras está activa manda sobre `estado.mirar`; aquí solo se interpola entre mensajes.
+ */
+let mirarDirecto: { x: number; y: number; activa: boolean } | null = null;
 /** La mirada viva (sin `mirar` activo): a dónde se fueron los ojos y cuándo se mueven otra vez. */
 const ojeada = { x: 0, y: 0 };
 let ojoX = 0;
@@ -627,15 +632,18 @@ function actualizar(dt: number) {
   hacerGesto();
   mezclador?.update(dt);
 
-  // Mirar: la cabeza y el cuello siguen la mirada; los ojos llegan más lejos.
-  const mx = estado.mirar.activa ? Math.max(-1, Math.min(1, estado.mirar.x)) : 0;
-  const my = estado.mirar.activa ? Math.max(-1, Math.min(1, estado.mirar.y)) : 0;
-  mirX = suave(mirX, mx, 5, dt);
-  mirY = suave(mirY, my, 5, dt);
+  // Mirar: la cabeza y el cuello siguen la mirada; los ojos llegan más lejos. La del teléfono (ya alisada) se
+  // interpola rápido entre sus mensajes (~30/s); la de `estado`, como siempre.
+  const directo = mirarDirecto?.activa ? mirarDirecto : null;
+  const mirar = directo || estado.mirar;
+  const mx = mirar.activa ? Math.max(-1, Math.min(1, mirar.x)) : 0;
+  const my = mirar.activa ? Math.max(-1, Math.min(1, mirar.y)) : 0;
+  mirX = suave(mirX, mx, directo ? 20 : 5, dt);
+  mirY = suave(mirY, my, directo ? 20 : 5, dt);
   // La mirada viva: sin nadie a quien mirar, los ojos se pasean solos (saltitos cortos cada 1,2–3,5 s,
   // casi siempre cerca del centro, como quien piensa o escucha). No con los ojos cerrados ni en
   // movimiento reducido (ni en las tomas fijas de las pruebas). La cabeza apenas acompaña.
-  const vaga = !estado.mirar.activa && !reducido && !vistaPrueba && !estado.silenciado && estado.expresion !== 'dormida';
+  const vaga = !mirar.activa && !reducido && !vistaPrueba && !estado.silenciado && estado.expresion !== 'dormida';
   proximaOjeada -= dt;
   if (proximaOjeada <= 0) {
     proximaOjeada = 1.2 + Math.random() * 2.3;
@@ -833,6 +841,9 @@ w.__avatar = (m: AlaEscena) => {
     case 'pausa':
       pausada = !!m.valor;
       if (!pausada) ultimoCuadro = 0;
+      return;
+    case 'mirar':
+      mirarDirecto = m.soltar ? null : { x: Number(m.x) || 0, y: Number(m.y) || 0, activa: !!m.activa };
       return;
   }
 };

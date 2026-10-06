@@ -9,16 +9,20 @@
  *     apagada 7 días en este teléfono y se avisa por /api/diag (lib/reporte.ts). Si se murió con ella ya
  *     andando, cuenta un golpe; dos en tres días, 3 días apagada.
  *  3. Interruptor remoto: GET /api/movil/config (server/movil-config.ts, AURA_CAMARA_RAPIDA=0 la apaga).
- *     Se usa lo último guardado al instante y se refresca por detrás; si el servidor la apaga con la cámara
- *     andando, se cambia a la de fotos en ese momento.
+ *     Se usa lo último guardado al instante y se refresca por detrás: al arrancar, al volver al frente (si pasó
+ *     1 min) y cada 10 min con la app delante (camaraNativa.ts REMOTA). Si el servidor la apaga con la cámara
+ *     andando, se cambia a la de fotos en ese momento. No es instantáneo: el peor caso es el TTL.
+ *  2b. Si la marca «montando» NO se puede escribir (disco lleno, AsyncStorage roto), no se monta la nativa: se avisa
+ *     y la mesa usa la de fotos (sin la marca, un cierre al montar no se detectaría la próxima vez).
  *  4. El ajuste «Cámara rápida (nueva)» (encendida por omisión donde exista).
  *  5. Si en esta sesión falló (no abrió, sin cuadros), la de fotos hasta reabrir la app.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { api } from './api';
 import { camaraVivaDisponible } from './auraCamara';
 import {
+  FilaGuardia,
   configCamaraValida,
   elegirCamara,
   guardiaAlArrancar,
@@ -27,6 +31,7 @@ import {
   guardiaAlSoltar,
   guardiaBloqueada,
   guardiaValida,
+  tocaRefrescarRemota,
   type ConfigCamaraRemota,
   type EstadoGuardia,
   type MotivoCamara,
@@ -59,16 +64,12 @@ export function suscribirCamara(f: () => void): () => void {
   return () => oyentes.delete(f);
 }
 
-/** Las escrituras van en fila: «montando» y un «soltar» que llega enseguida no pueden quedar al revés en el disco. */
-let fila: Promise<void> = Promise.resolve();
+/** Las escrituras van en fila (camaraNativa.ts FilaGuardia); cada una dice si quedó en el disco. */
+const fila = new FilaGuardia((texto) => AsyncStorage.setItem(CLAVE_GUARDIA, texto));
 
-function escribirGuardia(e: EstadoGuardia): Promise<void> {
+function escribirGuardia(e: EstadoGuardia): Promise<boolean> {
   guardia = e;
-  const texto = JSON.stringify(e);
-  fila = fila.then(() => AsyncStorage.setItem(CLAVE_GUARDIA, texto)).catch(() => {
-    /* sin disco: la guardia vale solo en memoria */
-  });
-  return fila;
+  return fila.poner(e);
 }
 
 /** Una vez por proceso: lo que dejó la vez anterior y lo último que dijo el servidor. */
@@ -85,12 +86,35 @@ function arrancar(): Promise<void> {
       /* */
     }
     void refrescarRemota();
+    vigilarRemota();
   })();
   return arranque;
 }
 
+let ultimaRemota = 0;
+let remotaEnCurso = false;
+let vigilando = false;
+
+/** El interruptor remoto en sesiones largas: al volver al frente y cada `REMOTA.ttlMs` con la app delante. */
+function vigilarRemota() {
+  if (vigilando) return;
+  vigilando = true;
+  const quizas = (motivo: 'frente' | 'tic') => {
+    if (tocaRefrescarRemota({ ahora: Date.now(), ultima: ultimaRemota, motivo, enCurso: remotaEnCurso })) void refrescarRemota();
+  };
+  try {
+    AppState.addEventListener('change', (s) => s === 'active' && quizas('frente'));
+    setInterval(() => AppState.currentState === 'active' && quizas('tic'), 60_000);
+  } catch {
+    /* sin AppState: solo al arrancar */
+  }
+}
+
 /** GET /api/movil/config, sin frenar nada. Si cambia algo, se guarda y se avisa. */
 export async function refrescarRemota(): Promise<void> {
+  if (remotaEnCurso) return;
+  remotaEnCurso = true;
+  ultimaRemota = Date.now();
   try {
     const r = await api<unknown>('/api/movil/config', { method: 'GET' }, 6000, false);
     const nueva = configCamaraValida(r);
@@ -103,6 +127,8 @@ export async function refrescarRemota(): Promise<void> {
     }
   } catch {
     /* sin red o servidor viejo (404): se queda lo guardado */
+  } finally {
+    remotaEnCurso = false;
   }
 }
 
@@ -123,10 +149,14 @@ export async function decidirCamara(): Promise<DecisionCamara> {
   return { ...d, remota };
 }
 
-/** Antes de montar la vista nativa. Se espera: la marca tiene que estar en el disco si la app muere ahí. */
-export async function camaraMontando(): Promise<void> {
-  await escribirGuardia(guardiaAlMontar(guardia, Date.now()));
-  miga('cámara nueva: montando');
+/**
+ * Antes de montar la vista nativa. Se espera: la marca tiene que estar en el disco si la app muere ahí. false = NO
+ * quedó escrita: quien monta no debe montar (CamaraVivo pasa a la de fotos con `onFallo`, que lo reporta).
+ */
+export async function camaraMontando(): Promise<boolean> {
+  const ok = await escribirGuardia(guardiaAlMontar(guardia, Date.now()));
+  miga(ok ? 'cámara nueva: montando' : 'cámara nueva: no pude anotar «montando» en el disco');
+  return ok;
 }
 
 /** Primer cuadro sano + 10 s sin caerse. */

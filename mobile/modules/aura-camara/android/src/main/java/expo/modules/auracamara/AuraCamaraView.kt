@@ -72,6 +72,11 @@ private const val TAG = "AuraCamara"
  *    COMO SE VE (giro y espejo de la frontal ya resueltos aquí: JS dibuja directo), `foto` en fracciones
  *    del cuadro derecho SIN espejo (para la escena), los ángulos, sonrisa y ojos. `w/h` la vista en px,
  *    `iw/ih` el cuadro derecho, `ms` lo que tardó ML Kit, `fps` los cuadros analizados por segundo.
+ *  · Origen y tiempo (master §25.5, CAM-C): `ts` es la hora de CAPTURA del sensor (`imageInfo.timestamp`, en ns,
+ *    pasada a hora de pared; `tsMono` en elapsedRealtime, `base` 'sensor' o 'llegada' si el reloj del sensor no
+ *    cuadra), no la de después de ML Kit. `epoca` sube con cada enlace de CameraX y viaja con el analizador como
+ *    contexto INMUTABLE (`Origen`: época, lado, espejo); `cuadro` numera los cuadros analizados. Antes de emitir se
+ *    cerca: un cuadro de un enlace anterior o de otro lado no sale.
  *  · `onEstado`: { tipo: 'lista' | 'error' | 'detenida', motivo? }. Sin permiso de cámara: un error, nunca
  *    un cierre.
  *  · Ciclo de vida propio: la cámara corre solo con la vista pegada a la ventana, `activa` y la actividad
@@ -84,6 +89,9 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
     @Volatile
     var actual: WeakReference<AuraCamaraView>? = null
   }
+
+  /** El origen INMUTABLE de un enlace de CameraX: lo captura el analizador al enlazar y lo lleva cada cuadro. */
+  private data class Origen(val epoca: Int, val lado: String, val espejo: Boolean)
 
   private val onCaras by EventDispatcher()
   private val onEstado by EventDispatcher()
@@ -134,7 +142,10 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
   @Volatile private var fallosSeguidos = 0
   @Volatile private var vistaW = 0
   @Volatile private var vistaH = 0
-  @Volatile private var espejo = true
+  /** Sube con cada enlace (cambio de lado, de tamaño, rearmado); solo la escribe el hilo principal. */
+  @Volatile private var epoca = 0
+  /** Número del cuadro analizado (solo el hilo AuraCamara). */
+  private var cuadroN = 0
   private var cuadrosVentana = 0
   private var inicioVentana = 0L
   @Volatile private var fpsMedido = 0.0
@@ -373,7 +384,8 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
     anterior = emptyList()
 
     val frontal = lado != "trasera"
-    espejo = frontal
+    epoca += 1
+    val origen = Origen(epoca, lado, frontal)
     val selector = if (frontal) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
     try {
       if (!p.hasCamera(selector)) {
@@ -403,7 +415,7 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
       .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
       .setTargetRotation(rot)
       .build()
-    an.setAnalyzer(ejecutor) { img -> analizar(img) }
+    an.setAnalyzer(ejecutor) { img -> analizar(img, origen) }
 
     val cap = ImageCapture.Builder()
       .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
@@ -491,12 +503,20 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   @OptIn(ExperimentalGetImage::class)
-  private fun analizar(img: ImageProxy) {
+  private fun analizar(img: ImageProxy, origen: Origen) {
     try {
-      if (destruida) return
+      // Un cuadro de un enlace anterior (se cambió de cámara y CameraX aún lo entrega) no se analiza.
+      if (destruida || origen.epoca != epoca) return
       val ahora = SystemClock.elapsedRealtime()
       if (ahora - ultimoAnalisis < (1000.0 / fpsMax).toLong()) return
       ultimoAnalisis = ahora
+      // La hora de CAPTURA (sensor, ns), antes de ML Kit; si su reloj no cuadra, la de llegada.
+      val llegadaNs = SystemClock.elapsedRealtimeNanos()
+      val capturaNs = Reloj.capturaRealtimeNs(img.imageInfo.timestamp, llegadaNs, System.nanoTime())
+      val base = if (capturaNs != null) "sensor" else "llegada"
+      val capturaMs = (capturaNs ?: llegadaNs) / 1_000_000L
+      cuadroN += 1
+      val cuadro = cuadroN
       val media = img.image ?: return
       val rot = img.imageInfo.rotationDegrees
       val t0 = SystemClock.elapsedRealtime()
@@ -510,10 +530,10 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
         val b = c.boundingBox
         CaraCuadro(c.trackingId ?: -(i + 1), b.left.toFloat(), b.top.toFloat(), b.width().toFloat(), b.height().toFloat())
       }
-      val cuando = System.currentTimeMillis()
-      almacen.guardar(img, rot, lista, cuando)
+      val cuando = Reloj.aPared(capturaMs, System.currentTimeMillis(), SystemClock.elapsedRealtime())
+      almacen.guardar(img, rot, lista, cuando, origen.epoca, cuadro, origen.lado)
       contarCuadro(ahora)
-      emitirSiCambio(caras, lista, iw, ih, ms, cuando)
+      emitirSiCambio(caras, lista, iw, ih, ms, cuando, capturaMs, base, cuadro, origen)
     } catch (t: Throwable) {
       fallosSeguidos += 1
       if (fallosSeguidos == 5) avisarError("detector", "ML Kit no responde: ${t.message ?: t}")
@@ -539,7 +559,18 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
   private fun r3(v: Float): Double = Math.round(v * 1000.0) / 1000.0
   private fun r1(v: Float): Double = Math.round(v * 10.0) / 10.0
 
-  private fun emitirSiCambio(caras: List<Face>, lista: List<CaraCuadro>, iw: Int, ih: Int, ms: Long, cuando: Long) {
+  private fun emitirSiCambio(
+    caras: List<Face>,
+    lista: List<CaraCuadro>,
+    iw: Int,
+    ih: Int,
+    ms: Long,
+    cuando: Long,
+    capturaMs: Long,
+    base: String,
+    cuadro: Int,
+    origen: Origen
+  ) {
     val vw = vistaW
     val vh = vistaH
     val salida = ArrayList<Map<String, Any>>(caras.size)
@@ -550,7 +581,7 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
       val fy = k.y / ih
       val fw = k.w / iw
       val fh = k.h / ih
-      val v = Geometria.aVista(fx, fy, fw, fh, iw, ih, vw, vh, espejo)
+      val v = Geometria.aVista(fx, fy, fw, fh, iw, ih, vw, vh, origen.espejo)
       val ojoI = c.leftEyeOpenProbability ?: -1f
       val ojoD = c.rightEyeOpenProbability ?: -1f
       val ojos = if (ojoI >= 0f && ojoD >= 0f) (ojoI + ojoD) / 2f else max(ojoI, ojoD)
@@ -575,7 +606,7 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
     if (desde < latido && !cambio(anterior, salida)) return
     ultimaEmision = ahora
     anterior = salida
-    val evento = HashMap<String, Any>(10)
+    val evento = HashMap<String, Any>(16)
     evento["caras"] = salida
     evento["w"] = vw
     evento["h"] = vh
@@ -584,11 +615,16 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
     evento["ms"] = ms
     evento["fps"] = Math.round(fpsMedido * 10.0) / 10.0
     evento["ts"] = cuando.toDouble()
-    evento["lado"] = lado
-    evento["espejo"] = espejo
+    evento["tsMono"] = capturaMs.toDouble()
+    evento["base"] = base
+    evento["lado"] = origen.lado
+    evento["espejo"] = origen.espejo
+    evento["epoca"] = origen.epoca
+    evento["cuadro"] = cuadro
     post {
       try {
-        if (!destruida) onCaras(evento)
+        // La cerca: si mientras tanto se cambió de cámara o se rearmó, este cuadro ya no es de la escena actual.
+        if (!destruida && origen.epoca == epoca && origen.lado == lado) onCaras(evento)
       } catch (_: Throwable) {
       }
     }
@@ -622,6 +658,9 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
     m["w"] = r.w
     m["h"] = r.h
     m["ts"] = r.ts.toDouble()
+    m["epoca"] = r.epoca
+    m["cuadro"] = r.cuadro
+    m["lado"] = r.lado
     r.caja?.let { m["caja"] = mapOf("x" to it[0].toDouble(), "y" to it[1].toDouble(), "w" to it[2].toDouble(), "h" to it[3].toDouble()) }
     r.tam?.let { m["tam"] = it.toDouble() }
     return m
@@ -638,6 +677,10 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
           m["w"] = r.w
           m["h"] = r.h
           m["origen"] = "cuadro"
+          m["ts"] = r.ts.toDouble()
+          m["epoca"] = r.epoca
+          m["cuadro"] = r.cuadro
+          m["lado"] = r.lado
           promesa.resolve(m)
         }
       } catch (t: Throwable) {
@@ -645,6 +688,9 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
       }
     }
     val cap = captura
+    // El origen de la foto de la cámara de fotos: el enlace de ahora (la cámara de fotos es de ese enlace).
+    val epocaFoto = epoca
+    val ladoFoto = lado
     if (!alta || cap == null || !corriendo) {
       try {
         ejecutor.execute { desdeCuadro() }
@@ -661,6 +707,7 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
             val bytes = ByteArray(buf.remaining())
             buf.get(bytes)
             val giro = image.imageInfo.rotationDegrees
+            val capturaNs = Reloj.capturaRealtimeNs(image.imageInfo.timestamp, SystemClock.elapsedRealtimeNanos(), System.nanoTime(), 10_000_000_000L)
             image.close()
             val b = AlmacenCuadros.derecho(bytes, giro)
             if (b == null) return desdeCuadro()
@@ -669,6 +716,10 @@ class AuraCamaraView(context: Context, appContext: AppContext) : ExpoView(contex
               m["w"] = b.width
               m["h"] = b.height
               m["origen"] = "captura"
+              val capturaMs = (capturaNs ?: SystemClock.elapsedRealtimeNanos()) / 1_000_000L
+              m["ts"] = Reloj.aPared(capturaMs, System.currentTimeMillis(), SystemClock.elapsedRealtime()).toDouble()
+              m["epoca"] = epocaFoto
+              m["lado"] = ladoFoto
               promesa.resolve(m)
             } finally {
               b.recycle()
