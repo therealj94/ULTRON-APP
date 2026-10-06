@@ -1,0 +1,16 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.auravoz'
+version = '1.0.0'
+
+// Sin dependencias propias: AudioTrack y HttpURLConnection son del sistema (minSdk 26, app.json).
+android {
+  namespace "expo.modules.auravoz"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

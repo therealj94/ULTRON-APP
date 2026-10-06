@@ -190,6 +190,7 @@ import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from '
 import { manifiestoEntrega, sondearAlmacen } from './lib/build';
 import { montarRecepcion, montarRutaBuild } from './server/build-rutas';
 import { montarConfigMovil } from './server/movil-config';
+import { montarVozPcm } from './server/voz-pcm';
 import { codigosActivos } from './server/cuentas';
 import {
   claveHiloDe,
@@ -2419,6 +2420,8 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
 
 app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVozVivo);
+// La voz en streaming del teléfono (PCM, sonando con el primer trozo): mismas puertas, cupo y minutos (server/voz-pcm.ts).
+montarVozPcm(app, { exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla });
 app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */

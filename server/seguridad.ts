@@ -556,7 +556,7 @@ export function mesaAutorizada(req: Request): boolean {
  * Coincidencia EXACTA a propósito: con prefijo, `/api/voz` dejaba pasar `/api/voz/agente` (abrir una
  * conversación de ElevenLabs, que sí piensa con el 27B) por ser «una ruta de voz».
  */
-const RUTAS_SIN_CEREBRO = ['/api/tts', '/api/tts/stream', '/api/voz', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/diag'];
+const RUTAS_SIN_CEREBRO = ['/api/tts', '/api/tts/stream', '/api/tts/pcm', '/api/voz', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/diag'];
 
 function rutaConversacion(path: string) {
   const p = String(path || '').split('?')[0].replace(/\/+$/, '');

@@ -764,6 +764,17 @@ export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emo
   return `${API_BASE}/api/tts?${q.toString()}`;
 }
 
+/**
+ * La misma frase por la voz en streaming (modules/aura-voz, server/voz-pcm.ts): PCM que el teléfono suena con el primer
+ * trozo. Mismos parámetros que `ttsUrl` salvo los tiempos por letra (la boca sale del volumen real que suena).
+ */
+export function ttsPcmUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral', avatar = 'aura', idioma = 'es', vecinos: { previo?: string; siguiente?: string } = {}) {
+  const q = new URLSearchParams({ text, performance, emocion, avatar, idioma });
+  if (vecinos.previo) q.set('previo', vecinos.previo);
+  if (vecinos.siguiente) q.set('siguiente', vecinos.siguiente);
+  return `${API_BASE}/api/tts/pcm?${q.toString()}`;
+}
+
 export const TTS_ENDPOINT = `${API_BASE}/api/tts`;
 export const CANTAR_ENDPOINT = `${API_BASE}/api/cantar`;
 export const ORAR_ENDPOINT = `${API_BASE}/api/orar`;
