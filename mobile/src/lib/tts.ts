@@ -20,10 +20,20 @@
  *
  * Todo lo que suena pasa por playPrepared() y comparte la generación `gen`: stopSpeaking() corta
  * cualquier cosa, y cada función avisa onStart/onAudioStart/onEnd para que la mesa pause el mic.
+ *
+ * VOZ EN STREAMING (5.5, docs/adr/ADR-voz-en-streaming.md): con el módulo nativo (modules/aura-voz) y permiso
+ * (lib/guardiaVoz.ts: interruptor remoto, Ajustes, guardia), el habla de `speak` y del locutor por frases no baja cada
+ * frase entera: la pide en PCM (/api/tts/pcm) y suena con el primer trozo (lib/sonidoVivo.ts, con la misma cara que
+ * un sonido de expo-av, así todo lo de arriba sigue igual). La frase siguiente se encadena sin hueco. Si el nativo falla
+ * antes de sonar, ESA frase va por el camino de siempre (no se pierde) y, si el fallo es del módulo o se repite, el
+ * camino nuevo queda apagado hasta reabrir la app. Canciones, oraciones, lo privado y el relleno siguen como siempre.
  */
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsUrl } from './api';
+import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsPcmUrl, ttsUrl } from './api';
+import { moduloVoz } from './auraVoz';
+import { CentralVoz, SonidoVivo, type FalloVoz, type Reproducible } from './sonidoVivo';
+import { cabecerasVoz, falloDeSesion } from './vozNativa';
 import { API_BASE } from '../config';
 import type { Emocion } from './emocion';
 import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
@@ -104,7 +114,9 @@ export class CorteIO {
   abortar() {
     if (this.abortado) return;
     this.abortado = true;
-    const fs = [...this.fs];
+    // De lo último a lo primero: en el reproductor en streaming, lo encadenado DETRÁS se cancela antes que lo que suena
+    // (si no, al callar la que suena, la siguiente arrancaría un instante antes de que llegue su propio cancelar).
+    const fs = [...this.fs].reverse();
     this.fs.clear();
     for (const f of fs) {
       try {
@@ -116,7 +128,7 @@ export class CorteIO {
   }
 }
 
-let current: Audio.Sound | null = null;
+let current: Reproducible | null = null;
 let gen = 0;
 
 /**
@@ -136,7 +148,7 @@ export function fraccionSonando(): number | undefined {
 
 /** Los tiempos por letra de cada audio descargado (por su ruta en el teléfono) y de cada sonido preparado. */
 const alineaciones = new Map<string, AlineacionAudio>();
-const alineacionDeSonido = new WeakMap<Audio.Sound, AlineacionAudio>();
+const alineacionDeSonido = new WeakMap<object, AlineacionAudio>();
 
 /** Una cabecera, sin importar mayúsculas (Android e iOS no las devuelven igual). */
 function cabecera(h: unknown, nombre: string): string {
@@ -298,6 +310,99 @@ async function ensureAudioMode() {
   }
 }
 
+// ---------------------------------------------------------------- voz en streaming (modules/aura-voz)
+
+/** Lo fija lib/guardiaVoz.ts (remoto, Ajustes, guardia). Hasta que lo lea, el camino de siempre. */
+let vivoPermitido = false;
+/** Por qué el camino nuevo quedó apagado en esta sesión (null: no falló). No se reintenta hasta reabrir la app. */
+let falloVivo: string | null = null;
+/** Frases seguidas que fallaron antes de sonar por el nativo (una que suena lo vuelve a cero). */
+let fallosSeguidos = 0;
+let central: CentralVoz | null | undefined;
+type OyenteVozVivo = { alFallar?: (f: FalloVoz, apagada: string | null) => void; alSonar?: () => void };
+const oyentesVivo = new Set<OyenteVozVivo>();
+
+export function permitirVozEnVivo(on: boolean) {
+  vivoPermitido = on;
+}
+
+/** Qué pasa con la voz en streaming (Ajustes y el diagnóstico). */
+export function estadoVozEnVivo(): { disponible: boolean; permitida: boolean; fallo: string | null } {
+  return { disponible: !!centralVoz(), permitida: vivoPermitido, fallo: falloVivo };
+}
+
+/**
+ * Lo que se espera antes de la PRIMERA frase por el nativo (lib/guardiaVoz.ts: anotar «arrancando» en el disco, por si
+ * el módulo cierra la app). false: no quedó anotado y esta sesión va por el camino de siempre. Se vuelve a pedir si se
+ * fija otra vez (al volver de segundo plano).
+ */
+let antesDeVivo: (() => Promise<boolean>) | null = null;
+let antesDeVivoP: Promise<boolean> | null = null;
+export function alPrimeraVozEnVivo(f: (() => Promise<boolean>) | null) {
+  antesDeVivo = f;
+  antesDeVivoP = null;
+}
+
+/** Solo pruebas (pruebas/oido/vozvivo.cjs): como reabrir la app, sin el fallo de la sesión. */
+export function _olvidarFalloVozEnVivo() {
+  falloVivo = null;
+  fallosSeguidos = 0;
+}
+
+/** Quien cuida el camino nuevo (lib/guardiaVoz.ts): fallos (y si lo apagaron en la sesión) y frases que sonaron. */
+export function escucharVozEnVivo(o: OyenteVozVivo): () => void {
+  oyentesVivo.add(o);
+  return () => {
+    oyentesVivo.delete(o);
+  };
+}
+
+function centralVoz(): CentralVoz | null {
+  if (central !== undefined) return central;
+  try {
+    const m = moduloVoz();
+    central = m ? new CentralVoz(m) : null;
+  } catch {
+    central = null;
+  }
+  return central;
+}
+
+/** ¿Esta locución va por el camino nuevo? Solo habla (no canto), no privada y sin la voz suspendida. */
+function usarVivo(perf: Perf, privado: boolean): boolean {
+  return vivoPermitido && !falloVivo && perf === 'speak' && !privado && !suspendida && !callaPorConversacion && !!centralVoz();
+}
+
+function anotarFalloVivo(f: FalloVoz) {
+  fallosSeguidos += 1;
+  if (!falloVivo && falloDeSesion(f, fallosSeguidos)) falloVivo = `${f.codigo}${f.status ? ` ${f.status}` : ''}: ${f.motivo}`.slice(0, 160);
+  for (const o of [...oyentesVivo]) {
+    try {
+      o.alFallar?.(f, falloVivo);
+    } catch {
+      /* */
+    }
+  }
+}
+
+function anotarSonoVivo() {
+  fallosSeguidos = 0;
+  for (const o of [...oyentesVivo]) {
+    try {
+      o.alSonar?.();
+    } catch {
+      /* */
+    }
+  }
+}
+
+/** Una frase por el camino nuevo: todavía no se bajó nada; el nativo la empieza a bajar al prepararla. */
+type PedidoVivo = { url: string; texto: string; perf: Perf; emocion: Emocion; vecinos?: VecinosVoz; voz?: AvatarId; corte?: CorteIO; alListo?: () => void };
+type Fuente = AVPlaybackSource | { vivo: PedidoVivo };
+function esVivo(f: Fuente | null | undefined): f is { vivo: PedidoVivo } {
+  return !!f && typeof f === 'object' && 'vivo' in (f as object);
+}
+
 // ---------------------------------------------------------------- descarga TTS
 
 /**
@@ -375,6 +480,29 @@ async function descargar(url: string, path: string, headers: Record<string, stri
   }
 }
 
+/** Los vecinos cambian la entonación (y el tono va solo en la primera): forman parte de la clave. */
+function claveAudio(avatar: string, idioma: string, perf: Perf, emocion: Emocion, text: string, v: { previo?: string; siguiente?: string }) {
+  return `${avatar}|${idioma}|${perf}|${emocion}|${text}|${(v.previo || '').slice(-40)}|${(v.siguiente || '').slice(0, 40)}`;
+}
+
+/**
+ * De dónde sale la voz de una frase: por el camino nuevo (un pedido que el nativo baja y suena a medida que llega)
+ * o por el de siempre (fetchSource: la frase entera en disco). Lo que ya está en la caché de aquí (los saludos y
+ * «un momento» que se precalientan) sale de ahí: suena sin esperar a nadie.
+ */
+async function fuenteDe(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId, corte?: CorteIO, permitirVivo = true): Promise<Fuente | null> {
+  if (callaPorConversacion || corte?.abortado) return null;
+  if (permitirVivo && usarVivo(perf, privado)) {
+    const avatar = voz || avatarActual();
+    const idioma = idiomaActual();
+    const v = vecinosLimpios(vecinos);
+    const hit = fileCache.get(claveAudio(avatar, idioma, perf, emocion, text, v));
+    if (hit) return { uri: hit };
+    return { vivo: { url: ttsPcmUrl(text, perf, emocion, avatar, idioma, v), texto: text, perf, emocion, vecinos, voz, corte } };
+  }
+  return fetchSource(text, perf, emocion, privado, vecinos, voz, corte);
+}
+
 async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId, corte?: CorteIO): Promise<AVPlaybackSource | null> {
   // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
   if (callaPorConversacion || corte?.abortado) return null;
@@ -388,8 +516,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
     return uri && !corte?.abortado ? { uri } : null;
   }
   const v = perf === 'sing' ? {} : vecinosLimpios(vecinos);
-  // Los vecinos cambian la entonación (y el tono va solo en la primera): forman parte de la clave.
-  const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}|${(v.previo || '').slice(-40)}|${(v.siguiente || '').slice(0, 40)}`;
+  const key = claveAudio(avatar, idioma, perf, emocion, text, v);
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
   const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
@@ -485,9 +612,10 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
 
 // ---------------------------------------------------------------- reproducción
 
-async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
+async function prepare(source: Fuente): Promise<Reproducible | null> {
   // Todo lo que suena pasa por aquí (frases, el locutor del turno, canciones, oraciones).
   if (suspendida || callaPorConversacion) return null;
+  if (esVivo(source)) return prepararVivo(source.vivo);
   try {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
     const uri = typeof source === 'object' && source && 'uri' in source ? String((source as { uri?: string }).uri || '') : '';
@@ -497,6 +625,46 @@ async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Encola la frase en el nativo (empieza a bajar; suena con playAsync). Si el puente no la acepta, o el nativo falla
+ * antes de sonar, la misma frase por el camino de siempre (`respaldo`): nunca se pierde.
+ */
+async function prepararVivo(p: PedidoVivo): Promise<Reproducible | null> {
+  const respaldo = async (): Promise<Reproducible | null> => {
+    const src = await fetchSource(p.texto, p.perf, p.emocion, false, p.vecinos, p.voz, p.corte);
+    return src ? prepare(src) : null;
+  };
+  const c = centralVoz();
+  if (!c) return respaldo();
+  if (antesDeVivo) {
+    if (!antesDeVivoP) antesDeVivoP = antesDeVivo().catch(() => false);
+    if (!(await antesDeVivoP)) {
+      if (!falloVivo) falloVivo = 'guardia: no se pudo anotar en el disco';
+      return respaldo();
+    }
+  }
+  const cabeceras = cabecerasVoz(await sessionHeaders().catch(() => ({})));
+  if (p.corte?.abortado || suspendida || callaPorConversacion) return null;
+  const s = c.crear({ url: p.url, cabeceras, respaldo, alFallar: anotarFalloVivo, alSonar: anotarSonoVivo, alListo: p.alListo });
+  if (!s) return respaldo();
+  // Un locutor cancelado aborta sus descargas: la del nativo también.
+  p.corte?.alAbortar(() => void s.unloadAsync());
+  return s;
+}
+
+/**
+ * Cuando `actual` suene por el nativo, la frase preparada detrás (`siguiente`) puede encadenarse: sonará en cuanto
+ * termine, sin hueco. `sigueValiendo` se mira en ese momento (y lo que la invalide después la cancela en el nativo).
+ */
+function encadenarDetras(actual: Reproducible, siguiente: Promise<Reproducible | null> | null | undefined, sigueValiendo: () => boolean) {
+  if (!(actual instanceof SonidoVivo) || !siguiente) return;
+  actual.cuandoSuene(() => {
+    void siguiente.then((s) => {
+      if (s instanceof SonidoVivo && sigueValiendo()) s.encadenar();
+    });
+  });
 }
 
 type PlayMeta = {
@@ -519,7 +687,7 @@ type PlayMeta = {
  */
 let soltarActual: (() => void) | null = null;
 
-function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
+function playPrepared(sound: Reproducible, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
     let guard: ReturnType<typeof setTimeout> | null = null;
@@ -528,6 +696,8 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
     const reloj = new RelojReproduccion();
     const al = alineacionDeSonido.get(sound);
     const alineada = al ? new BocaAlineada(al) : null;
+    // Por el nativo: la boca sale del volumen REAL que suena en esa posición (lib/vozNativa.ts nivelDeRms).
+    const vivo = sound instanceof SonidoVivo ? sound : null;
     const suave = new Envolvente();
     let antes = Date.now();
     const tick = setInterval(() => {
@@ -545,8 +715,10 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
         senalVoz.formaReproducida(b.visema);
         return emitLevel(suave.seguir(b.nivel, dt));
       }
+      const real = vivo?.nivelBoca();
+      if (real != null) return emitLevel(suave.seguir(real, dt));
       emitLevel((env || (env = envolventeLibre(kind)))(pos));
-    }, alineada ? PASO_BOCA_MS : 50);
+    }, alineada || vivo ? PASO_BOCA_MS : 50);
     let duracion = 0;
     let confirmada = false;
     const end = () => {
@@ -591,7 +763,7 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
           /* quien mide no rompe la voz */
         }
       }
-      reloj.aviso(st.positionMillis || 0, Date.now(), st.isPlaying);
+      reloj.aviso(st.positionMillis || 0, Date.now(), !!st.isPlaying);
       if (st.durationMillis) duracion = st.durationMillis;
       if (st.durationMillis && !guard) {
         guard = setTimeout(end, st.durationMillis + 1500);
@@ -611,7 +783,7 @@ const locutoresVivos = new Set<{ alCambiarGen: () => void }>();
  * Calla ESTE sonido si es el que suena ahora, sin cambiar la generación: lo usa un locutor cancelado para cortar
  * lo suyo sin tocar lo de nadie más (si ya suena otro, no hace nada).
  */
-function callarSonido(sound: Audio.Sound) {
+function callarSonido(sound: Reproducible) {
   if (current !== sound) return;
   current = null;
   fraccionActual = null;
@@ -628,6 +800,8 @@ export async function stopSpeaking() {
   gen += 1;
   // Lo que esperaba el comienzo del audio de antes ya no lo va a ver: ese audio no suena.
   alSonar = [];
+  // El reproductor en streaming se calla en el acto y vacía su cola (lo encadenado detrás tampoco suena).
+  if (central) central.parar();
   for (const l of [...locutoresVivos]) l.alCambiarGen();
   const s = current;
   current = null;
@@ -833,14 +1007,16 @@ export async function speak(
 
   const sentences = perf === 'sing' ? [clean] : splitSentences(clean);
   const AHEAD = 2;
-  const sources: Array<Promise<AVPlaybackSource | null>> = [];
+  const sources: Array<Promise<Fuente | null>> = [];
+  // El relleno (`hastaQue`) va por el camino de siempre: su corte gana mientras se BAJA, y por el nativo ya estaría sonando.
+  const vivoOk = !opts?.hastaQue;
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado, { previo: sentences[i - 1], siguiente: sentences[i + 1] }, opts?.voz);
+    if (i < sentences.length && !sources[i]) sources[i] = fuenteDe(sentences[i], perf, emocion, !!opts?.privado, { previo: sentences[i - 1], siguiente: sentences[i + 1] }, opts?.voz, undefined, vivoOk);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 
   let spoke = false;
-  let nextPrepared: Promise<Audio.Sound | null> | null = null;
+  let nextPrepared: Promise<Reproducible | null> | null = null;
   let cortado = false;
   void opts?.hastaQue?.then(() => (cortado = true));
   try {
@@ -872,6 +1048,9 @@ export async function speak(
         vozSonando.preparar(locucion, false);
         opts?.onAudioStart?.();
       }
+      // Por el nativo: la siguiente suena pegada a esta (sin hueco), si nada la invalidó.
+      const siguiente = nextPrepared;
+      encadenarDetras(sound, siguiente, () => my === gen && !cortado && nextPrepared === siguiente);
       await playPrepared(sound, my, perf === 'sing' ? 120_000 : 25_000, {
         text: sentences[i],
         kind: perf === 'sing' ? 'sing' : emocion === 'oracion' ? 'pray' : 'speak',
@@ -907,7 +1086,7 @@ export type FinLocutor = 'terminado' | 'cancelado';
 type FraseCola = { texto: string; previo: string; v: number };
 
 /** Suelta un sonido preparado que ya nadie va a usar (cuando llegue, si todavía no llegó). */
-function soltarPreparado(p: Promise<Audio.Sound | null>) {
+function soltarPreparado(p: Promise<Reproducible | null>) {
   void p.then((s) => s?.unloadAsync().catch(() => {})).catch(() => {});
 }
 
@@ -947,10 +1126,10 @@ export class StreamSpeaker {
   private my: number;
   private spoke = false;
   /** El sonido que puso ESTE locutor y suena ahora (cancelar lo calla; no toca el de nadie más). */
-  private sonido: Audio.Sound | null = null;
+  private sonido: Reproducible | null = null;
   /** La frase siguiente, preparándose mientras suena la actual (o mientras termina el relleno). */
-  private nextPrepared: { frase: FraseCola; p: Promise<Audio.Sound | null> } | null = null;
-  private sources = new Map<string, Promise<AVPlaybackSource | null>>();
+  private nextPrepared: { frase: FraseCola; p: Promise<Reproducible | null> } | null = null;
+  private sources = new Map<string, Promise<Fuente | null>>();
   /** Las descargas de este locutor: cancelar las aborta. */
   private io = new CorteIO();
   private soltarEsperas!: () => void;
@@ -1117,9 +1296,16 @@ export class StreamSpeaker {
     let p = this.sources.get(clave);
     if (!p) {
       const primera = !this.sources.size;
-      p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo }, undefined, this.io);
-      // Bajado no es sonando: la traza lo llama «tts» (lib/trazaTurno.ts); lo que suena lo dice onSuena.
-      if (primera && this.opts.onAudioBajado) void p.then((src) => src && this.vigente() && this.opts.onAudioBajado?.());
+      p = fuenteDe(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo }, undefined, this.io);
+      // Bajado no es sonando: la traza lo llama «tts» (lib/trazaTurno.ts); lo que suena lo dice onSuena. Por el nativo,
+      // «bajado» es haber juntado el prebúfer (el aviso «listo»).
+      if (primera && this.opts.onAudioBajado) {
+        void p.then((src) => {
+          if (!src) return;
+          if (esVivo(src)) src.vivo.alListo = () => this.vigente() && this.opts.onAudioBajado?.();
+          else if (this.vigente()) this.opts.onAudioBajado?.();
+        });
+      }
       this.sources.set(clave, p);
     }
     return p;
@@ -1129,7 +1315,7 @@ export class StreamSpeaker {
    * Prepara una frase. Después de CADA espera mira si sigue valiendo (no cancelado, misma generación, misma
    * versión del texto): si no, lo que llegó se suelta y no suena.
    */
-  private preparar(f: FraseCola): Promise<Audio.Sound | null> {
+  private preparar(f: FraseCola): Promise<Reproducible | null> {
     return (async () => {
       const src = await this.source(f.texto, f.previo);
       if (!src || !this.vigente() || f.v !== this.version) return null;
@@ -1163,7 +1349,7 @@ export class StreamSpeaker {
         const lista = this.nextPrepared;
         this.nextPrepared = null;
         // Lo preparado es de ESTA frase o no sirve (una cola reemplazada no revive con su audio viejo).
-        let prep: Promise<Audio.Sound | null>;
+        let prep: Promise<Reproducible | null>;
         if (lista && lista.frase === frase) prep = lista.p;
         else {
           if (lista) soltarPreparado(lista.p);
@@ -1195,6 +1381,9 @@ export class StreamSpeaker {
         }
         const primera = this.oido.length === 1;
         this.sonido = sound;
+        // Por el nativo: la siguiente suena pegada a esta (sin hueco), si para entonces sigue valiendo.
+        const sig = this.nextPrepared;
+        encadenarDetras(sound, sig?.p, () => !!sig && this.nextPrepared === sig && this.vigente() && sig.frase.v === this.version);
         await playPrepared(sound, this.my, 25_000, {
           text: frase.texto,
           kind: this.opts.emocion === 'oracion' ? 'pray' : 'speak',

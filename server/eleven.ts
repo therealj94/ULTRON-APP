@@ -466,7 +466,24 @@ type PedidoEleven = {
   idioma?: Idioma;
   /** El modelo de ElevenLabs (modeloDeLocucion); sin él, el de siempre. */
   modelo?: string;
+  /**
+   * El formato de salida (`output_format`). Sin él, el MP3 de siempre. `pcm_<hz>` lo pide la voz en streaming de
+   * la app (PCM crudo de 16 bits mono, que el teléfono suena con el primer trozo: server/voz-pcm.ts).
+   */
+  formato?: string;
 };
+
+/** Frecuencias de PCM que todos los planes de ElevenLabs dan por /stream (44,1 kHz pide plan Pro). */
+export const HZ_PCM_ELEVEN = [16000, 22050, 24000] as const;
+export type HzPcm = (typeof HZ_PCM_ELEVEN)[number];
+/** 22,05 kHz: la voz se oye entera y pesa 44 KB por segundo (un trozo de 7 s, ~300 KB por la red del teléfono). */
+export const HZ_PCM_OMISION: HzPcm = 22050;
+
+/** La frecuencia del PCM en streaming: ELEVENLABS_PCM_HZ si es una de las que se pueden pedir; si no, 22 050. */
+export function hzPcm(env: NodeJS.ProcessEnv = process.env): HzPcm {
+  const n = Number(String(env.ELEVENLABS_PCM_HZ || '').trim());
+  return (HZ_PCM_ELEVEN as readonly number[]).includes(n) ? (n as HzPcm) : HZ_PCM_OMISION;
+}
 
 /**
  * La estabilidad según la emoción: con alegría, risa o sorpresa se deja variar más la voz; en lo
@@ -505,10 +522,11 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
   if (opts.reloj && !opts.reloj.alcanza()) return null;
   const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
   const cuerpo = cuerpoEleven(opts);
+  const formato = opts.formato && /^(mp3|pcm)_\d{4,5}(_\d{2,3})?$/.test(opts.formato) ? opts.formato : FORMATO;
   try {
-    const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/stream?output_format=${FORMATO}`, {
+    const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/stream?output_format=${formato}`, {
       method: 'POST',
-      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: formato.startsWith('pcm') ? 'audio/pcm' : 'audio/mpeg' },
       body: JSON.stringify(cuerpo),
       signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
     });

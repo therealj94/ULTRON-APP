@@ -63,6 +63,7 @@ test('oír, ver y la voz abiertos con rate limit; ni turnos ni nada que cambie e
   // Oír, ver, la voz y cantar: pasan (decisión de la junta, la APK no se queda muda). Ninguna piensa.
   assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts', query: {} } as any), true);
   assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/stream', query: {} } as any), true);
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/pcm', query: {} } as any), true);
   assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/vision/analyze' } as any), true);
   // Un turno despierta al 27B: sin sesión ni clave de mesa, no (Fase 0.3).
   assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/turno' } as any), false);
