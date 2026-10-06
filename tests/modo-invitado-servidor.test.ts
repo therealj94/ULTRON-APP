@@ -76,6 +76,9 @@ before(async () => {
       ULTRON_VOCES_DIR: path.join(tmp, 'voces'),
       TSX_TSCONFIG_PATH: path.join(RAIZ, 'tsconfig.json'),
       ULTRON_SESION_SECRETO: SECRETO,
+      // SEC-04: despliegue de prueba SIN registro de cuentas, declarado (en producción sin declararlo, la comunidad no lee
+      // datos privados: «no configurado» no es «no suspendido»; tests/sesion-suspension.test.ts).
+      AURA_SUSPENSIONES: 'ninguna',
       ULTRON_NODO_URL: `http://127.0.0.1:${(nodo.address() as AddressInfo).port}`,
       ULTRON_NODO_SECRETO: 'prueba',
       // Que el servidor tenga correo y computadora para ofrecer (a la dueña sí; al invitado nunca).

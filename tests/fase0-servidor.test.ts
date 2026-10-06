@@ -81,6 +81,9 @@ before(async () => {
       ULTRON_PERFILES_DIR: path.join(tmp, 'perfiles'),
       TSX_TSCONFIG_PATH: path.join(RAIZ, 'tsconfig.json'),
       ULTRON_SESION_SECRETO: SECRETO,
+      // SEC-04: despliegue de prueba SIN registro de cuentas, declarado (en producción sin declararlo, la comunidad no lee
+      // datos privados: «no configurado» no es «no suspendido»; tests/sesion-suspension.test.ts).
+      AURA_SUSPENSIONES: 'ninguna',
       ULTRON_PADRON: PADRON,
       ULTRON_NODO_URL: `http://127.0.0.1:${(nodo.address() as AddressInfo).port}`,
       ULTRON_NODO_SECRETO: 'prueba',
