@@ -1,8 +1,10 @@
 /**
- * SU WHATSAPP EN LA APP: vincular, la lista de chats y cada conversación (server/whatsapp.ts).
+ * SU WHATSAPP EN LA APP: vincular, la lista de chats y cada conversación (server/whatsapp.ts). Cada cuenta de
+ * AU-RA, el suyo (José, 5-oct: «No aparece agregar whatsapp…»).
  *
- *   · Sin vincular: «con un código» (sirve en este mismo teléfono: WhatsApp → Dispositivos vinculados →
- *     Vincular con el número de teléfono) o «con QR» (para escanearlo desde otro teléfono o la PC).
+ *   · Sin vincular: «Agregar mi WhatsApp»: primero acepta qué se guarda y el riesgo (la tarjeta de consentimiento);
+ *     luego «con un código» (sirve en este mismo teléfono: WhatsApp → Dispositivos vinculados → Vincular un
+ *     dispositivo → Vincular con número de teléfono) o, de segunda opción, «con QR» (desde otro teléfono o la PC).
  *   · Vinculado: la lista como en WhatsApp (José, 2-oct: «todo es como texto plano… no parece WhatsApp»):
  *     cabecera verde, la foto de perfil de cada chat (o sus iniciales, o el icono de grupo), el nombre,
  *     la vista previa con el icono de lo que llegó (foto, nota de voz, documento…), la hora a la derecha
@@ -15,7 +17,7 @@
  *     se desvinculó (desde el teléfono), se limpia la lista y se ofrece vincular.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Clipboard, FlatList, Image, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { idiomaActual, tr, useIdioma } from '../i18n';
@@ -27,18 +29,23 @@ import { NuevoChatWA } from './NuevoChatWA';
 import { AvatarWA } from './PiezasWA';
 import {
   chatDeContacto,
+  codigoLegibleWA,
   coincide,
+  errorVincularWA,
   horaLista,
   huellaChats,
   juntarChats,
   mensajeErrorWA,
   nombreChat,
   paletaWA,
+  pasosCodigoWA,
+  pasoVincularWA,
   previaTexto,
   previaWA,
   sondeoListaWA,
   telefonoBonito,
   telefonoValido,
+  textoConsentimientoWA,
   vistaDe,
   type ChatWA,
   type ContactoWA,
@@ -59,6 +66,8 @@ type Props = {
   estadoInicial?: EstadoWA | null;
   /** Cuántos chats tienen algo sin leer (para el punto de la pestaña). */
   onNoLeidos?: (n: number) => void;
+  /** Cada estado nuevo (al vincular, la pestaña «+ WhatsApp» pasa a «WhatsApp»). */
+  onEstado?: (e: EstadoWA) => void;
 };
 
 const ICONO_PREVIA: Record<IconoPrevia, NombreIconoWA> = {
@@ -73,7 +82,7 @@ const ICONO_PREVIA: Record<IconoPrevia, NombreIconoWA> = {
   eliminado: 'prohibido',
 };
 
-export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null, onNoLeidos }: Props) {
+export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null, onNoLeidos, onEstado }: Props) {
   useIdioma();
   const p = useTema();
   const w = useMemo(() => paletaWA(p.oscuro), [p.oscuro]);
@@ -94,6 +103,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
     try {
       const e = await API.estadoWA();
       setEstado(e);
+      onEstado?.(e);
       const v = vistaDe(e);
       if (v === 'vincular') {
         // Se desvinculó (desde el teléfono o venció): lo de antes ya no vale.
@@ -119,7 +129,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
     } catch (e: any) {
       setError(mensajeErrorWA(Number(e?.status) || 0, e?.message, idiomaActual() === 'en' ? 'en' : 'es'));
     }
-  }, [onNoLeidos]);
+  }, [onNoLeidos, onEstado]);
 
   const vistaRef = useRef(vista);
   vistaRef.current = vista;
@@ -196,7 +206,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
   // El puente no contesta pero ya había chats: se siguen viendo (con el aviso arriba) en vez de una pantalla vacía.
   const conLista = vista === 'listo' || (vista === 'caido' && !!chats?.length);
   const numero = telefonoBonito(estado?.numero) || estado?.numero || '';
-  const detalle = vista === 'caido' ? tr('sin conexión con tu WhatsApp', 'not connected to your WhatsApp') : vista === 'listo' ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ') : tr('Tu WhatsApp personal', 'Your personal WhatsApp');
+  const detalle = vista === 'caido' ? tr('sin conexión con tu WhatsApp', 'not connected to your WhatsApp') : vista === 'listo' ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ') : tr('Agrega tu WhatsApp personal', 'Add your personal WhatsApp');
 
   return (
     <View style={{ flex: 1, backgroundColor: conLista ? w.fondo : p.fondo }}>
@@ -256,7 +266,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       {vista === 'revisando' ? (
         <ActivityIndicator color={w.globo} style={{ marginTop: 48 }} />
       ) : vista === 'caido' && !conLista ? (
-        <Aviso p={p} titulo={tr('Tu WhatsApp no contesta', 'Your WhatsApp isn’t answering')} texto={tr('Sigue vinculado: es la conexión con el servidor. Reintento solo cada pocos segundos; no hace falta vincular otra vez.', 'It’s still linked: it’s the connection to the server. I retry on my own every few seconds; no need to link again.')}>
+        <Aviso p={p} titulo={tr('Tu WhatsApp no contesta', 'Your WhatsApp isn’t answering')} texto={tr('Es la conexión del servidor con WhatsApp. Si ya lo tenías vinculado, sigue vinculado: no hace falta vincular otra vez. Reintento solo cada pocos segundos.', 'It’s the server’s connection to WhatsApp. If you had it linked, it’s still linked: no need to link again. I retry on my own every few seconds.')}>
           <Pressable onPress={() => void leer()} accessibilityRole="button" style={[s.botonGrande, { paddingHorizontal: 32, marginTop: 8 }]}>
             <Text style={s.botonGrandeTxt}>{tr('Reintentar ahora', 'Retry now')}</Text>
           </Pressable>
@@ -361,17 +371,28 @@ const st = StyleSheet.create({
 
 /* ── vincular ─────────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * «Agregar mi WhatsApp» (cada cuenta de AU-RA, el suyo; José, 5-oct). Primero la tarjeta de consentimiento (qué se
+ * guarda y dónde, que se borra al desvincular y el riesgo de una conexión no oficial) con «Acepto y vincular». Luego,
+ * en el MISMO teléfono, el código de 8 letras: grande, con «Copiar» y los pasos en WhatsApp. El QR queda de segunda
+ * opción (para vincular desde otro teléfono o la PC). Si el servidor ya no tiene lugar (CUPO_LLENO), se dice tal cual.
+ */
 export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA | null; onCambio: () => void }) {
   const s = useMemo(() => estilos(p), [p]);
+  const idioma = idiomaActual() === 'en' ? 'en' : 'es';
+  const [aceptado, setAceptado] = useState(false);
   const [modo, setModo] = useState<'codigo' | 'qr'>('codigo');
   const [tel, setTel] = useState('');
   const [codigo, setCodigo] = useState('');
   const [qr, setQr] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [error, setError] = useState('');
+  const [cupoLleno, setCupoLleno] = useState(false);
+  const [copiado, setCopiado] = useState(false);
   // Mientras vincula, el QR se renueva solo (el estado trae el último) y al vincular se cambia de pantalla.
   const qrVivo = estado?.qr || qr;
   const codigoVivo = estado?.codigo || codigo;
+  const paso = pasoVincularWA(estado, aceptado);
 
   const pedir = async () => {
     setError('');
@@ -388,40 +409,68 @@ export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA 
       }
       onCambio();
     } catch (e: any) {
-      setError(e?.message || tr('WhatsApp no contestó. Prueba otra vez.', 'WhatsApp didn’t answer. Try again.'));
+      const r = errorVincularWA(e, idioma);
+      setCupoLleno(r.cupoLleno);
+      setError(r.texto);
     } finally {
       setOcupado(false);
     }
   };
 
+  const copiar = async () => {
+    const c = codigoLegibleWA(codigoVivo);
+    try {
+      Clipboard.setString(c);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    } catch {
+      // Sin portapapeles: se comparte (y el código también se puede seleccionar a mano).
+      void Share.share({ message: c }).catch(() => {});
+    }
+  };
+
+  if (paso === 'consentimiento') {
+    return (
+      <View style={{ padding: MEDIDA.espacio.l, gap: MEDIDA.espacio.m }}>
+        <Text style={s.vTitulo} accessibilityRole="header">
+          {tr('Agregar mi WhatsApp', 'Add my WhatsApp')}
+        </Text>
+        <Text style={s.detalle}>
+          {tr(
+            'AU-RA entra como un «dispositivo vinculado», igual que WhatsApp Web: ves tus chats y contestas desde aquí, y AURA te los puede leer y ayudarte a contestar (nada sale sin tu «sí»). Tu teléfono sigue funcionando igual.',
+            'AU-RA joins as a “linked device”, like WhatsApp Web: you see your chats and reply from here, and AURA can read them to you and help you reply (nothing is sent without your “yes”). Your phone keeps working the same.'
+          )}
+        </Text>
+        <View style={s.tarjeta} accessible accessibilityLabel={textoConsentimientoWA(idioma)}>
+          <Text style={{ color: p.texto, fontSize: 15, lineHeight: 22 }}>{textoConsentimientoWA(idioma)}</Text>
+        </View>
+        <Pressable onPress={() => setAceptado(true)} style={s.botonGrande} accessibilityRole="button" accessibilityLabel={tr('Acepto y vincular', 'I agree, link it')}>
+          <Text style={s.botonGrandeTxt}>{tr('Acepto y vincular', 'I agree, link it')}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={{ padding: MEDIDA.espacio.l, gap: MEDIDA.espacio.m }}>
-      <Text style={s.vTitulo}>{tr('Vincula tu WhatsApp', 'Link your WhatsApp')}</Text>
-      <Text style={s.detalle}>
-        {tr(
-          'AU-RA entra como un «dispositivo vinculado», igual que WhatsApp Web: ves tus chats y contestas desde aquí. Tu teléfono sigue funcionando igual.',
-          'AU-RA joins as a “linked device”, like WhatsApp Web: you see your chats and reply from here. Your phone keeps working the same.'
-        )}
+      <Text style={s.vTitulo} accessibilityRole="header">
+        {tr('Agregar mi WhatsApp', 'Add my WhatsApp')}
       </Text>
-      <View style={s.segmento}>
-        {(['codigo', 'qr'] as const).map((m) => (
-          <Pressable key={m} onPress={() => setModo(m)} style={[s.segOpcion, modo === m && { backgroundColor: '#00A884' }]} accessibilityRole="button">
-            <Text style={[s.segTxt, modo === m && { color: '#FFFFFF' }]}>{m === 'codigo' ? tr('Con un código', 'With a code') : tr('Con QR', 'With QR')}</Text>
-          </Pressable>
-        ))}
-      </View>
       {modo === 'codigo' ? (
         codigoVivo ? (
           <View style={s.tarjeta}>
             <Text style={s.detalle}>{tr('Escribe este código en WhatsApp:', 'Type this code in WhatsApp:')}</Text>
-            <Text style={s.codigo} selectable>
-              {codigoVivo}
+            <Text style={s.codigo} selectable accessibilityLabel={codigoLegibleWA(codigoVivo).split('').join(' ')}>
+              {codigoLegibleWA(codigoVivo)}
             </Text>
-            <Pasos p={p} pasos={[tr('Abre WhatsApp → ⋮ (Más opciones) → Dispositivos vinculados.', 'Open WhatsApp → ⋮ (More options) → Linked devices.'), tr('Toca «Vincular un dispositivo» y luego «Vincular con el número de teléfono».', 'Tap “Link a device”, then “Link with phone number instead”.'), tr('Escribe el código. Aquí cambia solo cuando quede vinculado.', 'Type the code. This screen changes by itself once it’s linked.')]} />
+            <Pressable onPress={() => void copiar()} style={[s.botonGrande, { height: 44 }]} accessibilityRole="button" accessibilityLabel={tr('Copiar el código', 'Copy the code')}>
+              <Text style={s.botonGrandeTxt}>{copiado ? tr('¡Copiado!', 'Copied!') : tr('Copiar el código', 'Copy the code')}</Text>
+            </Pressable>
+            <Pasos p={p} pasos={pasosCodigoWA(idioma)} />
           </View>
         ) : (
           <View style={{ gap: MEDIDA.espacio.s }}>
-            <Text style={s.detalle}>{tr('Tu número de WhatsApp, con el código de país:', 'Your WhatsApp number, with the country code:')}</Text>
+            <Text style={s.detalle}>{tr('Tu número de WhatsApp, con el código de país (te doy un código de 8 letras para escribir en WhatsApp, en este mismo teléfono):', 'Your WhatsApp number, with the country code (I’ll give you an 8-letter code to type in WhatsApp, on this same phone):')}</Text>
             <TextInput value={tel} onChangeText={setTel} placeholder="504 9999 9999" placeholderTextColor={p.texto3} keyboardType="phone-pad" style={s.campo} accessibilityLabel={tr('Tu número', 'Your number')} />
           </View>
         )
@@ -430,15 +479,34 @@ export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA 
           <Image source={{ uri: qrVivo }} style={{ width: 240, height: 240, borderRadius: 8, backgroundColor: '#fff' }} accessibilityLabel={tr('Código QR para vincular', 'QR code to link')} />
           <Pasos p={p} pasos={[tr('En el teléfono con tu WhatsApp: ⋮ → Dispositivos vinculados → Vincular un dispositivo.', 'On the phone with your WhatsApp: ⋮ → Linked devices → Link a device.'), tr('Escanea este código (se renueva solo).', 'Scan this code (it refreshes by itself).')]} />
         </View>
-      ) : null}
-      {!!error && <Text style={{ color: p.aviso, fontSize: 14 }}>{error}</Text>}
-      {(modo === 'codigo' && !codigoVivo) || (modo === 'qr' && !qrVivo) ? (
+      ) : (
+        <Text style={s.detalle}>{tr('El QR sirve si vinculas desde otro teléfono o desde la PC: lo escaneas con el teléfono que tiene tu WhatsApp.', 'The QR works if you link from another phone or a PC: scan it with the phone that has your WhatsApp.')}</Text>
+      )}
+      {!!error && (
+        <Text style={{ color: p.aviso, fontSize: 14, lineHeight: 20 }} accessibilityLiveRegion="polite">
+          {error}
+        </Text>
+      )}
+      {!cupoLleno && ((modo === 'codigo' && !codigoVivo) || (modo === 'qr' && !qrVivo)) ? (
         <Pressable onPress={() => void pedir()} disabled={ocupado} style={[s.botonGrande, ocupado && { opacity: 0.6 }]} accessibilityRole="button">
           {ocupado ? <ActivityIndicator color="#FFFFFF" /> : <Text style={s.botonGrandeTxt}>{modo === 'codigo' ? tr('Pedir el código', 'Get the code') : tr('Mostrar el QR', 'Show the QR')}</Text>}
         </Pressable>
       ) : null}
+      {!cupoLleno ? (
+        <Pressable
+          onPress={() => {
+            setError('');
+            setModo(modo === 'codigo' ? 'qr' : 'codigo');
+          }}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={{ alignSelf: 'center', paddingVertical: 6 }}
+        >
+          <Text style={{ color: '#00A884', fontWeight: '700', fontSize: 14 }}>{modo === 'codigo' ? tr('Mejor con QR (desde otro teléfono o la PC)', 'Use a QR instead (from another phone or a PC)') : tr('Volver al código (en este teléfono)', 'Back to the code (on this phone)')}</Text>
+        </Pressable>
+      ) : null}
       <Text style={[s.detalle, { fontSize: 12, color: p.texto3 }]}>
-        {tr('Es tu WhatsApp personal y solo tu cuenta de AU-RA lo ve. Puedes desvincularlo cuando quieras, desde aquí o desde el teléfono.', 'It’s your personal WhatsApp and only your AU-RA account sees it. Unlink it anytime, from here or from your phone.')}
+        {tr('Es tu WhatsApp personal y solo tu cuenta de AU-RA lo ve. Puedes desvincularlo cuando quieras, desde Ajustes, desde aquí o desde el teléfono: se borra todo.', 'It’s your personal WhatsApp and only your AU-RA account sees it. Unlink it anytime, from Settings, from here or from your phone: everything is erased.')}
       </Text>
     </View>
   );

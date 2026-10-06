@@ -8,6 +8,8 @@
  *   POST /api/trabajos {requestId, titulo, objetivo?}                  → { tarea } (201 nueva, 200 la misma)
  *   POST /api/trabajos/:id/decisiones {decisionId, expectedVersion, opcion, hasta?} → { tarea, … }
  *   POST /api/trabajos/:id/pausar | /reanudar | /cancelar             → { tarea, ack } (idempotentes)
+ *   POST /api/trabajos/:id/editar {decisionId, expectedVersion, texto, asunto?} → { tarea } (nueva decisión para ESE texto; nada sale)
+ *   POST /api/trabajos/:id/en-pantalla {decisionId, visible, seq?}    → { registrada } (la ventana de decisión de la mesa)
  *
  * (`/api/tareas` ya es la lista de pendientes de la junta: no se renombra; lo nuevo va en `/api/trabajos`.)
  *
@@ -69,6 +71,8 @@ import {
   type VinculoTaller,
 } from '../lib/tareas-durables';
 import type { PropuestaAbierta, PropuestaTaller } from '../lib/taller';
+import { fijarEnPantalla, renovarEnPantalla, sigueSiendoUltimaSecuencia, soltarEnPantalla, tomarSecuenciaPantalla } from './decision-en-pantalla';
+import { esIdVeta } from './veta-entrar';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -79,6 +83,9 @@ export type RefTarea = { id: string; title: string; state: TaskSnapshot['state']
 export type SalidaEnvio = { estado: 'succeeded' | 'failed' | 'unknown' | 'stale'; resumen: string; referencia?: string };
 
 export type AccionTareaEnCurso = 'pausar' | 'seguir' | 'descartar' | 'retomar';
+
+/** Lo que devuelve editar un borrador desde la tarjeta: el nuevo, listo para su decisión, o por qué no. */
+export type EdicionDeBorrador = { ok: true; borrador: BorradorParaDecidir } | { ok: false; codigo: 'no-esta' | 'huella' | 'vacio' | 'largo'; mensaje: string };
 
 export type DepsTrabajos = {
   exigirMesa: express.RequestHandler;
@@ -114,9 +121,18 @@ export type DepsTrabajos = {
    * (destinatario o chat, cuenta y contenido); `enviar` recibe la que mostró la tarjeta y solo manda si es esa.
    */
   borradores?: {
-    vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string; huella?: string } | null;
+    /**
+     * El borrador que espera en esa conversación. Con `intento` (José, 5-oct): el de ESE intento, esté en el lugar
+     * principal o entre los apartados que otro borrador desplazó (server/borradores-cola.ts); null si ya no espera.
+     */
+    vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento?: string): { intento: string; huella?: string } | null;
     enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string): Promise<SalidaEnvio>;
     descartar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<unknown>;
+    /**
+     * «Editar» de la ventana de decisión (José, 5-oct): cambia el texto del borrador de ESE intento y ESA huella (los que
+     * mostró la tarjeta). Devuelve el borrador NUEVO (otro intento, otra huella) que espera su propio «sí»; nada sale.
+     */
+    editar?(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string, cambios: { texto: string; asunto?: string }): EdicionDeBorrador;
   };
   /**
    * Lo que el taller de la junta propuso (revisión 10, MEDIO-C; lib/taller.ts). `vigente`: ¿la cuenta que aprueba puede
@@ -185,6 +201,11 @@ export function conoceEstadosNuevos(req: Pick<express.Request, 'query' | 'header
 export const RECIENTES_MS = 3 * 86_400_000;
 /** Un envío aprobado en el chat que no confirmó nada en este rato pasa a «no he podido confirmar». */
 const ENVIO_SIN_NOTICIA_MS = 2 * 60_000;
+/**
+ * Cuánto se queda a la vista una propuesta bloqueada (venció o se quedó sin borrador) antes de cerrarse sola como
+ * «no salió nada» (José, 5-oct: lo vencido se dice, no se queda pidiendo una decisión para siempre).
+ */
+export const BLOQUEADA_VISIBLE_MS = 30 * 60_000;
 
 /* ------------------------------------------------------------------ el contexto del turno */
 
@@ -219,9 +240,13 @@ function pedidoDelTurno(tipo: string, clave: string): { requestId: string; turno
   return { requestId: `${tipo}-${crypto.randomUUID()}` };
 }
 
+/**
+ * De quién son las tareas: un correo o, revisión independiente (MENOR b), una identidad de Veta Wallet (`veta:0x…`, los
+ * miembros que entran solo con su billetera). Antes estos no tenían tarjetas de decisión.
+ */
 const conCorreo = (c: string) => {
   const s = String(c || '').trim().toLowerCase();
-  return s.includes('@') ? s : '';
+  return s.includes('@') || esIdVeta(s) ? s : '';
 };
 
 /* ------------------------------------------------------------------ ganchos: la computadora */
@@ -394,6 +419,9 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
  * `huella`: la del borrador (server/correo.ts huellaCorreo, server/whatsapp.ts huellaWhatsapp: destinatario o chat exacto,
  * cuenta y contenido). Es el vínculo de la decisión: «Aprobar» manda solo un borrador con ESA huella (revisión 4-oct).
  */
+/** Lo más largo del texto entero de un borrador que viaja en su decisión (la ventana lo muestra y lo deja editar). */
+export const TEXTO_PROPUESTA_MAX = 6000;
+
 export type BorradorParaDecidir = { canal: 'correo' | 'whatsapp'; intento: string; para: string[] | string; desde?: string; asunto?: string; texto: string; vence: number; huella?: string };
 
 function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion: number, ahora: number): Decision {
@@ -410,6 +438,10 @@ function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion:
       destinatario,
       datos: [b.asunto ? `Asunto: «${trozo(b.asunto, 140)}»` : '', `Texto: «${trozo(b.texto, 400)}»`].filter(Boolean),
       alcance: 'Solo este mensaje, una vez y sin cambios. No autoriza envíos futuros.',
+      // El texto entero (la ventana de decisión lo muestra tal cual y lo deja editar). Con su tope: un correo larguísimo
+      // se ve recortado, pero lo que se aprueba sigue siendo la huella del borrador entero.
+      texto: String(b.texto || '').slice(0, TEXTO_PROPUESTA_MAX),
+      ...(b.asunto ? { asunto: linea(b.asunto, 200) } : {}),
     },
     opciones: opcionesAprobacion(accion, destinatario),
     creada: ahora,
@@ -420,12 +452,57 @@ function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion:
   };
 }
 
+/** A quién va un borrador, como lo dice su tarjeta (la misma cuenta de `decisionDeBorrador`). */
+const destinatarioDe = (b: Pick<BorradorParaDecidir, 'para'>) => trozo(Array.isArray(b.para) ? b.para.join(', ') : b.para, 160) || 'sin destinatario';
+
+/**
+ * ¿Esta tarea espera (o se le bloqueó) la decisión de OTRA versión del mismo mensaje: mismo canal, misma conversación,
+ * mismo destinatario, otro intento? (`blocked`: venció o se quedó sin borrador; la versión nueva la revive.)
+ */
+function esOtraVersionDelMismo(t: RegistroTarea, ambito: string, b: BorradorParaDecidir, sigueEsperando?: (intento: string) => boolean): boolean {
+  const d = t.decision;
+  const v = d?.vinculo?.tipo === 'borrador' ? d.vinculo : null;
+  // Revisión 8.5 (MENOR 1): si el borrador de esa tarjeta sigue esperando (otro correo a la misma persona sobre otra cosa:
+  // server/correo.ts esVersionDe lo dejó entre los apartados), NO es una versión vieja: conserva su tarjeta.
+  if (v && sigueEsperando?.(v.intento)) return false;
+  // Revisión independiente (G3): la misma cuenta que los borradores (server/correo.ts: los mismos destinatarios en
+  // cualquier orden y sin importar mayúsculas; WhatsApp: el mismo chat, que su tarjeta dice igual).
+  return !!v && (t.estado === 'awaiting_approval' || t.estado === 'blocked') && v.canal === b.canal && v.ambito === ambito && v.intento !== b.intento && destinoCanon(d!.propuesta.destinatario) === destinoCanon(destinatarioDe(b));
+}
+
+/** Un destinatario de tarjeta, comparable: «B@x.com, a@x.com» y «a@x.com, b@x.com» son el mismo. */
+const destinoCanon = (s: string | undefined) =>
+  String(s || '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join(',');
+
+/** Las otras tarjetas de versiones viejas del mismo mensaje (si quedó más de una) se cierran: no se envió ninguna. */
+async function cerrarVersionesViejas(dueno: string, ids: string[]) {
+  for (const id of ids) {
+    const c = await cambiarTarea(dueno, id, (reg): Cambio | null =>
+      esTerminal(reg.estado)
+        ? null
+        : { estado: 'cancelled', pasoActual: null, decision: null, resultado: { id: `${reg.id}:resultado`, resumen: 'La reemplazó una versión nueva del mismo mensaje; esta no se envió.', evidencias: [], parcial: [], pendiente: [], t: Date.now() } }
+    ).catch(() => null);
+    if (c && c.ok) anotar(c.tarea);
+  }
+}
+
 /**
  * Un borrador quedó esperando su «sí»: la tarea con su decisión exacta. Una vez por borrador (su id de
  * intento). Si esa conversación tenía una tarea esperando cambios («Editar»), la nueva propuesta vuelve a
  * ESA tarea con otra versión del plan.
  */
-export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: string, b: BorradorParaDecidir): Promise<RefTarea | null> {
+export async function abrirDecisionDeBorrador(
+  duenoCorreo: string,
+  ambito: string,
+  b: BorradorParaDecidir,
+  /** ¿El borrador de ese intento sigue esperando? (server.ts lo busca en correo/WhatsApp; sin esto, por destinatario como antes). */
+  sigueEsperando?: (intento: string) => boolean
+): Promise<RefTarea | null> {
   const dueno = conCorreo(duenoCorreo);
   if (!dueno || !b.intento) return null;
   const requestId = `borrador-${b.intento}`;
@@ -450,6 +527,25 @@ export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: strin
         const c = await cambiarTarea(dueno, editando.id, (reg) => (reg.estado !== 'waiting_resource' ? null : { estado: 'awaiting_approval', pasoActual: 'Esperando tu decisión sobre la nueva propuesta', planVersion: reg.planVersion + 1, decision: decisionDeBorrador(amb, b, reg.planVersion + 1, ahora) }));
         if (c.ok) {
           anotar(c.tarea);
+          return refDe(c.tarea);
+        }
+      }
+    }
+    // José (5-oct): «cámbialo a…» arma otra versión del mensaje para la MISMA persona. Antes quedaban dos tarjetas (la vieja
+    // «bloqueada: ya no está esperando» y la nueva); ahora la versión nueva vuelve a la tarjeta que ya tenía a la vista
+    // (otra versión del plan, otra decisión: un «Aprobar» de la vieja no manda la nueva). El borrador viejo ya no espera:
+    // server/correo.ts y server/whatsapp.ts lo reemplazan al armar uno al mismo destino.
+    const versiones = lista.ok ? lista.tareas.filter((t) => esOtraVersionDelMismo(t, amb, b, sigueEsperando)).sort((x, y) => y.actualizada - x.actualizada) : [];
+    const misma = versiones[0];
+    if (misma) {
+      const r = await reservarPedido({ espacio: ESPACIO_PEDIDOS, dueno, requestId, propuesto: misma.id });
+      if (r.ok && r.id === misma.id) {
+        const c = await cambiarTarea(dueno, misma.id, (reg) =>
+          esOtraVersionDelMismo(reg, amb, b, sigueEsperando) ? { estado: 'awaiting_approval', pasoActual: 'Esperando tu decisión sobre la versión nueva', planVersion: reg.planVersion + 1, decision: decisionDeBorrador(amb, b, reg.planVersion + 1, ahora) } : null
+        );
+        if (c.ok) {
+          anotar(c.tarea);
+          await cerrarVersionesViejas(dueno, versiones.slice(1).map((x) => x.id));
           return refDe(c.tarea);
         }
       }
@@ -664,7 +760,8 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
     }
   }
   const leidas = misiones;
-  const vigente = (canal: 'correo' | 'whatsapp', ambito: string) => (d.borradores ? d.borradores.vigente(dueno, canal, ambito) : undefined);
+  // Por su intento (José, 5-oct): un borrador apartado que otro desplazó sigue esperando; no es «ya no está».
+  const vigente = (canal: 'correo' | 'whatsapp', ambito: string, intento: string) => (d.borradores ? d.borradores.vigente(dueno, canal, ambito, intento) : undefined);
   const r = await cambiarTarea(
     dueno,
     reg.id,
@@ -684,9 +781,20 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
           return { estado: 'blocked', pasoActual: 'Lo propuesto ya no es lo que se puede aprobar (cambió el destino o la cuenta). No se hizo nada.', decision: { ...dec, caduca: Math.min(dec.caduca ?? ahora, ahora - 1) } };
         }
       }
+      // Lo que quedó atrás (José, 5-oct): una propuesta que venció o se quedó sin borrador se le muestra una vez como
+      // «bloqueada» (la ventana de decisión pregunta si se rehace); pasado un rato se cierra sola con la verdad —no salió
+      // nada—, en vez de seguir pidiendo «Necesito una decisión» para siempre.
+      if (x.estado === 'blocked' && (dec?.vinculo?.tipo === 'borrador' || dec?.vinculo?.tipo === 'taller') && dec.caduca && ahora > dec.caduca + BLOQUEADA_VISIBLE_MS) {
+        return {
+          estado: 'cancelled',
+          pasoActual: null,
+          decision: null,
+          resultado: { id: `${x.id}:resultado`, resumen: dec.vinculo.tipo === 'borrador' ? 'Venció sin enviarse: no salió nada. Si aún lo quieres, pídemelo de nuevo.' : 'Venció sin hacerse: no se hizo nada. Si aún lo quieres, pídelo de nuevo.', evidencias: [], parcial: [], pendiente: [], t: ahora },
+        };
+      }
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {
         if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin enviarse. Si aún lo quieres, pide un borrador nuevo.' };
-        const v = vigente(dec.vinculo.canal, dec.vinculo.ambito);
+        const v = vigente(dec.vinculo.canal, dec.vinculo.ambito, dec.vinculo.intento);
         if (v !== undefined && (v?.intento !== dec.vinculo.intento || !v.huella || v.huella !== dec.vinculo.hash)) {
           return {
             estado: 'blocked',
@@ -928,7 +1036,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
         resultado: { id: `${e.reg.id}:resultado`, resumen: vinc ? 'No se envió: lo rechazaste. Queda constancia.' : 'Rechazada: no se hizo. Queda constancia.', evidencias: [], parcial: [], pendiente: [], t: t0 },
       });
       if (!r.ok) return r.resp();
-      if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
+      if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
+      soltarEnPantalla(dueno, e.reg.id);
       anotar(r.reg);
       return res.json({ tarea: vistaTarea(r.reg, ahora()), honesto: true });
     }
@@ -937,7 +1046,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       const r = await aplicar({ resolver, decision: null, estado: 'waiting_resource', pasoActual: 'Dime en el chat qué cambio; preparo una propuesta nueva. Esta ya no vale.' });
       if (!r.ok) return r.resp();
       // Editar invalida el vínculo anterior: el borrador viejo se descarta (un «sí» en el chat ya no lo manda).
-      if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
+      if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
       const para = decision.propuesta.destinatario || '';
       const sugerencia = vinc ? (vinc.canal === 'correo' ? `Cambia el correo para ${para}: ` : `Cambia el WhatsApp para ${para}: `) : 'Cambia la propuesta: ';
       return res.json({ tarea: vistaTarea(r.reg, ahora()), sugerencia, honesto: true });
@@ -978,7 +1087,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4) El mismo intento y la
     // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno. Sin huella del que
     // espera no hay con qué compararlo: se bloquea (permisos exactos, 4-oct; antes, sin huella, pasaba).
-    const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito);
+    const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento);
     if (espera?.intento !== vinc.intento || !espera.huella || espera.huella !== vinc.hash) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'Esa propuesta ya no es la que espera: no envié nada. Mira la actual o pide una nueva.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
@@ -994,8 +1103,100 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const s: SalidaEnvio = salida.corrio && salida.resultado ? salida.resultado : { estado: 'unknown', resumen: 'No supe cómo terminó el envío.' };
     const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
     const reg = fin && fin.ok ? fin.tarea : r.reg;
+    soltarEnPantalla(dueno, e.reg.id);
     anotar(reg);
     return res.json({ tarea: vistaTarea(reg, ahora()), operacion, honesto: true });
+  });
+
+  /* ---------------------------------------------------------------- editar el texto desde la tarjeta */
+
+  /**
+   * POST /api/trabajos/:id/editar {decisionId, expectedVersion, texto, asunto?} (José, 5-oct: «que sea tocar Sí o No o
+   * Editar»). Cambia el texto del borrador que mostró la tarjeta (su intento y su huella, la decisión y la versión que vio
+   * la persona) y deja en la MISMA tarea una decisión nueva para ESE texto: la tarjeta se lo vuelve a mostrar y nada sale
+   * hasta su «sí» a esta versión exacta (otra huella: un «Aprobar» de antes no la manda). No envía nada.
+   */
+  app.post('/api/trabajos/:id/editar', d.exigirMesa, d.limitar(30), async (req, res) => {
+    const dueno = correoDe(req);
+    if (!dueno) return sinDueno(req, res);
+    const b = (req.body || {}) as Record<string, unknown>;
+    const pedido = { decisionId: String(b.decisionId || ''), expectedVersion: Number(b.expectedVersion), opcion: 'editar' };
+    if (!pedido.decisionId || !Number.isFinite(pedido.expectedVersion) || typeof b.texto !== 'string') return res.status(400).json({ error: 'Faltan decisionId, expectedVersion o el texto.', honesto: true });
+    if (b.asunto !== undefined && typeof b.asunto !== 'string') return res.status(400).json({ error: 'El asunto va como texto.', honesto: true });
+    const e = await buscar(dueno, String(req.params.id || ''), false);
+    if (e.tipo === 'almacen') return almacenCaido(res);
+    if (e.tipo === 'no') return noEsta(res);
+    if (e.tipo !== 'durable') return res.status(409).json({ error: 'Esta decisión no se edita: contéstala con sus opciones.', codigo: 'no-editable', tarea: vista(e), honesto: true });
+    const t0 = ahora();
+    const v = validarDecision(e.reg, pedido, t0);
+    if (v.ok === false) return res.status(409).json({ error: v.codigo === 'opcion' ? 'Esta propuesta no se edita: contéstala con sus opciones.' : v.mensaje, codigo: v.codigo === 'opcion' ? 'no-editable' : v.codigo, tarea: vistaTarea(e.reg, t0), honesto: true });
+    if ('repetida' in v) return res.status(409).json({ error: 'Esa propuesta ya se dejó para cambiar en el chat.', codigo: 'ya-decidida', tarea: vistaTarea(e.reg, t0), honesto: true });
+    const vinc = v.decision.vinculo?.tipo === 'borrador' ? v.decision.vinculo : null;
+    if (!vinc || !d.borradores?.editar) return res.status(409).json({ error: 'Esta propuesta no se edita desde aquí: contéstala con sus opciones.', codigo: 'no-editable', tarea: vistaTarea(e.reg, t0), honesto: true });
+    if (v.decision.caduca && t0 > v.decision.caduca) return res.status(409).json({ error: 'La propuesta caducó: pide un borrador nuevo.', codigo: 'caducada', tarea: vistaTarea(e.reg, t0), honesto: true });
+    const cambios = { texto: String(b.texto), ...(typeof b.asunto === 'string' && vinc.canal === 'correo' ? { asunto: b.asunto } : {}) };
+    const r = d.borradores.editar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash, cambios);
+    if (r.ok === false) {
+      if (r.codigo === 'vacio' || r.codigo === 'largo') return res.status(400).json({ error: r.mensaje, codigo: 'texto', tarea: vistaTarea(e.reg, t0), honesto: true });
+      const fresca = await reconciliar(dueno, e.reg, d, ahora());
+      return res.status(409).json({ error: r.mensaje, codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
+    }
+    const nuevo = r.borrador;
+    // El intento nuevo apunta a ESTA tarea: el «sí» del chat (cerrarDecisionPorChat) y el panel la encuentran.
+    await reservarPedido({ espacio: ESPACIO_PEDIDOS, dueno, requestId: `borrador-${nuevo.intento}`, propuesto: e.reg.id }).catch(() => null);
+    const c = await cambiarTarea(
+      dueno,
+      e.reg.id,
+      (reg) => ({ estado: 'awaiting_approval', pasoActual: 'Esperando tu decisión sobre el texto que cambiaste', planVersion: reg.planVersion + 1, decision: decisionDeBorrador(vinc.ambito, nuevo, reg.planVersion + 1, ahora()) }),
+      { expectedVersion: pedido.expectedVersion, ahora: ahora() }
+    ).catch(() => null);
+    if (!c || c.ok === false) {
+      // La tarea cambió en medio: el borrador ya es el nuevo (el viejo no se puede mandar); la tarea se reconcilia.
+      const fresca = await reconciliar(dueno, e.reg, d, ahora());
+      return res.status(409).json({ error: 'La tarea cambió mientras editabas. No envié nada: mira cómo quedó.', codigo: 'version', tarea: vistaTarea(fresca, ahora()), honesto: true });
+    }
+    anotar(c.tarea);
+    return res.json({ tarea: vistaTarea(c.tarea, ahora()), editada: true, honesto: true });
+  });
+
+  /* ---------------------------------------------------------------- lo que la persona tiene a la vista */
+
+  /**
+   * POST /api/trabajos/:id/en-pantalla {decisionId, visible} (José, 5-oct: «y pueda decirlo hablado»). La ventana de
+   * decisión de la mesa avisa qué propuesta muestra: mientras se ve, un «sí» o un «no» puro del chat o de la voz es para
+   * ESA (server/decision-en-pantalla.ts, server/decision-turno.ts), nunca para otra. `visible: false` la suelta. Una
+   * decisión que ya cambió es 409 `decision-vieja` con la tarea de ahora (la ventana muestra la nueva).
+   */
+  app.post('/api/trabajos/:id/en-pantalla', d.exigirMesa, d.limitar(60), async (req, res) => {
+    const dueno = correoDe(req);
+    if (!dueno) return sinDueno(req, res);
+    const b = (req.body || {}) as Record<string, unknown>;
+    const id = String(req.params.id || '');
+    // Revisión 7.5 (MENOR 2): un aviso más viejo que el último de este aparato (llegó tarde) no cuenta.
+    const aparato = req.headers['x-aura-aparato'];
+    if (!tomarSecuenciaPantalla(dueno, aparato, b.seq)) return res.json({ registrada: false, vieja: true, honesto: true });
+    if (b.visible === false) {
+      soltarEnPantalla(dueno, id, typeof b.decisionId === 'string' && b.decisionId ? b.decisionId : undefined);
+      return res.json({ registrada: false, honesto: true });
+    }
+    const decisionId = String(b.decisionId || '');
+    if (!decisionId) return res.status(400).json({ error: 'Falta decisionId.', honesto: true });
+    // La ventana sigue abierta con la misma: solo se renueva si sigue registrada (no revive una que una pregunta más nueva
+    // de AU-RA ya reemplazó).
+    if (b.renovar === true) return res.json({ registrada: renovarEnPantalla(dueno, id, decisionId), honesto: true });
+    const e = await buscar(dueno, id, false);
+    if (e.tipo === 'almacen') return almacenCaido(res);
+    if (e.tipo === 'no') return noEsta(res);
+    if (e.tipo !== 'durable') return res.json({ registrada: false, honesto: true });
+    const dec = e.reg.decision;
+    if (esTerminal(e.reg.estado) || !dec) return res.status(409).json({ error: 'Esta tarea ya no espera ninguna decisión.', codigo: 'sin-decision', tarea: vistaTarea(e.reg, ahora()), honesto: true });
+    if (dec.id !== decisionId) return res.status(409).json({ error: 'Esa propuesta ya cambió.', codigo: 'decision-vieja', tarea: vistaTarea(e.reg, ahora()), honesto: true });
+    const vinc = dec.vinculo?.tipo === 'borrador' ? dec.vinculo : null;
+    if (!vinc || e.reg.estado !== 'awaiting_approval') return res.json({ registrada: false, honesto: true });
+    // Mientras se leía la tarea llegó un aviso más nuevo del mismo aparato (la «oculta»): ese gana.
+    if (!sigueSiendoUltimaSecuencia(dueno, aparato, b.seq)) return res.json({ registrada: false, vieja: true, honesto: true });
+    fijarEnPantalla(dueno, { canal: vinc.canal, ambito: vinc.ambito, intento: vinc.intento, huella: vinc.hash, tareaId: e.reg.id, decisionId: dec.id, via: 'pantalla' });
+    return res.json({ registrada: true, honesto: true });
   });
 
   function decidirTareaEnCurso(res: express.Response, dueno: string, t: TareaEnCursoMin, p: { decisionId: string; expectedVersion: number; opcion: string }) {
@@ -1082,7 +1283,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
           }
         }
         const vinc = reg.decision?.vinculo?.tipo === 'borrador' ? reg.decision.vinculo : null;
-        if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
+        if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
         const hechas = reg.resueltas.filter((x) => x.operacion);
         if (faseParada && faseParada !== 'quiescent') {
           ack = 'recibido';

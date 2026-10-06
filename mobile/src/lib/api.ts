@@ -21,6 +21,7 @@ import { esVencida, guardarTokenDeEntrada, intentoVigente, vencida, type Intento
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
+import { campoQuienHabla, type QuienHablaTurno } from '../voces/voces';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -431,6 +432,13 @@ type TurnoOpts = {
    * alcanzó a oír. El servidor abre con un acuse corto («Va, dime») en vez de repetirse (lib/interrumpida.ts).
    */
   interrumpido?: { oido: string };
+  /**
+   * Por la voz, quien dijo ESTA frase es alguien del círculo y no la dueña (src/voces): su id de voz. El
+   * servidor lo usa para la regla de «no le leas lo privado de la dueña» aunque la escena llegue cortada;
+   * solo AGREGA cuidado, nunca da permiso de nada (lib/voces-miembro.ts reglaQuienHablaDeTurno). `reciente`: de esta frase
+   * no se supo (muy corta, tardó) y es la última voz que no es la dueña (revisión 7.5, M1′): solo precaución.
+   */
+  quienHabla?: QuienHablaTurno;
 };
 
 /**
@@ -485,6 +493,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
     ...(opts.soloRepetir && opts.idTurno ? { soloRepetir: true } : {}),
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
+    ...(campoQuienHabla(opts.quienHabla) ? { quienHabla: campoQuienHabla(opts.quienHabla) } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

@@ -14,7 +14,7 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`;
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { API, CUENTA } = M;
   const mesa = globalThis.__mesa;
   CUENTA.fijarCuenta('a@prueba.local', { nueva: true });

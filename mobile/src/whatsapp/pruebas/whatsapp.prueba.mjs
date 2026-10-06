@@ -12,6 +12,14 @@ import {
   archivoCache,
   archivoFoto,
   chatDeContacto,
+  codigoLegibleWA,
+  dirCacheWA,
+  entradasAjenasWA,
+  entradaWA,
+  errorVincularWA,
+  pasosCodigoWA,
+  pasoVincularWA,
+  textoConsentimientoWA,
   mediaReintentable,
   normalizarContactos,
   coincide,
@@ -153,7 +161,8 @@ prueba('las dos entradas de chats llevan la pestaña de WhatsApp; otra cuenta ve
   assert.match(envoltorio, /setTimeout\(\(\) => preguntar\(intento \+ 1\)/, 'si falla la red, vuelve a preguntar');
   assert.match(envoltorio, /clearTimeout\(espera\)/, 'al salir no queda un reintento colgado');
   const pantalla = leer('whatsapp/PantallaWhatsapp.tsx');
-  assert.match(pantalla, /Vincular con el número de teléfono/, 'el código sirve en el mismo teléfono');
+  assert.match(pasosCodigoWA().join(' '), /Vincular con número de teléfono/, 'el código sirve en el mismo teléfono');
+  assert.match(pantalla, /pasosCodigoWA\(idioma\)/);
   const chat = leer('whatsapp/ConversacionWA.tsx');
   assert.match(chat, /API\.leidoWA/, 'abrir un chat lo marca leído');
   assert.match(chat, /registrarAtras\(/, '«atrás» cierra el chat (y antes la foto o el video)');
@@ -414,7 +423,7 @@ prueba('subir en un chat trae los mensajes anteriores (?antes=), sin repetir ni 
   assert.match(chat, /API\.mensajesWA\(chat\.jid, masViejo\)/);
   assert.match(fs.readFileSync(path.join(AQUI, '..', 'api.ts'), 'utf8'), /&antes=\$\{Math\.floor\(antes\)\}/);
   const servidor = fs.readFileSync(path.join(AQUI, '..', '..', '..', '..', 'server', 'whatsapp.ts'), 'utf8');
-  assert.match(servidor, /mensajesWA\(chat, 60, Number\(req\.query\.antes\) \|\| 0\)/, 'el servidor pasa `antes` al puente');
+  assert.match(servidor, /mensajesWA\(correoDe\(req\), chat, 60, Number\(req\.query\.antes\) \|\| 0\)/, 'el servidor pasa `antes` al puente (de SU cuenta)');
 });
 
 prueba('los errores dichos para la persona: puente caído, desvinculado (412), sesión, sin red', () => {
@@ -439,6 +448,93 @@ prueba('una nota de voz o un video que ya no están (410) se nombran como lo que
   assert.equal(mensajeErrorMedia(410, 'esa foto ya no está en WhatsApp; ábrela en tu teléfono', 'es', 'imagen'), 'Esa foto ya no está en WhatsApp; ábrela en tu teléfono');
   assert.match(mensajeErrorMedia(412, '', 'es', 'audio'), /no está vinculado/, '412: no se reintenta');
   assert.match(fs.readFileSync(path.join(AQUI, '..', 'medios.ts'), 'utf8'), /mensajeErrorMedia\(status, e\?\.message, .*?, m\.tipo\)/);
+});
+
+/* ── «Agregar mi WhatsApp» (José, 5-oct: «No aparece agregar whatsapp… ni les aparece whatsapp en donde está todo») ── */
+
+prueba('«Agregar mi WhatsApp»: lo ve toda cuenta que puede y todavía no lo tiene; vinculado, la pestaña de siempre', () => {
+  assert.equal(entradaWA(null), 'oculto', 'sin saber todavía, nada');
+  assert.equal(entradaWA({ disponible: true, permitido: false, vinculado: false }), 'oculto', 'una cuenta que no puede');
+  assert.equal(entradaWA({ disponible: false, permitido: true, vinculado: false }), 'oculto', 'el servidor sin WhatsApp: nada que agregar');
+  assert.equal(entradaWA({ disponible: true, permitido: true, vinculado: false, registrada: false }), 'agregar', 'cualquier cuenta sin vincular: agregar');
+  assert.equal(entradaWA({ disponible: true, permitido: true, vinculado: false, vinculando: true, codigo: 'ABCDEFGH' }), 'agregar', 'a media vinculación sigue en agregar');
+  assert.equal(entradaWA({ disponible: true, permitido: true, vinculado: true }), 'whatsapp');
+  assert.equal(entradaWA({ disponible: true, permitido: true, vinculado: false, error: 'El puente no contestó' }), 'whatsapp', 'el puente caído no esconde su WhatsApp ni pide vincular');
+  const leer = (r) => fs.readFileSync(path.join(AQUI, '..', '..', r), 'utf8');
+  // En Chats, donde va la pestaña de WhatsApp: «+ WhatsApp» (se lee «Agregar mi WhatsApp»).
+  const envoltorio = leer('whatsapp/ChatsConWhatsapp.tsx');
+  assert.match(envoltorio, /const entrada = entradaWA\(estado\);\s*const conWhatsapp = entrada !== 'oculto';/);
+  assert.match(envoltorio, /agregarWA=\{entrada === 'agregar'\}/);
+  assert.match(envoltorio, /texto: '\+ WhatsApp'.*etiqueta: tr\('Agregar mi WhatsApp'/);
+  assert.match(envoltorio, /onEstado=\{alEstado\}/, 'al vincular, la pestaña cambia sola');
+  // En Ajustes: agregar si no lo tiene; ya vinculado, verlo y «Desvincular WhatsApp» (con confirmación).
+  const ajustes = leer('ajustes/Ajustes.tsx');
+  assert.match(ajustes, /entradaWa === 'agregar' \? \(\s*<Fila titulo=\{tr\('Agregar mi WhatsApp'/);
+  assert.match(ajustes, /onPress=\{abrirWhatsapp\}/);
+  assert.match(ajustes, /\{wa\?\.vinculado \? <Fila titulo=\{tr\('Desvincular WhatsApp'/);
+  assert.match(ajustes, /visible=\{hoja === 'whatsapp-desvincular'\}/);
+  assert.match(ajustes, /await WA\.desvincularWA\(\)/);
+  assert.match(ajustes, /se borra todo lo que tenía guardado/);
+});
+
+prueba('antes de vincular, el consentimiento; el código de 8 letras grande, para copiar, con los pasos; CUPO_LLENO honesto', () => {
+  assert.equal(
+    textoConsentimientoWA('es'),
+    'Tus mensajes de WhatsApp se guardan en el servidor de AU-RA para que puedas verlos y contestarlos aquí. Puedes desvincularlo cuando quieras (se borra todo). WhatsApp no es oficial con esta conexión y podría limitar tu cuenta.'
+  );
+  assert.match(textoConsentimientoWA('en'), /stored on the AU-RA server.*everything is erased.*isn’t official/);
+  // Primero acepta; a media vinculación (código o QR a la vista) no se le vuelve a preguntar.
+  assert.equal(pasoVincularWA(null, false), 'consentimiento');
+  assert.equal(pasoVincularWA({ disponible: true, permitido: true, vinculado: false }, false), 'consentimiento');
+  assert.equal(pasoVincularWA({ disponible: true, permitido: true, vinculado: false }, true), 'vincular');
+  assert.equal(pasoVincularWA({ disponible: true, permitido: true, vinculado: false, codigo: 'ABCDEFGH' }, false), 'vincular');
+  assert.equal(pasoVincularWA({ disponible: true, permitido: true, vinculado: false, vinculando: true }, false), 'vincular');
+  // Los pasos en WhatsApp, en orden.
+  assert.deepEqual(pasosCodigoWA('es'), ['Abre WhatsApp → Dispositivos vinculados.', 'Toca «Vincular un dispositivo».', 'Toca «Vincular con número de teléfono».', 'Escribe este código. Aquí cambia solo cuando quede vinculado.']);
+  assert.equal(pasosCodigoWA('en').length, 4);
+  assert.equal(codigoLegibleWA('abcd1234'), 'ABCD-1234');
+  assert.equal(codigoLegibleWA('ABCD-1234'), 'ABCD-1234');
+  // El servidor lleno: se dice tal cual y no se ofrece reintentar.
+  const lleno = errorVincularWA({ status: 507, message: 'x', data: { code: 'CUPO_LLENO', error: 'Ahora mismo no caben más WhatsApp en AU-RA: el servidor llegó a su tope de cuentas. No se vinculó nada.' } });
+  assert.equal(lleno.cupoLleno, true);
+  assert.match(lleno.texto, /no caben más WhatsApp.*No se vinculó nada/);
+  assert.match(errorVincularWA({ status: 507, data: { code: 'CUPO_LLENO' } }, 'en').texto, /no room for more WhatsApp/);
+  assert.deepEqual(errorVincularWA({ status: 400, message: 'escribe tu número con el código de país' }), { cupoLleno: false, texto: 'escribe tu número con el código de país' });
+  assert.equal(errorVincularWA(new Error('Escribe tu número con el código de país, por ejemplo 504 9999 9999.')).cupoLleno, false);
+  // La pantalla: la tarjeta con «Acepto y vincular», el código grande con «Copiar», el QR de segunda opción.
+  const pantalla = fs.readFileSync(path.join(AQUI, '..', 'PantallaWhatsapp.tsx'), 'utf8');
+  assert.match(pantalla, /if \(paso === 'consentimiento'\)/);
+  assert.match(pantalla, /\{textoConsentimientoWA\(idioma\)\}/);
+  assert.match(pantalla, /tr\('Acepto y vincular', 'I agree, link it'\)/);
+  assert.match(pantalla, /Clipboard\.setString\(c\)/);
+  assert.match(pantalla, /tr\('Copiar el código', 'Copy the code'\)/);
+  assert.match(pantalla, /useState<'codigo' \| 'qr'>\('codigo'\)/, 'primero el código (en el mismo teléfono)');
+  assert.match(pantalla, /Mejor con QR \(desde otro teléfono o la PC\)/);
+  assert.match(pantalla, /!cupoLleno && \(\(modo === 'codigo'/, 'con el cupo lleno no se ofrece pedir otra vez');
+  assert.match(pantalla, /tr\('Agregar mi WhatsApp', 'Add my WhatsApp'\)/);
+});
+
+prueba('revisión del 5-oct: el caché de fotos y archivos es de UNA cuenta y se borra al salir', () => {
+  // Una carpeta por cuenta (el seudónimo, sin el correo); sin nadie dentro o sin disco, ninguna.
+  assert.equal(dirCacheWA('file:///cache/', 'u0011aabb'), 'file:///cache/whatsapp/u0011aabb/');
+  assert.equal(dirCacheWA('file:///cache/', ''), '');
+  assert.equal(dirCacheWA(null, 'u0011aabb'), '');
+  assert.equal(dirCacheWA('file:///cache/', '../x'), 'file:///cache/whatsapp/x/', 'nada de «..» ni «/»');
+  assert.notEqual(dirCacheWA('c/', 'u1') + archivoCache('504@s.whatsapp.net', 'M1', 'imagen'), dirCacheWA('c/', 'u2') + archivoCache('504@s.whatsapp.net', 'M1', 'imagen'), 'el mismo chat y mensaje en dos cuentas: dos archivos');
+  // Al cambiar de cuenta: se borra todo lo que no es de quien entró (también lo de antes, que iba sin cuenta); al salir, todo.
+  assert.deepEqual(entradasAjenasWA(['u1', 'u2', 'm-504-M1.jpg', 'foto-504.jpg'], 'u2'), ['u1', 'm-504-M1.jpg', 'foto-504.jpg']);
+  assert.deepEqual(entradasAjenasWA(['u1', 'u2'], ''), ['u1', 'u2']);
+  // medios.ts lo usa: carpeta por cuenta, memoria y disco soltados al cambiar de cuenta, y nada de la anterior que llegue tarde.
+  const medios = fs.readFileSync(path.join(AQUI, '..', 'medios.ts'), 'utf8');
+  assert.match(medios, /const dirActual = \(\) => dirCacheWA\(FS\.cacheDirectory, seudonimoActual\(\)\)/);
+  assert.match(medios, /alCambiarCuenta\(\(\) => \{\s*MEDIA\.clear\(\);\s*MEDIA_EN_VUELO\.clear\(\);\s*FOTOS\.clear\(\);\s*FOTOS_EN_VUELO\.clear\(\);[\s\S]*?limpiarAjenas\(\);/);
+  assert.match(medios, /entradasAjenasWA\(entradas, quien\)/);
+  assert.match(medios, /if \(sigueVigente\(gen\)\) MEDIA\.set\(clave, uri\);/);
+  assert.doesNotMatch(medios, /`\$\{FS\.cacheDirectory\}whatsapp\/` : '';\s*let dirListo: Promise/, 'ya no hay una carpeta común');
+  // La sesión: salir y entrar otra persona abren una generación nueva (lib/cuenta.ts), lo que dispara la limpieza.
+  const sesion = fs.readFileSync(path.join(AQUI, '..', '..', 'app', 'sesion.ts'), 'utf8');
+  assert.match(sesion, /export function salirDeLaSesion\(\) \{[\s\S]*?fijarUsuario\(null\);/);
+  assert.match(sesion, /export function fijarUsuario[\s\S]*?fijarCuenta\(u\?\.correo \?\? null\);/);
 });
 
 let ok = 0;

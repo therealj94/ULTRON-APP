@@ -12,7 +12,7 @@ const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`;
 const resp = (cuerpo, status = 200) => new Response(JSON.stringify(cuerpo), { status });
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { API, CUENTA, INTENTO } = M;
   const mesa = globalThis.__mesa;
   const esVencida = (e) => !!INTENTO?.esVencida?.(e);

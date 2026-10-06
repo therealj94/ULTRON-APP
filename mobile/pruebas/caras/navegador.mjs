@@ -15,6 +15,9 @@
  *    su distancia al original (debe quedar bajo UMBRAL);
  *  · caras de personas DISTINTAS: su distancia (debe quedar sobre UMBRAL);
  *  · con `identificar` (src/caras/caras.ts), aciertos, confusiones y «no sé» al reconocer las variantes.
+ *  · caras LEJANAS (la foto achicada dentro de una de 1280×720, como la del bucle de la cámara): la foto
+ *    entera con el detector chico a 416 (lo de antes) contra los recortes agrandados de las cajas de ML Kit
+ *    (lo de ahora, `cajas` en el mensaje): cuántas ve y reconoce cada uno, y que ninguno confunda nombres.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -109,9 +112,9 @@ try {
   if (lista?.tipo !== 'lista') throw new Error('no cargó');
 
   let n = 0;
-  const analizar = async (b64) => {
+  const analizar = async (b64, cajas) => {
     const id = ++n;
-    await pag.evaluate(([id, b64]) => window.__caras({ tipo: 'analizar', id, imagen: b64 }), [id, b64]);
+    await pag.evaluate(([id, b64, cajas]) => window.__caras({ tipo: 'analizar', id, imagen: b64, ...(cajas ? { cajas } : {}) }), [id, b64, cajas || null]);
     const r = await esperar((m) => m.id === id && (m.tipo === 'caras' || m.tipo === 'error'), 60_000);
     if (!r || r.tipo !== 'caras') throw new Error(`análisis ${id}: ${r?.motivo || 'sin respuesta'}`);
     return r;
@@ -185,6 +188,65 @@ try {
   const falsasAceptaciones = distintas.filter((d) => d < UMBRAL).length;
   console.log(`[caras] con umbral ${UMBRAL}: ${falsosRechazos}/${mismas.length} rechazos falsos · ${falsasAceptaciones}/${distintas.length} aceptaciones falsas`);
   console.log(`[caras] identificar(): ${aciertos} aciertos · ${confusiones} confusiones · ${noSe} «no sé» · tiempo por foto: mediana ${med(tiempos)} ms (Chromium con SwiftShader, sin GPU)`);
+  // ── caras LEJANAS: la foto de muestra achicada dentro de una foto de 1280×720 (como la del bucle) ──
+  // Lo de antes (la foto entera con el detector chico a 416) contra lo de ahora (recortes agrandados de las
+  // cajas que da ML Kit; aquí las cajas salen de la detección en la foto original, llevadas a la lejana).
+  const lejana = (b64, escala) =>
+    pag.evaluate(
+      async ([b64, escala]) => {
+        const img = new Image();
+        img.src = `data:image/jpeg;base64,${b64}`;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = 1280;
+        c.height = 720;
+        const g = c.getContext('2d');
+        g.fillStyle = '#6b6b6b';
+        g.fillRect(0, 0, 1280, 720);
+        const w = 1280 * escala;
+        const h = (w * img.naturalHeight) / img.naturalWidth;
+        const x = (1280 - w) / 2;
+        const y = (720 - h) / 2;
+        g.drawImage(img, x, y, w, h);
+        return { b64: c.toDataURL('image/jpeg', 0.5).split(',')[1], x: x / 1280, y: y / 720, w: w / 1280, h: h / 720 };
+      },
+      [b64, escala]
+    );
+  const lejos = { antes: { vistas: 0, aciertos: 0, confusiones: 0 }, ahora: { vistas: 0, aciertos: 0, confusiones: 0 }, total: 0, dAhora: [], px: [] };
+  for (const escala of [0.45, 0.3]) {
+    for (let i = 1; i <= 6; i++) {
+      const b64 = fs.readFileSync(local(`${DEMO}sample${i}.jpg`)).toString('base64');
+      const orig = conocidas.filter((k) => k.id.startsWith(`s${i}c`));
+      const caras0 = (await analizar(b64)).caras.filter((c) => c.caja.w > 0.04);
+      const f = await lejana(b64, escala);
+      const enLejana = (c) => ({ x: f.x + c.x * f.w, y: f.y + c.y * f.h, w: c.w * f.w, h: c.h * f.h });
+      const cajas = caras0.map((c) => enLejana(c.caja));
+      lejos.total += cajas.length;
+      for (const c of cajas) lejos.px.push(Math.round(c.w * 1280));
+      const quienEs = (c) => {
+        const p = { x: c.caja.x + c.caja.w / 2, y: c.caja.y + c.caja.h / 2 };
+        return orig.map((k) => ({ k, d: Math.hypot(f.x + k.centro.x * f.w - p.x, f.y + k.centro.y * f.h - p.y) })).sort((a, b) => a.d - b.d)[0];
+      };
+      const contar = (lista, r, conIndice) => {
+        for (const c of r.caras) {
+          // Con recortes, el índice dice de qué caja es (las cajas salen de la misma detección que `conocidas`).
+          const o = conIndice ? { k: orig[c.indice] } : quienEs(c);
+          if (!o?.k || (!conIndice && o.d > 0.03)) continue;
+          lista.vistas++;
+          const q = identificar(c.vector, conocidas);
+          if (q?.id === o.k.id) lista.aciertos++;
+          else if (q) lista.confusiones++;
+          if (conIndice) lejos.dAhora.push(distancia(c.vector, o.k.vectores[0]));
+        }
+      };
+      contar(lejos.antes, await analizar(f.b64), false);
+      contar(lejos.ahora, await analizar(f.b64, cajas), true);
+    }
+  }
+  console.log(`[caras] lejanas (${lejos.total} caras de ${Math.min(...lejos.px)}-${Math.max(...lejos.px)} px de ancho, mediana ${med(lejos.px)}, en fotos de 1280×720): foto entera a 416 → ${lejos.antes.vistas} vistas, ${lejos.antes.aciertos} reconocidas, ${lejos.antes.confusiones} confusiones · recortes de las cajas de ML Kit → ${lejos.ahora.vistas} vistas, ${lejos.ahora.aciertos} reconocidas, ${lejos.ahora.confusiones} confusiones (mediana de distancia ${r3(med(lejos.dAhora))})`);
+  ok(lejos.ahora.vistas > lejos.antes.vistas && lejos.ahora.aciertos > lejos.antes.aciertos, 'caras lejanas: los recortes de las cajas encuentran y reconocen más que la foto entera');
+  ok(lejos.ahora.confusiones === 0 && lejos.antes.confusiones === 0, 'caras lejanas: nunca el nombre de otro (ni antes ni ahora)');
+
   ok(conocidas.length >= 6, 'encuentra caras en las fotos de muestra');
   ok(conocidas.every((c) => c.vectores[0].length === 128), 'cada cara da un vector de 128 números (y nada más)');
   ok(mismas.length >= 10 && falsosRechazos / mismas.length <= 0.1, 'la misma cara en otra toma queda bajo el umbral (≤ 10 % de rechazos)');

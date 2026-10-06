@@ -22,6 +22,7 @@ import type { NivelAura } from '../lib/perfiles/tipos';
 import { JUNTA, normalizarCorreo } from './desk';
 import { mesaAutorizada, sesionDe } from './seguridad';
 import { modoDesarrollo } from '../lib/entorno';
+import { esIdVeta, ROL_MIEMBRO_VETA } from './veta-entrar';
 
 export type { NivelAura } from '../lib/perfiles/tipos';
 
@@ -42,7 +43,8 @@ export function nivelDeCorreo(correo: unknown, plataforma: Plataforma = 'ultron'
 /** El rol con que se saluda y se firma la sesión: el propio de JUNTA, el de la junta o el de miembro. */
 export function rolVisible(correo: unknown, nivel: NivelAura = nivelDeCorreo(correo)): string {
   const c = normalizarCorreo(correo);
-  if (nivel === 'miembro') return ROL_MIEMBRO;
+  // Quien entró solo con Veta Wallet (server/veta-entrar.ts) tiene su propio rol de miembro.
+  if (nivel === 'miembro') return esIdVeta(c) ? ROL_MIEMBRO_VETA : ROL_MIEMBRO;
   return JUNTA[c]?.rol || ROL_JUNTA;
 }
 

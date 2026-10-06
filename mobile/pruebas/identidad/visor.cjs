@@ -11,7 +11,7 @@ const { ok, fin } = require('../chat/comun.cjs');
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { CUENTA, VISOR } = M;
   if (!VISOR) {
     ok('el paquete trae el visor (app/visor.ts)', false);

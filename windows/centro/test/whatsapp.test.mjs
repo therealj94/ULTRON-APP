@@ -111,11 +111,13 @@ test('los pasos: oculto, sin puente, vincular (QR cada 3 s) y listo', () => {
   assert.ok(F.SONDEO.chats === 5000 && F.SONDEO.hilo === 3000, 'lista cada 5 s, conversación cada 3 s');
 
   const sinQr = { permitido: true, disponible: true, vinculado: false };
-  assert.equal(F.pedirQr(sinQr, false), true, 'al llegar a vincular se pide el QR una vez');
-  assert.equal(F.pedirQr(sinQr, true), false, 'no en bucle (el servidor limita /vincular)');
-  assert.equal(F.pedirQr({ ...sinQr, qr: 'data:image/png;base64,AA' }, false), false);
-  assert.equal(F.pedirQr({ ...sinQr, vinculando: true }, false), false);
-  assert.equal(F.pedirQr({ ...sinQr, vinculado: true }, false), false);
+  assert.equal(F.pedirQr(sinQr, false, true), true, 'al llegar a vincular (ya aceptado) se pide el QR una vez');
+  assert.equal(F.pedirQr(sinQr, false, false), false, 'sin aceptar, abrir el panel no pide nada (no abre una cuenta en el puente)');
+  assert.equal(F.pedirQr(sinQr, true, true), false, 'no en bucle (el servidor limita /vincular)');
+  assert.equal(F.pedirQr({ ...sinQr, qr: 'data:image/png;base64,AA' }, false, true), false);
+  assert.equal(F.pedirQr({ ...sinQr, vinculando: true }, false, true), false);
+  assert.equal(F.pedirQr({ ...sinQr, vinculado: true }, false, true), false);
+  assert.match(F.textoConsentimiento(), /se guardan en el servidor de AU-RA.*se borra todo.*podría limitar tu cuenta/);
 
   assert.equal(F.codigoBonito('abcdefgh'), 'ABCD-EFGH');
   assert.equal(F.codigoBonito('ABCD-EFGH'), 'ABCD-EFGH');

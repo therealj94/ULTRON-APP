@@ -6,10 +6,14 @@
 //  O4  Nada se queda frenando para siempre: un borrador olvidado (> 10 min) y un `llamada`/`voz`
 //      sin su cierre (> 5 min) dejan de frenar; lo vivo (comprobador `true`) sigue frenando.
 //  O5  «Instala la APK nueva» solo en producción y con una huella de verdad distinta a la instalada.
+//  O9  Recién abierta (`arranque`) no recarga a media entrada: con la app fuera (la pestaña de la wallet),
+//      con algo escrito en «Entrar» ni con la entrada de la wallet / Genesis en curso; terminada, sí.
+//  O10 (revisión 7.5, MENOR 3) Tampoco justo DESPUÉS de entrar (TRAS_ENTRAR_MS) ni durante la primera vez
+//      (mobile/src/primeravez): no es momento para el `arranque`; se aplica en el próximo momento seguro.
 const { ok, fin } = require('../chat/comun.cjs');
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { BARRERA: B, CONTRATO } = M;
   console.log('identidad · la actualización por aire\n');
   if (!B || !B.decidirAplicar) {
@@ -72,6 +76,73 @@ const { ok, fin } = require('../chat/comun.cjs');
   ok('O4: un motivo no sale dos veces', B.motivosParaNoRecargar().filter((m) => m === 'llamada').length === 1);
   CONTRATO.emitir('llamada', { activa: false, video: false });
   quitarRepetido();
+
+  /* ── O8 (José, 5-oct): recién abierta, lo descargado se aplica ya; lo vivo sigue frenando ── */
+  ok('O8: recién abierta (arranque), aplica aunque la acaben de tocar', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [] }) === 'aplicar');
+  ok('O8: recién abierta pero escribiendo (teclado), pospone', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: ['teclado'] }) === 'posponer');
+  ok('O8: sin nada descargado, nada', B.decidirAplicar({ pendiente: false, momento: 'arranque', motivos: [] }) === 'nada');
+  ok('O8: la ventana de «recién abierta» es corta (≤ 2 min)', B.VENTANA_ARRANQUE_MS > 0 && B.VENTANA_ARRANQUE_MS <= 120_000, String(B.VENTANA_ARRANQUE_MS));
+
+  /* ── O9 (revisión del 5-oct): recién abierta pero entrando (login, wallet, Genesis) no se recarga ── */
+  ok('O9: recién abierta con la app FUERA (la pestaña de la wallet delante), pospone', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [], activa: false }) === 'posponer');
+  ok('O9: …y con la app delante, aplica', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [], activa: true }) === 'aplicar');
+  ok('O9: escribiendo en la pantalla de entrar (aunque el teclado se haya cerrado), pospone', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: ['entrando'] }) === 'posponer');
+  if (B.empezarTrabajo) {
+    const soltar = B.empezarTrabajo('entrada-wallet');
+    const soltar2 = B.empezarTrabajo('entrada-wallet');
+    ok('O9: un trabajo en curso (empezarTrabajo) frena', B.motivosParaNoRecargar().includes('entrada-wallet'));
+    soltar();
+    soltar();
+    ok('O9: …hasta que terminan todos (soltar dos veces el mismo no cuenta doble)', B.motivosParaNoRecargar().includes('entrada-wallet'));
+    soltar2();
+    ok('O9: …y al terminar ya no frena', !B.motivosParaNoRecargar().includes('entrada-wallet'), B.motivosParaNoRecargar().join());
+  } else ok('O9: hay empezarTrabajo en lib/barreraOta', false);
+  // La entrada con Genesis ID de verdad: mientras la wallet tiene el pedido (la app fuera), no se recarga.
+  if (M.GENESIS && globalThis.__rn) {
+    const rn = globalThis.__rn;
+    const fetchAntes = globalThis.fetch;
+    globalThis.fetch = async () => new Response('{}', { status: 200 });
+    rn.openURL = async () => {};
+    globalThis.__wb = async () => ({ type: 'dismiss' });
+    const pG = M.GENESIS.entrarConGenesis();
+    await new Promise((r) => setTimeout(r, 30));
+    ok('O9: con la wallet abierta esperando su vuelta, la entrada frena la recarga', B.motivosParaNoRecargar().includes('entrada-wallet'), B.motivosParaNoRecargar().join());
+    ok('O9: …también en el arranque', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0 }) === 'posponer');
+    rn.app.forEach((f) => f('background'));
+    rn.app.forEach((f) => f('active'));
+    await pG;
+    ok('O9: terminada la entrada, ya no frena (se aplica en el próximo momento seguro)', !B.motivosParaNoRecargar().includes('entrada-wallet'), B.motivosParaNoRecargar().join());
+    globalThis.fetch = fetchAntes;
+  } else ok('O9: hay GENESIS en el paquete de pruebas', false);
+
+  /* ── O10 (revisión 7.5, MENOR 3): ni justo después de entrar ni en la primera vez ───────────── */
+  if (B.marcarEntradaLograda && B.frenarArranque && B.motivosContraArranque) {
+    B._reiniciarBarreraOta();
+    const ahora = Date.now();
+    ok('O10: sin entrar recién, el arranque aplica', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [] }) === 'aplicar');
+    B.marcarEntradaLograda(ahora);
+    ok('O10: recién entró (la pantalla de entrar se cerró): el arranque NO recarga', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [] }) === 'posponer', B.motivosContraArranque().join());
+    ok('O10: …y lo dice', B.motivosContraArranque(ahora + 1000).includes('recien-entrada'));
+    ok('O10: pasado TRAS_ENTRAR_MS ya no frena', B.TRAS_ENTRAR_MS >= 30_000 && !B.motivosContraArranque(ahora + B.TRAS_ENTRAR_MS + 1).includes('recien-entrada'), String(B.TRAS_ENTRAR_MS));
+    ok('O10: el próximo momento seguro (quieta 4 min) sí aplica', B.decidirAplicar({ pendiente: true, momento: 'quieto', quietoMs: 4 * MIN, motivos: [] }) === 'aplicar');
+    ok('O10: …y el botón «Reiniciar» también', B.decidirAplicar({ pendiente: true, momento: 'boton', motivos: [] }) === 'aplicar');
+    B._reiniciarBarreraOta();
+    const soltarPv = B.frenarArranque('primera-vez');
+    const soltarPv2 = B.frenarArranque('primera-vez');
+    ok('O10: en la primera vez, el arranque NO recarga', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [] }) === 'posponer');
+    soltarPv();
+    soltarPv();
+    ok('O10: …mientras siga montada (soltar dos veces no cuenta doble)', B.motivosContraArranque().includes('primera-vez'));
+    soltarPv2();
+    ok('O10: terminada la primera vez, el arranque aplica', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [] }) === 'aplicar', B.motivosContraArranque().join());
+    // Lo usan de verdad: entrar marca la entrada lograda y la primera vez frena el arranque mientras está montada.
+    const fs = require('fs');
+    const path = require('path');
+    const src = (r) => fs.readFileSync(path.join(__dirname, '../../src', r), 'utf8');
+    ok('O10: entrarCon (app/sesion.ts) marca la entrada lograda al fijar a la persona', /fijarUsuario\(s\);\s*\n\s*marcarEntradaLograda\(\)/.test(src('app/sesion.ts')));
+    ok('O10: la primera vez (primeravez/PrimeraVez.tsx) frena el arranque mientras está montada', /useEffect\(\(\) => frenarArranque\('primera-vez'\), \[\]\)/.test(src('primeravez/PrimeraVez.tsx')));
+    B._reiniciarBarreraOta();
+  } else ok('O10: hay marcarEntradaLograda, frenarArranque y motivosContraArranque en lib/barreraOta', false);
 
   /* ── O5: ¿APK nueva? ───────────────────────────────────────────────────────────────── */
   const h1 = 'a'.repeat(40);

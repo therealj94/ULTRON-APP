@@ -22,6 +22,8 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
+import { montarRutasVoces } from './server/voces-rutas';
+import { reglaQuienHablaDeTurno } from './lib/voces-miembro';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
@@ -74,7 +76,7 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
-import { atajoDeAppBloqueado, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { atajoDeAppBloqueado, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { puedeMano } from './lib/manos-app';
 import {
   abrirDecisionDeBorrador,
@@ -111,9 +113,10 @@ import {
   vistaMision,
   type MotorNodo,
 } from './server/computadora';
-import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
+import { avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
+import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
@@ -165,7 +168,7 @@ import { alAvisar, comandoDeAprobacion, reconciliarAprobaciones, resumenParaAvis
 import { hechoCerebro, lineas as lineasCerebro } from './lib/cerebro';
 import { lineasPorSignificado } from './lib/cognitivo/conocimiento-semantico';
 import { herramientaActiva, herramientaPermitida, perfilPara, type NivelAura } from './lib/perfiles';
-import { exigirJunta, nivelDeCorreo, nivelDePeticion, rolVisible, ROL_MIEMBRO } from './server/nivel';
+import { exigirJunta, nivelDeCorreo, nivelDePeticion, rolVisible } from './server/nivel';
 import { anotarVoz, fraseTopeVoz, msDeHabla, restanteVozMs } from './server/tope-voz';
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
@@ -201,6 +204,8 @@ import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesion
 import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
+import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
+import { gastarCupo } from './server/seguridad';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
@@ -290,7 +295,7 @@ app.use(redirigirADominio);
 const leerJson = express.json({ limit: '1mb' });
 const leerJsonGrande = express.json({ limit: '12mb' });
 /** AU-RA: turnos con foto o PDF, la visión y el oído (el teléfono manda el audio dos veces, en base64). */
-const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt'];
+const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt', '/api/voces/aprender'];
 /** Dr Electrum: foto, audio, el mapa del informe, el polígono del área y las cargas por lote. */
 const CUERPO_GRANDE_ELECTRUM = ['/api/electrum/ver', '/api/electrum/oir', '/api/electrum/informe', '/api/electrum/area/analizar', '/api/electrum/area/informe', '/api/electrum/muestras/cargar', '/api/electrum/satelite/cargar'];
 function cuerpoGrandePermitido(req: express.Request): boolean {
@@ -1565,12 +1570,28 @@ montarRutasTrabajos(app, {
   // o antes de un reinicio); pausar y reanudar solo si el nodo sabe; cada control deja su recibo durable.
   computadora: adaptadorTrabajos(),
   borradores: {
-    vigente: (correo, canal, ambito) => {
-      const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
+    // Con su intento (José, 5-oct): también un apartado que otro borrador desplazó (sigue esperando, en orden).
+    vigente: (correo, canal, ambito, intento) => {
+      const b = intento
+        ? canal === 'correo'
+          ? borradorCorreoPorIntento(correo, ambito, intento)
+          : borradorWhatsappPorIntento(correo, ambito, intento)
+        : canal === 'correo'
+          ? borradorDe(correo, ambito)
+          : borradorWhatsappDe(correo, ambito);
       return b ? { intento: b.intento, huella: b.huella } : null;
     },
     enviar: (correo, canal, ambito, intento, huella) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí', huella),
     descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
+    // «Editar» de la ventana de decisión: el borrador nuevo (otro intento y huella) espera su propio «sí»; nada sale.
+    editar: (correo, canal, ambito, intento, huella, cambios) => {
+      if (canal === 'correo') {
+        const r = editarBorradorCorreo(correo, ambito, intento, huella, cambios);
+        return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: r.borrador.para, desde: r.borrador.desde, asunto: r.borrador.asunto, texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
+      }
+      const r = editarBorradorWhatsapp(correo, ambito, intento, huella, cambios);
+      return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: destinoWhatsapp(r.borrador), texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
+    },
   },
   // Lo que propuso el taller de la junta (revisión 10, MEDIO-C): lo aprueba la misma cuenta, si sigue en la junta y el
   // vínculo es exactamente lo aprobado; se ejecuta con los argumentos congelados, una vez.
@@ -1604,6 +1625,8 @@ montarRutasApp(app, {
 
 // Las caras que conoce AURA, con permiso y por persona (solo números, nunca fotos).
 montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
+// Las voces que conoce AURA (quién habla), con permiso y por persona (solo números, nunca el audio).
+montarRutasVoces(app, { exigirMesa, limitar, sesionDe });
 // Avisos al teléfono con la app cerrada (FCM): registrar el token, quitarlo, probar y estado (server/push.ts).
 montarRutasPush(app, { exigirMesa, limitar, sesionDe });
 
@@ -1816,7 +1839,8 @@ function nombreYRolDe(correo: string, nombreCuenta?: string) {
 /** El rol que se enseña de una sesión viva: el nivel de HOY manda sobre el rol que se firmó al entrar. */
 function rolDeSesion(s: { correo: string; rol: string }) {
   if (ES_ELECTRUM) return s.rol;
-  return nivelDeCorreo(s.correo) === 'miembro' ? ROL_MIEMBRO : s.rol;
+  // El de miembro sale de rolVisible: «Miembro · Genesis ID» o, sin Genesis, «Miembro · Veta Wallet».
+  return nivelDeCorreo(s.correo) === 'miembro' ? rolVisible(s.correo, 'miembro') : s.rol;
 }
 
 // El panel de infraestructura de lo que sabe Dr Electrum (carpetas, estados, releer, importar).
@@ -1894,6 +1918,24 @@ if (!ES_ELECTRUM) {
       }
       return true;
     },
+  });
+
+  /*
+   * Entrar solo con Veta Wallet, sin Genesis ID (José, 5-oct): el teléfono hizo login en la wallet y manda
+   * su token de acceso UNA vez; se comprueba con la wallet y se suelta. Sesión de MIEMBRO con identidad
+   * `veta:<dirección>` (nunca el correo, nunca junta). AURA_VETA_ABIERTO=0 lo cierra. Ver
+   * server/veta-entrar.ts y docs/ENTRAR-GENESIS.md (caso f).
+   */
+  montarRutasVeta(app, {
+    limitar,
+    cupo: (clave, max, ventanaMs) => gastarCupo(clave, max, ventanaMs),
+    emitirSesion,
+    suspendida: async (id) => (cuentasDisponibles() ? cuentaSuspendida(id) : false),
+    registrarMiembro: async ({ id, nombre }) => {
+      if (!cuentasDisponibles()) return;
+      if (await asegurarCuentaMiembro(id, nombre, '', id)) console.log('[veta] cuenta de miembro abierta');
+    },
+    sembrarPerfil: (id, g) => sembrarDesdeGenesis(id, { apodo: g.apodo }),
   });
 }
 
@@ -2792,22 +2834,32 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
    * appEsperandoDe da como `borrador`) NO: no es nada que AU-RA le preguntó (revisión independiente, MEDIO-B).
    */
   const appPreguntada = appEsperando && appEsperando.que !== 'borrador' ? appEsperando : null;
+  // ¿Tiene su WhatsApp aquí? (no suspendida; revisión del 5-oct). La marca firmada de comunidad, la de la sesión del turno.
+  const comunidadTurno = !!correoApp && duenoComputadora === correoApp && body?.sesion?.comunidad === true;
+  const whatsappTurno = !!duenoComputadora && (await whatsappPermitido(duenoComputadora, comunidadTurno ? { comunidad: true } : {}));
   const esperabaSi =
     !!appPreguntada ||
     (!!duenoComputadora &&
       (!!borradorDe(duenoComputadora, ambitoTurno) ||
         !!borradorWhatsappDe(duenoComputadora, ambitoTurno) ||
-        pendientesDelTurno({ dueno: duenoComputadora, ambito: ambitoTurno, whatsapp: whatsappPermitido(duenoComputadora), app: appPreguntada }).length > 0));
+        pendientesDelTurno({ dueno: duenoComputadora, ambito: ambitoTurno, whatsapp: whatsappTurno, app: appPreguntada }).length > 0));
   const decision = await resolverDecisionesDelTurno({
     dueno: duenoComputadora,
     ambito: ambitoTurno,
     mensaje: message,
     retener: opciones.retener,
-    whatsapp: !!duenoComputadora && whatsappPermitido(duenoComputadora),
+    whatsapp: whatsappTurno,
     appEspera: !!(correoApp && pendienteAnterior(ambitoApp(correoApp, body?.aparato))),
     app: appEsperando,
     conocidos: (contextoApp?.contactos || []).map((c) => c.nombre),
     registrarEfecto: () => efectoDelTurno('decision'),
+    // La escena del teléfono: si la voz reconoce a OTRA persona (no la dueña), su «sí» no decide nada de la cuenta.
+    escena: String(body?.escena || '').slice(0, 400),
+    // Lo mismo por el campo aparte (validado allá: solo la app, solo una voz guardada de ESA cuenta que no es la dueña),
+    // también la precaución `reciente` de un «sí» corto justo después de otra voz (revisión 7.5, M1′).
+    quienHabla: body?.quienHabla,
+    origen: body?.origen,
+    sesion: body?.sesion,
   });
   hechos.push(...decision.hechos);
   const { delCorreo, delWhatsapp, deLaPregunta } = decision;
@@ -3063,12 +3115,17 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       hechos.push('Responde con lo que dicen las fuentes y el hilo. Si el usuario dijo «esto», es el tema o la URL anterior. No pidas otra vez el enlace. Si las fuentes no contestan, dilo.');
     }
     // Escena que la cámara local ya interpretó (MediaPipe en la web, ML Kit en la APK): quién está y qué hace.
-    const escena = String(body?.escena || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const escena = String(body?.escena || '').replace(/\s+/g, ' ').trim().slice(0, 400);
     const preguntaPorVer = /\b(qu[eé] ves|qu[eé] hay aqu[ií]|qui[eé]n (est[aá]|hay|anda)( aqu[ií]| ah[ií]| conmigo)?|me ves|c[oó]mo me ves|estoy solo|cu[aá]ntos somos|qu[eé] cara tengo|me veo)\b/.test(q);
     if (escena) {
       hechos.push(`ESCENA (tu cámara, ahora mismo): ${escena}${preguntaPorVer ? '' : ' (úsalo solo si viene al caso; no lo recites sin motivo).'}`);
       tools.push('escena');
     }
+    // Las voces (mobile/src/voces): si la voz dice que quien pide NO es la dueña, lo privado no se le lee. Sale de la
+    // escena o del campo aparte `quienHabla` (solo de la app con sesión y con una voz guardada de ESA cuenta): una
+    // escena larga ya no se come la regla. Solo agrega cuidado.
+    const quienHabla = await reglaQuienHablaDeTurno({ escena, quienHabla: body?.quienHabla, origen: body?.origen, sesion: body?.sesion });
+    if (quienHabla) hechos.push(quienHabla);
     const image = body?.image;
     // Lo que la cámara de la app ya vio con orden (/api/vision/analyze modo estructurado): el hecho
     // viene hecho y la foto no se vuelve a subir ni a analizar. Es texto del propio teléfono de quien
@@ -3331,7 +3388,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // El system no cambia según la frase: el harness va siempre (antes se quitaba en «¿cómo estás?») y el
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
-  const conWhatsapp = !!duenoComputadora && whatsappDisponible() && whatsappPermitido(duenoComputadora);
+  // Su WhatsApp: a quien lo tiene vinculado aquí (cada cuenta el suyo; a los dueños, como siempre). Con tope corto.
+  const conWhatsapp = !!duenoComputadora && (await whatsappOfrecido(duenoComputadora, 400, comunidadTurno ? { comunidad: true } : {}));
   const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);
@@ -3940,12 +3998,16 @@ async function correrHerramientaPedida(
  */
 async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambito: string): Promise<ResultadoHerramienta> {
   const intento = r.recibo?.efecto === 'borrador' ? r.recibo.referencia : undefined;
-  if (!intento || !dueno.includes('@')) return r;
+  // Un correo o una identidad de Veta Wallet (`veta:0x…`): los miembros que entran con su billetera también tienen tarjetas.
+  if (!intento || !(dueno.includes('@') || esIdVeta(dueno))) return r;
+  // AU-RA acaba de preguntar por ESTE borrador: es la pregunta más reciente. Lo que la ventana de decisión mostraba antes
+  // deja de valer para un «sí» suelto hasta que la ventana vuelva a decir qué muestra (server/decision-en-pantalla.ts).
+  olvidarEnPantallaDeConversacion(dueno, ambito);
   const c = borradorDe(dueno, ambito);
   const w = borradorWhatsappDe(dueno, ambito);
   // La tarjeta dice a quién va de verdad (WhatsApp: el nombre Y el número del chat) y queda atada a la huella del borrador.
-  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella });
-  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella });
+  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella }, (i) => i !== intento && !!borradorCorreoPorIntento(dueno, ambito, i));
+  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella }, (i) => i !== intento && !!borradorWhatsappPorIntento(dueno, ambito, i));
   return r;
 }
 
@@ -4183,7 +4245,10 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
   // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
   // (server/decision-turno.ts), que pregunta cuál si no lo dice.
-  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: whatsappPermitido(correo), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
+  // La voz reconoce a OTRA persona (no la dueña): el atajo no cumple nada de la cuenta; el turno completo pide su sí. Con el
+  // campo aparte `quienHabla` (también la precaución `reciente`, revisión 7.5 M1′), igual: lo valida el turno completo.
+  if (otraVozDe(body?.escena) || typeof body?.quienHabla?.id === 'string') return null;
+  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: await whatsappPermitido(correo, body?.sesion?.comunidad === true ? { comunidad: true } : {}), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la

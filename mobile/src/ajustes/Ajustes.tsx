@@ -7,8 +7,9 @@
  *   Apariencia    Oscuro · Claro · Sistema (cambia al instante)
  *   Idioma        Español · English (la interfaz, la voz y las respuestas)
  *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil), «Lo que sé de ti» (lo que aprendió y lo que quedó
- *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx)
- *                 y la vibración
+ *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx),
+ *                 su WhatsApp («Agregar mi WhatsApp» o, ya vinculado, «Desvincular WhatsApp»; José, 5-oct) y la
+ *                 vibración
  *   Voz y oído    la voz del avatar y cómo convierte tu voz en texto (el teléfono o la nube)
  *   La mesa       «comenta lo que ve», los efectos de sonido y, con AU-RA, su cara (el orbe o los anillos)
  *   Memoria       cuántos hechos guarda de ti y «Olvidar» (pregunta antes; borra aquí y en el servidor)
@@ -35,7 +36,7 @@ import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
 import { Aparecer, Boton, Campo, Chip, Fila, Grupo, Hoja, Interruptor, PantallaConCabecera, Segmentado, Tarjeta, Texto, elegirIdioma, fijarHapticos, useHapticos, vibrar } from '../ui';
 import { fuenteDisplay } from '../ui/tipografia';
-import { armarCumple, leerCumple } from '../primeravez/flujo';
+import { SIN_CUMPLE, cumpleDeSeleccion, seleccionDeCumple, type SeleccionCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
 import { HojaComputadora } from './Computadora';
@@ -47,7 +48,9 @@ import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
 import { salirDeLaSesion, useUsuario } from '../app/sesion';
 import { mesaAjustes, suscribirMesa } from '../app/mesaAjustes';
-import { abrirRuta } from '../app/rutas';
+import { abrirRuta, abrirWhatsapp } from '../app/rutas';
+import * as WA from '../whatsapp/api';
+import { entradaWA, telefonoBonito, type EstadoWA } from '../whatsapp/logica';
 import { abrirBienvenida } from '../bienvenida/estado';
 import { abrirCartera } from '../cartera/estado';
 import type { SttEngine } from '../lib/storage';
@@ -62,7 +65,7 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | 'avisos' | PantallaCerebro | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | 'avisos' | 'whatsapp-desvincular' | PantallaCerebro | null;
 
 /** Lo que se lee debajo de «Iniciativa de AURA», según el nivel elegido. */
 function pieIniciativa(n: NivelIniciativa): string {
@@ -79,12 +82,45 @@ export function Ajustes({ navigation }: Props) {
   const hapticos = useHapticos();
   const [hoja, setHoja] = useState<HojaAbierta>(null);
   const [apodo, setApodo] = useState(perfil?.apodo || '');
-  const [cumple, setCumple] = useState<{ mes: number | null; dia: number | null }>({ mes: null, dia: null });
+  // La selección a medias (el mes sin el día) del selector del cumpleaños; se guarda solo completa.
+  const [cumple, setCumple] = useState<SeleccionCumple>(SIN_CUMPLE);
   const [permisosOk, setPermisosOk] = useState<number | null>(null);
   const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
   const { cuentas: correos } = useCuentasCorreo(hoja === 'correos');
+  // Su WhatsApp (cada cuenta el suyo): «Agregar mi WhatsApp» si puede y no lo tiene; «Desvincular» si ya lo tiene.
+  const [wa, setWa] = useState<EstadoWA | null>(null);
+  const [errorWa, setErrorWa] = useState('');
+  const [desvinculando, setDesvinculando] = useState(false);
+  const entradaWa = entradaWA(wa);
   // Lo de la mesa (voz, oído, comentarios, efectos, memoria, su cara): la mesa está montada debajo.
   const mesa = useSyncExternalStore(suscribirMesa, mesaAjustes, mesaAjustes);
+
+  useEffect(() => {
+    if (hoja !== null) return;
+    let vivo = true;
+    // Un fallo de red no es un «no»: se queda lo último que se supo.
+    void WA.estadoWA()
+      .then((e) => vivo && setWa(e))
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [hoja]);
+
+  const desvincularWa = async () => {
+    setErrorWa('');
+    setDesvinculando(true);
+    try {
+      await WA.desvincularWA();
+      vibrar('exito');
+      setHoja(null);
+      setWa((e) => (e ? { ...e, vinculado: false, conectado: false, numero: undefined, nombre: undefined, error: undefined } : e));
+    } catch (e: any) {
+      setErrorWa(e?.message || tr('No se pudo desvincular. Prueba otra vez.', 'Couldn’t unlink. Try again.'));
+    } finally {
+      setDesvinculando(false);
+    }
+  };
 
   useEffect(() => {
     if (hoja !== null) return;
@@ -103,10 +139,7 @@ export function Ajustes({ navigation }: Props) {
 
   const abrir = (h: HojaAbierta) => {
     if (h === 'apodo') setApodo(perfil?.apodo || '');
-    if (h === 'cumple') {
-      const c = leerCumple(perfil?.cumple);
-      setCumple({ mes: c?.mes ?? null, dia: c?.dia ?? null });
-    }
+    if (h === 'cumple') setCumple(seleccionDeCumple(perfil?.cumple));
     setHoja(h);
   };
 
@@ -193,6 +226,14 @@ export function Ajustes({ navigation }: Props) {
               valor={correos === null ? '' : String(correos.length)}
               onPress={() => abrir('correos')}
             />
+            {entradaWa === 'agregar' ? (
+              <Fila titulo={tr('Agregar mi WhatsApp', 'Add my WhatsApp')} detalle={tr('Para verlo y contestarlo aquí, aparte de PULSE2CHAT, y que AURA te ayude', 'To see and answer it here, apart from PULSE2CHAT, with AURA’s help')} icono="chat" onPress={abrirWhatsapp} />
+            ) : entradaWa === 'whatsapp' ? (
+              <>
+                <Fila titulo="WhatsApp" detalle={tr('Tus chats, en Chats → WhatsApp', 'Your chats, in Chats → WhatsApp')} icono="chat" valor={telefonoBonito(wa?.numero) || wa?.numero || ''} onPress={abrirWhatsapp} />
+                {wa?.vinculado ? <Fila titulo={tr('Desvincular WhatsApp', 'Unlink WhatsApp')} icono="basura" destructiva chevron={false} onPress={() => (setErrorWa(''), abrir('whatsapp-desvincular'))} /> : null}
+              </>
+            ) : null}
             <Fila titulo={tr('Veta Wallet', 'Veta Wallet')} detalle={tr('Tus saldos (solo lectura); pagas desde un chat y firmas en Veta Wallet', 'Your balances (read-only); pay from a chat and sign in Veta Wallet')} icono="wallet" onPress={abrirCartera} />
             <Fila
               titulo={tr('Repetir el recorrido', 'Replay the tour')}
@@ -340,9 +381,9 @@ export function Ajustes({ navigation }: Props) {
           <SelectorCumple mes={cumple.mes} dia={cumple.dia} onCambiar={(mes, dia) => setCumple({ mes, dia })} />
           <Boton
             titulo={tr('Guardar', 'Save')}
-            deshabilitado={!cumple.mes || !cumple.dia}
+            deshabilitado={!cumpleDeSeleccion(cumple)}
             onPress={() => {
-              const c = cumple.mes && cumple.dia ? armarCumple(cumple.mes, cumple.dia) : undefined;
+              const c = cumpleDeSeleccion(cumple);
               if (!c) return;
               guardarPerfil({ cumple: c });
               vibrar('exito');
@@ -369,6 +410,23 @@ export function Ajustes({ navigation }: Props) {
 
       <Hoja visible={hoja === 'permisos'} onCerrar={() => setHoja(null)} titulo={tr('Permisos', 'Permissions')} subtitulo={tr('Toca un permiso para darlo. Si lo bloqueaste, te llevo a los ajustes del teléfono.', 'Tap one to allow it. If you blocked it, I’ll take you to your phone settings.')}>
         <ListaPermisos />
+      </Hoja>
+
+      <Hoja
+        visible={hoja === 'whatsapp-desvincular'}
+        onCerrar={() => setHoja(null)}
+        titulo={tr('¿Desvincular WhatsApp?', 'Unlink WhatsApp?')}
+        subtitulo={tr('AU-RA deja de ver tus chats y se borra todo lo que tenía guardado de tu WhatsApp. Tu WhatsApp del teléfono no cambia.', 'AU-RA stops seeing your chats and everything it stored from your WhatsApp is erased. WhatsApp on your phone doesn’t change.')}
+      >
+        <View style={{ gap: MEDIDA.espacio.m }}>
+          {errorWa ? (
+            <Texto v="chica" color="aviso">
+              {errorWa}
+            </Texto>
+          ) : null}
+          <Boton titulo={tr('Desvincular y borrar', 'Unlink and erase')} icono="basura" variante="peligro" cargando={desvinculando} onPress={() => void desvincularWa()} />
+          <Boton titulo={tr('Cancelar', 'Cancel')} variante="secundario" onPress={() => setHoja(null)} />
+        </View>
       </Hoja>
 
       <Hoja visible={hoja === 'salir'} onCerrar={() => setHoja(null)} titulo={tr('¿Cerrar sesión?', 'Sign out?')} subtitulo={tr('Tu perfil y lo que AURA sabe de ti se quedan en tu cuenta. El chat se desconecta de este teléfono.', 'Your profile and what AURA knows stay in your account. The chat disconnects from this phone.')}>

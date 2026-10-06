@@ -36,7 +36,24 @@ export const TRABAJO_CADUCA_MS = 10 * 60_000;
 /** Un aviso del bus (`llamada`, `voz`) sin su cierre deja de frenar tras esto. */
 export const AVISO_CADUCA_MS = 5 * 60_000;
 
-export type Momento = 'volver' | 'quieto' | 'fin-trabajo' | 'boton';
+/**
+ * `arranque` (José, 5-oct: «apenas abra la app aparezca el de actualizar, porque sale hasta que uno está en el
+ * avatar»): recién abierta la app (VENTANA_ARRANQUE_MS) todavía no hay nada entre manos, así que lo descargado se
+ * aplica en el acto, sin esperar a que esté quieta ni a que vuelva de fuera. Lo vivo (teclado, llamada…) sí frena,
+ * y también entrar (revisión del 5-oct): la pantalla de entrar con algo escrito (`entrando`, Entrar.tsx), la
+ * entrada con la wallet o Genesis en curso (`entrada-wallet`, lib/genesis.ts) y la app FUERA (`activa: false`:
+ * la pestaña de la wallet delante). Se pospone; el aviso sigue a la vista y se aplica en el próximo momento seguro.
+ */
+export type Momento = 'volver' | 'quieto' | 'fin-trabajo' | 'boton' | 'arranque';
+/** Cuánto dura «recién abierta» para aplicar sin esperar. */
+export const VENTANA_ARRANQUE_MS = 60_000;
+/**
+ * Revisión 7.5 (MENOR 3): justo después de entrar, la persona sigue en la entrada (la primera vez, sus permisos, el
+ * avatar): el tic de 30 s aplicaba el `arranque` apenas se cerraba la pantalla de entrar. Durante esto tras una entrada
+ * lograda (y mientras la primera vez está montada) el `arranque` se pospone; lo descargado se aplica en el próximo
+ * momento seguro (volver, quieta, al terminar una llamada o el botón).
+ */
+export const TRAS_ENTRAR_MS = 90_000;
 
 const trabajos = new Map<string, () => boolean | number>();
 /** Desde cuándo el bus dice que hay llamada / que la conversación tiene el audio (0 = no). */
@@ -66,6 +83,56 @@ export function registrarTrabajoActivo(nombre: string, activo: () => boolean | n
   };
 }
 
+/** Cuántos trabajos `empezarTrabajo` siguen en curso, por nombre. */
+const enCurso = new Map<string, number>();
+
+/**
+ * Un trabajo que empieza y termina (entrar con la wallet: de pedir el pase a canjearlo). Frena la recarga
+ * hasta que se suelten todos los del mismo nombre. Devuelve cómo soltarlo (soltar dos veces no cuenta doble).
+ */
+export function empezarTrabajo(nombre: string): () => void {
+  enCurso.set(nombre, (enCurso.get(nombre) || 0) + 1);
+  if (!trabajos.has(nombre)) registrarTrabajoActivo(nombre, () => (enCurso.get(nombre) || 0) > 0);
+  let suelto = false;
+  return () => {
+    if (suelto) return;
+    suelto = true;
+    const n = (enCurso.get(nombre) || 1) - 1;
+    if (n > 0) enCurso.set(nombre, n);
+    else enCurso.delete(nombre);
+  };
+}
+
+/* ── lo que solo frena el `arranque` (revisión 7.5, MENOR 3) ───────────────────────────────── */
+
+let entroEn = 0;
+const frenosArranque = new Map<string, number>();
+
+/** La entrada se logró (app/sesion.ts entrarCon, al fijar a la persona): un rato no es momento de `arranque`. */
+export function marcarEntradaLograda(ahora = Date.now()) {
+  entroEn = ahora;
+}
+
+/** Un flujo que no debe cortarse con el `arranque` (la primera vez montada). Devuelve cómo soltarlo (una sola vez). */
+export function frenarArranque(nombre: string): () => void {
+  frenosArranque.set(nombre, (frenosArranque.get(nombre) || 0) + 1);
+  let suelto = false;
+  return () => {
+    if (suelto) return;
+    suelto = true;
+    const n = (frenosArranque.get(nombre) || 1) - 1;
+    if (n > 0) frenosArranque.set(nombre, n);
+    else frenosArranque.delete(nombre);
+  };
+}
+
+/** Por qué ahora no es momento para el `arranque` (vacío = sí lo es). */
+export function motivosContraArranque(ahora = Date.now()): string[] {
+  const m = [...frenosArranque.keys()];
+  if (entroEn && ahora - entroEn < TRAS_ENTRAR_MS) m.push('recien-entrada');
+  return m;
+}
+
 /** Por qué no se debe recargar ahora (vacío = se puede). */
 export function motivosParaNoRecargar(ahora = Date.now()): string[] {
   const m = new Set<string>();
@@ -88,12 +155,16 @@ export function motivosParaNoRecargar(ahora = Date.now()): string[] {
  * Qué hacer con la OTA descargada en este momento: `aplicar`, `posponer` (es el momento, pero hay
  * trabajo activo) o `nada` (no hay descargada, o no es el momento).
  */
-export function decidirAplicar(o: { pendiente: boolean; momento: Momento; fueraMs?: number; quietoMs?: number; motivos?: string[] }): 'aplicar' | 'posponer' | 'nada' {
+export function decidirAplicar(o: { pendiente: boolean; momento: Momento; fueraMs?: number; quietoMs?: number; motivos?: string[]; activa?: boolean; contraArranque?: string[] }): 'aplicar' | 'posponer' | 'nada' {
   if (!o.pendiente) return 'nada';
   const quieto = o.quietoMs ?? quietoDesdeMs();
   if (o.momento === 'volver' && (o.fueraMs ?? 0) < FUERA_PARA_APLICAR_MS) return 'nada';
   if (o.momento === 'quieto' && quieto < QUIETO_PARA_APLICAR_MS) return 'nada';
   if (o.momento === 'fin-trabajo' && quieto < QUIETO_TRAS_TRABAJO_MS) return 'nada';
+  // La app fuera (una descarga que terminó mientras la persona está en la pestaña de la wallet): nunca por detrás.
+  if (o.activa === false) return 'posponer';
+  // Recién entró o está en la primera vez: no es el `arranque` (revisión 7.5, MENOR 3); otro momento seguro sí.
+  if (o.momento === 'arranque' && (o.contraArranque ?? motivosContraArranque()).length) return 'posponer';
   return (o.motivos ?? motivosParaNoRecargar()).length ? 'posponer' : 'aplicar';
 }
 
@@ -153,7 +224,10 @@ export async function prepararRecarga(topeMs = 1500): Promise<{ fallaron: string
 export function _reiniciarBarreraOta() {
   antesDe.clear();
   trabajos.clear();
+  enCurso.clear();
   llamadaDesde = 0;
   vozDesde = 0;
   ultimaActividad = Date.now();
+  entroEn = 0;
+  frenosArranque.clear();
 }

@@ -532,7 +532,8 @@ export function cambiosDe(b: Borrador, completado: boolean): Partial<Perfil> {
 
 /** Lo que cada paso escribe en el perfil al seguir (la primera vez y las preguntas que se retoman). */
 export function cambiosDelPaso(paso: PasoId, b: Borrador): Partial<Perfil> | null {
-  if (paso === 'genesis') return b.cumple ? { cumple: b.cumple } : null;
+  // El cumpleaños es opcional: sin tocarlo no se manda nada; quitado después de elegirlo, va '' (se borra).
+  if (paso === 'genesis') return b.cumple !== undefined ? { cumple: b.cumple } : null;
   if (paso === 'apodo') return { apodo: b.apodo.trim() };
   if (paso === 'avatar') return { avatar: b.avatar };
   if (paso === 'tema') return { tema: b.tema };
@@ -724,15 +725,85 @@ export function separarRespuesta(respuesta: string | undefined, sugerencias: rea
 
 /* ── el cumpleaños sin año ───────────────────────────────────────────────────────────────── */
 
+/** Los días de cada mes sin año: febrero con 29 (el 29 de febrero existe; el 31 de abril no). */
 export const DIAS_POR_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+/**
+ * Lo que la persona lleva elegido en el selector, aunque esté a medias (el mes sin el día, o al revés).
+ * Va aparte del cumpleaños guardado: el borrador y el perfil solo tienen fechas completas («MM-DD»), y si
+ * el selector leyera su mes de ahí, el mes tocado se perdía hasta tener el día (José, 5-oct: «no podemos
+ * seleccionar las fechas de cumple»: el mes no quedaba y los días seguían apagados).
+ */
+export type SeleccionCumple = { mes: number | null; dia: number | null };
+
+export const SIN_CUMPLE: SeleccionCumple = { mes: null, dia: null };
+
+const entero = (n: unknown, max: number): number | null => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= max ? n : null);
+
+/** Cuántos días se ofrecen: los del mes elegido, o los 31 si todavía no hay mes. */
+export function diasDelMes(mes: number | null | undefined): number {
+  const m = entero(mes, 12);
+  return m ? DIAS_POR_MES[m - 1] : 31;
+}
+
+/** ¿Es una fecha sin año que existe? (el 2-29 sí; el 4-31 y el 2-30 no). */
+export function validarCumple(mes: number | null | undefined, dia: number | null | undefined): boolean {
+  const m = entero(mes, 12);
+  const d = entero(dia, 31);
+  return !!m && !!d && d <= DIAS_POR_MES[m - 1];
+}
+
 export function armarCumple(mes: number, dia: number): string | undefined {
-  if (mes < 1 || mes > 12 || dia < 1 || dia > DIAS_POR_MES[mes - 1]) return undefined;
+  if (!validarCumple(mes, dia)) return undefined;
   return `${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
 }
 
 export function leerCumple(c: string | undefined): { mes: number; dia: number } | null {
   const m = /^(\d{2})-(\d{2})$/.exec(String(c || ''));
   if (!m) return null;
-  return { mes: Number(m[1]), dia: Number(m[2]) };
+  const mes = Number(m[1]);
+  const dia = Number(m[2]);
+  return validarCumple(mes, dia) ? { mes, dia } : null;
+}
+
+/** El cumpleaños guardado («MM-DD») → lo que el selector enseña elegido. */
+export function seleccionDeCumple(c: string | undefined): SeleccionCumple {
+  const l = leerCumple(c);
+  return l ? { mes: l.mes, dia: l.dia } : SIN_CUMPLE;
+}
+
+/** Tocar un mes: queda elegido; el día se conserva si existe en ese mes (el 31 no sobrevive a abril). */
+export function elegirMes(sel: SeleccionCumple, mes: number): SeleccionCumple {
+  const m = entero(mes, 12);
+  if (!m) return sel;
+  return { mes: m, dia: sel.dia && sel.dia <= DIAS_POR_MES[m - 1] ? sel.dia : null };
+}
+
+/** Tocar un día: queda elegido si existe en el mes elegido (o en alguno, si todavía no hay mes). */
+export function elegirDia(sel: SeleccionCumple, dia: number): SeleccionCumple {
+  const d = entero(dia, diasDelMes(sel.mes));
+  return d ? { mes: sel.mes, dia: d } : sel;
+}
+
+/** La fecha completa para guardar, o undefined si falta el mes o el día. */
+export function cumpleDeSeleccion(sel: SeleccionCumple): string | undefined {
+  return sel.mes && sel.dia ? armarCumple(sel.mes, sel.dia) : undefined;
+}
+
+/** Qué falta para tener la fecha: nada elegido, el mes, el día, o ya está. */
+export function faltaEnCumple(sel: SeleccionCumple): 'todo' | 'mes' | 'dia' | 'nada' {
+  if (cumpleDeSeleccion(sel)) return 'nada';
+  if (!sel.mes && !sel.dia) return 'todo';
+  return sel.mes ? 'dia' : 'mes';
+}
+
+/**
+ * El cumpleaños del borrador después de tocar el selector: la fecha si está completa. A medias o sin
+ * nada, no hay fecha; si antes había una (la eligió, siguió y volvió a quitarla), queda '' para que el
+ * perfil la borre también (lib/perfil.ts: `cumple: ''` lo borra), y si nunca hubo, nada que mandar.
+ */
+export function cumpleTrasCambio(anterior: string | undefined, sel: SeleccionCumple): string | undefined {
+  const c = cumpleDeSeleccion(sel);
+  if (c) return c;
+  return anterior === undefined ? undefined : '';
 }

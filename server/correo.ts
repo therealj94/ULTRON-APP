@@ -13,6 +13,7 @@
  *   PEDIR_HERRAMIENTA: correo responder <número, remitente o nada> | <texto>
  *   PEDIR_HERRAMIENTA: correo responder-todos <…> | <texto>
  *   PEDIR_HERRAMIENTA: correo escribir <para> | <asunto> | <texto>
+ *   PEDIR_HERRAMIENTA: correo rehacer <para> | <asunto> | <texto>   (la versión nueva del que ya armó para <para>)
  *
  * Revisar numera los correos (remitente con nombre y dirección, asunto, fecha y hora de Honduras,
  * adjuntos y el principio del texto) y abre la TAREA EN CURSO (lib/tarea-en-curso.ts): AU-RA los lleva
@@ -37,6 +38,7 @@ import type { RetencionAcciones } from './voz-agente';
 import { explicarFallo } from '../lib/correo/buzon';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
+import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
 
@@ -120,6 +122,18 @@ const normal = (quien: string) => String(quien || '').trim().toLowerCase();
  * dicho en la web no manda el borrador que se armó en el teléfono, ni uno nuevo pisa al de otro lado.
  */
 const llave = (quien: string, ambito = '') => `${normal(quien)}|${String(ambito || 'general').slice(0, 80)}`;
+
+/** Lo que se dice cuando un borrador venció sin que nadie lo decidiera (una vez, en el turno siguiente). */
+const avisoVencidoCorreo = (b: BorradorGuardado) =>
+  `QUEDÓ ATRÁS: el borrador de correo para ${b.para.join(', ')} («${resumenTexto(b.asunto, 60)}») venció sin enviarse; no salió nada. Si viene al caso, díselo en una frase y pregúntale si lo rehaces (sería un borrador nuevo que se le vuelve a leer).`;
+/**
+ * Los apartados que otro borrador desplazó en la misma conversación (server/borradores-cola.ts): esperan su decisión en
+ * el panel, en orden, hasta que vencen. Antes el borrador nuevo los pisaba en silencio.
+ */
+const APARTADOS = new ApartadosBorradores<BorradorGuardado>(
+  (b, quien) => motivoBorrador(b, quien),
+  (k, b) => anotarVencido(k, avisoVencidoCorreo(b))
+);
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
@@ -669,7 +683,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   return extra ? { ...borrador, texto: `${borrador.texto}\n${extra}` } : borrador;
 }
 
-async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<ResultadoHerramienta> {
+async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string, o: { rehacer?: boolean } = {}): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
   if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   let destinos = para.split(/[,;\s]+/).filter(Boolean);
@@ -696,7 +710,7 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
     }
   }
   if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
-  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}), ...(proveedorDeCuenta(cuentas[0]) ? { proveedorCuenta: proveedorDeCuenta(cuentas[0]) } : {}) });
+  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}), ...(proveedorDeCuenta(cuentas[0]) ? { proveedorCuenta: proveedorDeCuenta(cuentas[0]) } : {}) }, '', o);
 }
 
 /**
@@ -720,8 +734,31 @@ export function reemplazoPendiente(
   return { reemplazoDe: para, huellaAnterior: previo.huella };
 }
 
+/** El asunto para comparar versiones: sin «Re:» / «Fwd:» delante, sin mayúsculas, tildes ni espacios de más. */
+export const asuntoCanon = (a: string | undefined) =>
+  String(a || '')
+    .replace(/^(\s*(re|fw|fwd|rv|res|reenviar|tr)\s*:\s*)+/i, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+/**
+ * ¿El borrador `x` (uno que esperaba) es una versión anterior de `b`? Revisión 7.5 (MENOR 1): no basta con ir a los
+ * mismos destinatarios —a Ana se le pueden escribir dos correos distintos y cada uno tiene su tarjeta—. Además: la
+ * respuesta en el mismo hilo, el mismo asunto (con o sin «Re:»), o que el modelo lo REHAGA a propósito (`correo rehacer`,
+ * el «Rehaz el correo para Ana» de la ventana de decisión), aunque cambie el asunto.
+ */
+export function esVersionDe(x: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, b: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, rehacer = false): boolean {
+  if (JSON.stringify(direccionesCanon(x.para)) !== JSON.stringify(direccionesCanon(b.para))) return false;
+  if (rehacer) return true;
+  if (x.enRespuestaA && b.enRespuestaA) return x.enRespuestaA === b.enRespuestaA;
+  return asuntoCanon(x.asunto) === asuntoCanon(b.asunto);
+}
+
 /** El borrador queda esperando su «sí»: el recibo es `borrador` con su id de intento (nada salió todavía). */
-function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): ResultadoHerramienta {
+function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = '', o: { rehacer?: boolean } = {}): ResultadoHerramienta {
   if (!b.texto.trim()) return fallo('CORREO: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
   const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
   const k = llave(quien, ambito);
@@ -729,10 +766,24 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''):
   const previo = BORRADORES.get(k);
   // Se arma desde cero: nada del de antes (ni su aceptación de repetir, que era de ESE destinatario) pasa a este.
   const reemplazo = reemplazoPendiente(previo, huella, quien, previo ? `${previo.para.join(', ')} — «${previo.asunto}»` : '');
+  // Lo que quedó atrás (José, 5-oct): un apartado para el panel (siguió con otra cosa) ya no se pisa en silencio. Si va a
+  // OTROS destinatarios (o a los mismos sobre otra cosa: revisión 7.5, MENOR 1), espera en orden con los apartados; si es
+  // el mismo correo (esVersionDe), este es su versión nueva y se le dice.
+  let version = '';
+  const mismos = (x: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>) => esVersionDe(x, b, !!o.rehacer);
+  if (previo && previo.soloPanel && !motivoBorrador(previo, quien)) {
+    if (mismos(previo)) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(previo.asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
+    else APARTADOS.apartar(k, previo);
+  }
+  // Revisión independiente (G3): las versiones viejas de ESTE correo que esperaban entre los apartados también quedan
+  // reemplazadas (antes seguían ahí y podían salir las dos). Un correo distinto a la misma persona se queda.
+  const viejas = APARTADOS.quitarDonde(k, mismos);
+  if (viejas.length && !version) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(viejas[viejas.length - 1].asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
-  const aviso = reemplazo
-    ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`
-    : '';
+  const aviso =
+    (reemplazo
+      ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`
+      : '') + version;
   return exito(
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')}${b.cc?.length ? ` (con copia a ${b.cc.join(', ')})` : ''} — «${b.asunto}»:\n${b.texto}\n` +
       (nota ? `${nota}\n` : '') +
@@ -772,13 +823,93 @@ export function nombresRecientesCorreo(quien: string, ambito = ''): string[] {
 
 /** Pruebas y la app: el borrador que espera su «sí». */
 export function borradorDe(quien: string, ambito = ''): BorradorGuardado | null {
-  const b = BORRADORES.get(llave(quien, ambito));
+  const k = llave(quien, ambito);
+  const b = BORRADORES.get(k);
   if (!b) return null;
   if (motivoBorrador(b, quien)) {
-    BORRADORES.delete(llave(quien, ambito));
+    BORRADORES.delete(k);
+    // Venció sin que nadie lo decidiera: se le dice una vez (antes desaparecía sin aviso).
+    if (b.dueno === normal(quien) && vencioPorTiempo(b)) anotarVencido(k, avisoVencidoCorreo(b));
     return null;
   }
   return b;
+}
+
+/** Los apartados que otro borrador desplazó en esta conversación, del más viejo al más nuevo (los vigentes). */
+export function apartadosCorreoDe(quien: string, ambito = ''): BorradorGuardado[] {
+  return APARTADOS.lista(llave(quien, ambito), quien);
+}
+
+/** El borrador de ESE intento, esté en el lugar principal o entre los apartados (null si ya no espera). */
+export function borradorCorreoPorIntento(quien: string, ambito: string, intento: string): BorradorGuardado | null {
+  const b = borradorDe(quien, ambito);
+  if (b && b.intento === intento) return b;
+  return APARTADOS.porIntento(llave(quien, ambito), quien, intento);
+}
+
+/**
+ * La persona contesta a un apartado que tiene a la vista (la ventana de decisión de la mesa) por el chat o la voz: pasa al
+ * lugar principal para que el «sí»/«no» siga el camino de siempre. Lo que estaba ahí pasa a los apartados (no se pierde).
+ */
+export function promoverApartadoCorreo(quien: string, ambito: string, intento: string): (() => void) | null {
+  const k = llave(quien, ambito);
+  const actual = borradorDe(quien, ambito);
+  if (actual?.intento === intento) return () => undefined;
+  const b = APARTADOS.porIntento(k, quien, intento);
+  if (!b) return null;
+  APARTADOS.quitar(k, intento);
+  if (actual) APARTADOS.apartar(k, { ...actual, soloPanel: true });
+  BORRADORES.set(k, b);
+  // Revisión independiente (M2): un turno de voz que se descarta deja todo como estaba (cada uno en su lugar).
+  return () => {
+    const ahora = BORRADORES.get(k);
+    if (ahora && ahora.intento !== intento) return;
+    if (actual) {
+      APARTADOS.quitar(k, actual.intento);
+      BORRADORES.set(k, actual);
+    } else BORRADORES.delete(k);
+    if (!motivoBorrador(b, quien)) APARTADOS.apartar(k, b);
+  };
+}
+
+/** «Aprobar» o «Rechazar» de la tarjeta para un APARTADO: las mismas comprobaciones que el panel y el envío una vez. */
+export async function resolverApartadoCorreo(quien: string, ambito: string, intento: string, respuesta: 'sí' | 'no', huella?: string): Promise<ResultadoHerramienta | null> {
+  const k = llave(quien, ambito);
+  const b = APARTADOS.porIntento(k, quien, intento);
+  if (!b) return null;
+  if (respuesta === 'no') {
+    APARTADOS.quitar(k, intento);
+    return exito(`CORREO: no se mandó; el borrador para ${b.para.join(', ')} quedó descartado.`, { efecto: 'ninguno', codigo: 'descartado' });
+  }
+  const motivo = motivoPanel(b, huellaCorreo(b), huella);
+  if (motivo) return fallo(`CORREO: NO se mandó: ${motivo}.`, 'aprobacion');
+  APARTADOS.quitar(k, intento);
+  return enviarBorradorAprobado(quien, b, { desdePanel: true });
+}
+
+/** Lo más largo que se acepta al editar un correo (el texto; el asunto, una línea). */
+export const MAX_TEXTO_CORREO = 20_000;
+
+/**
+ * «Editar» en la ventana de decisión (José, 5-oct): la persona cambia el texto (y si quiere el asunto) del borrador que
+ * tiene a la vista. Solo el que mostró su tarjeta (intento y huella exactos, vigente); destinatarios, cuenta e hilo no
+ * cambian. Queda un borrador NUEVO (otro intento, otra huella) en el mismo sitio que espera su propio «sí». Nada sale aquí.
+ */
+export function editarBorradorCorreo(quien: string, ambito: string, intento: string, huella: string, cambios: { texto: unknown; asunto?: unknown }): EdicionBorrador<BorradorGuardado> {
+  const k = llave(quien, ambito);
+  const b = borradorCorreoPorIntento(quien, ambito, intento);
+  if (!b) return { ok: false, codigo: 'no-esta', mensaje: 'Ese borrador ya no está esperando (se decidió, se reemplazó o venció). No cambié nada.' };
+  if (!huella || b.huella !== huella || huellaCorreo(b) !== huella) return { ok: false, codigo: 'huella', mensaje: 'Lo que espera ya no es lo que estabas viendo. No cambié nada: mira el de ahora.' };
+  const texto = textoEditado(cambios.texto);
+  const asunto = cambios.asunto === undefined ? b.asunto : textoEditado(cambios.asunto).replace(/\s+/g, ' ').slice(0, 200) || b.asunto;
+  if (!texto) return { ok: false, codigo: 'vacio', mensaje: 'El correo no puede quedar vacío.' };
+  if (texto.length > MAX_TEXTO_CORREO) return { ok: false, codigo: 'largo', mensaje: `El correo es demasiado largo (máximo ${MAX_TEXTO_CORREO} letras).` };
+  const { dueno: _d, vence: _v, intento: _i, huella: _h, repeticionAceptada: _r, ...plano } = b;
+  const base = { ...plano, texto, asunto, creado: Date.now() };
+  const nuevo: BorradorGuardado = { ...base, ...vigenciaNueva(quien, base.creado, BORRADOR_VIVE_MS), huella: huellaCorreo(base) };
+  if (BORRADORES.get(k)?.intento === intento) BORRADORES.set(k, nuevo);
+  else APARTADOS.reemplazar(k, intento, nuevo);
+  return { ok: true, borrador: nuevo };
 }
 
 /** De quién es un borrador nuevo, hasta cuándo vale y su id de intento (correo y WhatsApp). */
@@ -857,6 +988,11 @@ type OpcionesDecidir = {
   aceptarCambio?: () => void;
   /** En la voz: si el turno se descarta (la frase seguía), «ya se le dijo a quién va» no cuenta. */
   reponerCambio?: () => void;
+  /**
+   * Lo que pasó con el envío, cuando por fin pasó (José, 5-oct). En la voz el envío sale DESPUÉS de contestar (al
+   * confirmarse el turno): sin esto, la tarea del panel se quedaba esperando su decisión aunque ya se hubiera mandado.
+   */
+  alTerminar?: (hecho: ResultadoHerramienta) => void;
 };
 
 /**
@@ -889,14 +1025,22 @@ export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: ()
   if (!r) return fallo(`${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'descartado');
   if (r === 'no') return exito(`${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`, { efecto: 'ninguno', codigo: 'descartado' });
   const enviarSiVale = async (): Promise<ResultadoHerramienta> => {
-    const motivo = o.vigente?.();
-    if (motivo) return fallo(`${o.canal}: NO se mandó: ${motivo}. Díselo con honestidad; si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'no-vigente');
+    const hecho = await (async (): Promise<ResultadoHerramienta> => {
+      const motivo = o.vigente?.();
+      if (motivo) return fallo(`${o.canal}: NO se mandó: ${motivo}. Díselo con honestidad; si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'no-vigente');
+      try {
+        return await o.enviar();
+      } catch (e: any) {
+        // `enviar` contiene sus propios fallos; lo que lance aquí pasó antes del efecto (sus cuentas, el almacén).
+        return fallo(`${o.canal}: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). No salió; díselo con honestidad.`, 'excepcion');
+      }
+    })();
     try {
-      return await o.enviar();
-    } catch (e: any) {
-      // `enviar` contiene sus propios fallos; lo que lance aquí pasó antes del efecto (sus cuentas, el almacén).
-      return fallo(`${o.canal}: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). No salió; díselo con honestidad.`, 'excepcion');
+      o.alTerminar?.(hecho);
+    } catch {
+      /* avisar del resultado nunca cambia el resultado */
     }
+    return hecho;
   };
   if (!o.retener) return enviarSiVale();
   o.retener.alDescartar(o.reponer);
@@ -939,6 +1083,13 @@ export type ComoResolver = {
   huellaVista?: string;
   /** La regla única eligió este borrador (un sí o un no): si cambió, se dice que no salió y se pregunta de nuevo. */
   decidido?: boolean;
+  /**
+   * José (5-oct): la persona tiene ESTE borrador a la vista en la ventana de decisión de la mesa (su intento va en
+   * `intento`). Aunque estuviera apartado para el panel, su «sí» o su «no» dicho ahora es para él.
+   */
+  enPantalla?: boolean;
+  /** Lo que pasó con el envío cuando por fin pasó (en la voz, después de contestar): cierra su tarea del panel. */
+  alTerminar?: (hecho: ResultadoHerramienta) => void;
 };
 
 /**
@@ -967,7 +1118,8 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
   // G1-N1: atado a lo decidido. Si cambió, no sale nada (ni se aparta ni se descarta el nuevo) y se pregunta de nuevo.
   const cambio = motivoCambioDecidido(b, b ? huellaCorreo(b) : null, como);
   if (cambio) return como.decidido ? fallo(`CORREO: NO se mandó ni se descartó nada: ${cambio}${b ? ` (ahora espera uno para ${b.para.join(', ')})` : ''}. Pregúntale de nuevo qué quiere hacer.`, 'cambio') : null;
-  if (!b || (b.soloPanel && !como.desdePanel)) return null;
+  // Un apartado no lo resuelve el chat, salvo el que la persona tiene a la vista y contesta (`enPantalla`, atado a su intento).
+  if (!b || (b.soloPanel && !como.desdePanel && !(como.enPantalla && como.intento === b.intento))) return null;
   const k = llave(quien, ambito);
   // «Aprobar» del panel: solo lo que mostró la tarjeta (no se toca el borrador si no coincide; un «no» siempre vale).
   const noEsElDelPanel = como.desdePanel && respuestaAlBorrador(mensaje) === 'si' ? motivoPanel(b, huellaCorreo(b), como.huella) : null;
@@ -995,6 +1147,7 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
       return null;
     },
     enviar: () => enviarBorradorAprobado(quien, b, { ambito, desdePanel: como.desdePanel }),
+    alTerminar: como.alTerminar,
   });
 }
 
@@ -1167,7 +1320,13 @@ export async function correrCorreoConEstado(quien: string, arg: string, ambito =
       const [asunto = '', ...texto] = partes;
       return await escribir(quien, ambito, resto, asunto, texto.join(' | '));
     }
-    return fallo(`CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos o escribir.`, 'no-entiendo');
+    // Revisión 7.5 (MENOR 1): rehacer el que ya armó para esos destinatarios (reemplaza al que esperaba aunque cambie el
+    // asunto). `escribir` a la misma persona sobre otra cosa deja los dos.
+    if (/^(rehacer|rehaz|reescribir|reescribe)$/.test(verbo)) {
+      const [asunto = '', ...texto] = partes;
+      return await escribir(quien, ambito, resto, asunto, texto.join(' | '), { rehacer: true });
+    }
+    return fallo(`CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos, escribir o rehacer.`, 'no-entiendo');
   } catch (e: any) {
     // Lo que lanza aquí (leer sus cuentas, el IMAP) pasa antes de dejar un borrador: no hubo efecto.
     return fallo(`CORREO: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
@@ -1178,6 +1337,7 @@ export async function correrCorreoConEstado(quien: string, arg: string, ambito =
 export function _olvidarCorreo() {
   LISTAS.clear();
   BORRADORES.clear();
+  APARTADOS.limpiar();
   LECTURAS.clear();
 }
 

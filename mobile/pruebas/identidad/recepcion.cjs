@@ -9,7 +9,7 @@
 const { ok, fin } = require('../chat/comun.cjs');
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { API, CUENTA, RECEPCION } = M;
   console.log('identidad · el build del teléfono para el servidor\n');
   if (!RECEPCION || !RECEPCION.fijarDatosBuild) {

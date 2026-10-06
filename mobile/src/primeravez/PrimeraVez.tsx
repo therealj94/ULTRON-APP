@@ -3,7 +3,7 @@
  *
  * Arriba, «atrás» y la barra dorada de progreso (avanza con un resorte en cada paso); en medio, el
  * paso, que entra deslizándose desde el lado hacia donde se va (adelante desde la derecha, atrás
- * desde la izquierda); abajo, el botón para seguir. Los pasos y sus reglas viven en flujo.ts.
+ * desde la izquierda; el que se va desaparece al instante, sin quedar encima); abajo, el botón para seguir. Los pasos y sus reglas viven en flujo.ts.
  *
  * Se guarda sobre la marcha: cada «Siguiente» escribe en el perfil lo de ese paso (lib/perfil.ts: al
  * instante en el teléfono y después en el servidor, sin esperar), y el número de paso queda anotado
@@ -25,13 +25,14 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
-import Animated, { FadeInLeft, FadeInRight, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeInLeft, FadeInRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { tr, useIdioma } from '../i18n';
 import { guardarPerfil, usePerfil } from '../lib/perfil';
 import { saveSettings } from '../lib/storage';
+import { frenarArranque } from '../lib/barreraOta';
 import { setAvatarVoz, stopSpeaking } from '../lib/tts';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { BarraProgreso, Boton, BotonRedondo, vibrar } from '../ui';
@@ -102,6 +103,10 @@ export function PrimeraVez(_: Props) {
   const plan = useMemo(() => pasosDelPlan(b), [b.objetivo, b.objetivoTexto, b.restriccion]); // eslint-disable-line react-hooks/exhaustive-deps
   const [paso, setPaso] = useState<PasoId>(PASOS[0]);
   const i = Math.max(0, plan.indexOf(paso));
+
+  // Mientras está en la primera vez, la actualización por aire no recarga como `arranque` (revisión 7.5, MENOR 3): se
+  // aplica en el próximo momento seguro.
+  useEffect(() => frenarArranque('primera-vez'), []);
 
   // Retomar donde se quedó (si Android cerró la app a la mitad), con su objetivo.
   useEffect(() => {
@@ -317,7 +322,11 @@ export function PrimeraVez(_: Props) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View key={paso} entering={(dir > 0 ? FadeInRight : FadeInLeft).springify().damping(20).stiffness(170)} exiting={FadeOut.duration(120)} style={{ width: '100%', maxWidth: 560, alignSelf: 'center' }}>
+        {/* Sin animación de salida: el paso que se va queda un rato como vista «fantasma» encima del que
+            llega (la salida de Reanimated deja la vista nativa montada sin su nodo de React) y, mientras dura
+            o si se atasca en Android, puede tragarse los toques de lo que tiene debajo. Por si acaso (José,
+            5-oct, el cumpleaños en un Samsung), el paso nuevo es lo único que hay encima. */}
+        <Animated.View key={paso} entering={(dir > 0 ? FadeInRight : FadeInLeft).springify().damping(20).stiffness(170)} style={{ width: '100%', maxWidth: 560, alignSelf: 'center' }}>
           {contenido}
         </Animated.View>
       </ScrollView>

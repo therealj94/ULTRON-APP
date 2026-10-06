@@ -2,13 +2,20 @@
  * (a) «Genesis ID compartió contigo»: el nombre y el cumpleaños que dio Genesis, cada uno con su
  * palomita ✔ que se dibuja en orden. Si el cumpleaños no vino, se pregunta (opcional); si no vino
  * nada, la pantalla es solo la pregunta del cumpleaños.
+ *
+ * La selección a medias (el mes sin el día) vive AQUÍ, no en el borrador: el borrador solo guarda fechas
+ * completas. Antes el selector leía su mes de `borrador.cumple`, y como un mes solo no es fecha, el toque
+ * se perdía: el mes no quedaba marcado y los días seguían apagados (José, 5-oct, en un Samsung: «no
+ * podemos seleccionar las fechas de cumple»). Ahora el borrador recibe la fecha cuando está completa
+ * (flujo.ts cumpleTrasCambio) y «Siguiente» sigue con fecha o sin ella.
  */
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { tr } from '../../i18n';
 import { cumpleLegible } from '../../lib/perfil';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { Aparecer, Icono, Palomita, Tarjeta, Texto, type NombreIcono } from '../../ui';
-import { armarCumple, leerCumple, queCompartioGenesis } from '../flujo';
+import { cumpleDeSeleccion, cumpleTrasCambio, queCompartioGenesis, seleccionDeCumple, type SeleccionCumple } from '../flujo';
 import { EncabezadoPaso, SelectorCumple } from '../piezas';
 import type { PropsPaso } from './tipos';
 
@@ -37,12 +44,23 @@ function Dato({ icono, etiqueta, valor, retraso }: { icono: NombreIcono; etiquet
 export function PasoGenesis({ perfil, borrador, cambiar }: PropsPaso) {
   const g = queCompartioGenesis(perfil);
   const hubo = !!(g.nombre || g.cumple);
-  const c = leerCumple(borrador.cumple);
+  const [sel, setSel] = useState<SeleccionCumple>(() => seleccionDeCumple(borrador.cumple));
+  // Si la fecha llega de fuera ya con el paso abierto (el perfil del servidor), se enseña elegida.
+  useEffect(() => {
+    if (borrador.cumple && borrador.cumple !== cumpleDeSeleccion(sel)) setSel(seleccionDeCumple(borrador.cumple));
+    // Solo cuando cambia la fecha del borrador: la selección a medias es de la persona.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [borrador.cumple]);
   const selector = (
     <SelectorCumple
-      mes={c?.mes ?? null}
-      dia={c?.dia ?? null}
-      onCambiar={(mes, dia) => cambiar({ cumple: mes && dia ? armarCumple(mes, dia) : undefined })}
+      mes={sel.mes}
+      dia={sel.dia}
+      onCambiar={(mes, dia) => {
+        const n = { mes, dia };
+        setSel(n);
+        const cumple = cumpleTrasCambio(borrador.cumple, n);
+        if (cumple !== borrador.cumple) cambiar({ cumple });
+      }}
     />
   );
   if (!hubo) {

@@ -7,7 +7,7 @@
 const { ok, fin } = require('../chat/comun.cjs');
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { RELEVO, CUENTA } = M;
   console.log('mensajes · sin llaves no hay envío en claro\n');
   const enviados = [];

@@ -1,8 +1,8 @@
 /**
  * ENTRAR CON GENESIS ID.
  *
- * AU-RA no pide la contraseña de la wallet ni la ve nunca. Le pide a la wallet de la persona un
- * PASE de Genesis ID, y la persona lo autoriza allá:
+ * El servidor de AU-RA no ve nunca la contraseña de la wallet. Lo que canjea es un PASE de Genesis ID
+ * que da la wallet de la persona:
  *
  *   1. Si el teléfono tiene la app Orden Global: `vetawallet://sso?destino=aura&reto=…&estado=…&vuelta=…`.
  *      La app muestra «AU-RA quiere usar tu Genesis ID», la persona toca «Permitir» y vuelve aquí
@@ -11,6 +11,12 @@
  *      pasa, con «Instalar Orden Global», «Usar Veta Wallet en la web» (`{ web: true }`: la web de la
  *      wallet, `#sso-aura`, en una pestaña segura, con el mismo consentimiento y la misma vuelta) y
  *      «Entrar con mi correo».
+ *   3. Con su correo y su contraseña de Veta Wallet, aquí mismo (`entrarConVetaWallet`, para quien no
+ *      tiene la app): el TELÉFONO hace login en el backend de la wallet, pide el pase con su reto y sigue
+ *      por el mismo canje (`canjearPase`). La contraseña va del teléfono a la wallet y a nadie más: ni al
+ *      servidor de AU-RA ni a ningún cajón (lib/entrarConClave.ts). Sin Genesis ID (no tiene, en revisión,
+ *      correo sin confirmar), el token de la wallet va UNA vez a `POST /api/veta/entrar` y entra como
+ *      miembro, sin chat (`entrarSoloConWallet`, server/veta-entrar.ts).
  *
  * SIN GENESIS ID. La wallet nueva no devuelve a la persona con las manos vacías: le ofrece sacar su
  * Genesis ID ahí mismo y GUARDA EL PEDIDO media hora (su `AURA_VIVE_MS`). Al terminar el trámite
@@ -47,8 +53,11 @@ import { sha256 } from '@noble/hashes/sha2';
 import { api } from './api';
 import { tr } from '../i18n';
 import { empezarIntento, esVencida, guardarTokenDeEntrada, intentoVigente, type Intento } from './intentoEntrada';
+import Constants from 'expo-constants';
 import { aB64 } from '../pulse/candado';
 import * as RELEVO from '../pulse/relevo';
+import { baseWallet, entrarConClave, errorDeWallet, pedirRecuperacion, type Pedir } from './entrarConClave';
+import { empezarTrabajo } from './barreraOta';
 
 const CAJON = 'aura.genesis.pendiente';
 /** La vuelta de siempre (esquema propio): la que usa la wallet si no se le pide otra. */
@@ -95,13 +104,18 @@ export type OpcionesEntrada = { web?: boolean };
 let enCurso = 0;
 /** Una vuelta tardía a la vez (la https y la `ultronfp://` pueden llegar las dos). */
 let canjeandoTardia = false;
-/** Corre `f` contando como entrada en curso. */
+/**
+ * Corre `f` contando como entrada en curso. Mientras tanto la actualización por aire no recarga la app
+ * (lib/barreraOta.ts, `entrada-wallet`): recargar a media entrada perdía la vuelta de la wallet.
+ */
 async function enCursoMientras<T>(f: () => Promise<T>): Promise<T> {
   enCurso++;
+  const soltar = empezarTrabajo('entrada-wallet');
   try {
     return await f();
   } finally {
     enCurso = Math.max(0, enCurso - 1);
+    soltar();
   }
 }
 
@@ -313,61 +327,8 @@ async function pedirPase(reto: string, estado: string, o: { web?: boolean } = {}
   }
 }
 
-/**
- * Lo que la wallet manda en `error=` (el contrato con la wallet) → el código y el mensaje de la app.
- * Las pantallas deciden qué hacer con cada código (Entrar.tsx); el mensaje es para quien no tiene
- * un trato propio (el chat, el arranque en frío).
- */
-export function errorDeWallet(error: string): { codigo: string; mensaje: string } {
-  switch (error) {
-    case 'cancelado':
-      return { codigo: 'CANCELADO', mensaje: tr('Cancelaste la entrada con Genesis ID.', 'You cancelled signing in with Genesis ID.') };
-    case 'sin-gid':
-      return {
-        codigo: 'SIN_GID',
-        mensaje: tr('Tu wallet todavía no tiene un Genesis ID. Crealo y volvé a entrar.', 'Your wallet doesn’t have a Genesis ID yet. Create one and sign in again.'),
-      };
-    case 'gid-pendiente':
-      return {
-        codigo: 'GID_PENDIENTE',
-        mensaje: tr(
-          'Tu Genesis ID está en verificación; cuando lo aprueben, entrás con este mismo botón.',
-          'Your Genesis ID is being verified; once it’s approved, sign in with this same button.'
-        ),
-      };
-    case 'no-vinculada':
-      return {
-        codigo: 'NO_VINCULADA',
-        mensaje: tr(
-          'Tu cuenta de la wallet no está vinculada a un Genesis ID. Abrí la app Orden Global, vinculá tu Genesis ID a esta cuenta y volvé a tocar «Entrar con Genesis ID».',
-          'Your wallet account isn’t linked to a Genesis ID. Open the Orden Global app, link your Genesis ID to this account and tap “Sign in with Genesis ID” again.'
-        ),
-      };
-    case 'correo-sin-confirmar':
-      return {
-        codigo: 'CORREO_SIN_CONFIRMAR',
-        mensaje: tr(
-          'Tu correo todavía no está confirmado en la wallet. Abrí el enlace que te mandó Orden Global y volvé a intentar.',
-          'Your email isn’t confirmed in the wallet yet. Open the link Orden Global sent you and try again.'
-        ),
-      };
-    case 'limite':
-      return {
-        codigo: 'LIMITE',
-        mensaje: tr('Hubo demasiados intentos seguidos. Esperá unos minutos y volvé a intentar.', 'Too many attempts in a row. Wait a few minutes and try again.'),
-      };
-    case 'red':
-      return {
-        codigo: 'RED',
-        mensaje: tr(
-          'Tu wallet no pudo comunicarse con Genesis ID. Revisá tu conexión y volvé a intentar.',
-          'Your wallet couldn’t reach Genesis ID. Check your connection and try again.'
-        ),
-      };
-    default:
-      return { codigo: 'FALLO', mensaje: tr('La wallet no pudo darte el pase. Probá de nuevo.', 'The wallet couldn’t give you the pass. Try again.') };
-  }
-}
+/** Los códigos de `error=` de la wallet viven con la entrada con clave (los dos caminos dicen lo mismo). */
+export { errorDeWallet };
 
 /** Lo que contestó el servidor de AU-RA al canjear el pase → código y mensaje de la app. */
 function errorDelServidor(e: any): { ok: false; codigo: string; mensaje: string; gid?: string } {
@@ -396,22 +357,50 @@ async function completar(url: string, p: Pendiente, intento: Intento): Promise<R
   if (!intentoVigente(intento)) return vencido();
   await olvidarPendiente();
   if (v.error || !v.pase) return { ok: false, ...errorDeWallet(v.error || '') };
+  return canjearPase(v.pase, p.verificador, intento);
+}
+
+/**
+ * Con el pase en la mano (venga de la vuelta de la wallet o de la entrada con clave): la sesión de AU-RA
+ * y, con el mismo pase, el chat. Al servidor de AU-RA solo viajan el pase y el verificador.
+ */
+function canjearPase(pase: string, verificador: string, intento: Intento): Promise<ResultadoGenesis> {
+  return abrirSesion('/api/genesis/entrar', { pase, verificador }, intento, { pase, verificador });
+}
+
+/**
+ * SIN GENESIS ID (docs/ENTRAR-GENESIS.md caso f): el token de acceso de la wallet va UNA vez a AU-RA, que lo
+ * comprueba con la wallet y lo suelta (server/veta-entrar.ts). Sesión de miembro; sin chat (su alta pide un
+ * pase de Genesis ID: la pantalla de chats ofrece conectarlo después).
+ */
+function entrarSoloConWallet(tokenWallet: string, intento: Intento): Promise<ResultadoGenesis> {
+  return abrirSesion('/api/veta/entrar', { token: tokenWallet }, intento);
+}
+
+/**
+ * Pide la sesión a AU-RA (`ruta` con `cuerpo`) y la guarda si sigue siendo el último intento; con `chat`
+ * (el pase y su verificador), conecta además el chat con el mismo pase.
+ */
+async function abrirSesion(ruta: string, cuerpo: object, intento: Intento, chatCon?: { pase: string; verificador: string }): Promise<ResultadoGenesis> {
+  if (!intentoVigente(intento)) return vencido();
   let data: { token?: string; miembro?: Miembro; genesis?: DatosGenesis };
   try {
-    data = await api('/api/genesis/entrar', { method: 'POST', body: JSON.stringify({ pase: v.pase, verificador: p.verificador }) }, 20_000, false);
+    data = await api(ruta, { method: 'POST', body: JSON.stringify(cuerpo) }, 20_000, false);
   } catch (e: any) {
     if (esVencida(e) || !intentoVigente(intento)) return vencido();
     return errorDelServidor(e);
   }
-  if (!data?.token || !data.miembro) return { ok: false, codigo: 'FALLO', mensaje: tr('No pude entrar con Genesis ID.', 'I couldn’t sign in with Genesis ID.') };
+  if (!data?.token || !data.miembro) return { ok: false, codigo: 'FALLO', mensaje: tr('No pude entrar a AU-RA.', 'I couldn’t sign in to AU-RA.') };
   // Solo si sigue siendo el último intento de entrar (otro empezó mientras se canjeaba: no lo pisa).
   if (!(await guardarTokenDeEntrada(data.token, intento))) return vencido();
+  if (!chatCon) return { ok: true, miembro: data.miembro, chat: false, intento };
+  const { pase, verificador } = chatCon;
   // El chat con el MISMO pase (el relevo lo gasta por su lado). Si falla, AU-RA entra igual y el
   // chat ofrece conectarse después. Con tope: AU-RA ya aceptó, y un relevo lento dejaba el botón
   // girando hasta un minuto. Si contesta después del tope, la cuenta del chat queda guardada igual
   // (entrarConPase la guarda al terminar) y la pantalla de chats la encuentra.
   // El chat queda ligado a esta persona de AU-RA (la sesión todavía no se fijó: se dice quién es).
-  const alta = RELEVO.entrarConPase(v.pase, p.verificador, data.miembro.nombre, data.miembro.correo).then(
+  const alta = RELEVO.entrarConPase(pase, verificador, data.miembro.nombre, data.miembro.correo).then(
     () => true,
     () => false
   );
@@ -454,6 +443,49 @@ async function entrar(o: OpcionesEntrada): Promise<ResultadoGenesis> {
     return { ok: false, codigo: 'SIN_VUELTA', mensaje: tr('No volvió la respuesta de la wallet.', 'The wallet’s response didn’t come back.') };
   }
   return completar(url, p, intento);
+}
+
+/**
+ * El backend de Veta Wallet (`extra.walletApi` de la configuración si lo hay; por omisión el de producción,
+ * WALLET_API_POR_OMISION). La entrada con clave le habla directo desde el teléfono: la contraseña no pasa por
+ * el servidor de AU-RA. OJO: no se pone en app.config.js sin necesidad: `extra` entra en la huella
+ * (runtimeVersion: fingerprint), y cambiarlo deja a las APK instaladas sin esta OTA.
+ */
+export const WALLET_API = baseWallet((Constants.expoConfig?.extra as { walletApi?: string } | undefined)?.walletApi);
+
+/** El fetch del teléfono, con la forma que pide lib/entrarConClave.ts. */
+const fetchWallet: Pedir = (url, init) => fetch(url, init);
+
+/**
+ * ENTRAR CON LA CUENTA DE VETA WALLET (correo y contraseña), para quien no tiene la app Orden Global
+ * (lib/entrarConClave.ts, docs/ENTRAR-GENESIS.md caso e). El teléfono hace login en la wallet, pide el pase
+ * con su propio reto y sigue por `canjearPase`, el mismo camino que la vuelta de la wallet. Es un intento
+ * de entrar nuevo: vence a los anteriores (una vuelta tardía de la wallet ya no lo pisa).
+ * La clave no se guarda en ningún lado; quien llama la borra de su estado al terminar.
+ */
+export function entrarConVetaWallet(correo: string, clave: string): Promise<ResultadoGenesis> {
+  return enCursoMientras(async () => {
+    const intento = empezarIntento();
+    const r = await entrarConClave<ResultadoGenesis>(
+      { correo, clave },
+      {
+        fetch: fetchWallet,
+        walletApi: WALLET_API,
+        nuevoReto,
+        canjear: (pase, verificador) => canjearPase(pase, verificador, intento),
+        // Sin Genesis ID: el token de la wallet, una vez, a AU-RA. Nunca la contraseña.
+        entrarSinGenesis: (tokenWallet) => entrarSoloConWallet(tokenWallet, intento),
+      }
+    );
+    // Si mientras tanto empezó otra entrada, esta no tiene nada que decir.
+    if (!r.ok && r.codigo !== 'VENCIDO' && !intentoVigente(intento)) return vencido();
+    return r;
+  });
+}
+
+/** «¿Olvidaste tu contraseña?»: el enlace de la wallet a ese correo (lib/entrarConClave.ts). */
+export function recuperarClaveWallet(correo: string): Promise<boolean> {
+  return pedirRecuperacion(correo, { fetch: fetchWallet, walletApi: WALLET_API });
 }
 
 /**

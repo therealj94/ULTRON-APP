@@ -10,7 +10,7 @@ const { ok, fin } = require('../chat/comun.cjs');
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { API, CUENTA } = M;
   const mesa = globalThis.__mesa;
   console.log('identidad · el token de la sesión\n');

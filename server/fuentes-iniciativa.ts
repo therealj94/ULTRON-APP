@@ -20,7 +20,7 @@ import type { Observacion } from '../lib/iniciativa';
 import type { Contadores, FuenteContadores } from './iniciativa';
 import { listar, type Cobertura } from '../lib/correo/buzon';
 import { leerCuentasSeguro, type CuentaCorreo } from '../lib/correo/cuentas';
-import { chatsWA, estadoWA, whatsappDisponible, whatsappPermitido } from './whatsapp';
+import { chatsWA, esDuenoWhatsapp, estadoWA, whatsappDisponible, whatsappPermitido } from './whatsapp';
 
 type CuentaMinima = { id: string; correo: string };
 
@@ -32,12 +32,13 @@ export type DepsContadores<C extends CuentaMinima = CuentaMinima> = {
     noLeidos: (dueno: string, cuenta: C) => Promise<number>;
   };
   whatsapp?: {
-    /** ¿Es su WhatsApp? (WHATSAPP_DUENOS). Si no, ni se mira. */
-    permitido: (dueno: string) => boolean;
+    /** ¿Puede tener su WhatsApp aquí? (whatsappPermitido). Si no, ni se mira. */
+    permitido: (dueno: string) => boolean | Promise<boolean>;
     /** ¿Hay puente configurado? */
     disponible: () => boolean;
-    estado: () => Promise<{ vinculado: boolean; conectado: boolean }>;
-    chats: () => Promise<{ noLeidos: number }[]>;
+    /** El de ESA cuenta. `registrada: false`: nunca empezó a vincular (no es «se desconectó»). */
+    estado: (dueno: string) => Promise<{ vinculado: boolean; conectado: boolean; registrada?: boolean }>;
+    chats: (dueno: string) => Promise<{ noLeidos: number }[]>;
   };
   reloj?: () => number;
   /** Tope por consulta (una cuenta, el puente): pasado, la fuente queda `unavailable`. */
@@ -96,12 +97,13 @@ export function crearContadores<C extends CuentaMinima = CuentaMinima>(d: DepsCo
   async function whatsapp(dueno: string, visto: number): Promise<Observacion> {
     const w = d.whatsapp;
     // Solo el WhatsApp de su dueño: a nadie más se le mira (ni como respaldo).
-    if (!w || !w.permitido(dueno) || !w.disponible()) return { estado: 'not_configured', visto };
+    if (!w || !w.disponible() || !(await w.permitido(dueno))) return { estado: 'not_configured', visto };
     try {
-      const e = await conTope(w.estado(), tope);
-      if (!e?.vinculado) return { estado: 'disconnected', visto };
+      const e = await conTope(w.estado(dueno), tope);
+      // Quien nunca agregó su WhatsApp no tiene nada «desconectado» que avisarle.
+      if (!e?.vinculado) return { estado: e?.registrada === false && !esDuenoWhatsapp(dueno) ? 'not_configured' : 'disconnected', visto };
       if (!e.conectado) return { estado: 'unavailable', visto };
-      const chats = await conTope(w.chats(), tope);
+      const chats = await conTope(w.chats(dueno), tope);
       const n = chats.filter((c) => Number(c?.noLeidos) > 0).length;
       return n > 0 ? { estado: 'vigente', valor: n, version: n, visto } : { estado: 'empty', visto };
     } catch {
@@ -137,7 +139,7 @@ export function crearContadores<C extends CuentaMinima = CuentaMinima>(d: DepsCo
 
 /**
  * El adaptador PRODUCTIVO: sus cuentas de correo (lib/correo: cuántos sin leer en la bandeja de entrada, de
- * solo lectura) y su WhatsApp si es el dueño (server/whatsapp.ts).
+ * solo lectura) y SU WhatsApp si puede tenerlo aquí (server/whatsapp.ts; cada cuenta el suyo).
  */
 export function contadoresProductivos(): FuenteContadores {
   return crearContadores<CuentaCorreo>({
@@ -150,6 +152,6 @@ export function contadoresProductivos(): FuenteContadores {
         return cobertura.total;
       },
     },
-    whatsapp: { permitido: whatsappPermitido, disponible: whatsappDisponible, estado: () => estadoWA(), chats: () => chatsWA('', 60) },
+    whatsapp: { permitido: whatsappPermitido, disponible: whatsappDisponible, estado: (dueno) => estadoWA(dueno), chats: (dueno) => chatsWA(dueno, '', 60) },
   });
 }

@@ -2,11 +2,16 @@ package main
 
 // LA API DEL PUENTE (solo la red privada de Render y con clave): lo que el servidor de AU-RA le pide.
 //
-//	GET  /salud                          sin clave: ¿vive?
-//	GET  /estado                         vinculado, conectado, número; mientras vincula, el QR o el código
+// Cada pedido (salvo /salud) dice de qué cuenta de AU-RA es con la cabecera X-Cuenta (una clave opaca que saca el
+// servidor de la sesión; cuentas.go). Todo lo que hace es sobre ESA cuenta: sin la cabecera, o con una que no está,
+// nunca toca lo de otra. Solo /vincular crea una cuenta nueva (si cabe: si no, 507 con codigo CUPO_LLENO).
+//
+//	GET  /salud                          sin clave: ¿vive? (y cuántas cuentas hay, sin decir cuáles)
+//	GET  /estado                         vinculado, conectado, número; mientras vincula, el QR o el código.
+//	                                     `registrada`: false si esa cuenta nunca empezó a vincular
 //	POST /vincular {telefono?}           con teléfono: un código de 8 letras (WhatsApp → Dispositivos
 //	                                     vinculados → Vincular con número); sin teléfono: un QR
-//	POST /desvincular                    cierra la sesión y borra todo lo guardado
+//	POST /desvincular                    cierra la sesión y borra la carpeta entera de esa cuenta
 //	GET  /chats?limite=&buscar=          los chats, el más reciente primero
 //	GET  /mensajes?chat=&limite=&antes=  los de un chat, del más viejo al más nuevo
 //	GET  /buscar?q=&limite=              en el texto de todos los chats
@@ -18,6 +23,13 @@ package main
 //
 // Los chats van con su id canónica: el número (…@s.whatsapp.net) siempre que se sepa, aunque WhatsApp los
 // mande por LID (…@lid). Un LID viejo que ya se pasó al número sigue sirviendo en ?chat=.
+//
+// Los errores van con `error` (para la persona) y, cuando sirve para decidir, `codigo`: SIN_CUENTA (falta la
+// cabecera o no tiene la forma), SIN_VINCULAR (esa cuenta no tiene WhatsApp aquí), CUPO_LLENO.
+//
+// Toda respuesta de una cuenta (también sus errores) lleva X-Cuenta-Eco: <la clave de X-Cuenta> (revisión del 5-oct,
+// MEDIO-1). Un puente de antes no la pone: el servidor de AU-RA no deja pasar nada de una cuenta que no sea «legado»
+// sin ese eco (si el puente vuelve a una versión de una sola cuenta, nadie recibe el WhatsApp de otro).
 
 import (
 	"crypto/subtle"
@@ -28,7 +40,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -48,6 +59,10 @@ type Cuenta interface {
 	// El nombre de un chat o de una persona con lo que ya se sabe (sin red); vacío si no se sabe.
 	Nombre(jid string) string
 	Contactos(buscar string, limite int) ([]Contacto, error)
+	// ¿Tiene una sesión guardada? (al arrancar solo esas se reconectan).
+	TieneSesion() bool
+	// La suelta sin desvincular (desconecta y cierra su base): antes de borrar la carpeta o al apagar.
+	Cerrar()
 }
 
 type Contacto struct {
@@ -64,6 +79,8 @@ type EstadoCuenta struct {
 	QR         string `json:"qr,omitempty"`
 	Codigo     string `json:"codigo,omitempty"`
 	Vinculando bool   `json:"vinculando"`
+	// La pone la API: false si esa cuenta de AU-RA nunca empezó a vincular aquí (no hay nada suyo).
+	Registrada bool `json:"registrada"`
 }
 
 var ErrYaVinculado = errors.New("ya hay un WhatsApp vinculado: desvincúlalo primero")
@@ -79,39 +96,69 @@ var ErrMediaVencida = errors.New("esa foto ya no está en WhatsApp; ábrela en t
 
 type API struct {
 	clave   string
-	cuenta  Cuenta
-	almacen *Almacen
-	// Los envíos con id van de uno en uno: buscar si ya salió y mandarlo no se cruzan (AUR13).
-	enviando sync.Mutex
+	cuentas *Registro
 }
+
+// La cabecera con la cuenta de AU-RA de cada pedido.
+const CabeceraCuenta = "X-Cuenta"
+
+// La respuesta dice de qué cuenta es (el servidor de AU-RA la exige a toda cuenta que no sea «legado»).
+const CabeceraEco = "X-Cuenta-Eco"
+
+// La pone SOLO el servidor de AU-RA en /vincular cuando la cuenta es de la junta o del padrón («junta»): puede usar los
+// lugares guardados (WHATSAPP_RESERVA_JUNTA). Nadie más llega al puente (red privada y clave).
+const CabeceraPrioridad = "X-Cuenta-Prioridad"
 
 // El id que AU-RA le pone a un mensaje (AUR13): como los de WhatsApp Web, 3EB0 + hexadecimal en mayúsculas.
 var idDeAura = regexp.MustCompile(`^3EB0[0-9A-F]{16,40}$`)
 
 func (a *API) Rutas() http.Handler {
 	m := http.NewServeMux()
-	m.HandleFunc("GET /salud", func(w http.ResponseWriter, r *http.Request) { escribir(w, 200, map[string]any{"ok": true}) })
-	m.HandleFunc("GET /estado", a.con(func(w http.ResponseWriter, r *http.Request) { escribir(w, 200, a.cuenta.Estado()) }))
-	m.HandleFunc("POST /vincular", a.con(a.vincular))
-	m.HandleFunc("POST /desvincular", a.con(func(w http.ResponseWriter, r *http.Request) {
-		if err := a.cuenta.Desvincular(); err != nil {
+	m.HandleFunc("GET /salud", func(w http.ResponseWriter, r *http.Request) {
+		usadas, max := a.cuentas.Cupo()
+		escribir(w, 200, map[string]any{"ok": true, "cuentas": usadas, "maxCuentas": max})
+	})
+	// Una cuenta que no está (nunca vinculó, o ya se desvinculó): «sin vincular», sin crear nada.
+	m.HandleFunc("GET /estado", a.conClave(func(w http.ResponseWriter, r *http.Request, clave string) {
+		e, ok := a.cuentas.Obtener(clave)
+		if !ok {
+			escribir(w, 200, EstadoCuenta{})
+			return
+		}
+		est := e.cuenta.Estado()
+		est.Registrada = true
+		escribir(w, 200, est)
+	}))
+	m.HandleFunc("POST /vincular", a.conClave(a.vincular))
+	// Cierra la sesión en WhatsApp y borra la carpeta entera de esa cuenta. Una que no está: ya no hay nada.
+	m.HandleFunc("POST /desvincular", a.conClave(func(w http.ResponseWriter, r *http.Request, clave string) {
+		e, ok := a.cuentas.Obtener(clave)
+		if !ok {
+			escribir(w, 200, map[string]any{"ok": true})
+			return
+		}
+		if err := e.cuenta.Desvincular(); err != nil {
 			fallo(w, 502, err)
+			return
+		}
+		if err := a.cuentas.Quitar(clave); err != nil {
+			fallo(w, 500, err)
 			return
 		}
 		escribir(w, 200, map[string]any{"ok": true})
 	}))
-	m.HandleFunc("GET /chats", a.con(func(w http.ResponseWriter, r *http.Request) {
-		chats, err := a.almacen.Chats(entre(r.URL.Query().Get("limite"), 60, 1, 300), r.URL.Query().Get("buscar"))
+	m.HandleFunc("GET /chats", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
+		chats, err := e.almacen.Chats(entre(r.URL.Query().Get("limite"), 60, 1, 300), r.URL.Query().Get("buscar"))
 		if err != nil {
 			fallo(w, 500, err)
 			return
 		}
 		for i := range chats {
-			a.completar(&chats[i])
+			completar(e, &chats[i])
 		}
 		escribir(w, 200, map[string]any{"chats": chats})
 	}))
-	m.HandleFunc("GET /mensajes", a.con(func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("GET /mensajes", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
 		q := r.URL.Query()
 		chat := q.Get("chat")
 		if chat == "" {
@@ -119,14 +166,14 @@ func (a *API) Rutas() http.Handler {
 			return
 		}
 		antes, _ := strconv.ParseInt(q.Get("antes"), 10, 64)
-		ms, err := a.almacen.Mensajes(chat, entre(q.Get("limite"), 60, 1, 300), antes)
+		ms, err := e.almacen.Mensajes(chat, entre(q.Get("limite"), 60, 1, 300), antes)
 		if err != nil {
 			fallo(w, 500, err)
 			return
 		}
-		c, ok := a.almacen.Chat(chat)
+		c, ok := e.almacen.Chat(chat)
 		if ok {
-			a.completar(&c)
+			completar(e, &c)
 		}
 		// Quién mandó cada uno: si se guardó sin nombre (o con el número), se busca otra vez.
 		nombres := map[string]string{}
@@ -137,7 +184,7 @@ func (a *API) Rutas() http.Handler {
 			}
 			n, visto := nombres[m.De]
 			if !visto {
-				n = a.cuenta.Nombre(m.De)
+				n = e.cuenta.Nombre(m.De)
 				nombres[m.De] = n
 			}
 			if tieneNombre(n) {
@@ -148,35 +195,35 @@ func (a *API) Rutas() http.Handler {
 		}
 		escribir(w, 200, map[string]any{"chat": c, "mensajes": ms})
 	}))
-	m.HandleFunc("GET /buscar", a.con(func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("GET /buscar", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
 		t := strings.TrimSpace(r.URL.Query().Get("q"))
 		if len([]rune(t)) < 2 {
 			fallo(w, 400, errors.New("¿qué busco? (al menos dos letras)"))
 			return
 		}
-		ms, err := a.almacen.Buscar(t, entre(r.URL.Query().Get("limite"), 20, 1, 100))
+		ms, err := e.almacen.Buscar(t, entre(r.URL.Query().Get("limite"), 20, 1, 100))
 		if err != nil {
 			fallo(w, 500, err)
 			return
 		}
 		escribir(w, 200, map[string]any{"mensajes": ms})
 	}))
-	m.HandleFunc("POST /enviar", a.con(a.enviar))
+	m.HandleFunc("POST /enviar", a.deCuenta(enviar))
 	// AUR13: un mensaje propio por su id (para que AU-RA reconcilie un envío del que no supo el final).
-	m.HandleFunc("GET /mensaje", a.con(func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("GET /mensaje", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
 		id := r.URL.Query().Get("id")
 		if id == "" || len(id) > 128 {
 			fallo(w, 400, errors.New("falta el id"))
 			return
 		}
-		msg, err := a.almacen.MioPorID(id)
+		msg, err := e.almacen.MioPorID(id)
 		if err != nil {
 			fallo(w, 404, errors.New("no hay un mensaje tuyo con ese id"))
 			return
 		}
 		escribir(w, 200, map[string]any{"mensaje": msg})
 	}))
-	m.HandleFunc("POST /leido", a.con(func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("POST /leido", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
 		var c struct {
 			Chat string `json:"chat"`
 		}
@@ -184,14 +231,14 @@ func (a *API) Rutas() http.Handler {
 			fallo(w, 400, errors.New("falta el chat"))
 			return
 		}
-		if err := a.cuenta.MarcarLeido(c.Chat); err != nil {
+		if err := e.cuenta.MarcarLeido(c.Chat); err != nil {
 			fallo(w, 502, err)
 			return
 		}
 		escribir(w, 200, map[string]any{"ok": true})
 	}))
-	m.HandleFunc("GET /media", a.con(func(w http.ResponseWriter, r *http.Request) {
-		datos, tipo, err := a.cuenta.Media(r.URL.Query().Get("chat"), r.URL.Query().Get("id"))
+	m.HandleFunc("GET /media", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
+		datos, tipo, err := e.cuenta.Media(r.URL.Query().Get("chat"), r.URL.Query().Get("id"))
 		if errors.Is(err, ErrMediaGrande) {
 			fallo(w, 413, err)
 			return
@@ -213,13 +260,13 @@ func (a *API) Rutas() http.Handler {
 		w.Header().Set("Cache-Control", "private, max-age=3600")
 		w.Write(datos)
 	}))
-	m.HandleFunc("GET /foto", a.con(func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("GET /foto", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
 		chat := r.URL.Query().Get("chat")
 		if chat == "" {
 			fallo(w, 400, errors.New("falta el chat"))
 			return
 		}
-		datos, err := a.cuenta.Foto(chat)
+		datos, err := e.cuenta.Foto(chat)
 		switch {
 		case errors.Is(err, ErrSinFoto):
 			fallo(w, 404, err)
@@ -233,8 +280,8 @@ func (a *API) Rutas() http.Handler {
 		w.Header().Set("Cache-Control", "private, max-age=3600")
 		w.Write(datos)
 	}))
-	m.HandleFunc("GET /contactos", a.con(func(w http.ResponseWriter, r *http.Request) {
-		cs, err := a.cuenta.Contactos(r.URL.Query().Get("buscar"), entre(r.URL.Query().Get("limite"), 100, 1, 500))
+	m.HandleFunc("GET /contactos", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
+		cs, err := e.cuenta.Contactos(r.URL.Query().Get("buscar"), entre(r.URL.Query().Get("limite"), 100, 1, 500))
 		if err != nil {
 			fallo(w, codigoDe(err), err)
 			return
@@ -246,45 +293,62 @@ func (a *API) Rutas() http.Handler {
 
 // Antes de mostrar un chat: si no tiene nombre de verdad se busca otra vez (y se guarda si apareció);
 // nunca sale sin nombre. También el de quien mandó lo último en un grupo, y si ya se sabe si tiene foto.
-func (a *API) completar(c *Chat) {
+func completar(e *Espacio, c *Chat) {
 	if !tieneNombre(c.Nombre) {
-		if n := a.cuenta.Nombre(c.JID); tieneNombre(n) {
+		if n := e.cuenta.Nombre(c.JID); tieneNombre(n) {
 			c.Nombre = n
-			_, _ = a.almacen.MejorarNombre(c.JID, n)
+			_, _ = e.almacen.MejorarNombre(c.JID, n)
 		}
 	}
 	c.Nombre = nombreVisible(*c)
 	if c.Grupo && !c.UltimoMio && c.ultimoDeJID != "" && !tieneNombre(c.UltimoDe) {
-		if n := a.cuenta.Nombre(c.ultimoDeJID); tieneNombre(n) {
+		if n := e.cuenta.Nombre(c.ultimoDeJID); tieneNombre(n) {
 			c.UltimoDe = n
 		} else if c.UltimoDe == "" {
 			c.UltimoDe = numeroDe(c.ultimoDeJID)
 		}
 	}
-	c.Foto = a.cuenta.FotoConocida(c.JID)
+	c.Foto = e.cuenta.FotoConocida(c.JID)
 }
 
-func (a *API) vincular(w http.ResponseWriter, r *http.Request) {
+// POST /vincular: la única ruta que crea la cuenta (su carpeta) si no existía. Un número mal escrito no crea nada.
+func (a *API) vincular(w http.ResponseWriter, r *http.Request, clave string) {
 	var c struct {
 		Telefono string `json:"telefono"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&c)
+	tel := ""
 	if c.Telefono != "" {
-		tel := soloDigitos(c.Telefono)
+		tel = soloDigitos(c.Telefono)
 		if len(tel) < 8 || len(tel) > 15 {
 			fallo(w, 400, errors.New("escribe tu número con el código de país, por ejemplo 504 9999 9999"))
 			return
 		}
-		codigo, err := a.cuenta.VincularCodigo(tel)
+	}
+	e, err := a.cuentas.ObtenerOCrear(clave, r.Header.Get(CabeceraPrioridad) == "junta")
+	if err != nil {
+		fallo(w, codigoDe(err), err)
+		return
+	}
+	// Si no arrancó (WhatsApp no contestó) y no quedó nada en curso, la cuenta recién abierta no ocupa cupo.
+	soltarSiFallo := func() {
+		if !e.cuenta.TieneSesion() && !e.cuenta.Estado().Vinculando {
+			_ = a.cuentas.Quitar(clave)
+		}
+	}
+	if tel != "" {
+		codigo, err := e.cuenta.VincularCodigo(tel)
 		if err != nil {
+			soltarSiFallo()
 			fallo(w, codigoDe(err), err)
 			return
 		}
 		escribir(w, 200, map[string]any{"codigo": codigo})
 		return
 	}
-	qr, err := a.cuenta.VincularQR()
+	qr, err := e.cuenta.VincularQR()
 	if err != nil {
+		soltarSiFallo()
 		fallo(w, codigoDe(err), err)
 		return
 	}
@@ -293,7 +357,7 @@ func (a *API) vincular(w http.ResponseWriter, r *http.Request) {
 
 // POST /enviar {chat, texto, id?}. Con `id` (AUR13: el que AU-RA deriva de su operación), el mismo mensaje no sale
 // dos veces: si ya hay uno propio con ese id, se devuelve ese con "repetido": true y no se manda otra vez.
-func (a *API) enviar(w http.ResponseWriter, r *http.Request) {
+func enviar(w http.ResponseWriter, r *http.Request, e *Espacio) {
 	var c struct {
 		Chat  string `json:"chat"`
 		Texto string `json:"texto"`
@@ -312,14 +376,14 @@ func (a *API) enviar(w http.ResponseWriter, r *http.Request) {
 			fallo(w, 400, errors.New("ese id de mensaje no tiene la forma esperada"))
 			return
 		}
-		a.enviando.Lock()
-		defer a.enviando.Unlock()
-		if m, err := a.almacen.MioPorID(c.ID); err == nil {
+		e.enviando.Lock()
+		defer e.enviando.Unlock()
+		if m, err := e.almacen.MioPorID(c.ID); err == nil {
 			escribir(w, 200, map[string]any{"mensaje": m, "repetido": true})
 			return
 		}
 	}
-	m, err := a.cuenta.Enviar(c.Chat, c.Texto, c.ID)
+	m, err := e.cuenta.Enviar(c.Chat, c.Texto, c.ID)
 	if err != nil {
 		fallo(w, codigoDe(err), err)
 		return
@@ -340,12 +404,40 @@ func (a *API) con(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// Con la clave del puente y la cuenta de AU-RA (X-Cuenta) bien formada. Sin ella no se toca ninguna cuenta. Toda
+// respuesta de aquí en adelante lleva el eco de la cuenta (X-Cuenta-Eco).
+func (a *API) conClave(f func(w http.ResponseWriter, r *http.Request, clave string)) http.HandlerFunc {
+	return a.con(func(w http.ResponseWriter, r *http.Request) {
+		clave := strings.TrimSpace(r.Header.Get(CabeceraCuenta))
+		if !claveValida.MatchString(clave) {
+			escribir(w, 400, map[string]any{"error": "falta la cuenta de AU-RA (o no tiene la forma esperada)", "codigo": "SIN_CUENTA"})
+			return
+		}
+		w.Header().Set(CabeceraEco, clave)
+		f(w, r, clave)
+	})
+}
+
+// Con una cuenta que ya existe en el puente. Si no está: 412 SIN_VINCULAR, sin crear nada ni mirar otra.
+func (a *API) deCuenta(f func(w http.ResponseWriter, r *http.Request, e *Espacio)) http.HandlerFunc {
+	return a.conClave(func(w http.ResponseWriter, r *http.Request, clave string) {
+		e, ok := a.cuentas.Obtener(clave)
+		if !ok {
+			fallo(w, 412, ErrSinVincular)
+			return
+		}
+		f(w, r, e)
+	})
+}
+
 func codigoDe(err error) int {
 	switch {
 	case errors.Is(err, ErrYaVinculado):
 		return 409
 	case errors.Is(err, ErrSinVincular):
 		return 412
+	case errors.Is(err, ErrCupoLleno):
+		return 507
 	default:
 		return 502
 	}
@@ -359,7 +451,14 @@ func escribir(w http.ResponseWriter, code int, v any) {
 }
 
 func fallo(w http.ResponseWriter, code int, err error) {
-	escribir(w, code, map[string]any{"error": err.Error()})
+	j := map[string]any{"error": err.Error()}
+	switch {
+	case errors.Is(err, ErrCupoLleno):
+		j["codigo"] = "CUPO_LLENO"
+	case errors.Is(err, ErrSinVincular):
+		j["codigo"] = "SIN_VINCULAR"
+	}
+	escribir(w, code, j)
 }
 
 func entre(s string, def, min, max int) int {

@@ -1,9 +1,11 @@
 /**
  * LAS CARAS CONOCIDAS (el reconocimiento con permiso de la app; lo guarda lib/caras-miembro.ts).
  *
- *   GET    /api/caras        → { personas: [{ id, nombre, relacion, vectores, creado }] }
- *   POST   /api/caras        { nombre, relacion: 'yo'|'conocido', vectores: number[128][], consentimiento: { como, frase? } }
+ *   GET    /api/caras        → { personas: [{ id, nombre, relacion, parentesco?, vectores, creado }] }
+ *   POST   /api/caras        { nombre, relacion: 'yo'|'conocido', vectores: number[128][], consentimiento: { como, frase? }, parentesco? }
  *                             → { persona } (400 con la frase si falta el permiso o no es un vector)
+ *   POST   /api/caras/:id/muestras { vectores: number[128][] (1-2) } → { ok, muestras } (aprender con el uso:
+ *                             solo a alguien que ya está en el cajón de esta sesión; 404 si no)
  *   DELETE /api/caras/:id    → { ok, nombre } (404 si no estaba)
  *   DELETE /api/caras        → { ok, borradas }
  *
@@ -12,7 +14,7 @@
  * no sea un vector de 128 números se rechaza.
  */
 import type express from 'express';
-import { agregarCara, cargarCaras, CarasNoDisponibles, CarasNoGuardadas, olvidarCara, olvidarTodasLasCaras, validarAlta } from '../lib/caras-miembro';
+import { agregarCara, cargarCaras, CarasNoDisponibles, CarasNoGuardadas, olvidarCara, olvidarTodasLasCaras, sumarMuestras, validarAlta, validarMuestras } from '../lib/caras-miembro';
 import type { Sesion } from './seguridad';
 
 type Deps = {
@@ -34,7 +36,7 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
     res.setHeader('Cache-Control', 'no-store');
     try {
       const { personas } = await cargarCaras(s.correo);
-      return res.json({ personas: personas.map((p) => ({ id: p.id, nombre: p.nombre, relacion: p.relacion, vectores: p.vectores, creado: p.creado })), honesto: true });
+      return res.json({ personas: personas.map((p) => ({ id: p.id, nombre: p.nombre, relacion: p.relacion, ...(p.parentesco ? { parentesco: p.parentesco } : {}), vectores: p.vectores, creado: p.creado })), honesto: true });
     } catch (e) {
       if (e instanceof CarasNoDisponibles) return noDisponible(res);
       throw e;
@@ -48,11 +50,28 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
     if (v.ok === false) return res.status(400).json({ error: v.error, honesto: true });
     try {
       const p = await agregarCara(s.correo, v);
-      return res.json({ persona: { id: p.id, nombre: p.nombre, relacion: p.relacion, muestras: p.vectores.length }, honesto: true });
+      return res.json({ persona: { id: p.id, nombre: p.nombre, relacion: p.relacion, ...(p.parentesco ? { parentesco: p.parentesco } : {}), muestras: p.vectores.length }, honesto: true });
     } catch (e) {
       if (e instanceof CarasNoDisponibles) return noDisponible(res);
       if (e instanceof CarasNoGuardadas) return noGuardado(res);
       if (e instanceof RangeError) return res.status(409).json({ error: e.message, honesto: true });
+      throw e;
+    }
+  });
+
+  // Aprender con el uso: el id se busca SOLO en el cajón del correo de la sesión (el de otro da 404).
+  app.post('/api/caras/:id/muestras', d.exigirMesa, d.limitar(30), async (req, res) => {
+    const s = d.sesionDe(req);
+    if (!s) return sinSesion(res);
+    const v = validarMuestras(req.body || {});
+    if (v.ok === false) return res.status(400).json({ error: v.error, honesto: true });
+    try {
+      const p = await sumarMuestras(s.correo, String(req.params.id || '').slice(0, 40), v.vectores);
+      if (!p) return res.status(404).json({ error: 'No conozco esa cara.', honesto: true });
+      return res.json({ ok: true, muestras: p.vectores.length, honesto: true });
+    } catch (e) {
+      if (e instanceof CarasNoDisponibles) return noDisponible(res);
+      if (e instanceof CarasNoGuardadas) return noGuardado(res);
       throw e;
     }
   });

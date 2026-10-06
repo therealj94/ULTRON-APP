@@ -371,6 +371,25 @@ type cuentaFalsa struct {
 	errEnvio error
 	alm      *Almacen
 	nombres  map[string]string
+	// Con carpeta (las del registro), «vinculada» es que exista su sesion.db, como la de verdad.
+	dir     string
+	cerrada bool
+}
+
+func (c *cuentaFalsa) TieneSesion() bool {
+	if c.dir != "" {
+		_, err := os.Stat(filepath.Join(c.dir, "sesion.db"))
+		return err == nil
+	}
+	return c.estado.Vinculado
+}
+func (c *cuentaFalsa) Cerrar() { c.cerrada = true }
+
+// Lo que pasa cuando la persona escribe el código en su teléfono: queda la sesión guardada.
+func (c *cuentaFalsa) vincularDeVerdad(t *testing.T) {
+	t.Helper()
+	c.estado = EstadoCuenta{Vinculado: true, Conectado: true, Numero: "+504" + filepath.Base(c.dir)[:4]}
+	must(t, os.WriteFile(filepath.Join(c.dir, "sesion.db"), []byte("vinculada"), 0o600))
 }
 
 func (c *cuentaFalsa) Nombre(jid string) string { return c.nombres[jid] }
@@ -401,9 +420,15 @@ func (c *cuentaFalsa) Contactos(buscar string, limite int) ([]Contacto, error) {
 	return out, nil
 }
 
-func (c *cuentaFalsa) Estado() EstadoCuenta          { return c.estado }
-func (c *cuentaFalsa) VincularQR() (string, error)   { return "data:image/png;base64,QR", nil }
-func (c *cuentaFalsa) Desvincular() error            { c.estado = EstadoCuenta{}; return c.alm.Borrar() }
+func (c *cuentaFalsa) Estado() EstadoCuenta        { return c.estado }
+func (c *cuentaFalsa) VincularQR() (string, error) { return "data:image/png;base64,QR", nil }
+func (c *cuentaFalsa) Desvincular() error {
+	c.estado = EstadoCuenta{}
+	if c.dir != "" {
+		_ = os.Remove(filepath.Join(c.dir, "sesion.db"))
+	}
+	return c.alm.Borrar()
+}
 func (c *cuentaFalsa) MarcarLeido(chat string) error { c.leidos = append(c.leidos, chat); return nil }
 func (c *cuentaFalsa) Media(chat, id string) ([]byte, string, error) {
 	if id == "foto" {
@@ -421,6 +446,10 @@ func (c *cuentaFalsa) VincularCodigo(tel string) (string, error) {
 	if c.estado.Vinculado {
 		return "", ErrYaVinculado
 	}
+	if tel == "50400000000" {
+		return "", errors.New("WhatsApp no contestó a tiempo; prueba otra vez")
+	}
+	c.estado.Vinculando = true
 	return "ABCD-EFGH", nil
 }
 func (c *cuentaFalsa) Enviar(chat, texto, id string) (Mensaje, error) {
@@ -440,7 +469,14 @@ func (c *cuentaFalsa) Enviar(chat, texto, id string) (Mensaje, error) {
 
 const claveDePrueba = "clave-de-prueba-de-24-caracteres"
 
+// Un pedido de la cuenta «legado» (las pruebas de siempre: una sola cuenta).
 func pedir(t *testing.T, h http.Handler, metodo, ruta, clave string, cuerpo any) (int, map[string]any) {
+	t.Helper()
+	return pedirComo(t, h, ClaveLegado, metodo, ruta, clave, cuerpo)
+}
+
+// Un pedido de la cuenta de AU-RA `cuenta` (X-Cuenta; vacía: sin la cabecera).
+func pedirComo(t *testing.T, h http.Handler, cuenta, metodo, ruta, clave string, cuerpo any) (int, map[string]any) {
 	t.Helper()
 	var b bytes.Buffer
 	if cuerpo != nil {
@@ -450,6 +486,9 @@ func pedir(t *testing.T, h http.Handler, metodo, ruta, clave string, cuerpo any)
 	if clave != "" {
 		r.Header.Set("Authorization", "Bearer "+clave)
 	}
+	if cuenta != "" {
+		r.Header.Set(CabeceraCuenta, cuenta)
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	var j map[string]any
@@ -457,10 +496,21 @@ func pedir(t *testing.T, h http.Handler, metodo, ruta, clave string, cuerpo any)
 	return w.Code, j
 }
 
+// Una API con una sola cuenta ya abierta: la «legado» con la cuenta falsa y su almacén.
+func apiCon(t *testing.T, clave string, cuenta *cuentaFalsa, alm *Almacen) (http.Handler, *Registro) {
+	t.Helper()
+	reg, err := NuevoRegistro(t.TempDir(), 25, waLog.Noop, func(string, string, *Almacen) (Cuenta, error) { return nil, errors.New("no se abren otras") })
+	must(t, err)
+	dir := filepath.Join(reg.raiz, ClaveLegado)
+	must(t, os.MkdirAll(dir, 0o700))
+	reg.cuentas[ClaveLegado] = &Espacio{clave: ClaveLegado, dir: dir, cuenta: cuenta, almacen: alm, creada: reg.ahora()}
+	return (&API{clave: clave, cuentas: reg}).Rutas(), reg
+}
+
 func TestAPI(t *testing.T) {
 	alm := almacenDePrueba(t)
 	cuenta := &cuentaFalsa{alm: alm}
-	h := (&API{clave: claveDePrueba, cuenta: cuenta, almacen: alm}).Rutas()
+	h, reg := apiCon(t, claveDePrueba, cuenta, alm)
 
 	if c, _ := pedir(t, h, "GET", "/salud", "", nil); c != 200 {
 		t.Fatal("salud sin clave")
@@ -471,7 +521,7 @@ func TestAPI(t *testing.T) {
 		}
 	}
 	// Una API sin clave configurada no abre a nadie.
-	h0 := (&API{clave: "", cuenta: cuenta, almacen: alm}).Rutas()
+	h0, _ := apiCon(t, "", cuenta, alm)
 	if c, _ := pedir(t, h0, "GET", "/chats", "", nil); c != 401 {
 		t.Fatal("sin clave configurada")
 	}
@@ -549,6 +599,7 @@ func TestAPI(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "/media?chat=c&id=foto", nil)
 	r.Header.Set("Authorization", "Bearer "+claveDePrueba)
+	r.Header.Set(CabeceraCuenta, ClaveLegado)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" || w.Body.String() != "JPG" {
@@ -563,18 +614,22 @@ func TestAPI(t *testing.T) {
 	if c, j := pedir(t, h, "GET", "/media?chat=c&id=vieja", claveDePrueba, nil); c != 410 || !strings.Contains(j["error"].(string), "ábrela en tu teléfono") {
 		t.Fatalf("una foto vencida lo dice claro: %d %v", c, j)
 	}
+	dir := reg.cuentas[ClaveLegado].dir
 	if c, _ := pedir(t, h, "POST", "/desvincular", claveDePrueba, nil); c != 200 {
 		t.Fatal("desvincular")
 	}
-	if c, j := pedir(t, h, "GET", "/chats", claveDePrueba, nil); c != 200 || len(j["chats"].([]any)) != 0 {
-		t.Fatal("al desvincular se borra todo")
+	if c, j := pedir(t, h, "GET", "/chats", claveDePrueba, nil); c != 412 || j["codigo"] != "SIN_VINCULAR" {
+		t.Fatalf("al desvincular la cuenta ya no está: %d %v", c, j)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) || !cuenta.cerrada || len(reg.claves()) != 0 {
+		t.Fatalf("al desvincular se borra su carpeta entera: %v %v %v", err, cuenta.cerrada, reg.claves())
 	}
 }
 
 func TestAPIChatsNombresYFotos(t *testing.T) {
 	alm := almacenDePrueba(t)
 	cuenta := &cuentaFalsa{alm: alm, nombres: map[string]string{"50422223333@s.whatsapp.net": "Lucía", "50411112222@s.whatsapp.net": "Mamá"}}
-	h := (&API{clave: claveDePrueba, cuenta: cuenta, almacen: alm}).Rutas()
+	h, _ := apiCon(t, claveDePrueba, cuenta, alm)
 	t0 := time.Now()
 	for i, c := range []struct {
 		jid, nombre string
@@ -636,6 +691,7 @@ func TestAPIChatsNombresYFotos(t *testing.T) {
 	// La foto de perfil: JPEG con su tamaño, 404 si no tiene, 412 sin vincular, 400 sin chat, y con clave.
 	r := httptest.NewRequest("GET", "/foto?chat=504@s.whatsapp.net", nil)
 	r.Header.Set("Authorization", "Bearer "+claveDePrueba)
+	r.Header.Set(CabeceraCuenta, ClaveLegado)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" || w.Header().Get("Content-Length") != "4" || w.Body.String() != "FOTO" {
@@ -784,5 +840,305 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+/* ------------------------------------------------- varias cuentas: cada cuenta de AU-RA con su WhatsApp */
+
+// Abre cuentas falsas en su carpeta (como main.go abre las de whatsmeow) y recuerda cuál es cuál.
+type fabricaFalsa struct {
+	mu      sync.Mutex
+	cuentas map[string]*cuentaFalsa
+}
+
+func (f *fabricaFalsa) abrir(clave, dir string, alm *Almacen) (Cuenta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := &cuentaFalsa{alm: alm, dir: dir}
+	if _, err := os.Stat(filepath.Join(dir, "sesion.db")); err == nil {
+		c.estado = EstadoCuenta{Vinculado: true, Conectado: true}
+	}
+	f.cuentas[clave] = c
+	return c, nil
+}
+
+func registroDePrueba(t *testing.T, datos string, max int) (*Registro, *fabricaFalsa, http.Handler) {
+	t.Helper()
+	f := &fabricaFalsa{cuentas: map[string]*cuentaFalsa{}}
+	reg, err := NuevoRegistro(datos, max, waLog.Noop, f.abrir)
+	must(t, err)
+	t.Cleanup(reg.CerrarTodo)
+	return reg, f, (&API{clave: claveDePrueba, cuentas: reg}).Rutas()
+}
+
+// Claves como las que manda el servidor (HMAC en hexadecimal).
+const (
+	cuentaAna   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cuentaBruno = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	cuentaCarla = "cccccccccccccccccccccccccccccccccccccccc"
+)
+
+func carpetas(t *testing.T, raiz string) []string {
+	t.Helper()
+	es, err := os.ReadDir(raiz)
+	must(t, err)
+	var out []string
+	for _, e := range es {
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+func TestCuentasAisladas(t *testing.T) {
+	reg, f, h := registroDePrueba(t, t.TempDir(), 25)
+
+	// Sin la cabecera, o con una que no tiene la forma (ni «..», ni mayúsculas, ni corta): 400 y no se toca nada.
+	for _, malo := range []string{"", "../legado", "LEGADO", "abc", cuentaAna + "/x", strings.ToUpper(cuentaAna)} {
+		for _, ruta := range [][2]string{{"GET", "/estado"}, {"GET", "/chats"}, {"POST", "/vincular"}, {"POST", "/enviar"}, {"POST", "/desvincular"}, {"GET", "/buscar?q=hola"}} {
+			if c, j := pedirComo(t, h, malo, ruta[0], ruta[1], claveDePrueba, map[string]string{"telefono": "50499990000", "chat": "x", "texto": "hola"}); c != 400 || j["codigo"] != "SIN_CUENTA" {
+				t.Fatalf("cuenta %q en %v: %d %v", malo, ruta, c, j)
+			}
+		}
+	}
+	// Sin la clave del puente tampoco, aunque traiga la cuenta.
+	if c, _ := pedirComo(t, h, cuentaAna, "GET", "/estado", "", nil); c != 401 {
+		t.Fatalf("sin clave: %d", c)
+	}
+	// Una cuenta que nunca vinculó: estado vacío, sus datos 412, y no se le crea nada.
+	if c, j := pedirComo(t, h, cuentaAna, "GET", "/estado", claveDePrueba, nil); c != 200 || j["vinculado"] != false || j["registrada"] != false {
+		t.Fatalf("estado de una cuenta nueva: %d %v", c, j)
+	}
+	for _, ruta := range []string{"/chats", "/mensajes?chat=504@s.whatsapp.net", "/buscar?q=hola", "/contactos", "/foto?chat=504@s.whatsapp.net", "/media?chat=c&id=foto", "/mensaje?id=3EB0ABCDEF0123456789AB"} {
+		if c, j := pedirComo(t, h, cuentaAna, "GET", ruta, claveDePrueba, nil); c != 412 || j["codigo"] != "SIN_VINCULAR" {
+			t.Fatalf("%s de una cuenta sin WhatsApp: %d %v", ruta, c, j)
+		}
+	}
+	if c, _ := pedirComo(t, h, cuentaAna, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "504@s.whatsapp.net", "texto": "hola"}); c != 412 {
+		t.Fatalf("enviar sin WhatsApp: %d", c)
+	}
+	// Un número mal escrito tampoco crea su carpeta; desvincular una que no está, tampoco.
+	if c, _ := pedirComo(t, h, cuentaAna, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "123"}); c != 400 {
+		t.Fatalf("número corto: %d", c)
+	}
+	if c, _ := pedirComo(t, h, cuentaAna, "POST", "/desvincular", claveDePrueba, nil); c != 200 {
+		t.Fatalf("desvincular una que no está: %d", c)
+	}
+	if got := carpetas(t, reg.raiz); len(got) != 0 {
+		t.Fatalf("nada se creó todavía: %v", got)
+	}
+
+	// Ana y Bruno vinculan, cada uno su WhatsApp, en su carpeta.
+	for _, k := range []string{cuentaAna, cuentaBruno} {
+		if c, j := pedirComo(t, h, k, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "+504 9999-0000"}); c != 200 || j["codigo"] != "ABCD-EFGH" {
+			t.Fatalf("vincular %s: %d %v", k[:4], c, j)
+		}
+		f.cuentas[k].vincularDeVerdad(t)
+	}
+	if got := carpetas(t, reg.raiz); len(got) != 2 || got[0] != cuentaAna || got[1] != cuentaBruno {
+		t.Fatalf("una carpeta por cuenta, con la clave de nombre: %v", got)
+	}
+	if c, j := pedirComo(t, h, cuentaAna, "GET", "/estado", claveDePrueba, nil); c != 200 || j["vinculado"] != true || j["registrada"] != true {
+		t.Fatalf("estado de Ana: %d %v", c, j)
+	}
+	// Le llega un mensaje a Ana.
+	ana, _ := reg.Obtener(cuentaAna)
+	t0 := time.Now()
+	must(t, ana.almacen.GuardarChat("50411112222@s.whatsapp.net", "Mamá de Ana", false, t0))
+	_, err := ana.almacen.GuardarMensaje(Mensaje{ID: "A1", Chat: "50411112222@s.whatsapp.net", De: "50411112222@s.whatsapp.net", Hora: t0.UnixMilli(), Tipo: "texto", Texto: "secreto de Ana"}, nil, nil)
+	must(t, err)
+	if c, j := pedirComo(t, h, cuentaAna, "GET", "/chats", claveDePrueba, nil); c != 200 || len(j["chats"].([]any)) != 1 {
+		t.Fatalf("Ana ve su chat: %d %v", c, j)
+	}
+	// Bruno no ve nada de Ana: ni sus chats, ni sus mensajes, ni lo encuentra buscando.
+	if c, j := pedirComo(t, h, cuentaBruno, "GET", "/chats", claveDePrueba, nil); c != 200 || len(j["chats"].([]any)) != 0 {
+		t.Fatalf("Bruno no ve los chats de Ana: %d %v", c, j)
+	}
+	if c, j := pedirComo(t, h, cuentaBruno, "GET", "/mensajes?chat=50411112222@s.whatsapp.net", claveDePrueba, nil); c != 200 || len(j["mensajes"].([]any)) != 0 {
+		t.Fatalf("Bruno no lee los mensajes de Ana: %d %v", c, j)
+	}
+	if c, j := pedirComo(t, h, cuentaBruno, "GET", "/buscar?q=secreto", claveDePrueba, nil); c != 200 || len(j["mensajes"].([]any)) != 0 {
+		t.Fatalf("ni buscando: %d %v", c, j)
+	}
+	// Lo que manda Bruno sale de SU WhatsApp y queda en SU almacén.
+	id := "3EB0ABCDEF0123456789AB"
+	if c, _ := pedirComo(t, h, cuentaBruno, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "50433334444@s.whatsapp.net", "texto": "hola de Bruno", "id": id}); c != 200 {
+		t.Fatalf("enviar de Bruno: %d", c)
+	}
+	if len(f.cuentas[cuentaBruno].enviados) != 1 || len(f.cuentas[cuentaAna].enviados) != 0 {
+		t.Fatalf("salió de la cuenta equivocada: Ana %v, Bruno %v", f.cuentas[cuentaAna].enviados, f.cuentas[cuentaBruno].enviados)
+	}
+	if c, _ := pedirComo(t, h, cuentaAna, "GET", "/mensaje?id="+id, claveDePrueba, nil); c != 404 {
+		t.Fatalf("el envío de Bruno no aparece en Ana: %d", c)
+	}
+	// El mismo id en la cuenta de Ana es otro mensaje (el candado y el «ya salió» son por cuenta).
+	if c, j := pedirComo(t, h, cuentaAna, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "50411112222@s.whatsapp.net", "texto": "hola de Ana", "id": id}); c != 200 || j["repetido"] == true {
+		t.Fatalf("el id de Bruno no bloquea a Ana: %d %v", c, j)
+	}
+
+	// Bruno desvincula: su carpeta se borra entera; lo de Ana sigue igual.
+	dirBruno := filepath.Join(reg.raiz, cuentaBruno)
+	if c, _ := pedirComo(t, h, cuentaBruno, "POST", "/desvincular", claveDePrueba, nil); c != 200 {
+		t.Fatalf("desvincular a Bruno: %d", c)
+	}
+	if _, err := os.Stat(dirBruno); !os.IsNotExist(err) || !f.cuentas[cuentaBruno].cerrada {
+		t.Fatalf("la carpeta de Bruno se borró y su cuenta se cerró: %v", err)
+	}
+	if c, j := pedirComo(t, h, cuentaBruno, "GET", "/estado", claveDePrueba, nil); c != 200 || j["registrada"] != false {
+		t.Fatalf("Bruno ya no está: %d %v", c, j)
+	}
+	if c, j := pedirComo(t, h, cuentaAna, "GET", "/chats", claveDePrueba, nil); c != 200 || len(j["chats"].([]any)) != 1 || f.cuentas[cuentaAna].cerrada {
+		t.Fatalf("Ana sigue con lo suyo: %d %v", c, j)
+	}
+	if got := reg.claves(); len(got) != 1 || got[0] != cuentaAna {
+		t.Fatalf("registro: %v", got)
+	}
+	// Y salud dice cuántas, sin decir cuáles.
+	if c, j := pedirComo(t, h, "", "GET", "/salud", "", nil); c != 200 || j["cuentas"] != float64(1) || j["maxCuentas"] != float64(25) {
+		t.Fatalf("salud: %d %v", c, j)
+	}
+}
+
+func TestCupoLleno(t *testing.T) {
+	reg, f, h := registroDePrueba(t, t.TempDir(), 2)
+	for _, k := range []string{cuentaAna, cuentaBruno} {
+		if c, _ := pedirComo(t, h, k, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "50499990000"}); c != 200 {
+			t.Fatalf("vincular %s: %d", k[:4], c)
+		}
+		f.cuentas[k].vincularDeVerdad(t)
+	}
+	// Lleno: la tercera no entra, con un código claro, y no se le crea carpeta.
+	c, j := pedirComo(t, h, cuentaCarla, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "50499990000"})
+	if c != 507 || j["codigo"] != "CUPO_LLENO" || !strings.Contains(j["error"].(string), "administrador") {
+		t.Fatalf("cupo lleno: %d %v", c, j)
+	}
+	if _, err := os.Stat(filepath.Join(reg.raiz, cuentaCarla)); !os.IsNotExist(err) {
+		t.Fatal("sin cupo no se crea su carpeta")
+	}
+	// Una que ya está no choca con el tope: vuelve a su propia cuenta (aquí: ya vinculada).
+	if c, _ := pedirComo(t, h, cuentaAna, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "50499990000"}); c != 409 {
+		t.Fatalf("Ana ya vinculada: %d", c)
+	}
+	// Bruno se desvinculó desde el teléfono y no está vinculando: su lugar se libera para Carla.
+	must(t, f.cuentas[cuentaBruno].Desvincular())
+	if c, j := pedirComo(t, h, cuentaCarla, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "50499990000"}); c != 200 {
+		t.Fatalf("con el lugar de una vinculación abandonada: %d %v", c, j)
+	}
+	if got := reg.claves(); len(got) != 2 || got[0] != cuentaAna || got[1] != cuentaCarla {
+		t.Fatalf("registro: %v", got)
+	}
+	if _, err := os.Stat(filepath.Join(reg.raiz, cuentaBruno)); !os.IsNotExist(err) {
+		t.Fatal("lo de Bruno se borró")
+	}
+	// Un /vincular que falla (WhatsApp no contestó) no deja la cuenta ocupando lugar.
+	must(t, reg.Quitar(cuentaCarla))
+	if c, _ := pedirComo(t, h, cuentaCarla, "POST", "/vincular", claveDePrueba, map[string]string{"telefono": "50400000000"}); c != 502 {
+		t.Fatalf("vincular que falla: %d", c)
+	}
+	if _, ok := reg.Obtener(cuentaCarla); ok {
+		t.Fatal("la cuenta que no arrancó no ocupa cupo")
+	}
+}
+
+// La cuenta de antes (la de José, en la raíz del disco) pasa a cuentas/legado y sigue vinculada, sin volver a vincular.
+func TestMigrarLegado(t *testing.T) {
+	datos := t.TempDir()
+	// El disco como lo dejó el puente de una sola cuenta.
+	must(t, os.WriteFile(filepath.Join(datos, "sesion.db"), []byte("vinculada"), 0o600))
+	alm, err := AbrirAlmacen(filepath.Join(datos, "mensajes.db"))
+	must(t, err)
+	must(t, alm.GuardarChat("50499990000@s.whatsapp.net", "Beto", false, time.Now()))
+	_, err = alm.GuardarMensaje(Mensaje{ID: "J1", Chat: "50499990000@s.whatsapp.net", De: "50499990000@s.whatsapp.net", Hora: time.Now().UnixMilli(), Tipo: "texto", Texto: "hola José"}, nil, nil)
+	must(t, err)
+	alm.Cerrar()
+	must(t, os.MkdirAll(filepath.Join(datos, "fotos"), 0o700))
+	must(t, os.WriteFile(filepath.Join(datos, "fotos", "x.jpg"), []byte("FOTO"), 0o600))
+
+	reg, f, h := registroDePrueba(t, datos, 25)
+	for _, n := range []string{"sesion.db", "mensajes.db", "fotos"} {
+		if _, err := os.Stat(filepath.Join(datos, n)); !os.IsNotExist(err) {
+			t.Fatalf("%s quedó en la raíz", n)
+		}
+		if _, err := os.Stat(filepath.Join(reg.raiz, ClaveLegado, n)); err != nil {
+			t.Fatalf("%s no está en legado: %v", n, err)
+		}
+	}
+	reg.Cargar()
+	if got := reg.claves(); len(got) != 1 || got[0] != ClaveLegado || !f.cuentas[ClaveLegado].TieneSesion() {
+		t.Fatalf("la cuenta de antes se reconecta sola: %v", got)
+	}
+	// José (el servidor manda «legado») ve sus chats de siempre; cualquier otra cuenta, nada.
+	if c, j := pedirComo(t, h, ClaveLegado, "GET", "/chats", claveDePrueba, nil); c != 200 || len(j["chats"].([]any)) != 1 || j["chats"].([]any)[0].(map[string]any)["nombre"] != "Beto" {
+		t.Fatalf("José ve lo suyo: %d %v", c, j)
+	}
+	if c, j := pedirComo(t, h, ClaveLegado, "GET", "/estado", claveDePrueba, nil); c != 200 || j["vinculado"] != true {
+		t.Fatalf("José sigue vinculado: %d %v", c, j)
+	}
+	if c, _ := pedirComo(t, h, cuentaAna, "GET", "/chats", claveDePrueba, nil); c != 412 {
+		t.Fatalf("otra cuenta no ve lo de José: %d", c)
+	}
+	if b, _ := os.ReadFile(filepath.Join(reg.raiz, ClaveLegado, "fotos", "x.jpg")); string(b) != "FOTO" {
+		t.Fatal("las fotos pasaron con la cuenta")
+	}
+	// Arrancar otra vez no mueve nada más (ya está hecho).
+	reg.CerrarTodo()
+	reg2, _, _ := registroDePrueba(t, datos, 25)
+	reg2.Cargar()
+	if got := reg2.claves(); len(got) != 1 || got[0] != ClaveLegado {
+		t.Fatalf("segundo arranque: %v", got)
+	}
+}
+
+// Si ya hay algo con ese nombre en legado, no se pisa: el puente no arranca y no mueve nada.
+func TestMigrarLegadoNoPisa(t *testing.T) {
+	datos := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(datos, "sesion.db"), []byte("vieja"), 0o600))
+	must(t, os.MkdirAll(filepath.Join(datos, "cuentas", ClaveLegado), 0o700))
+	must(t, os.WriteFile(filepath.Join(datos, "cuentas", ClaveLegado, "sesion.db"), []byte("otra"), 0o600))
+	if _, err := NuevoRegistro(datos, 25, waLog.Noop, (&fabricaFalsa{cuentas: map[string]*cuentaFalsa{}}).abrir); err == nil || !strings.Contains(err.Error(), "no piso nada") {
+		t.Fatalf("debía negarse: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(datos, "sesion.db")); string(b) != "vieja" {
+		t.Fatal("no se movió nada")
+	}
+	if b, _ := os.ReadFile(filepath.Join(datos, "cuentas", ClaveLegado, "sesion.db")); string(b) != "otra" {
+		t.Fatal("no se pisó nada")
+	}
+}
+
+// Al arrancar solo se reconectan las vinculadas; una vinculación a medias se borra; lo que no es una cuenta, ni se toca.
+func TestCargarSoloVinculadas(t *testing.T) {
+	datos := t.TempDir()
+	raiz := filepath.Join(datos, "cuentas")
+	for _, k := range []string{cuentaAna, cuentaBruno, "no-es-una-cuenta"} {
+		must(t, os.MkdirAll(filepath.Join(raiz, k), 0o700))
+	}
+	must(t, os.WriteFile(filepath.Join(raiz, cuentaAna, "sesion.db"), []byte("vinculada"), 0o600))
+	reg, f, _ := registroDePrueba(t, datos, 25)
+	reg.Cargar()
+	if got := reg.claves(); len(got) != 1 || got[0] != cuentaAna {
+		t.Fatalf("solo la vinculada: %v", got)
+	}
+	if _, err := os.Stat(filepath.Join(raiz, cuentaBruno)); !os.IsNotExist(err) || !f.cuentas[cuentaBruno].cerrada {
+		t.Fatalf("la vinculación a medias se borra: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(raiz, "no-es-una-cuenta")); err != nil {
+		t.Fatal("lo que no es una cuenta no se toca")
+	}
+	if _, ok := f.cuentas["no-es-una-cuenta"]; ok {
+		t.Fatal("ni se abre")
+	}
+}
+
+// La cuenta de verdad (whatsmeow) se puede soltar dos veces sin romperse (desvincular + apagar).
+func TestCuentaWACerrar(t *testing.T) {
+	c, _ := cuentaDePrueba(t)
+	c.fin = make(chan struct{})
+	go c.ordenador()
+	c.pedirOrden()
+	c.Cerrar()
+	c.Cerrar()
+	c.pedirOrden() // después de cerrar no se cuelga ni revienta
+	if !c.TieneSesion() {
+		t.Fatal("la sesión de prueba sigue en memoria")
 	}
 }

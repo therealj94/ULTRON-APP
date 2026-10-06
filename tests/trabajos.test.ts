@@ -46,6 +46,8 @@ import {
   type SalidaEnvio,
 } from '../server/trabajos';
 import { conS3Falso } from './s3-condicional-falso';
+import { BLOQUEADA_VISIBLE_MS } from '../server/trabajos';
+import { _olvidarEnPantalla, enPantallaDe, olvidarEnPantallaDeConversacion } from '../server/decision-en-pantalla';
 
 const T0 = Date.parse('2026-10-03T15:00:00Z');
 let n = 0;
@@ -321,7 +323,7 @@ test('la tarea en curso que espera a la persona: Pausar y Cancelar siguen llegan
 
 type Llamadas = { enviar: number; descartar: number; accionesTc: string[]; pausarPc: string[]; pararPc: string[]; huellas: string[] };
 
-function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: MisionComputadoraMin[]; vigente?: (canal: string, ambito: string) => string | null; huellaVigente?: () => string | undefined; ahora?: () => number; pausarPc?: () => Promise<unknown>; pararPc?: () => Promise<unknown>; reanudarPc?: () => Promise<unknown> } = {}) {
+function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: MisionComputadoraMin[]; vigente?: (canal: string, ambito: string, intento?: string) => string | null; huellaVigente?: () => string | undefined; ahora?: () => number; pausarPc?: () => Promise<unknown>; pararPc?: () => Promise<unknown>; reanudarPc?: () => Promise<unknown>; editar?: NonNullable<DepsTrabajos['borradores']>['editar'] } = {}) {
   const ll: Llamadas = { enviar: 0, descartar: 0, accionesTc: [], pausarPc: [], pararPc: [], huellas: [] };
   const pasa = ((_q: express.Request, _s: express.Response, nx: express.NextFunction) => nx()) as express.RequestHandler;
   const deps: DepsTrabajos = {
@@ -352,8 +354,8 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
       reanudar: async () => (o.reanudarPc ? o.reanudarPc() : undefined),
     },
     borradores: {
-      vigente: (_c, canal, ambito) => {
-        const i = o.vigente ? o.vigente(canal, ambito) : 'int-1';
+      vigente: (_c, canal, ambito, intento) => {
+        const i = o.vigente ? o.vigente(canal, ambito, intento) : 'int-1';
         // Como los borradores de verdad, el que espera dice su huella (la del fixture: `h-<intento>`). Sin huella, el
         // panel no aprueba nada (permisos exactos, 4-oct).
         const huella = o.huellaVigente ? o.huellaVigente() : i ? `h-${i}` : undefined;
@@ -366,6 +368,7 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
         return o.salida || { estado: 'succeeded', resumen: 'CORREO ENVIADO desde yo@ejemplo.com a ana@ejemplo.com — «Fechas».' };
       },
       descartar: async () => void ll.descartar++,
+      ...(o.editar ? { editar: o.editar } : {}),
     },
   };
   const app = express();
@@ -374,9 +377,9 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
   const srv = app.listen(0, '127.0.0.1');
   const listo = new Promise((r) => srv.once('listening', r));
   const base = () => `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
-  const pedir = async (ruta: string, quien: string | null, cuerpo?: unknown) => {
+  const pedir = async (ruta: string, quien: string | null, cuerpo?: unknown, cabeceras: Record<string, string> = {}) => {
     await listo;
-    const r = await fetch(`${base()}${ruta}`, { method: cuerpo ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}) }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
+    const r = await fetch(`${base()}${ruta}`, { method: cuerpo ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}), ...cabeceras }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
     return { status: r.status, json: (await r.json()) as any };
   };
   return { ll, pedir, cerrar: () => srv.close() };
@@ -929,6 +932,269 @@ test('el borrador desapareció (reinicio del servidor) → bloqueada con explica
     assert.equal(t.state, 'blocked');
     assert.match(t.currentStep, /No se envió nada/);
     assert.deepEqual((await h.pedir('/api/trabajos', yo)).json.resumen, { trabajando: 0, decisiones: 1 });
+  } finally {
+    h.cerrar();
+  }
+});
+
+/* ------------------------------------------------------------------ la ventana de decisión (José, 5-oct) */
+
+test('ventana de decisión: el reconciliar pregunta por SU intento (un apartado que otro desplazó sigue esperando, no «ya no está»)', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  const pedidos: Array<string | undefined> = [];
+  // El lugar principal tiene a Bruno (int-bruno); Ana (int-ana) espera entre los apartados: por su intento, sigue.
+  const h = arnes({ vigente: (_c, _a, intento) => (pedidos.push(intento), intento === 'int-ana' || intento === 'int-bruno' ? intento : 'int-bruno') });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-ana'));
+    const t = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal(t.state, 'awaiting_approval', 'sigue esperando su decisión');
+    assert.ok(pedidos.includes('int-ana'), 'preguntó por su intento');
+    const ok = await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t.decisionId, expectedVersion: t.version, opcion: 'aprobar' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(h.ll.huellas, ['h-int-ana'], 'manda el de Ana con SU huella');
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('ventana de decisión: «cámbialo a…» (otra versión para la MISMA persona) vuelve a la misma tarjeta con otra decisión; la vieja no aprueba la nueva', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let vigente = 'int-v1';
+  const h = arnes({ vigente: () => vigente });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-v1'));
+    const v1 = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    vigente = 'int-v2';
+    const b = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-v2'), texto: 'Hola Ana, mejor el viernes.' });
+    assert.equal(b!.id, a!.id, 'la misma tarjeta (no quedan dos)');
+    const v2 = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal(v2.planVersion, 2);
+    assert.notEqual(v2.decisionId, v1.decisionId);
+    assert.ok(v2.decision.proposal.data.some((x: string) => x.includes('viernes')), 'muestra el texto nuevo');
+    const viejo = await h.pedir(`/api/trabajos/${a!.id}/decisiones`, yo, { decisionId: v1.decisionId, expectedVersion: v1.version, opcion: 'aprobar' });
+    assert.equal(viejo.status, 409);
+    assert.equal(h.ll.enviar, 0);
+    // A OTRA persona, en cambio, es otra tarjeta.
+    const c = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-otra'), para: ['bruno@ejemplo.com'] });
+    assert.notEqual(c!.id, a!.id);
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('ventana de decisión: una propuesta bloqueada (venció) se ve un rato y luego se cierra sola «no salió nada» (no pide decisión para siempre)', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let ahora = Date.now();
+  const h = arnes({ vigente: () => 'int-vence', ahora: () => ahora });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-vence', ahora + 60_000));
+    ahora += 2 * 60_000;
+    const t = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal(t.state, 'blocked', 'venció: se ve bloqueada (la ventana pregunta si se rehace)');
+    ahora += BLOQUEADA_VISIBLE_MS + 1000;
+    const fin = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal(fin.state, 'cancelled');
+    assert.equal(fin.terminal, true);
+    assert.match(fin.result.summary, /no salió nada/);
+    assert.deepEqual((await h.pedir('/api/trabajos', yo)).json.resumen, { trabajando: 0, decisiones: 0 }, 'el indicador ya no pide una decisión');
+    assert.equal(h.ll.enviar, 0);
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('editar desde la tarjeta: el texto nuevo queda como decisión NUEVA en la misma tarea (otra huella); nada sale; la vieja no aprueba', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let vigente = 'int-1';
+  const editados: Array<{ intento: string; huella: string; texto: string }> = [];
+  const h = arnes({
+    vigente: () => vigente,
+    editar: (_c, canal, _amb, intento, huella, cambios) => {
+      if (huella !== `h-${intento}`) return { ok: false, codigo: 'huella', mensaje: 'Lo que espera ya no es lo que estabas viendo.' };
+      if (!cambios.texto.trim()) return { ok: false, codigo: 'vacio', mensaje: 'Vacío.' };
+      editados.push({ intento, huella, texto: cambios.texto });
+      vigente = 'int-2';
+      return { ok: true, borrador: { ...borrador('int-2'), canal, texto: cambios.texto, huella: 'h-int-2' } };
+    },
+  });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-1'));
+    const t = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}/editar`, yo, { decisionId: t.decisionId, expectedVersion: t.version, texto: '   ' })).status, 400, 'vacío: 400, nada cambia');
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}/editar`, yo, { decisionId: 'dc_viejo', expectedVersion: t.version, texto: 'x' })).json.codigo, 'decision-vieja');
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}/editar`, correo(), { decisionId: t.decisionId, expectedVersion: t.version, texto: 'x' })).status, 404, 'otro no edita lo mío');
+    const r = await h.pedir(`/api/trabajos/${t.id}/editar`, yo, { decisionId: t.decisionId, expectedVersion: t.version, texto: 'Hola Ana, ¿mejor el viernes?' });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.deepEqual(editados, [{ intento: 'int-1', huella: 'h-int-1', texto: 'Hola Ana, ¿mejor el viernes?' }], 'edita SOLO el que mostró la tarjeta');
+    const t2 = r.json.tarea;
+    assert.equal(t2.state, 'awaiting_approval');
+    assert.notEqual(t2.decisionId, t.decisionId, 'otra decisión: hay que volver a decir que sí');
+    assert.ok(t2.decision.proposal.data.some((x: string) => x.includes('viernes')), 'la tarjeta vuelve a mostrar el texto final');
+    assert.equal(t2.decision.proposal.text, 'Hola Ana, ¿mejor el viernes?', 'el texto entero, para la ventana y para volver a editar');
+    assert.equal(t.decision.proposal.subject, 'Fechas de la reunión');
+    assert.equal(h.ll.enviar, 0, 'editar no envía nada');
+    const viejo = await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t.decisionId, expectedVersion: t.version, opcion: 'aprobar' });
+    assert.equal(viejo.status, 409);
+    const ok = await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t2.decisionId, expectedVersion: t2.version, opcion: 'aprobar' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(h.ll.huellas, ['h-int-2'], 'sale la versión editada (su huella)');
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('editar desde la tarjeta: lo que no es un borrador (la tarea en curso, el taller) no se edita: 409 no-editable', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  const tc: TareaEnCursoMin = { id: 'tc_ed', ambito: 'tel', tipo: 'correo', titulo: 'revisar correos', pasos: [{ etiqueta: 'a', estado: 'pendiente' }], actual: 0, estado: 'preguntando', creado: T0, actualizado: T0 + 1 };
+  const h = arnes({ tc: [tc] });
+  try {
+    const t = (await h.pedir('/api/trabajos/tc_ed', yo)).json.tarea;
+    const r = await h.pedir('/api/trabajos/tc_ed/editar', yo, { decisionId: t.decisionId, expectedVersion: t.version, texto: 'x' });
+    assert.equal(r.status, 409);
+    assert.equal(r.json.codigo, 'no-editable');
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('en pantalla: la ventana registra SU decisión (borrador), una vieja es 409 con la de ahora, y soltarla la quita', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  _olvidarEnPantalla();
+  const yo = correo();
+  const h = arnes();
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-1'));
+    const t = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    const vieja = await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: 'dc_viejo', visible: true });
+    assert.equal(vieja.status, 409);
+    assert.equal(vieja.json.codigo, 'decision-vieja');
+    assert.equal(vieja.json.tarea.decisionId, t.decisionId, 'vuelve la de ahora para mostrarla');
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    const ok = await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true });
+    assert.equal(ok.json.registrada, true);
+    const e = enPantallaDe(yo, 'telefono');
+    assert.equal(e?.intento, 'int-1');
+    assert.equal(e?.huella, 'h-int-1');
+    assert.equal(enPantallaDe(yo, 'web'), null, 'solo en la conversación del borrador');
+    assert.equal(enPantallaDe(correo(), 'telefono'), null, 'de nadie más');
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, correo(), { decisionId: t.decisionId, visible: true })).status, 404, 'otro no registra lo mío');
+    // Renovar mantiene la MISMA (no la vuelve «más nueva»); si AU-RA preguntó otra cosa después, renovar no la revive.
+    const desde = enPantallaDe(yo, 'telefono')!.t;
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true, renovar: true })).json.registrada, true);
+    assert.equal(enPantallaDe(yo, 'telefono')!.t, desde);
+    olvidarEnPantallaDeConversacion(yo, 'telefono');
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true, renovar: true })).json.registrada, false);
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true });
+    // Soltar OTRA decisión de la misma tarea (la versión vieja que la ventana dejó de mostrar) no suelta esta.
+    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: 'dc_version_vieja', visible: false });
+    assert.equal(enPantallaDe(yo, 'telefono')?.decisionId, t.decisionId);
+    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: false });
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    // Decidida (rechazada) deja de estar a la vista.
+    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true });
+    await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t.decisionId, expectedVersion: t.version, opcion: 'rechazar' });
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    assert.equal(h.ll.enviar, 0);
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('revisión 7.5 (MENOR 2): «oculta» y «visible» en carrera (cancelar una edición rápido): gana la más nueva del aparato', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  _olvidarEnPantalla();
+  const yo = correo();
+  const h = arnes();
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-1'));
+    const t = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    const ruta = `/api/trabajos/${t.id}/en-pantalla`;
+    const tel = { 'x-aura-aparato': 'a-tel-1' };
+    // La ventana: oculta (seq 100) y enseguida visible (seq 101); la visible llega PRIMERO y la oculta después.
+    assert.equal((await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: true, seq: 101 }, tel)).json.registrada, true);
+    const vieja = await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: 100 }, tel);
+    assert.equal(vieja.json.registrada, false);
+    assert.equal(enPantallaDe(yo, 'telefono')?.decisionId, t.decisionId, 'antes la oculta vieja borraba el registro nuevo');
+    // La misma secuencia otra vez no cuenta; una más nueva, sí.
+    await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: 101 }, tel);
+    assert.ok(enPantallaDe(yo, 'telefono'));
+    await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: 102 }, tel);
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    // Es por aparato: otro teléfono con su propio reloj (más atrás) no queda ignorado.
+    assert.equal((await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: true, seq: 5 }, { 'x-aura-aparato': 'a-tel-2' })).json.registrada, true);
+    // Una app de antes (sin seq) sigue como siempre.
+    await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false });
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    // A la vez de verdad (visible 200 y oculta 201): sea cual sea el orden de llegada, queda la oculta (la más nueva).
+    for (let i = 0; i < 6; i++) {
+      const base = 300 + i * 10;
+      await Promise.all([h.pedir(ruta, yo, { decisionId: t.decisionId, visible: true, seq: base }, tel), h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: base + 1 }, tel)]);
+      assert.equal(enPantallaDe(yo, 'telefono'), null, `vuelta ${i}: la visible vieja no queda registrada`);
+    }
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('revisión (MENOR b): un miembro que entra solo con Veta Wallet (`veta:0x…`) también tiene su tarjeta de decisión y la ve', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const veta = `veta:0x${'ab'.repeat(20)}`;
+  const h = arnes();
+  try {
+    const ref = await abrirDecisionDeBorrador(veta, 'telefono', borrador('int-veta'));
+    assert.ok(ref, 'se abre la tarjeta');
+    const l = await h.pedir('/api/trabajos', veta);
+    assert.equal(l.status, 200);
+    assert.equal(l.json.tareas.length, 1);
+    assert.equal((await h.pedir('/api/trabajos', `veta:0x${'cd'.repeat(20)}`)).json.tareas.length, 0, 'de nadie más');
+    assert.equal((await h.pedir('/api/trabajos', 'veta:no-es-una-billetera')).status, 403, 'algo que no es una identidad no es dueño de nada');
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('revisión (G3): la versión nueva para los MISMOS destinatarios (en otro orden) vuelve a la misma tarjeta', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let vigente = 'int-o1';
+  const h = arnes({ vigente: () => vigente });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-o1'), para: ['Bruno@ejemplo.com', 'ana@ejemplo.com'] });
+    vigente = 'int-o2';
+    const b = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-o2'), para: ['ana@ejemplo.com', 'bruno@ejemplo.com'], texto: 'Versión 2' });
+    assert.equal(b!.id, a!.id, 'no quedan dos tarjetas del mismo mensaje');
+    const l = await h.pedir('/api/trabajos', yo);
+    assert.equal(l.json.tareas.filter((t: any) => !t.terminal).length, 1);
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('revisión 8.5 (MENOR 1): otro correo a la MISMA persona sobre otra cosa conserva su tarjeta si su borrador sigue esperando', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  const h = arnes();
+  try {
+    const esperan = new Set(['int-factura']);
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-factura'), asunto: 'Factura de septiembre' }, (i) => esperan.has(i));
+    esperan.add('int-reunion');
+    const b = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-reunion'), asunto: 'Reunión del jueves' }, (i) => i !== 'int-reunion' && esperan.has(i));
+    assert.notEqual(b!.id, a!.id, 'la factura no pierde su tarjeta: son dos correos distintos');
+    const l = await h.pedir('/api/trabajos', yo);
+    assert.equal(l.json.tareas.filter((t: any) => !t.terminal).length, 2);
+    // Una versión nueva de verdad (el borrador viejo ya no espera: correo.ts lo quitó) sí vuelve a la misma tarjeta.
+    esperan.delete('int-reunion');
+    const c = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-reunion2'), asunto: 'Reunión del jueves', texto: 'Versión 2' }, (i) => i !== 'int-reunion2' && esperan.has(i));
+    assert.equal(c!.id, b!.id);
+    const l2 = await h.pedir('/api/trabajos', yo);
+    const factura = l2.json.tareas.find((t: any) => t.id === a!.id);
+    assert.ok(factura && !factura.terminal, 'la tarjeta de la factura sigue abierta');
   } finally {
     h.cerrar();
   }

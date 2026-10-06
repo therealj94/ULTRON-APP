@@ -155,7 +155,10 @@ prueba('caras por voz: conóceme, te presento a…, olvida a…, ¿a quién cono
   assert.deepEqual(pedidoDeCaras('Conóceme'), { tipo: 'conoceme' });
   assert.deepEqual(pedidoDeCaras('aprende mi cara'), { tipo: 'conoceme' });
   assert.deepEqual(pedidoDeCaras('Te presento a Ana'), { tipo: 'presentar', nombre: 'Ana' });
-  assert.deepEqual(pedidoDeCaras('te presento a mi amigo Juan Pérez'), { tipo: 'presentar', nombre: 'Juan Pérez' });
+  assert.deepEqual(pedidoDeCaras('te presento a mi amigo Juan Pérez'), { tipo: 'presentar', nombre: 'Juan Pérez', parentesco: 'amigo' });
+  assert.deepEqual(pedidoDeCaras('Te presento a mi esposa Ana'), { tipo: 'presentar', nombre: 'Ana', parentesco: 'esposa' });
+  assert.deepEqual(pedidoDeCaras('te presento a Ana, mi esposa'), { tipo: 'presentar', nombre: 'Ana', parentesco: 'esposa' }, 'el parentesco después del nombre no entra al nombre');
+  assert.deepEqual(pedidoDeCaras('Quiero que conozcas a mi mamá Rosa'), { tipo: 'presentar', nombre: 'Rosa', parentesco: 'mamá' });
   assert.deepEqual(pedidoDeCaras('Ella es María'), { tipo: 'presentar', nombre: 'María' });
   assert.equal(pedidoDeCaras('este es un buen día'), null, '«este es…» sin nombre no es presentar');
   assert.deepEqual(pedidoDeCaras('olvida a Ana'), { tipo: 'olvidar', nombre: 'Ana' });
