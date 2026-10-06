@@ -122,11 +122,13 @@ async function conEntorno<R>(fn: (e: { mandados: Envio[]; enviados: Array<{ chat
   }
 }
 
-const turno = (mensaje: string, o: Record<string, unknown> = {}) => T.resolverDecisionesDelTurno({ dueno: JOSE, ambito: 'tel', mensaje, whatsapp: true, registrarEfecto: async () => true, ...o } as any);
+/** El teléfono de José: un «sí» hablado ata solo el registro de la ventana de ESTE aparato (revisión 7, MENOR). */
+const APARATO = 'telefono-de-jose-1';
+const turno = (mensaje: string, o: Record<string, unknown> = {}) => T.resolverDecisionesDelTurno({ dueno: JOSE, ambito: 'tel', mensaje, whatsapp: true, registrarEfecto: async () => true, aparato: APARATO, ...o } as any);
 const waParaBruno = (texto = 'Llego a las 5.') => W.correrWhatsapp(JOSE, `responder Bruno | ${texto}`, 'tel');
 const waParaTigo = (texto = 'Mañana pago la factura.') => W.correrWhatsapp(JOSE, `responder Tigo | ${texto}`, 'tel');
 const correoParaAna = (texto = 'Va el informe.') => C.correrCorreo(JOSE, `escribir ana@example.test | Informe | ${texto}`, 'tel');
-const vistaDe = (canal: 'correo' | 'whatsapp', b: { intento: string; huella: string }) => ({ canal, ambito: 'tel', intento: b.intento, huella: b.huella, tareaId: 'tk_x', decisionId: 'dc_x', via: 'pantalla' as const, t: Date.now() + 1 });
+const vistaDe = (canal: 'correo' | 'whatsapp', b: { intento: string; huella: string }) => ({ canal, ambito: 'tel', intento: b.intento, huella: b.huella, tareaId: 'tk_x', decisionId: 'dc_x', via: 'pantalla' as const, t: Date.now() + 1, aparato: APARATO });
 const esperar = async (cond: () => Promise<boolean> | boolean, ms = 2000) => {
   const fin = Date.now() + ms;
   while (Date.now() < fin) {
