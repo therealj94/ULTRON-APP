@@ -303,14 +303,30 @@ test('MENOR-F (revisión independiente del 5-oct): «el último correo de la ma�
   assert.deepEqual(mal, []);
 });
 
-test('MENOR-F: «el último correo de la mañana» abre el último (sin lista ni tarea)', async () => {
-  await preparar();
+test('MENOR-F: «el último correo de la mañana» abre el último DE LA MAÑANA (sin lista ni tarea)', async () => {
+  // LANG-02: con reloj fijo (11:30 a. m. en Honduras). Antes abría el más nuevo de todos aunque hubiera llegado de noche:
+  // ahora escoge dentro de «la mañana» de hoy (hora de Honduras).
+  _olvidarCuentas();
+  _olvidarTareas();
+  C._olvidarCorreo();
+  const hn = (s: string) => new Date(`${s.replace(' ', 'T')}:00-06:00`).toISOString();
+  const g = buzon({
+    [TRABAJO]: [
+      { uid: 41, de: 'Ana Paz', deCorreo: 'ana@paz.invalid', asunto: 'De la mañana', fecha: hn('2026-10-06 10:30'), noLeido: true, texto: 'Buenos días.' },
+      { uid: 40, de: 'Beto', deCorreo: 'beto@x.invalid', asunto: 'De anoche', fecha: hn('2026-10-05 22:00'), noLeido: true, texto: 'Buenas noches.' },
+    ],
+  });
+  C._buzonDePrueba(g.b);
+  C._relojDePrueba(() => Date.parse(hn('2026-10-06 11:30')));
   try {
+    await agregarCuenta(YO, TRABAJO, PROV('empresa.invalid'), 'clave');
     const r = await C.correrCorreoConEstado(YO, 'revisar', AMB, { pedido: 'revisa el último correo de la mañana' });
     assert.equal(r.estado, 'succeeded', r.texto);
     assert.match(r.texto, /ES EL ÚLTIMO QUE RECIBIÓ/, r.texto);
+    assert.deepEqual(g.abiertos, [`${TRABAJO}:41`]);
     assert.equal(tareaDe(YO, AMB), null, 'no abre una tarea');
   } finally {
     C._buzonDePrueba(null);
+    C._relojDePrueba(null);
   }
 });

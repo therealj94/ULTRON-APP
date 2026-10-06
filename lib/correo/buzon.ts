@@ -374,13 +374,25 @@ export function partesDe(est: NodoEstructura | undefined): { texto: { parte: str
  */
 export type Cobertura = { total?: number; revisados?: number };
 
-export async function listar(quien: string, c: CuentaCorreo, o: { soloNoLeidos?: boolean; buscar?: string; n?: number; extractos?: boolean; cobertura?: Cobertura } = {}): Promise<Resumen[]> {
+export async function listar(
+  quien: string,
+  c: CuentaCorreo,
+  o: { soloNoLeidos?: boolean; buscar?: string; n?: number; extractos?: boolean; cobertura?: Cobertura; desde?: Date; hasta?: Date } = {}
+): Promise<Resumen[]> {
   const cliente = await imapPara(c.proveedor, await credencial(quien, c));
   try {
     const candado = await cliente.getMailboxLock('INBOX', { readOnly: true });
     try {
       const t = o.buscar?.trim();
-      const consulta = t ? { or: [{ from: t }, { subject: t }, { body: t }] } : o.soloNoLeidos ? { seen: false } : { all: true };
+      const base: Record<string, unknown> = t ? { or: [{ from: t }, { subject: t }, { body: t }] } : o.soloNoLeidos ? { seen: false } : { all: true };
+      // LANG-02: un intervalo («el último correo de ayer»). SINCE/BEFORE de IMAP son por DÍA y en la zona del servidor:
+      // se abre un día de margen a cada lado y quien llama filtra exacto por la hora (America/Tegucigalpa).
+      const DIA = 24 * 3600_000;
+      const consulta = {
+        ...base,
+        ...(o.desde ? { since: new Date(o.desde.getTime() - DIA) } : {}),
+        ...(o.hasta ? { before: new Date(o.hasta.getTime() + DIA) } : {}),
+      };
       const uids = ((await cliente.search(consulta, { uid: true })) || []) as number[];
       const ultimos = uids.slice(-(o.n ?? 10)).reverse();
       if (o.cobertura) Object.assign(o.cobertura, { total: uids.length, revisados: ultimos.length });
@@ -395,7 +407,8 @@ export async function listar(quien: string, c: CuentaCorreo, o: { soloNoLeidos?:
           de: de?.name || de?.address || '',
           deCorreo: de?.address || '',
           asunto: m.envelope?.subject || '(sin asunto)',
-          fecha: new Date(m.internalDate || m.envelope?.date || Date.now()).toISOString(),
+          // Sin fecha del servidor ni del encabezado: '' (no «ahora»: un correo sin fecha no es el más nuevo ni «de hoy»).
+          fecha: m.internalDate || m.envelope?.date ? new Date((m.internalDate || m.envelope?.date) as Date | string).toISOString() : '',
           noLeido: !m.flags?.has('\\Seen'),
         };
         if (o.extractos && m.bodyStructure) {
