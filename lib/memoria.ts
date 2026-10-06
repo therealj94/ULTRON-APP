@@ -3,6 +3,7 @@
  * Disco local = caché. S3 = la copia que no se pierde al redesplegar Render.
  */
 
+import { insertarTurno } from './hilo-orden';
 import fs from 'node:fs';
 import path from 'node:path';
 import { esHechoLargo, semillaLarga } from '../server/hechos';
@@ -321,14 +322,23 @@ export async function recordarTurno(opts: {
    * de ms) retrasaba la primera palabra de cada respuesta, y la cola ya guarda en orden.
    */
   esperar?: boolean;
+  /**
+   * Cuándo se dijo (José, 6-oct): un turno de voz se anota al confirmarse, un rato después; con su hora entra en su lugar
+   * del hilo (lib/hilo-orden.ts) y no detrás de lo que la persona dijo mientras tanto. Sin ella, ahora.
+   */
+  t?: number;
 }): Promise<void> {
   const a = await cargarMemoria();
   const texto = String(opts.texto || '').trim().slice(0, 4000);
   if (!texto) return;
-  const t = Date.now();
+  const ahora = Date.now();
+  const t = opts.t && Number.isFinite(opts.t) && opts.t <= ahora ? opts.t : ahora;
   if (opts.quien) {
     const p = a.perfiles[opts.quien] || (a.perfiles[opts.quien] = { corta: [], larga: [] });
-    p.corta = [...p.corta, { rol: opts.rol, texto, t, canal: opts.canal }].slice(-MAX_CORTA);
+    // En su lugar por la hora; la misma frase suya repetida hace un momento (reintento, voz cortada) no se guarda dos veces.
+    const corta = insertarTurno(p.corta, { rol: opts.rol, texto, t, canal: opts.canal }, MAX_CORTA);
+    if (!corta) return;
+    p.corta = corta;
     if (opts.rol === 'user' && esHechoLargo(texto)) {
       // Al pool compartido de la junta solo va lo que se pide guardar PARA la junta de forma explícita.
       // Mencionar «la mina» en una charla privada no lo convierte en hecho que vean los demás.
