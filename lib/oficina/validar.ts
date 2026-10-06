@@ -5,7 +5,10 @@
  *  1. ESTRUCTURAL — lo que hay por dentro es del tipo que dice el nombre (bytes mágicos), el contenedor está entero
  *     (un ZIP con su directorio central y TODAS sus partes obligatorias; un PDF con xref, %%EOF y al menos una página),
  *     cada XML se puede leer, y no trae nada que no pusimos: macros, ActiveX ni relaciones a direcciones de afuera.
- *  2. SEMÁNTICA — se RELEE con lectores independientes del que lo escribió (lib/leer-oficina.ts para Word y Excel,
+ *     En una presentación, además: cada diapositiva que nombra la presentación existe, y lo único incrustado que se
+ *     acepta es el libro de datos de un gráfico (revisado por dentro).
+ *  2. SEMÁNTICA — se RELEE con lectores independientes del que lo escribió (lib/leer-oficina.ts para Word, Excel y
+ *     PowerPoint —diapositiva por diapositiva, en su orden; tablas celda por celda y gráficos serie por serie—,
  *     pdf.js para el PDF, ExcelJS releyendo la hoja) y se comprueba que está TODO lo pedido: cada título, párrafo,
  *     viñeta y celda; en el presupuesto, cada partida, cada fórmula en su sitio y cada total, que además se vuelve a
  *     calcular desde las cantidades y precios releídos. Una fórmula que no pusimos, o un texto que empieza por «=»
@@ -22,11 +25,11 @@ import path from 'node:path';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { DOMParser } from '@xmldom/xmldom';
-import { paginasDeDocx, paginasDeXlsx } from '../leer-oficina';
+import { paginasDeDocx, paginasDePptx, paginasDeXlsx } from '../leer-oficina';
 import { textoPorPaginas } from '../leer-pdf-pdfjs';
 import { textoVisiblePdf } from '../pdf';
 import { disposicionHoja, formulasHoja, HOJA_PRESUPUESTO } from './generar';
-import { calcularTotales, celdaSegura, dinero, entero, importeCentavos, TOPES, textosEsperados, type ArchivoPedido, type EspecHoja, type EspecTexto, type TipoArchivo } from './spec';
+import { calcularTotales, celdaSegura, dinero, entero, importeCentavos, TOPES, textosDiapositiva, textosEsperados, type ArchivoPedido, type EspecHoja, type EspecPresentacion, type EspecTexto, type TipoArchivo } from './spec';
 
 export type Comprobacion = { que: string; ok: boolean; detalle?: string };
 export type Render = { estado: 'hecho' | 'omitido' | 'fallido'; motor?: string; paginas?: number; ms?: number; detalle: string };
@@ -71,6 +74,7 @@ export async function tipoPorDentro(datos: Buffer): Promise<TipoArchivo | 'otro'
     const zip = await JSZip.loadAsync(datos);
     if (zip.file('word/document.xml')) return 'docx';
     if (zip.file('xl/workbook.xml')) return 'xlsx';
+    if (zip.file('ppt/presentation.xml')) return 'pptx';
   } catch {
     /* un ZIP roto no es de ningún tipo */
   }
@@ -79,10 +83,78 @@ export async function tipoPorDentro(datos: Buffer): Promise<TipoArchivo | 'otro'
 
 /* ------------------------------------------------------------------ estructural */
 
-const PRINCIPAL: Record<'docx' | 'xlsx', { partes: string[]; contenido: string }> = {
+type Ooxml = 'docx' | 'xlsx' | 'pptx';
+const PRINCIPAL: Record<Ooxml, { partes: string[]; contenido: string }> = {
   docx: { partes: ['[Content_Types].xml', '_rels/.rels', 'word/document.xml'], contenido: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml' },
   xlsx: { partes: ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels'], contenido: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml' },
+  pptx: { partes: ['[Content_Types].xml', '_rels/.rels', 'ppt/presentation.xml', 'ppt/_rels/presentation.xml.rels'], contenido: 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml' },
 };
+
+/** Lo que apunta una relación, como ruta dentro del ZIP («../charts/chart1.xml» desde ppt/slides → ppt/charts/chart1.xml). */
+function destinoRel(desde: string, target: string): string {
+  if (target.startsWith('/')) return target.slice(1);
+  const partes = desde.split('/').slice(0, -1);
+  for (const p of target.split('/')) {
+    if (p === '..') partes.pop();
+    else if (p && p !== '.') partes.push(p);
+  }
+  return partes.join('/');
+}
+
+/** Las relaciones de una parte: id → {tipo (lo último de su Type), destino}. */
+async function relacionesDe(zip: JSZip, parte: string): Promise<Record<string, { tipo: string; destino: string }>> {
+  const xml = (await zip.file(parte.replace(/([^/]+)$/, '_rels/$1.rels'))?.async('text')) || '';
+  const out: Record<string, { tipo: string; destino: string }> = {};
+  for (const m of xml.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+    const target = /\bTarget="([^"]+)"/.exec(m[0])?.[1];
+    const tipo = /\bType="([^"]+)"/.exec(m[0])?.[1] || '';
+    if (id && target) out[id] = { tipo: tipo.split('/').pop() || '', destino: destinoRel(parte, desescaparXml(target)) };
+  }
+  return out;
+}
+
+/**
+ * Las diapositivas EN ORDEN según ppt/presentation.xml (su lista sldIdLst resuelta por sus relaciones: el nombre del
+ * archivo no dice el orden) y las que esa lista nombra pero no están en el ZIP (una diapositiva faltante).
+ */
+export async function diapositivasDe(zip: JSZip): Promise<{ partes: string[]; faltan: string[] }> {
+  const pres = (await zip.file('ppt/presentation.xml')?.async('text')) || '';
+  const rels = await relacionesDe(zip, 'ppt/presentation.xml');
+  const lista = /<p:sldIdLst>([\s\S]*?)<\/p:sldIdLst>/.exec(pres)?.[1] || '';
+  const partes: string[] = [];
+  const faltan: string[] = [];
+  for (const m of lista.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)) {
+    const r = rels[m[1]];
+    if (r && zip.file(r.destino)) partes.push(r.destino);
+    else faltan.push(r?.destino || m[1]);
+  }
+  return { partes, faltan };
+}
+
+/**
+ * Un libro de datos incrustado (el de un gráfico): tiene que ser un .xlsx de verdad, entero, sin macros, sin objetos
+ * incrustados y sin enlaces de afuera. Devuelve sus defectos.
+ */
+async function revisarIncrustado(nombre: string, datos: Buffer): Promise<string[]> {
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(datos);
+  } catch {
+    return [`el libro incrustado ${nombre} está dañado`];
+  }
+  const d: string[] = [];
+  if (!zip.file('xl/workbook.xml')) d.push(`${nombre} no es un libro de Excel`);
+  for (const n of Object.keys(zip.files)) {
+    if (zip.files[n].dir) continue;
+    if (/vbaProject\.bin$|\/activeX\/|\.bin$|\/embeddings\//i.test(n)) d.push(`${nombre} trae macros u objetos incrustados (${n})`);
+    if (!/\.(xml|rels)$/i.test(n)) continue;
+    const xml = await zip.files[n].async('text');
+    if (/TargetMode\s*=\s*"External"/i.test(xml) || /externalLink/i.test(xml)) d.push(`${nombre} apunta a una dirección de afuera (${n})`);
+    if (/macroEnabled/i.test(xml)) d.push(`${nombre} es un libro con macros`);
+  }
+  return d;
+}
 
 function xmlBienFormado(xml: string): string | null {
   try {
@@ -97,7 +169,7 @@ function xmlBienFormado(xml: string): string | null {
   }
 }
 
-async function estructuraOoxml(datos: Buffer, tipo: 'docx' | 'xlsx'): Promise<{ defectos: string[]; zip: JSZip | null }> {
+async function estructuraOoxml(datos: Buffer, tipo: Ooxml): Promise<{ defectos: string[]; zip: JSZip | null }> {
   const defectos: string[] = [];
   if (datos.length < 4 || datos.readUInt32LE(0) !== 0x04034b50) return { defectos: ['no empieza como un ZIP de Office'], zip: null };
   let zip: JSZip;
@@ -114,15 +186,27 @@ async function estructuraOoxml(datos: Buffer, tipo: 'docx' | 'xlsx'): Promise<{ 
   if (tipo === 'xlsx' && !Object.keys(zip.files).some((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))) defectos.push('no tiene ninguna hoja');
   const tipos = (await zip.file('[Content_Types].xml')?.async('text')) || '';
   if (tipos && !tipos.includes(p.contenido)) defectos.push(`[Content_Types].xml no declara el documento principal de ${tipo}`);
+  if (/macroEnabled/i.test(tipos)) defectos.push('[Content_Types].xml lo declara como documento CON MACROS');
+  if (tipo === 'pptx' && zip.file('ppt/presentation.xml')) {
+    const d = await diapositivasDe(zip);
+    if (!d.partes.length && !d.faltan.length) defectos.push('no tiene ninguna diapositiva');
+    if (d.faltan.length) defectos.push(`le faltan ${d.faltan.length} diapositiva(s) que la presentación nombra (${d.faltan.slice(0, 3).join(', ')})`);
+  }
   for (const nombre of Object.keys(zip.files)) {
     const f = zip.files[nombre];
     if (f.dir) continue;
     if (/vbaProject\.bin$|\/activeX\/|\.bin$/i.test(nombre)) defectos.push(`trae una parte binaria o con macros (${nombre})`);
+    // Lo único incrustado que se acepta es el libro de datos de un gráfico (un .xlsx), y se revisa por dentro.
+    if (/(?:^|\/)embeddings\//i.test(nombre)) {
+      if (tipo === 'pptx' && /^ppt\/embeddings\/[\w.-]+\.xlsx$/i.test(nombre)) defectos.push(...(await revisarIncrustado(nombre, await f.async('nodebuffer'))));
+      else defectos.push(`trae un objeto incrustado (${nombre})`);
+    }
     if (!/\.(xml|rels)$/i.test(nombre)) continue;
     const xml = await f.async('text');
     const mal = xmlBienFormado(xml);
     if (mal) defectos.push(`${nombre} no es XML válido (${mal})`);
     if (/TargetMode\s*=\s*"External"/i.test(xml)) defectos.push(`${nombre} apunta a una dirección de afuera`);
+    if (/\/relationships\/oleObject"/i.test(xml)) defectos.push(`${nombre} incrusta un objeto OLE`);
   }
   return { defectos, zip };
 }
@@ -274,6 +358,110 @@ async function semanticaXlsx(h: EspecHoja, datos: Buffer): Promise<Comprobacion[
   return c;
 }
 
+/** Los valores de una lista de puntos de un gráfico (`<c:pt idx><c:v>…</c:v></c:pt>`), en el orden de su idx. */
+function puntos(xml: string): string[] {
+  const out: string[] = [];
+  for (const m of xml.matchAll(/<c:pt\b[^>]*\bidx="(\d+)"[^>]*>\s*<c:v>([\s\S]*?)<\/c:v>/g)) out[Number(m[1])] = desescaparXml(m[2]);
+  return out;
+}
+
+const ELEMENTO_GRAFICO = { barras: 'c:barChart', lineas: 'c:lineChart', pastel: 'c:pieChart' } as const;
+
+/**
+ * La presentación, releída: el texto con lib/leer-oficina.ts (paginasDePptx, el lector de lo que LLEGA, que no comparte
+ * código con PptxGenJS) diapositiva por diapositiva y en su orden; las tablas y los gráficos desde su XML (celda por
+ * celda; cada serie con sus categorías y valores), la numeración, el título de cada diapositiva en su marcador, el
+ * texto alternativo de cada gráfico, las propiedades y el idioma.
+ */
+async function semanticaPptx(e: EspecPresentacion, datos: Buffer, zip: JSZip): Promise<{ comprobaciones: Comprobacion[]; paginas: number }> {
+  const c: Comprobacion[] = [];
+  const n = e.diapositivas.length;
+  const { partes } = await diapositivasDe(zip);
+  const leidas = await paginasDePptx(datos);
+  const porPagina = new Map(leidas.map((p) => [p.pagina, p.texto]));
+  c.push({ que: 'número de diapositivas (releídas con lib/leer-oficina.ts)', ok: partes.length === n && leidas.length === n, detalle: `${partes.length} en el archivo, ${leidas.length} con texto, ${n} pedidas en la especificación` });
+  if (e.diapositivas_pedidas !== undefined) c.push({ que: `las ${e.diapositivas_pedidas} diapositivas que pidió la persona`, ok: partes.length === e.diapositivas_pedidas, detalle: `tiene ${partes.length}` });
+
+  const faltanTexto: string[] = [];
+  const faltanNotas: string[] = [];
+  const faltanCeldas: string[] = [];
+  const tablasMal: string[] = [];
+  const graficosMal: string[] = [];
+  const sinNumero: number[] = [];
+  const sinTitulo: number[] = [];
+  const sinAlt: number[] = [];
+  let tablas = 0;
+  let graficos = 0;
+  for (const [i, d] of e.diapositivas.entries()) {
+    const k = i + 1;
+    const parte = partes[i];
+    const xml = parte ? (await zip.file(parte)?.async('text')) || '' : '';
+    const leido = porPagina.get(k) || '';
+    const [cuerpo, notas = ''] = leido.split(/\n\nNotas: /);
+    const esperado = textosDiapositiva(d);
+    const hay = compacto(cuerpo);
+    for (const t of esperado.textos) if (!hay.includes(compacto(t))) faltanTexto.push(`diapositiva ${k}: «${corto(t, 40)}»`);
+    if (d.notas && !compacto(notas).includes(compacto(d.notas))) faltanNotas.push(`diapositiva ${k}`);
+    // El título va en el marcador de título (type="title", con el idx 0 implícito que buscan los lectores), no en una
+    // caja cualquiera.
+    if (d.titulo) {
+      const ph = /<p:sp>(?:(?!<\/p:sp>)[\s\S])*?<p:ph\b[^>]*\btype="title"[\s\S]*?<\/p:sp>/.exec(xml)?.[0] || '';
+      const marca = /<p:ph\b[^>]*>/.exec(ph)?.[0] || '';
+      const textoPh = [...ph.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => desescaparXml(m[1])).join('');
+      if (compacto(textoPh) !== compacto(d.titulo) || /\bidx="(?!0")\d+"/.test(marca)) sinTitulo.push(k);
+    }
+    if (d.tipo !== 'portada' && d.tipo !== 'cierre' && !/<a:fld\b[^>]*\btype="slidenum"/.test(xml)) sinNumero.push(k);
+    if (d.tabla) {
+      tablas++;
+      const tbl = /<a:tbl>([\s\S]*?)<\/a:tbl>/.exec(xml)?.[1] || '';
+      const filas = [...tbl.matchAll(/<a:tr\b[\s\S]*?<\/a:tr>/g)].map((m) => [...m[0].matchAll(/<a:tc\b[\s\S]*?<\/a:tc>/g)].map((x) => [...x[0].matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => desescaparXml(t[1])).join('')));
+      const esperadas = [d.tabla.cabecera, ...d.tabla.filas];
+      if (filas.length !== esperadas.length || filas.some((f) => f.length !== d.tabla!.cabecera.length)) tablasMal.push(`diapositiva ${k}: ${filas.length} filas × ${filas[0]?.length ?? 0} columnas (pedidas ${esperadas.length} × ${d.tabla.cabecera.length})`);
+      else esperadas.forEach((f, r) => f.forEach((cel, col) => compacto(filas[r][col]) !== compacto(cel) && faltanCeldas.push(`diapositiva ${k}, fila ${r + 1}, columna ${col + 1}: «${corto(cel, 30)}»`)));
+    }
+    if (d.grafico) {
+      graficos++;
+      const g = d.grafico;
+      const rels = parte ? await relacionesDe(zip, parte) : {};
+      const rel = Object.values(rels).find((r) => r.tipo === 'chart');
+      const cx = rel ? (await zip.file(rel.destino)?.async('text')) || '' : '';
+      const sers = [...cx.matchAll(/<c:ser>([\s\S]*?)<\/c:ser>/g)].map((m) => m[1]);
+      const problemas: string[] = [];
+      if (!cx) problemas.push('no tiene el gráfico');
+      else {
+        if (!cx.includes(`<${ELEMENTO_GRAFICO[g.tipo]}>`)) problemas.push(`no es de ${g.tipo}`);
+        if (sers.length !== g.series.length) problemas.push(`${sers.length} series (pedidas ${g.series.length})`);
+        g.series.forEach((s, j) => {
+          const ser = sers[j] || '';
+          const nombre = puntos(/<c:tx>([\s\S]*?)<\/c:tx>/.exec(ser)?.[1] || '')[0] || '';
+          const cats = puntos(/<c:cat>([\s\S]*?)<\/c:cat>/.exec(ser)?.[1] || '');
+          const vals = puntos(/<c:val>([\s\S]*?)<\/c:val>/.exec(ser)?.[1] || '').map(Number);
+          if (compacto(nombre) !== compacto(s.nombre)) problemas.push(`serie ${j + 1} se llama «${corto(nombre, 20)}»`);
+          if (cats.length !== g.categorias.length || cats.some((x, q) => compacto(x) !== compacto(g.categorias[q]))) problemas.push(`serie ${j + 1}: categorías distintas`);
+          if (vals.length !== s.valores.length || vals.some((v, q) => !(Math.abs(v - s.valores[q]) <= 1e-9 * Math.max(1, Math.abs(s.valores[q]))))) problemas.push(`serie ${j + 1}: valores distintos`);
+        });
+      }
+      if (problemas.length) graficosMal.push(`diapositiva ${k}: ${problemas.slice(0, 3).join(', ')}`);
+      if (!/<p:cNvPr\b[^>]*\bdescr="[^"]{10,}"/.test(xml)) sinAlt.push(k);
+    }
+  }
+  c.push({ que: 'títulos, viñetas, cifras y citas en SU diapositiva', ok: !faltanTexto.length, detalle: faltanTexto.length ? `faltan ${faltanTexto.length}: ${faltanTexto.slice(0, 3).join('; ')}` : `${n} de ${n} diapositivas completas` });
+  if (e.diapositivas.some((d) => d.notas)) c.push({ que: 'notas del orador', ok: !faltanNotas.length, ...(faltanNotas.length ? { detalle: `faltan en ${faltanNotas.join(', ')}` } : {}) });
+  c.push({ que: 'cada título en el marcador de título (navegable y accesible)', ok: !sinTitulo.length, ...(sinTitulo.length ? { detalle: `diapositivas ${sinTitulo.join(', ')}` } : {}) });
+  c.push({ que: 'numeración de diapositivas', ok: !sinNumero.length, ...(sinNumero.length ? { detalle: `sin número: ${sinNumero.join(', ')}` } : {}) });
+  if (tablas) c.push({ que: 'tablas con todas sus celdas', ok: !tablasMal.length && !faltanCeldas.length, detalle: tablasMal.length ? tablasMal.slice(0, 2).join('; ') : faltanCeldas.length ? `celdas distintas: ${faltanCeldas.slice(0, 3).join('; ')}` : `${tablas} tabla(s)` });
+  if (graficos) {
+    c.push({ que: 'gráficos con sus series, categorías y valores', ok: !graficosMal.length, detalle: graficosMal.length ? graficosMal.slice(0, 2).join('; ') : `${graficos} gráfico(s)` });
+    c.push({ que: 'texto alternativo en cada gráfico', ok: !sinAlt.length, ...(sinAlt.length ? { detalle: `sin él: diapositivas ${sinAlt.join(', ')}` } : {}) });
+  }
+  const core = (await zip.file('docProps/core.xml')?.async('text')) || '';
+  const tituloCore = desescaparXml(/<dc:title>([\s\S]*?)<\/dc:title>/.exec(core)?.[1] || '');
+  c.push({ que: 'título en las propiedades de la presentación', ok: compacto(tituloCore) === compacto(e.titulo) });
+  const primera = partes[0] ? (await zip.file(partes[0])?.async('text')) || '' : '';
+  c.push({ que: 'idioma español (es-HN) declarado', ok: /\blang="es-HN"/.test(primera) });
+  return { comprobaciones: c, paginas: partes.length };
+}
+
 /* ------------------------------------------------------------------ render (LibreOffice) */
 
 function enPath(bin: string): string | null {
@@ -372,7 +560,11 @@ export async function validarArchivo(a: ArchivoPedido, datos: Buffer, o: { rende
   try {
     if (a.tipo === 'docx') comprobaciones = await semanticaDocx(a.spec, datos, zip!);
     else if (a.tipo === 'xlsx') comprobaciones = await semanticaXlsx(a.spec, datos);
-    else {
+    else if (a.tipo === 'pptx') {
+      const r = await semanticaPptx(a.spec, datos, zip!);
+      comprobaciones = r.comprobaciones;
+      paginas = r.paginas;
+    } else {
       const r = await semanticaPdf(a.spec, datos);
       comprobaciones = r.comprobaciones;
       paginas = r.paginas ?? paginas;
@@ -381,7 +573,9 @@ export async function validarArchivo(a: ArchivoPedido, datos: Buffer, o: { rende
     comprobaciones = [{ que: 'relectura', ok: false, detalle: String(e?.message || e).slice(0, 120) }];
   }
   const semantico = { ok: comprobaciones.length > 0 && comprobaciones.every((c) => c.ok), comprobaciones };
-  const render = o.renderizar && semantico.ok ? await renderizar(datos, a.tipo) : undefined;
-  if (render?.paginas && a.tipo !== 'pdf') paginas = render.paginas;
+  let render = o.renderizar && semantico.ok ? await renderizar(datos, a.tipo) : undefined;
+  // Una presentación sale de LibreOffice con una página por diapositiva: si no, se dice (sus páginas son las diapositivas).
+  if (a.tipo === 'pptx' && render?.estado === 'hecho' && render.paginas !== paginas) render = { ...render, estado: 'fallido', detalle: `LibreOffice sacó ${render.paginas} página(s) y la presentación tiene ${paginas} diapositiva(s)` };
+  if (render?.paginas && a.tipo !== 'pdf' && a.tipo !== 'pptx') paginas = render.paginas;
   return { tipoReal, estructural, semantico, ...(paginas !== undefined ? { paginas } : {}), ...(render ? { render } : {}) };
 }

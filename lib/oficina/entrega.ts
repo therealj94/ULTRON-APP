@@ -21,7 +21,7 @@
  *    termina `completed` solo si cada criterio tiene su archivo como evidencia; si no, `partial` o `failed`.
  */
 import { almacenDurable, claveDe, hashArgumentos, huellaDueno, modificarDurable, PROCESO_DURABLE, soltarLease, tomarLease, type AlmacenDurable } from '../durable';
-import { compararEntrega, enLista, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from '../entregables';
+import { compararEntrega, diapositivasPedidas, enLista, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from '../entregables';
 import { cambiarTarea, crearTarea, type Cambio, type Criterio, type Evidencia, type RegistroTarea } from '../tareas-durables';
 import { almacenArchivos, claveArchivo, ESPACIO_LOTES, idArchivo, publicarManifiesto, retencionMs, type AlmacenArchivos, type ManifiestoArchivo } from './almacen';
 import { generarArchivo } from './generar';
@@ -131,6 +131,8 @@ export type OpcionesEntrega = {
 
 const ENLACE = (id: string) => `/api/documentos/${id}`;
 const LEASE_MS = 120_000;
+/** «3 pág.» o, en una presentación, «8 diapositivas». */
+const extension = (a: { tipo: TipoArchivo; paginas?: number }) => (a.tipo === 'pptx' ? `${a.paginas} diapositiva${a.paginas === 1 ? '' : 's'}` : `${a.paginas} pág.`);
 const kb = (b: number) => (b < 1024 ? `${b} bytes` : `${Math.round(b / 102.4) / 10} KB`);
 
 function resumir(v: Validacion): ResumenValidacion {
@@ -164,6 +166,30 @@ function requisitos(instruccion: string, nombres: string[]): { texto: string; pe
 }
 
 /**
+ * «Una presentación de 8 diapositivas»: el número es un requisito de CONTENIDO que dijo la persona (no el modelo). Con
+ * tantas cifras como presentaciones, se emparejan en orden; cada presentación lleva su `diapositivas_pedidas` (la
+ * validación relee el .pptx y lo comprueba) y, si la especificación ya trae otro número, no se hace: va a `errores` con
+ * el porqué, para que el modelo la rehaga. Con cifras que no se pueden emparejar, no se adivina.
+ */
+export function conDiapositivasPedidas(archivos: ArchivoPedido[], instruccion: string, errores: ErrorEspec[]): ArchivoPedido[] {
+  const cifras = diapositivasPedidas(instruccion);
+  const pptx = archivos.filter((a) => a.tipo === 'pptx');
+  if (!cifras.length || cifras.length !== pptx.length) return archivos;
+  const out: ArchivoPedido[] = [];
+  for (const a of archivos) {
+    if (a.tipo !== 'pptx') {
+      out.push(a);
+      continue;
+    }
+    const n = cifras[pptx.indexOf(a)];
+    const trae = a.spec.diapositivas.length;
+    if (trae !== n) errores.push({ nombre: a.nombre, errores: [`pidió ${n} diapositivas y la especificación trae ${trae}: rehazla con ${n} exactas (portada y cierre cuentan)`] });
+    else out.push({ ...a, spec: { ...a.spec, diapositivas_pedidas: n } });
+  }
+  return out;
+}
+
+/**
  * Hace los archivos del pedido y devuelve su recibo. Lanza solo si lo hace un gancho de prueba (un crash simulado); un
  * fallo de generación, de validación o del almacén queda en el recibo, archivo por archivo.
  */
@@ -172,13 +198,15 @@ export async function crearDocumentos(o: OpcionesEntrega): Promise<ReciboLote> {
   const alm = o.almacen || almacenDurable();
   const arch = o.archivos || almacenArchivos();
   const enlace = o.enlace || ENLACE;
-  const { archivos: pedidos, errores } = validarPedido(o.entrada);
+  const validado = validarPedido(o.entrada);
+  const { errores } = validado;
+  const pedidos = conDiapositivasPedidas(validado.archivos, o.instruccion || '', errores);
   const nombresDichos = [...pedidos.map((a) => a.nombre), ...errores.filter((e) => e.nombre !== '(pedido)').map((e) => e.nombre)];
   const req = requisitos(o.instruccion || '', nombresDichos.length ? nombresDichos : ['los documentos']);
   const base = { requestId: o.requestId, errores } as const;
 
   if (!pedidos.length) {
-    return cerrar({ ...base, archivos: [], req, lote: null, tareaId: undefined, interrumpido: false, o, alm });
+    return cerrar({ ...base, archivos: recibosDeErrores(errores), req, lote: null, tareaId: undefined, interrumpido: false, o, alm });
   }
 
   // Un mismo requestId con OTRO contenido no es el mismo pedido: no hereda lo entregado ni lo pisa.
@@ -348,16 +376,22 @@ export async function crearDocumentos(o: OpcionesEntrega): Promise<ReciboLote> {
     );
   }
   // Lo que no alcanzó (un archivo malo en la especificación) también va en el recibo, con su porqué.
-  for (const e of errores) {
-    if (e.nombre === '(pedido)') continue;
-    const tipo = (/\.(docx|xlsx|pdf)$/i.exec(e.nombre)?.[1]?.toLowerCase() || 'pdf') as TipoArchivo;
-    recibos.push({ nombre: e.nombre, tipo, mime: MIME[tipo], estado: 'fallido', generado: false, validado: false, disponible: false, abierto: null, intentos: 0, detalle: `no lo hice: la especificación no sirve (${e.errores.slice(0, 3).join('; ')})` });
-  }
+  recibos.push(...recibosDeErrores(errores));
 
   const salida = await cerrar({ ...base, archivos: recibos, req, lote, tareaId, interrumpido, o, alm });
   // Solo al terminar en orden se suelta el lease; si algo lanzó (un crash), vence solo y otro proceso puede retomar.
   await soltarLease(lease.lease).catch(() => undefined);
   return salida;
+}
+
+/** Cada archivo cuya especificación no sirvió, como recibo «fallido» con su porqué (el modelo lo lee y la corrige). */
+function recibosDeErrores(errores: ErrorEspec[]): ReciboArchivo[] {
+  return errores
+    .filter((e) => e.nombre !== '(pedido)')
+    .map((e) => {
+      const tipo = (/\.(docx|xlsx|pdf|pptx)$/i.exec(e.nombre)?.[1]?.toLowerCase() || 'pdf') as TipoArchivo;
+      return { nombre: e.nombre, tipo, mime: MIME[tipo], estado: 'fallido', generado: false, validado: false, disponible: false, abierto: null, intentos: 0, detalle: `no lo hice: la especificación no sirve (${e.errores.slice(0, 3).join('; ')})` };
+    });
 }
 
 function conValidacion(r: Omit<ReciboArchivo, 'comprobaciones'>, v?: ResumenValidacion): ReciboArchivo {
@@ -447,7 +481,7 @@ async function cerrar(x: {
   }));
   const comp = compararEntrega(x.req.texto, nodo, x.req.pedido);
   const pedidos = comp.items;
-  const hechos = disponibles.map((a) => `${a.nombre} (${CLASE[a.tipo]}, ${kb(a.bytes!)}${a.paginas ? `, ${a.paginas} pág.` : ''}, sha256 ${a.sha256!.slice(0, 12)}…)`);
+  const hechos = disponibles.map((a) => `${a.nombre} (${CLASE[a.tipo]}, ${kb(a.bytes!)}${a.paginas ? `, ${extension(a)}` : ''}, sha256 ${a.sha256!.slice(0, 12)}…)`);
   const faltan = [
     ...pedidos.filter((p) => p.estado !== 'verified').map((p) => p.detalle),
     ...x.archivos.filter((a) => !a.disponible && !pedidos.some((p) => p.estado !== 'verified' && p.detalle.includes(a.nombre))).map((a) => `${a.nombre}: ${a.detalle}`),
@@ -476,7 +510,7 @@ async function cerrar(x: {
   }
 
   const lineaArchivo = (a: ReciboArchivo) =>
-    `${a.nombre}: ${CLASE[a.tipo]} de ${kb(a.bytes!)}${a.paginas ? ` (${a.paginas} pág.)` : ''}, comprobado por dentro (${(a.comprobaciones || []).filter((c) => c.ok).length} comprobaciones)${a.render?.estado === 'hecho' ? `, ${a.render.detalle}` : ''}; se baja tocando su nombre en la tarjeta de la tarea (panel de Tareas)`;
+    `${a.nombre}: ${CLASE[a.tipo]} de ${kb(a.bytes!)}${a.paginas ? ` (${extension(a)})` : ''}, comprobado por dentro (${(a.comprobaciones || []).filter((c) => c.ok).length} comprobaciones)${a.render?.estado === 'hecho' ? `, ${a.render.detalle}` : ''}; se baja tocando su nombre en la tarjeta de la tarea (panel de Tareas)`;
   let texto: string;
   if (estado === 'completo') {
     texto = `DOCUMENTOS LISTOS Y COMPROBADOS (uno por uno): ${disponibles.map(lineaArchivo).join(' · ')}. Quedan en su panel de Tareas y en su cuenta ${Math.round(retencionMs() / 86_400_000)} días. Puedes decir que quedaron listos. No digas que se los mandaste por correo ni que ya los abrió: eso no lo sabes.`;

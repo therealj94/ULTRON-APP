@@ -362,6 +362,27 @@ const NUM_PALABRA: Record<string, number> = {
   two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
   fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, both: 2,
 };
+/**
+ * «de 8 diapositivas», «con diez láminas», «que tenga 12 slides», «with eight slides»: lo que lleva UNA presentación
+ * (texto ya plegado: sin tildes y en minúsculas). requisitosDeEntrega lo tapa (no son archivos); diapositivasPedidas lo lee.
+ */
+const RE_DIAPOSITIVAS_DE = new RegExp(
+  `\\b(?:de|con|of|with|que\\s+(?:tenga|lleve|traiga)|that\\s+has)\\s+(?:unas?\\s+|about\\s+|around\\s+)?(\\d{1,2}|${Object.keys(NUM_PALABRA)
+    .filter((w) => !/^(?:ambos|ambas|both)$/.test(w))
+    .join('|')}|una|uno|one)\\s+(?:diapositivas?|laminas?|slides?)\\b`,
+  'g'
+);
+
+/**
+ * Cuántas diapositivas pidió la persona, una cifra por cada presentación que la diga («una presentación de 8
+ * diapositivas» → [8]; «una de 5 láminas y otra de 10» → [5] (la segunda no dice «láminas»); sin cifra → []).
+ * Es un requisito de CONTENIDO, no de archivos: lo comprueba la entrega de oficina contra la presentación hecha.
+ */
+export function diapositivasPedidas(instruccion: string): number[] {
+  const p = plegar(sinUrls(String(instruccion || '')));
+  return [...p.matchAll(RE_DIAPOSITIVAS_DE)].map((m) => (/^\d+$/.test(m[1]) ? Number(m[1]) : /^(?:una|uno|one)$/.test(m[1]) ? 1 : NUM_PALABRA[m[1]])).filter((n) => n > 0);
+}
+
 /** Ronda 12: lo que cuenta con dos palabras: «una docena de», «media docena de», «un par de», «a dozen», «a couple of». */
 const numeroCompuesto = (antes: string, w: string, despues: string): number | null => {
   if (w === 'docena') return antes === 'media' ? 6 : 12;
@@ -807,7 +828,10 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   const sinNombres = (() => {
     let r = p;
     for (const n of enTexto) r = r.slice(0, n.pos) + ' '.repeat(n.fin - n.pos) + r.slice(n.fin);
-    return r;
+    // «una presentación de 8 diapositivas»: las diapositivas son lo que LLEVA la presentación, no ocho archivos (ni un
+    // plural que deje el conteo sin seguro). Se tapan con espacios (las posiciones no cambian); las cuenta
+    // diapositivasPedidas, aparte.
+    return r.replace(RE_DIAPOSITIVAS_DE, (m) => ' '.repeat(m.length));
   })();
   for (const m of enTexto) {
     const pos = m.pos;
@@ -843,6 +867,13 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     const a = crudas[i];
     const b = crudas[i + 1];
     if (b && !b.det && RE_PEGADO.test(sinNombres.slice(a.fin, b.pos))) {
+      // «una presentación en PowerPoint», «una presentación de PowerPoint», «una hoja de cálculo en Excel»: la misma
+      // familia dicha dos veces es UNA cosa (antes salían dos requisitos y la entrega quedaba a medias para siempre).
+      if (a.fam.clave === b.fam.clave && !FAMILIAS_GENERICAS.has(a.fam.clave)) {
+        unidas.push({ ...a, fin: b.fin });
+        i++;
+        continue;
+      }
       // «archivos PDF», «documentos en Word», «imágenes PNG»: el genérico, con el formato del segundo.
       if (FAMILIAS_GENERICAS.has(a.fam.clave) && !FAMILIAS_GENERICAS.has(b.fam.clave) && (a.fam.ext.length === 0 || b.fam.ext.some((e) => a.fam.ext.includes(e)))) {
         unidas.push({ ...a, fam: b.fam, fin: b.fin });

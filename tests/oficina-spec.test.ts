@@ -89,6 +89,7 @@ test('validarPedido: tres archivos válidos, nombres saneados y sin repetir', ()
 test('validarPedido: lo que falta se dice archivo por archivo, sin rellenar nada', () => {
   const r = validarPedido({
     archivos: [
+      { tipo: 'odp', nombre: 'deck.odp', spec: {} },
       { tipo: 'pptx', nombre: 'deck.pptx', spec: {} },
       { tipo: 'docx', nombre: 'vacio.docx', spec: { titulo: '' } },
       { tipo: 'xlsx', nombre: 'malo.xlsx', spec: { titulo: 'P', partidas: [{ concepto: '', cantidad: 0, precio_unitario: -1 }, { concepto: 'B', cantidad: 'mucho', precio_unitario: 1 }] } },
@@ -97,7 +98,10 @@ test('validarPedido: lo que falta se dice archivo por archivo, sin rellenar nada
   });
   assert.equal(r.archivos.length, 0);
   const por = Object.fromEntries(r.errores.map((e) => [e.nombre, e.errores.join(' | ')]));
-  assert.match(por['deck.pptx'], /no soportado/);
+  assert.match(por['deck.odp'], /no soportado: docx, xlsx, pptx o pdf/);
+  // Una presentación vacía no se rellena: se dice qué le falta.
+  assert.match(por['deck.pptx'], /falta el título de la presentación/);
+  assert.match(por['deck.pptx'], /no tiene diapositivas/);
   assert.match(por['vacio.docx'], /no tiene contenido/);
   assert.match(por['vacio.docx'], /falta el título/);
   assert.match(por['malo.xlsx'], /falta el concepto/);
