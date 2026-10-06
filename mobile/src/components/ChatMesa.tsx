@@ -22,6 +22,11 @@ type Props = {
   onAccion: (pedido: string) => void;
   nombreAvatar: string;
   estado: string;
+  /**
+   * Lo que está haciendo ahora mientras trabaja («Revisando tu correo…» → «Encontré 2 de Ana»; compa/trabajoMesa.ts):
+   * UNA línea suave al final del chat que cambia en su lugar y se va cuando llega la respuesta ('' = nada).
+   */
+  progreso?: string;
   colorEstado: string;
   parcial: string;
   borrador: string;
@@ -43,7 +48,7 @@ export function ChatMesa(p: Props) {
   useEffect(() => {
     const t = setTimeout(() => lista.current?.scrollToEnd({ animated: true }), 60);
     return () => clearTimeout(t);
-  }, [p.mensajes.length, p.parcial]);
+  }, [p.mensajes.length, p.parcial, p.progreso]);
 
   const toque = () => void Haptics.selectionAsync().catch(() => {});
   const tema = avatarPorId(p.avatar).tema;
@@ -109,6 +114,14 @@ export function ChatMesa(p: Props) {
         {!!p.parcial && (
           <View style={[s.burbuja, s.mia, s.parcial, { backgroundColor: tema.acentoFondo }]}>
             <Text style={[s.texto, s.textoParcial]}>{p.parcial}</Text>
+          </View>
+        )}
+        {!!p.progreso && (
+          <View style={s.progreso} accessibilityLiveRegion="polite">
+            <View style={[s.progresoPunto, { backgroundColor: tema.acento }]} />
+            <Text style={s.progresoTexto} numberOfLines={1}>
+              {p.progreso}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -182,6 +195,9 @@ const s = StyleSheet.create({
   parcial: { opacity: 0.7 },
   texto: { color: T.texto, fontSize: 15, lineHeight: 21 },
   textoParcial: { fontStyle: 'italic' },
+  progreso: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 6, paddingVertical: 2, maxWidth: '90%' },
+  progresoPunto: { width: 6, height: 6, borderRadius: 3, opacity: 0.7 },
+  progresoTexto: { color: T.texto2, fontSize: 13, fontStyle: 'italic', flexShrink: 1 },
   barra: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, margin: 10, marginTop: 4, padding: 6, paddingLeft: 16, backgroundColor: T.panel, borderRadius: 28, borderWidth: 1, borderColor: T.borde },
   entrada: { flex: 1, color: T.texto, fontSize: 16, maxHeight: 110, paddingVertical: 10 },
   boton: { width: 46, height: 46, borderRadius: 23, backgroundColor: T.fondo2, alignItems: 'center', justifyContent: 'center' },

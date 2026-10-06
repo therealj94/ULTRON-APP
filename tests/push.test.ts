@@ -521,6 +521,11 @@ test('teléfono: propuesta con «Sí» (abre la app) y «Luego» (sin abrir); lo
   // La computadora: «Terminé en mi computadora» y al tocar se abre su vista.
   const c = L.planear(llega({ tipo: 'computadora', id: 'tarea-9', texto: 'El tipo de cambio es 24.7' })!, { dueno: YO, ahora: 1, k: K });
   assert.match(String(c.que === 'mostrar' && (c.aviso as any).title), /computadora|computer/);
+  // Con el título del servidor (cómo terminó de verdad: lib/progreso-trabajo.ts), ese; y al abrirlo se dice con él.
+  const malo = llega({ tipo: 'computadora', id: 'tarea-10', titulo: 'Sobre lo de mi computadora', texto: 'No pude terminar: la página pidió un código.' })!;
+  const cm = L.planear(malo, { dueno: YO, ahora: 1, k: K });
+  assert.equal(cm.que === 'mostrar' && (cm.aviso as any).title, 'Sobre lo de mi computadora', 'nunca «Terminé» si no quedó');
+  assert.equal(L.textoAlAbrir(malo), 'Sobre lo de mi computadora. No pude terminar: la página pidió un código.');
   assert.match(String(L.textoAlAbrir(llega({ tipo: 'recordatorio', id: 'r1', texto: 'La pastilla' })!)), /La pastilla/);
 });
 

@@ -32,6 +32,7 @@ import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
 import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../mobile/src/compa/frasesEstado';
+import { lineaDePantalla } from '../mobile/src/compa/narrador';
 import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft, AudioLines, PhoneOff } from 'lucide-react';
 import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
@@ -687,7 +688,7 @@ export default function App() {
       const idTurno = conv.aura('', 'pensando');
       let dicho = '';
       const cerrarTurno = (cambio: { texto?: string; estado: 'lista' | 'error' | 'interrumpida'; ms?: number; trazaId?: string; tareas?: ReturnType<typeof refsDeTurno> }) =>
-        conv.actualizar(idTurno, (x: any) => ({ ...cambio, texto: cambio.texto ?? x.texto, tsFin: Date.now() }));
+        conv.actualizar(idTurno, (x: any) => ({ ...cambio, texto: cambio.texto ?? x.texto, tsFin: Date.now(), progreso: undefined }));
       const resultadoAccion = (respuesta: string, error?: string) => {
         if (!o.accionId) return;
         const r = resultadoDe(respuesta, error);
@@ -744,6 +745,12 @@ export default function App() {
               if (t) hacerTarea(t, cmd);
               conv.actualizar(idTurno, { herramientas: tools, estado: 'usando' } as any);
             },
+            // Lo que está haciendo de verdad (lib/progreso-trabajo.ts): UNA línea que cambia en su lugar bajo el turno
+            // («Revisando tu correo…» → «Encontré 2 de Ana»); se va con la respuesta.
+            onProgreso: (p) => {
+              if (!vigente() || huboTexto) return;
+              conv.actualizar(idTurno, { progreso: lineaDePantalla(p, 'es') || undefined, estado: 'usando' } as any);
+            },
             onEmocion: (e) => {
               if (!vigente()) return;
               emo = e;
@@ -760,7 +767,7 @@ export default function App() {
               pendiente += t;
               soltar(false);
               dicho += t;
-              conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
+              conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo', progreso: undefined } as any);
             },
             onReplace: (t) => {
               if (!vigente()) return;
@@ -772,7 +779,7 @@ export default function App() {
               pendiente = t;
               soltar(true);
               dicho = t;
-              conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
+              conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo', progreso: undefined } as any);
             },
           }
         );

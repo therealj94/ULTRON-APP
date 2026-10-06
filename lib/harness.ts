@@ -404,6 +404,11 @@ export async function correrBucleHarness(o: {
   respaldo: (hechos: string[], alTexto?: (acumulado: string) => void) => Promise<VueltaHarness>;
   /** Se va a correr esta herramienta (la voz dice «déjame buscarlo…»). */
   alTarea?: (herramienta: string) => void;
+  /**
+   * La herramienta EMPIEZA de verdad, con su pedido (ya pasó el reloj, lo ajeno y el «persistir antes de actuar»): el
+   * progreso del turno (lib/progreso-trabajo.ts) dice «estoy buscando…» solo desde aquí, nunca antes.
+   */
+  alEmpezar?: (ped: PedidoHerramienta, ronda: number) => void;
   /** La respuesta de cada vuelta a trozos (`ronda` empieza en 1). */
   alTexto?: (acumulado: string, ronda: number) => void;
   /** Cada herramienta, al terminar (la traza). */
@@ -500,6 +505,11 @@ export async function correrBucleHarness(o: {
     }
     try {
       o.alTarea?.(ped.herramienta);
+    } catch {
+      /* quien escucha no rompe el turno */
+    }
+    try {
+      o.alEmpezar?.(ped, ronda);
     } catch {
       /* quien escucha no rompe el turno */
     }

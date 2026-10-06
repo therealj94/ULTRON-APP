@@ -137,7 +137,9 @@ import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, proponerCaptur
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
-import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type PasoHarness, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
+import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type PasoHarness, type PedidoHerramienta, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
+// El progreso real del turno que trabaja (event: progreso) y el aviso corto del final de su computadora.
+import { avisoFinalComputadora, EmisorProgreso } from './lib/progreso-trabajo';
 import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
 import { lineaTiemposTurno, type MedidaTurno } from './lib/tiempos-turno';
 import { reglasAppDelTurno } from './lib/prompt-voz';
@@ -1550,7 +1552,11 @@ alAvisarApp((quien, aviso, aparato) => {
   const n = empujarAccion(quien, aviso, { aparato }).entregada;
   // Ningún teléfono suyo escuchando (la app cerrada): el resultado le llega como aviso (FCM, server/push.ts).
   // Solo en el intento a todos sus teléfonos (sin aparato), para no avisar dos veces.
-  if (!n && !aparato && aviso.fase === 'termina' && aviso.texto) void avisarComputadoraPorPush(quien, aviso.id, aviso.texto).catch(() => undefined);
+  // Corto y humano (lib/progreso-trabajo.ts): el título dice cómo terminó de verdad y el texto, el final honesto en una frase.
+  if (!n && !aparato && aviso.fase === 'termina' && aviso.texto) {
+    const corto = avisoFinalComputadora(aviso.texto, aviso.ok, detectarIdioma(aviso.texto) === 'en' ? 'en' : 'es');
+    void avisarComputadoraPorPush(quien, aviso.id, corto.texto, { titulo: corto.titulo }).catch(() => undefined);
+  }
   // Lo mismo si su computadora espera su sí antes de algo sensible: el aviso abre la vista con los botones.
   if (!n && !aparato && aviso.fase === 'confirmar' && aviso.pregunta)
     void avisarPush(quien, { titulo: 'Tu computadora espera tu sí', texto: aviso.pregunta, id: aviso.id, abrir: 'computadora' }).catch(() => undefined);
@@ -4110,6 +4116,10 @@ async function bucleHarness(o: {
   espacio?: number;
   /** Se va a correr esta herramienta (la voz dice «déjame buscarlo…» y pone el sonido de fondo). */
   alTarea?: (herramienta: string) => void;
+  /** La herramienta empieza de verdad, con su pedido (el progreso del turno: lib/progreso-trabajo.ts). */
+  alEmpezar?: (ped: PedidoHerramienta, ronda: number) => void;
+  /** La herramienta terminó (el progreso del turno: su resultado, sin su contenido). Después de `alPaso`. */
+  alTerminar?: (p: PasoHarness) => void;
   /** La respuesta de cada vuelta a trozos, mientras el modelo la escribe (`ronda` empieza en 1). */
   alTexto?: (acumulado: string, ronda: number) => void;
   /** Cada herramienta al terminar, con su recibo, ANTES de la vuelta que la cuenta (la voz quita el tope, GRAVE-1). */
@@ -4142,6 +4152,7 @@ async function bucleHarness(o: {
     preguntar: o.preguntar,
     respaldo: (hechos, alTexto) => preguntarQwen(o.system, o.message, hechos, o.hilo, o.reloj ? o.reloj.senalCon(o.senal) : o.senal, o.nivel, o.contexto, o.espacio, alTexto),
     alTarea: o.alTarea,
+    alEmpezar: o.alEmpezar,
     alTexto: o.alTexto,
     alPaso: (p) => {
       trazaActual()?.paso({
@@ -4154,6 +4165,7 @@ async function bucleHarness(o: {
         ...(p.recibo ? { recibo: { efecto: p.recibo.efecto, proveedor: p.recibo.proveedor, codigo: p.recibo.codigo, durable: p.recibo.durable, incompleto: p.recibo.incompleto } } : {}),
       });
       o.alPaso?.(p);
+      o.alTerminar?.(p);
     },
     limpiar: neutralizarMarca,
     // Persistir antes de actuar (AUR06): la herramienta con efecto queda anotada en el turno durable; si este
@@ -5030,6 +5042,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   }
   const { t0, tools, system, message, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
+  // EL PROGRESO REAL (lib/progreso-trabajo.ts): de cada herramienta que de verdad empieza y termina, un `event: progreso`
+  // chico para el teléfono, la web y la voz («Abro tu correo…», «Encontré 2 de Ana»). En modo invitado, sin tema ni número.
+  const progreso = new EmisorProgreso((ev) => send('progreso', ev), { invitado: !!p.invitado });
   // `delModelo`: el texto es del modelo grande (el stream o su harness); solo de él salen acciones.
   // `cierre`: cómo terminó (auditoría 3-oct, STREAM01). Si no es `completo` (el cerebro se cortó con error,
   // el stream se acabó sin `done`, Bedrock la dejó a medias, la vuelta del harness no contestó) se avisa en
@@ -5513,10 +5528,12 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         contexto: p.contexto,
         espacio: p.espacio,
         alTarea: opciones.alTarea,
+        alEmpezar: (ped, ronda) => progreso.empezo(ped.herramienta, ped.arg, ronda),
         alTexto,
         // Un borrador que espera su «sí»: sin tope ANTES de que la vuelta hable (GRAVE-1). Una lectura (correo, chat): el
         // tope de lectura, un trozo y su «¿sigo?», no los 2 800 caracteres que puede traer (MENOR-D).
         alPaso: (paso) => subirTope(topeTrasPaso(topeDelTurno, paso)),
+        alTerminar: (paso) => progreso.termino(paso),
         computadora: p.computadora,
         dueno: p.dueno,
         ambito: p.ambito,
@@ -5524,6 +5541,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         preguntar,
         reloj,
       });
+      progreso.listo();
       medida.harnessMs = Date.now() - tHarness;
       medida.herramientas = h.pasos.map((x) => ({ nombre: x.herramienta, ms: x.ms }));
       const e = extraerEmocion(h.reply);

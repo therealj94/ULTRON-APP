@@ -53,6 +53,9 @@ import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/m
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
 import type { MedidaRuta } from './voz-medidas';
+// El narrador del trabajo: lo que de verdad pasa en el turno (event: progreso) en vez del «ya casi» genérico.
+import { ConductorNarrador, Narrador, eventoProgresoValido } from '../mobile/src/compa/narrador';
+import { memoriaNarradorDe } from '../lib/progreso-trabajo';
 // El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
 import {
   ESPERA_FRASE_MS,
@@ -1315,6 +1318,41 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       relojes.add(h);
     };
 
+    /*
+     * ── EL NARRADOR DEL TRABAJO (mobile/src/compa/narrador.ts; los eventos, lib/progreso-trabajo.ts) ──────────────
+     * Con eventos de progreso del turno, lo que se dice mientras espera sale de lo que de verdad pasa («Hay dos de
+     * Ana…», «Sigo revisando tu correo…»), al ritmo del narrador (uno cada 3,5–5 s, sin repetir en la conversación), y
+     * reemplaza al seguimiento genérico («ya casi…»). La PRIMERA frase de una tarea lenta sigue siendo la de siempre
+     * (alEsperar, a tiempo con el relleno del agente). Nunca encima del cerebro: si ya habló, se calla.
+     */
+    let conProgreso = false;
+    const decirNarrado = (texto: string) => {
+      const algoAntes = algo;
+      decir(`${dicho && !/\s$/.test(dicho) ? ' ' : ''}${texto} `);
+      // Como la frase de espera: no cuenta como «ya dijo algo» (si el cerebro falla después, igual se explica).
+      algo = algoAntes;
+      if (conv.enCurso === corte) conv.algoEnCurso = algoAntes;
+      puenteDicho = true;
+      primerTrozo = true;
+      inicioCerebro = dicho.length;
+    };
+    const narrador = new ConductorNarrador(new Narrador({ avatar: pase.avatar, idioma: pase.idioma, memoria: memoriaNarradorDe(conv.cid) }), {
+      puede: () => !terminado && !corte.signal.aborted && !cerebroHablo,
+      decir: decirNarrado,
+      setTimeout: (f, ms) => {
+        const h = setTimeout(() => {
+          relojes.delete(h);
+          f();
+        }, Math.max(0, ms));
+        relojes.add(h);
+        return h;
+      },
+      clearTimeout: (h) => {
+        clearTimeout(h as ReturnType<typeof setTimeout>);
+        relojes.delete(h as ReturnType<typeof setTimeout>);
+      },
+    });
+
     /** Pone (o cambia) el sonido de fondo de ESTE turno, o lo quita si lo puso este turno. */
     const ambiente = (sonido: SonidoAmbiente | null) => {
       const actual = conv.ambiente;
@@ -1345,13 +1383,15 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       puenteDicho = true;
       primerTrozo = true;
       inicioCerebro = dicho.length;
+      narrador.yaSeDijo();
     };
 
     /** «Ya casi lo tengo…»: si la espera sigue SEGUIMIENTO_MS después de lo último que se dijo. */
     const programarSeguimiento = () => {
       if (seguimientos >= MAX_SEGUIMIENTOS) return;
       programar(() => {
-        if (terminado || corte.signal.aborted || cerebroHablo || !esperando || seguimientos >= MAX_SEGUIMIENTOS) return;
+        // Con eventos de progreso, los avances los dice el narrador (lo real), no el seguimiento genérico.
+        if (terminado || corte.signal.aborted || cerebroHablo || !esperando || seguimientos >= MAX_SEGUIMIENTOS || conProgreso) return;
         if (msSeguimiento - (Date.now() - ultimoEn) > 50) return programarSeguimiento();
         seguimientos++;
         decirEspera('seguimiento');
@@ -1482,6 +1522,14 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
         // Otra ronda del harness (buscar → leer la página): si ya sonaba, cambia el sonido.
         if (conv.ambiente?.de === corte) ambiente(tr.sonido);
         if (tr.lenta && !(antes?.lenta && esperando)) programar(alEsperar, cuandoEsperar());
+      } else if (evento === 'progreso') {
+        const ev = eventoProgresoValido(datos);
+        if (!ev) return;
+        conProgreso = true;
+        narrador.evento(ev);
+        // La primera frase de una tarea lenta ya la dice alEsperar (a tiempo con el relleno del agente): el narrador no
+        // la adelanta, solo sigue con lo que de verdad pase después.
+        if (ev.fase === 'empece' && (tarea?.lenta || puenteDicho || algo)) narrador.narrador.soltarPendiente(Date.now());
       } else if (evento === 'done') {
         porRespaldo = /fallback|respaldo/i.test(String(datos?.via || '')) || datos?.respaldo === true;
         // Un corchete que quedó abierto al final del último trozo sale como texto (afinar lo limpia).

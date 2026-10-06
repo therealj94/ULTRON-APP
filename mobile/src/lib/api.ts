@@ -23,6 +23,7 @@ import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
 import { campoQuienHabla, type QuienHablaTurno } from '../voces/voces';
 import { campoParaTurno, type CampoDecisionVista } from './decisionVista';
+import { eventoProgresoValido, type EventoProgreso } from '../compa/narrador';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -560,6 +561,11 @@ export type StreamHandlers = {
    */
   onReplace?: (texto: string) => void;
   onTools?: (tools: string[]) => void;
+  /**
+   * Lo que está haciendo de verdad mientras trabaja (`event: progreso`, lib/progreso-trabajo.ts del servidor), ya
+   * validado: la línea de la mesa y lo que dice el narrador (compa/narrador.ts). Una mesa vieja no lo escucha.
+   */
+  onProgreso?: (e: EventoProgreso) => void;
 };
 
 /**
@@ -635,7 +641,10 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
         full = corregido;
         h.onReplace?.(full);
       } else if (ev === 'tools' && Array.isArray(data.tools)) h.onTools?.(data.tools);
-      else if (ev === 'done') {
+      else if (ev === 'progreso') {
+        const p = eventoProgresoValido(data);
+        if (p) h.onProgreso?.(p);
+      } else if (ev === 'done') {
         if (data.emocion) setEmocion(data.emocion);
         done = {
           reply: quitarExpresiones(pelarEtiqueta(String(data.reply || full)).texto),

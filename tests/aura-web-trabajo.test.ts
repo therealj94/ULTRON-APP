@@ -107,6 +107,11 @@ test('el estado del turno se dice en palabras (y las herramientas internas no se
   assert.match(textoDeEstado({ estado: 'lista', herramientas: ['web'], ts, tsFin: ts, ms: 1840 }), /^Respondida a las 14:05 · 1,8 s · usó búsqueda en internet$/);
   assert.match(textoDeEstado({ estado: 'error', herramientas: [], ts }), /Sin respuesta/);
   assert.deepEqual(nombresDeHerramientas(['harness', 'rag', 'cerebro-genesis']), ['documentos', 'conocimiento de la plataforma']);
+  // Mientras trabaja, UNA línea con lo que de verdad hace (event: progreso), que se va cuando contesta.
+  assert.equal(textoDeEstado({ estado: 'usando', herramientas: ['harness'], ts, progreso: 'Buscando lo de Ana en tu correo…' }), 'Buscando lo de Ana en tu correo…');
+  assert.equal(textoDeEstado({ estado: 'respondiendo', herramientas: [], ts, progreso: 'Encontré 2 de Ana', texto: '' }), 'Encontré 2 de Ana');
+  assert.equal(textoDeEstado({ estado: 'respondiendo', herramientas: [], ts, progreso: 'Encontré 2 de Ana', texto: 'Hay dos.' }), 'Respondiendo…');
+  assert.match(textoDeEstado({ estado: 'lista', herramientas: [], ts, tsFin: ts, progreso: 'Encontré 2 de Ana' }), /^Respondida/);
 });
 
 function almacen() {

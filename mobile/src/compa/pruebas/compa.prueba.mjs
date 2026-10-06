@@ -3034,6 +3034,106 @@ prueba('su computadora como un agente: plan, tu sí antes de algo sensible, paus
   assert.deepEqual({ trabajando: c.trabajando, quieta: c.quieta, pregunta: c.pregunta }, { trabajando: false, quieta: null, pregunta: null });
 });
 
+/* ── la mesa mientras trabaja (compa/trabajoMesa.ts + compa/narrador.ts) ───────────────────────────────────── */
+
+{
+  const { TrabajoMesa } = await import('../trabajoMesa.ts');
+  const { MemoriaNarrador, PASO_NARRADOR } = await import('../narrador.ts');
+  /** Una mesa de mentira con reloj falso: lo que dice, la línea, el sonido y si algo suena. */
+  const mesaFalsa = (o = {}) => {
+    let ahora = 0;
+    const relojes = [];
+    const visto = { dichos: [], lineas: [], sonidos: [], cortes: 0 };
+    let suena = false;
+    const t = new TrabajoMesa({
+      avatar: 'aura',
+      idioma: 'es',
+      memoria: o.memoria || new MemoriaNarrador(),
+      puedeHablar: () => !suena,
+      hablar: (texto, corte) => {
+        visto.dichos.push({ ms: ahora, texto });
+        void corte.then(() => (visto.cortes += 1));
+      },
+      alLinea: (l) => visto.lineas.push(l),
+      ambiente: { poner: (s) => visto.sonidos.push(s), quitar: () => visto.sonidos.push(null) },
+      sonido: () => o.sonido ?? false,
+      ahora: () => ahora,
+      setTimeout: (f, ms) => {
+        const r = { en: ahora + ms, f, vivo: true };
+        relojes.push(r);
+        return r;
+      },
+      clearTimeout: (h) => (h.vivo = false),
+    });
+    const avanzar = (hasta) => {
+      for (;;) {
+        const r = relojes.filter((x) => x.vivo && x.en <= hasta).sort((a, b) => a.en - b.en)[0];
+        if (!r) break;
+        r.vivo = false;
+        ahora = r.en;
+        r.f();
+      }
+      ahora = hasta;
+    };
+    return { t, visto, avanzar, ponerSuena: (v) => (suena = v) };
+  };
+
+  prueba('mesa trabajando: «Abro tu correo…» a ≤ 700 ms de empezar, la línea cambia en su lugar y se va con la respuesta', async () => {
+    const m = mesaFalsa();
+    m.t.evento({ fase: 'empece', herramienta: 'correo', detalle_seguro: 'Ana' });
+    m.avanzar(PASO_NARRADOR.primeraMaxMs);
+    assert.equal(m.visto.dichos.length, 1);
+    assert.match(m.visto.dichos[0].texto, /Ana/);
+    m.t.evento({ fase: 'encontre', herramienta: 'correo', detalle_seguro: 'Ana', n: 2 });
+    assert.deepEqual(m.visto.lineas, ['Buscando lo de Ana en tu correo…', 'Encontré 2 de Ana']);
+    // La respuesta llega antes del siguiente comentario: no sale, el corte se cumple y la línea se va.
+    m.avanzar(1_500);
+    m.t.respuesta();
+    m.avanzar(30_000);
+    await dormir(0);
+    assert.equal(m.visto.dichos.length, 1);
+    assert.equal(m.visto.lineas.at(-1), '');
+    assert.equal(m.visto.cortes, 1);
+    // Otra herramienta después del texto (dijo «déjame ver» y luego buscó): la línea vuelve, el narrador ya no habla.
+    m.t.evento({ fase: 'empece', herramienta: 'web' });
+    m.avanzar(60_000);
+    assert.equal(m.visto.dichos.length, 1);
+    assert.equal(m.visto.lineas.at(-1), 'Buscando en internet…');
+    m.t.respuesta();
+    assert.equal(m.visto.lineas.at(-1), '');
+    // El turno terminó: lo que llegue tarde no hace nada.
+    m.t.terminar();
+    m.t.evento({ fase: 'empece', herramienta: 'leer' });
+    assert.equal(m.visto.lineas.at(-1), '');
+  });
+
+  prueba('mesa trabajando: si algo suena (el relleno, la respuesta) no habla encima; con lo que ya sonó espera su ritmo', () => {
+    const m = mesaFalsa();
+    m.ponerSuena(true);
+    m.t.evento({ fase: 'empece', herramienta: 'web' });
+    m.avanzar(2_000);
+    assert.equal(m.visto.dichos.length, 0, 'sonaba otra cosa: no se dijo ni se dice tarde');
+    m.ponerSuena(false);
+    const n = mesaFalsa();
+    n.t.yaSeDijo();
+    n.t.evento({ fase: 'empece', herramienta: 'web' });
+    n.avanzar(3_000);
+    assert.equal(n.visto.dichos.length, 0, 'acaba de sonar el relleno: no se le pega');
+  });
+
+  prueba('mesa trabajando: el tecleo solo si la mesa lo permite (micrófono en silencio) y se quita con el resultado', () => {
+    const sin = mesaFalsa({ sonido: false });
+    sin.t.evento({ fase: 'empece', herramienta: 'web' });
+    assert.deepEqual(sin.visto.sonidos, [], 'con el micrófono abierto, nada (lo oiría el oído)');
+    const con = mesaFalsa({ sonido: true });
+    con.t.evento({ fase: 'empece', herramienta: 'web' });
+    con.t.evento({ fase: 'encontre', herramienta: 'web', n: 3 });
+    con.t.evento({ fase: 'empece', herramienta: 'leer' });
+    con.t.terminar();
+    assert.deepEqual(con.visto.sonidos, ['teclado', null, 'papel', null]);
+  });
+}
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {
