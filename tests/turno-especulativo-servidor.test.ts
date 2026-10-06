@@ -57,6 +57,7 @@ test('la misma, confirmada: la acción sí llega (la retención no se come lo qu
   await confirmar(idTurno);
   assert.ok(await esperarQue(() => t.hay('done')));
   const done = t.eventos.find((e) => e.ev === 'done')!.data;
+  await esperarQue(() => s.acciones.length > antes, 2_000);
   assert.ok(s.acciones.length > antes || (done.acciones || []).length > 0, `la acción salió al confirmar: ${JSON.stringify(done).slice(0, 300)}`);
   await t.fin;
 });
@@ -80,4 +81,22 @@ test('sin `especulativo`, el turno de siempre no espera a nadie', { skip: !s.lis
   const t = abrirTurno(s.BASE, s.h, { message: '¿Te gusta la música?', hablado: true, idioma: 'es', avatar: 'aura', idTurno: id('normal') });
   assert.ok(await esperarQue(() => t.hay('done')));
   await t.fin;
+});
+
+/* La ruta de charla (lib/cerebro-rapido.ts planDeModelos): la charla hablada va primero al cerebro rápido. */
+test('la charla hablada va primero a Kimi; una orden, lo que pide ir a fondo o lo escrito, a GLM-5 (el de las manos)', { skip: !s.listo }, async () => {
+  contestar = () => ({ texto: '[EMO: neutral] Claro.' });
+  const modeloDe = async (message: string, extra: Record<string, unknown> = {}) => {
+    const antes = s.pedidos.length;
+    const t = abrirTurno(s.BASE, s.h, { message, idioma: 'es', avatar: 'aura', idTurno: id('ruta'), ...extra });
+    await esperarQue(() => t.hay('done'));
+    await t.fin;
+    return s.pedidos.slice(antes)[0]?.modelo;
+  };
+  assert.equal(await modeloDe('¿Tú qué harías un domingo libre?', { hablado: true }), 'moonshotai.kimi-k2.5');
+  assert.equal(await modeloDe('Llámame en diez minutos.', { hablado: true }), 'zai.glm-5');
+  assert.equal(await modeloDe('Explícame paso a paso cómo se forma el oro.', { hablado: true }), 'zai.glm-5');
+  assert.equal(await modeloDe('¿Tú qué harías un sábado libre?'), 'zai.glm-5', 'escrito: como siempre');
+  const linea = s.stdout().split('\n').filter((l) => /\[mesa\] turno .* \(hablado\)/.test(l) && /\(charla\)/.test(l)).at(-1) || '';
+  assert.match(linea, / · por bedrock moonshotai\.kimi-k2\.5 \(charla\) · total \d+ ms$/, 'la línea del turno lo dice');
 });

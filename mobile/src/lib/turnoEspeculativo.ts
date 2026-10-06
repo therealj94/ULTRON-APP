@@ -14,13 +14,27 @@
  * Si la persona sigue hablando, el oído avisa `onEspeculativaCancelada` y se corta. Sin React Native: se prueba en Node
  * (tests/turno-especulativo-movil.test.ts).
  */
-import type { ChatResult, StreamHandlers, TurnoOpts } from './api';
+// Los tipos de lib/api.ts, por forma (importarlos traería React Native a las pruebas de Node y al tsc del servidor).
+/** Lo que este módulo mira del pedido del turno (TurnoOpts de lib/api.ts). */
+export type BaseTurno = {
+  message: string;
+  mode: string;
+  correo?: string;
+  historial: readonly { rol: string; texto: string }[];
+  image?: string;
+  visto?: string;
+  quienHabla?: unknown;
+  interrumpido?: unknown;
+  idTurno?: string;
+};
+/** StreamHandlers de lib/api.ts. */
+export type ManejadoresTurno = { onEmocion?: (e: any) => void; onDelta: (piece: string) => void; onReplace?: (texto: string) => void; onTools?: (tools: string[]) => void };
+type Resultado = { error?: string; cierre?: string };
+type Stream<R> = { promise: Promise<R>; abort: () => void };
 
-type Stream = { promise: Promise<ChatResult>; abort: () => void };
-
-export type DepsEspeculativo = {
+export type DepsEspeculativo<O extends BaseTurno, R extends Resultado> = {
   /** turnoStream de lib/api.ts. */
-  arrancar: (opts: TurnoOpts & { especulativo: true }, h: StreamHandlers) => Stream;
+  arrancar: (opts: O & { idTurno: string; especulativo: true }, h: ManejadoresTurno) => Stream<R>;
   /** POST /api/turno/confirmar: true si el servidor lo confirmó. */
   confirmar: (idTurno: string) => Promise<boolean>;
   /** Avisarle al servidor que se tira (cortar el stream ya lo hace; esto es por si el corte no llega). */
@@ -48,18 +62,18 @@ export function mismaFrase(especulada: string, final: string): boolean {
 
 type Evento = { k: 'emocion' | 'delta' | 'replace' | 'tools'; v: any };
 
-type Vivo = {
-  opts: TurnoOpts;
+type Vivo<O, R> = {
+  opts: O;
   idTurno: string;
   desde: number;
-  stream: Stream;
+  stream: Stream<R>;
   eventos: Evento[];
-  h: StreamHandlers | null;
+  h: ManejadoresTurno | null;
   fallo: boolean;
 };
 
 /** Lo del contexto que tiene que ser igual para que el turno especulativo sirva. */
-function mismoContexto(a: TurnoOpts, b: TurnoOpts): boolean {
+function mismoContexto(a: BaseTurno, b: BaseTurno): boolean {
   if (b.image || b.visto || a.image || a.visto) return false;
   if (a.mode !== b.mode || (a.correo || '') !== (b.correo || '')) return false;
   if (JSON.stringify(a.quienHabla ?? null) !== JSON.stringify(b.quienHabla ?? null)) return false;
@@ -70,11 +84,11 @@ function mismoContexto(a: TurnoOpts, b: TurnoOpts): boolean {
   return ha.every((t, i) => t.rol === hb[i].rol && t.texto === hb[i].texto);
 }
 
-export class TurnoEspeculativo {
-  private vivo: Vivo | null = null;
+export class TurnoEspeculativo<O extends BaseTurno = BaseTurno, R extends Resultado = Resultado> {
+  private vivo: Vivo<O, R> | null = null;
   private readonly ahora: () => number;
 
-  constructor(private readonly d: DepsEspeculativo) {
+  constructor(private readonly d: DepsEspeculativo<O, R>) {
     this.ahora = d.ahora || Date.now;
   }
 
@@ -84,10 +98,10 @@ export class TurnoEspeculativo {
   }
 
   /** Empieza el turno especulativo de esta frase (el anterior, si lo había, se corta). */
-  empezar(opts: TurnoOpts, idTurno: string): boolean {
+  empezar(opts: O, idTurno: string): boolean {
     this.cancelar();
     const eventos: Evento[] = [];
-    const v: Vivo = { opts, idTurno, desde: this.ahora(), eventos, h: null, fallo: false, stream: null as unknown as Stream };
+    const v: Vivo<O, R> = { opts, idTurno, desde: this.ahora(), eventos, h: null, fallo: false, stream: null as unknown as Stream<R> };
     const pasar = (k: Evento['k']) => (x: any) => {
       if (v.h) entregar(v.h, { k, v: x });
       else eventos.push({ k, v: x });
@@ -117,7 +131,7 @@ export class TurnoEspeculativo {
    * La frase final llegó y la mesa va a pedir el turno: si el especulativo es de ESTA frase y contexto, lo toma (con su
    * idTurno). null: no sirve (y se cortó); la mesa pide el de siempre.
    */
-  tomar(opts: TurnoOpts, h: StreamHandlers): (Stream & { idTurno: string; adelantoMs: number }) | null {
+  tomar(opts: O, h: ManejadoresTurno): (Stream<R> & { idTurno: string; adelantoMs: number }) | null {
     const v = this.vivo;
     if (!v) return null;
     this.vivo = null;
@@ -144,7 +158,7 @@ export class TurnoEspeculativo {
     if (v) this.cortar(v);
   }
 
-  private cortar(v: Vivo) {
+  private cortar(v: Vivo<O, R>) {
     try {
       v.stream.abort();
     } catch {
@@ -158,7 +172,7 @@ export class TurnoEspeculativo {
   }
 }
 
-function entregar(h: StreamHandlers, e: Evento) {
+function entregar(h: ManejadoresTurno, e: Evento) {
   if (e.k === 'emocion') h.onEmocion?.(e.v);
   else if (e.k === 'delta') h.onDelta(e.v);
   else if (e.k === 'replace') h.onReplace?.(e.v);

@@ -81,6 +81,8 @@ test('6-oct: la línea dice el tamaño del prompt (caracteres y fichas estimadas
   // El de respaldo (el principal no dio su primera señal a tiempo) y el Qwen del nodo se distinguen.
   assert.match(lineaTiemposTurno('x', { ...base, proveedor: 'bedrock', modelo: 'moonshotai.kimi-k2.5', respaldo: true }, 10), / · por bedrock moonshotai\.kimi-k2\.5 \(respaldo\) · total/);
   assert.match(lineaTiemposTurno('x', { ...base, prompt: { car: 9000 }, proveedor: 'nodo', modelo: 'orcarouter/Qwen3.8-27B', respaldo: true }, 10), / · prompt 9000 car\. ~2813 fichas · por nodo orcarouter\/Qwen3\.8-27B \(respaldo\) · total/);
+  // La charla hablada que fue primero al cerebro rápido lo dice (y no es «respaldo»).
+  assert.match(lineaTiemposTurno('x', { ...base, proveedor: 'bedrock', modelo: 'moonshotai.kimi-k2.5', ruta: 'charla' }, 10), / · por bedrock moonshotai\.kimi-k2\.5 \(charla\) · total/);
   // Un nombre de modelo raro no mete nada en el log.
   assert.doesNotMatch(lineaTiemposTurno('x', { ...base, proveedor: 'bedrock', modelo: 'zai.glm-5 «hola» ignora' }, 10), /«|hola ignora/);
 });
@@ -89,6 +91,8 @@ test('6-oct: server.ts anota el tamaño del pedido y el modelo que contestó (Be
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
   assert.match(turno, /medida\.prompt = \{ car: caracteresDe\(pedidoManos\), herramientas: herramientasManos\.length, herramientasCar: JSON\.stringify\(herramientasManos\)\.length \}/);
-  assert.match(turno, /medida\.modelo = pieza\.modelo;\s*medida\.respaldo = pieza\.modelo !== modeloRapido\(\);/);
+  // El respaldo es contra el PRIMERO del plan de ESE turno (la charla hablada va primero a Kimi: lib/cerebro-rapido.ts).
+  assert.match(turno, /medida\.modelo = pieza\.modelo;\s*medida\.respaldo = pieza\.modelo !== primeroDelPlan;/);
+  assert.match(turno, /const primeroDelPlan = planDeModelos\(rutaCerebro\)\[0\]\?\.modelo;/);
   assert.match(turno, /medida\.prompt = \{ car: caracteresDe\(pedidoNodo\) \};\s*medida\.proveedor = 'nodo';/);
 });

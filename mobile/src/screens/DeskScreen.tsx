@@ -557,7 +557,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * El turno especulativo (lib/turnoEspeculativo.ts): el oído avisa a los ~0,35 s de silencio que la idea parece cerrada
    * y el turno empieza ya; askBrain lo toma si la frase final es esa (si no, se corta y el servidor no hace nada).
    */
-  const especulativo = useRef(new TurnoEspeculativo({ arrancar: (o, h) => turnoStream(o, h), confirmar: confirmarTurnoEspeculativo, cancelar: cancelarTurnoEspeculativo })).current;
+  const especulativo = useRef(new TurnoEspeculativo<TurnoOpts, ChatResult>({ arrancar: (o, h) => turnoStream(o, h), confirmar: confirmarTurnoEspeculativo, cancelar: cancelarTurnoEspeculativo })).current;
   /** El stream del turno: el especulativo de ESTA frase si sirve (con su idTurno, que pasa a ser el del turno), si no uno nuevo. */
   const streamDelTurno = (base: TurnoOpts & { idTurno: string }, h: StreamHandlers) => {
     const e = especulativo.tomar(base, h);
