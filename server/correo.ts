@@ -39,6 +39,7 @@ import { explicarFallo } from '../lib/correo/buzon';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { dentroDe, intervaloDeCorreo, sinTiempo, type Intervalo } from '../lib/correo/intervalo';
+import { presentadoEnChat } from './presentacion-decision';
 import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
@@ -858,6 +859,8 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = '', 
   const viejas = APARTADOS.quitarDonde(k, mismos);
   if (viejas.length && !version) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(viejas[viejas.length - 1].asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
+  // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
+  presentadoEnChat(quien, ambito, { canal: 'correo', intento: vigencia.intento, huella });
   const aviso =
     (reemplazo
       ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`

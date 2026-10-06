@@ -16,7 +16,9 @@
  * de antes de editar) o con un registro de otro aparato: no se elige nada, no sale nada y se le pide que mire la ventana.
  * Con varias esperando y sin un registro que diga desde cuándo se ve lo que dice el campo, se pregunta cuál.
  *
- * Lo escrito (el chat) y el toque en la ventana o el panel (POST /api/trabajos/:id/decisiones) siguen como siempre.
+ * SEC-01: lo escrito desde el teléfono con la ventana a la vista también trae `decisionVista` y se ata igual; lo escrito
+ * sin ventana se ata a lo último presentado en el chat (server/presentacion-decision.ts). El toque en la ventana o el
+ * panel (POST /api/trabajos/:id/decisiones) sigue como siempre.
  */
 import { apartadosCorreoDe, borradorDe } from './correo';
 import { apartadosWhatsappDe, borradorWhatsappDe } from './whatsapp';
@@ -88,10 +90,11 @@ export function vistaHablada(o: { dueno: string; ambito: string; whatsapp: boole
  * ¿Este «sí» hablado puede mandar `p`? null si sí (está atado a su intento y huella exactos); si no, el HECHO que dice
  * que no salió nada y qué hacer.
  */
-export function hechoSiNoEstaLigada(p: { origen: string; id?: string; huella?: string }, h: VistaHablada, mensaje: string, decir: string): string | null {
+export function hechoSiNoEstaLigada(p: { origen: string; id?: string; huella?: string }, h: VistaHablada, mensaje: string, decir: string, o: { escrito?: boolean } = {}): string | null {
   const l = h.ligada;
   if (l && l.canal === p.origen && l.intento === p.id && !!p.huella && l.huella === p.huella) return null;
-  const dijo = `dijo «${mensaje.slice(0, 80)}» en voz alta`;
+  // SEC-01: lo escrito desde el teléfono con la ventana a la vista también lleva lo que muestra (y se ata igual).
+  const dijo = o.escrito ? `escribió «${mensaje.slice(0, 80)}» con la ventana de decisión a la vista` : `dijo «${mensaje.slice(0, 80)}» en voz alta`;
   if (h.campoSinBorrador)
     return `HECHO: ${dijo}, pero lo que su ventana de decisión mostraba ya no es lo que espera (lo editó, venció o cambió). NO se mandó nada. Dile que mire la ventana: ahí está la versión de ahora (${decir}); si es esa, que diga «sí» mientras la ve o toque «Sí».`;
   if (l)

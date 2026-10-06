@@ -20,6 +20,7 @@ import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-col
 import type { RetencionAcciones } from './voz-agente';
 import { otraVozDelTurno } from '../lib/voces-miembro';
 import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
+import { atadoAlPresentado, presentadoEnChat, type AtaduraEscrita } from './presentacion-decision';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
 export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
@@ -236,6 +237,36 @@ export function pendientesEnOrden(dueno: string, ambito: string, whatsapp: boole
   return out.sort((a, b) => a.creado - b.creado);
 }
 
+/**
+ * SEC-01: el «sí» escrito no estaba atado a lo último presentado. El HECHO vuelve a presentar ESA versión (a quién, desde
+ * dónde, el asunto y el texto exactos que esperan) para que se le lea y se le pregunte otra vez; desde ahora es lo último
+ * presentado en esta conversación (el próximo «sí» escrito, si es para esto, la manda; si se edita, se vuelve a preguntar).
+ */
+function representar(dueno: string, ambito: string, p: PendienteTurno, porQue: AtaduraEscrita, mensaje: string): string {
+  const motivo =
+    porQue === 'ventana_sin_autoridad'
+      ? 'lo último que su pantalla mostraba era la ventana de decisión, y ya no consta que la siga viendo (se cerró, venció o no se pudo renovar)'
+      : porQue === 'otra_version'
+        ? 'lo último que se le presentó no es esta versión (se editó o se le mostró otra cosa después)'
+        : 'no consta que esta versión exacta se le haya presentado (venció lo que se le leyó, o el servidor se reinició)';
+  let version = '';
+  if (p.origen === 'correo') {
+    const c = borradorCorreoPorIntento(dueno, ambito, p.id || '') || (borradorDe(dueno, ambito)?.intento === p.id ? borradorDe(dueno, ambito) : null);
+    if (c && c.huella === p.huella) {
+      version = `el correo desde ${c.desde} para ${c.para.join(', ')}${c.cc?.length ? ` (con copia a ${c.cc.join(', ')})` : ''} — «${c.asunto}»:\n${c.texto.slice(0, 2400)}`;
+      presentadoEnChat(dueno, ambito, { canal: 'correo', intento: c.intento, huella: c.huella });
+    }
+  } else {
+    const w = borradorWhatsappPorIntento(dueno, ambito, p.id || '') || (borradorWhatsappDe(dueno, ambito)?.intento === p.id ? borradorWhatsappDe(dueno, ambito) : null);
+    if (w && w.huella === p.huella) {
+      version = `el WhatsApp para ${destinoWhatsapp(w)}:\n${w.texto.slice(0, 2400)}`;
+      presentadoEnChat(dueno, ambito, { canal: 'whatsapp', intento: w.intento, huella: w.huella });
+    }
+  }
+  const que = version || decirPendiente(p);
+  return `HECHO: escribió «${mensaje.slice(0, 80)}», pero ${motivo}. NO se mandó nada. Lo que espera ahora es ${que}\nLéeselo tal cual (es lo que saldría) y pregúntale si lo manda. Solo sale si después dice que sí a ESTO; no digas que se envió.`;
+}
+
 /** De qué ya se le habló («quedó pendiente…»): una vez por borrador, para no insistir. */
 const MENCIONADOS = new Map<string, string[]>();
 const MAX_MENCIONADOS = 30;
@@ -270,7 +301,9 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   // Lo que la persona tiene a la vista (la ventana de decisión de la mesa, o lo que AU-RA acaba de preguntar). En un turno
   // hablado, lo que dice el teléfono que muestra ESE aparato (o su registro): server/decision-hablada.ts.
   const hablado = o.hablado === true || !!retener;
-  const hv: VistaHablada | null = hablado ? vistaHablada({ dueno, ambito, whatsapp: o.whatsapp, campo: decisionVistaDelTurno(o.decisionVista), aparato: o.aparato, registro: vistaDe({ dueno, ambito, enPantalla: o.enPantalla }) }) : null;
+  // SEC-01: lo escrito desde el teléfono con la ventana a la vista también trae `decisionVista` y se ata igual que lo hablado.
+  const campo = decisionVistaDelTurno(o.decisionVista);
+  const hv: VistaHablada | null = hablado || campo ? vistaHablada({ dueno, ambito, whatsapp: o.whatsapp, campo, aparato: o.aparato, registro: vistaDe({ dueno, ambito, enPantalla: o.enPantalla }) }) : null;
   const vista = hv ? hv.vista : vistaDe({ dueno, ambito, enPantalla: o.enPantalla });
   // Lo que espera cuando la persona contestó (lo que estaba contestando).
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app, enPantalla: vista });
@@ -308,9 +341,21 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   // Revisión del 6-oct (bloqueante 1): un «sí» HABLADO manda un correo o un WhatsApp solo si está atado a la huella exacta
   // que ese aparato muestra. Si no (sin ventana, la de antes de editar, la de otro aparato), no se elige ni se manda nada.
   if (hv && d.tipo === 'ejecutar' && (d.p.origen === 'correo' || d.p.origen === 'whatsapp')) {
-    const no = hechoSiNoEstaLigada(d.p, hv, message, decirPendiente(d.p));
+    const no = hechoSiNoEstaLigada(d.p, hv, message, decirPendiente(d.p), { escrito: !hablado });
     if (no) {
       hechos.push(no);
+      return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+    }
+  }
+  // SEC-01 (el residual del chat ESCRITO): sin campo de la ventana, un «sí» escrito manda un correo o un WhatsApp solo si
+  // la última presentación de esta conversación (su texto en el chat, o la ventana mientras su registro vive) es
+  // EXACTAMENTE ese borrador. Si no, no se busca otro: se vuelve a presentar ESA versión y se pregunta.
+  if (!hv && d.tipo === 'ejecutar' && (d.p.origen === 'correo' || d.p.origen === 'whatsapp')) {
+    // Nombrar a cuál («sí, el correo») la identifica; aun así, ESA versión exacta tiene que habérsele presentado.
+    const nombrada = d.analisis.restos.length > 0;
+    const atadura = atadoAlPresentado({ dueno, ambito, p: d.p, ventana: vistaDe({ dueno, ambito, enPantalla: o.enPantalla }), nombrada });
+    if (atadura !== 'ok') {
+      hechos.push(representar(dueno, ambito, d.p, atadura, message));
       return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
     }
   }

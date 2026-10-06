@@ -36,6 +36,8 @@ export type EnPantalla = {
   aparato?: string;
 };
 
+import { _olvidarPresentaciones, presentadoEnVentana } from './presentacion-decision';
+
 /** Cuánto vale sin que la app lo repita (la ventana lo renueva mientras está abierta). */
 export const EN_PANTALLA_VIVE_MS = 4 * 60_000;
 
@@ -49,6 +51,8 @@ export function fijarEnPantalla(dueno: string, e: Omit<EnPantalla, 't' | 'vivo'>
   const antes = VISTAS.get(llave(dueno));
   const t = antes && antes.intento === e.intento && antes.huella === e.huella && antes.ambito === e.ambito && antes.aparato === e.aparato ? antes.t : ahora;
   VISTAS.set(llave(dueno), { ...e, t, vivo: ahora });
+  // SEC-01: es la presentación más reciente de esta conversación (un «sí» escrito queda atado a ESTA, mientras viva).
+  presentadoEnVentana(dueno, e.ambito, e, e.aparato, ahora);
 }
 
 /**
@@ -126,4 +130,6 @@ export function sigueSiendoUltimaSecuencia(dueno: string, aparato: unknown, seq:
 export function _olvidarEnPantalla() {
   VISTAS.clear();
   SECUENCIAS.clear();
+  // Como tras un reinicio: lo presentado (en memoria igual que esto) también se pierde (SEC-01).
+  _olvidarPresentaciones();
 }

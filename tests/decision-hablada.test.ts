@@ -210,9 +210,13 @@ test('editar: la vieja tampoco vale si el registro de la ventana se queda con el
     assert.ok(r.ok);
     await hablado('sí');
     assert.equal(e.enviados.length, 0, 'lo que espera no es lo que la ventana mostraba: no sale');
-    // Escrito (no hablado), como siempre.
+    // SEC-01 (residual escrito): escrito tampoco manda la versión editada que nunca se presentó; se la vuelve a presentar
+    // (con su texto exacto) y se pregunta. El «sí» escrito siguiente, a ESA versión ya presentada, sale una vez.
+    const r1 = await escrito('sí');
+    assert.equal(e.enviados.length, 0, `la versión editada no se presentó: ${r1.hechos.join(' | ')}`);
+    assert.match(r1.hechos.join('\n'), /NO se mandó nada[\s\S]*Mejor a las 8\./);
     await escrito('sí');
-    assert.deepEqual(e.enviados.map((x) => x.texto), ['Mejor a las 8.'], 'el camino escrito no cambia');
+    assert.deepEqual(e.enviados.map((x) => x.texto), ['Mejor a las 8.'], 'presentada, sale exactamente esa, una vez');
   });
 });
 
