@@ -6,6 +6,7 @@
  * línea) y el teléfono los mandaba sin filtrar: un token, una clave o un correo dentro de una
  * excepción terminaban en los logs.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sanearDiag, sanearTexto } from '../lib/diag-saneador';
@@ -16,7 +17,7 @@ const SINTETICOS = [
   `Error: fetch failed https://aura-fp.onrender.com/api/turno?token=${TOKEN}&x=1`,
   `401 x-ultron-sesion: ${TOKEN}`,
   'password=Hunter2! y clave: miClaveSecreta',
-  '{"contraseña":"abc123456","correo":"maria.jose@ordenglobal.org"}',
+  '{"contraseña":"abc123456","correo":"maria.jose.h@ordenglobal.org"}',
   'Authorization: Bearer sk_live_abcdefghijklmnop',
   'llamar a +504 9988-7766 mañana',
   'llave AAAAB3NzaC1yc2EAAAADAQABAAABAQC7aBcDeFgHiJkLmNoPqRsTuVwXyZ',
@@ -25,7 +26,7 @@ const SINTETICOS = [
 
 test('tokens, claves, correos, parámetros de URL y teléfonos no quedan en la carga ni en el log', () => {
   const salida = SINTETICOS.map((s) => sanearTexto(s, 900)).join(' || ');
-  for (const prohibido of [TOKEN, 'Hunter2!', 'miClaveSecreta', 'abc123456', 'maria.jose@ordenglobal.org', 'sk_live_abcdefghijklmnop', '9988-7766', 'AAAAB3NzaC1yc2EAAAADAQABAAABAQC7aBcDeFgHiJkLmNoPqRsTuVwXyZ', 'x=1']) {
+  for (const prohibido of [TOKEN, 'Hunter2!', 'miClaveSecreta', 'abc123456', 'maria.jose.h@ordenglobal.org', 'sk_live_abcdefghijklmnop', '9988-7766', 'AAAAB3NzaC1yc2EAAAADAQABAAABAQC7aBcDeFgHiJkLmNoPqRsTuVwXyZ', 'x=1']) {
     assert.ok(!salida.includes(prohibido), `quedó «${prohibido}» en: ${salida}`);
   }
   assert.ok(salida.includes('https://aura-fp.onrender.com/api/turno?[…]'), 'la URL queda, sin sus parámetros');
@@ -46,8 +47,8 @@ test('solo pasan los campos conocidos, con su largo y saneados', () => {
     sesion: 'ab12cd34<script>',
     error: `No pude: ${TOKEN}`,
     stack: 'x\n'.repeat(2000),
-    migas: ['+0.1s arranque', 'correo jose@ordenglobal.org'],
-    correo: 'jose@ordenglobal.org',
+    migas: ['+0.1s arranque', 'correo jose.h@ordenglobal.org'],
+    correo: 'jose.h@ordenglobal.org',
     token: TOKEN,
     cualquierCosa: { profundo: true },
   });

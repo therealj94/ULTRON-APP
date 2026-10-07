@@ -13,6 +13,7 @@
  *   · el círculo, la cola de aprobaciones y el panel de tareas, con sus ejecutores de mentira.
  * Lo durable, en memoria. Datos sintéticos (example.test, números falsos).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -589,14 +590,14 @@ test('aprobaciones: lo mismo pedido por OTRA persona no se junta con la solicitu
     registrarEjecutor('permisos_exactos.mandar_informe', async (args) => ((hechas.push(args), { ok: true, texto: 'mandado' })));
     const pedido = (quien: string) => ({ herramienta: 'permisos_exactos.mandar_informe', efecto: 'externo' as const, plataforma: 'electrum' as const, args: { a: 'cliente@example.test' }, quien, nivel: 'mando' as const, prueba: 'sesion' as const, destino: 'tercero' as const });
     const deJose = await autorizar(pedido('jose'));
-    const deMedardo = await autorizar(pedido('medardo'));
-    assert.ok(deJose.aprobacionId && deMedardo.aprobacionId);
-    assert.notEqual(deMedardo.aprobacionId, deJose.aprobacionId, 'cada quien su solicitud');
-    const r = await firmar({ id: deMedardo.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
-    assert.equal(r.ok, false, 'Medardo no aprueba lo que él mismo pidió');
+    const deRamiro = await autorizar(pedido('ramiro'));
+    assert.ok(deJose.aprobacionId && deRamiro.aprobacionId);
+    assert.notEqual(deRamiro.aprobacionId, deJose.aprobacionId, 'cada quien su solicitud');
+    const r = await firmar({ id: deRamiro.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    assert.equal(r.ok, false, 'Ramiro no aprueba lo que él mismo pidió');
     assert.equal(hechas.length, 0);
     // La de José la firma otra persona: se hace UNA vez, con los argumentos congelados.
-    assert.equal((await firmar({ id: deJose.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).aprobacion?.estado, 'ejecutada');
+    assert.equal((await firmar({ id: deJose.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).aprobacion?.estado, 'ejecutada');
     assert.equal((await firmar({ id: deJose.aprobacionId!, quien: 'carlos', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false);
     assert.deepEqual(hechas, [{ a: 'cliente@example.test' }]);
   } finally {

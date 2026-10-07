@@ -3,7 +3,7 @@
  *
  * `hechosCerebro` elige las líneas del conocimiento que comparten palabras con la pregunta. Falla
  * cuando se pregunta con otras palabras: «¿quién puso la plata para arrancar?» no comparte ninguna
- * con «Fundador: Medardo…». Aquí cada línea tiene su vector (BGE-M3) y se buscan las más cercanas.
+ * con «Fundador: …». Aquí cada línea tiene su vector (BGE-M3) y se buscan las más cercanas.
  *
  * Solo se usa cuando la búsqueda por palabras no encontró nada: si ya hay líneas, las palabras
  * exactas mandan (son más precisas con nombres y cifras). Los vectores de las líneas se calculan una

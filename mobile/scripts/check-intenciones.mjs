@@ -60,7 +60,7 @@ check('explícame el modo guardián de la aplicación con detalle', 'cerebro');
 check('cuánto cuesta un chiste de esos en la radio hondureña', 'cerebro');
 check('la cámara del banco central grabó el robo', 'cerebro');
 check('anotá que mañana hay junta', 'cerebro');
-check('recuérdame mañana llamar a Medardo', 'cerebro');
+check('recuérdame mañana llamar a Ramiro', 'cerebro');
 check('qué opinás de abrir sociedad en Próspera', 'cerebro');
 check('precio del oro hoy', 'cerebro');
 check('busca noticias de Honduras hoy', 'cerebro');

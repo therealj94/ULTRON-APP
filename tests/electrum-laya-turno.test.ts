@@ -7,6 +7,7 @@
  *  · `/api/electrum/salud` dice si Laya está y si contesta; el detalle —tiempos, fallos, la sonda—
  *    solo a quien manda.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -131,7 +132,7 @@ test('salud: Laya a todos por encima, el detalle solo a quien manda', { skip: fs
 
   // José manda en Electrum en el padrón de arranque: una sesión firmada con el secreto del servidor.
   const at = Date.now();
-  const cuerpo = Buffer.from(JSON.stringify({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta', at, exp: at + 3_600_000 })).toString('base64url');
+  const cuerpo = Buffer.from(JSON.stringify({ correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta', at, exp: at + 3_600_000 })).toString('base64url');
   const sesion = `u1.${cuerpo}.${crypto.createHmac('sha256', secreto).update(cuerpo).digest('base64url')}`;
   const mando: any = await (await fetch(`${base}/api/electrum/salud`, { headers: { 'x-ultron-sesion': sesion } })).json();
   assert.equal(mando.nivel, 'mando');

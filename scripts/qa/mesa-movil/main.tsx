@@ -67,7 +67,7 @@ function Mesa({ conversando = false, oculta = 0 }: { conversando?: boolean; ocul
 /** La pantalla de los chats, como la dibuja la app (lista), para el fondo de la transición. */
 function Chats({ corrida }: { corrida: number }) {
   const { width } = useWindowDimensions();
-  const filas = ['Mamá', 'Beto', 'Ana', 'Equipo Orden Global', 'Medardo'];
+  const filas = ['Mamá', 'Beto', 'Ana', 'Equipo Orden Global', 'Ramiro'];
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1C1D20', transform: [{ translateX: corrida * width }] }]}>
       <View style={s.cabeza}>

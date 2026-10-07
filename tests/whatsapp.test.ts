@@ -5,6 +5,7 @@
  * revisa, lee por nombre y deja un borrador que solo sale con el «sí» (un mensaje que «ordena» algo no
  * manda nada).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -186,7 +187,7 @@ async function appDePrueba() {
   return { como, cerrar: () => new Promise<void>((r) => srv.close(() => r())) };
 }
 
-const JOSE = 'j.ordonez@ordenglobal.org';
+const JOSE = 'j.herrera@ordenglobal.org';
 
 test('la app: solo su dueño ve su WhatsApp; chats, mensajes, enviar, leído, foto y vincular', async () => {
   const p = await puenteFalso();
@@ -429,9 +430,9 @@ test('el harness: pide «whatsapp …» y la instrucción solo va a quien tiene 
     null,
     'jose',
     async () => {
-      assert.ok(await whatsappPermitido('j.ordonez@ordenglobal.org'));
-      assert.ok(await whatsappPermitido('jose@ordenglobal.org'));
-      assert.ok(!(await whatsappPermitido('m.ordonez@ordenglobal.org')));
+      assert.ok(await whatsappPermitido('j.herrera@ordenglobal.org'));
+      assert.ok(await whatsappPermitido('jose.h@ordenglobal.org'));
+      assert.ok(!(await whatsappPermitido('r.herrera@ordenglobal.org')));
       assert.ok(!(await whatsappPermitido('jose@otro.hn')));
     },
     '0'
@@ -704,7 +705,7 @@ test('AUR13 la app: /api/whatsapp/enviar con idEnvio sale una vez; el mismo id c
 /* ------------------------------------------------------------------ cada cuenta de AU-RA, SU WhatsApp (5-oct) */
 
 const ANA = 'ana.prueba@ejemplo.org'; // miembro de la comunidad (fuera del padrón, con la marca firmada)
-const MEDARDO = 'm.ordonez@ordenglobal.org'; // de la junta (en el padrón, con AU-RA)
+const RAMIRO = 'r.herrera@ordenglobal.org'; // de la junta (en el padrón, con AU-RA)
 
 test('cada cuenta: puede agregar SU WhatsApp («Agregar mi WhatsApp»), va por su propia clave y nunca ve el de otro', async () => {
   const p = await puenteFalso();
@@ -716,7 +717,7 @@ test('cada cuenta: puede agregar SU WhatsApp («Agregar mi WhatsApp»), va por s
       const e0 = await (await como(ANA, '/api/whatsapp/estado', {}, true)).json();
       assert.deepEqual([e0.disponible, e0.permitido, e0.vinculado, e0.registrada], [true, true, false, false]);
       assert.equal(e0.numero, undefined, 'el número de José no aparece en otra cuenta');
-      const m0 = await (await como(MEDARDO, '/api/whatsapp/estado')).json();
+      const m0 = await (await como(RAMIRO, '/api/whatsapp/estado')).json();
       assert.deepEqual([m0.permitido, m0.vinculado], [true, false], 'la junta también');
       // Sin la marca de comunidad y fuera del padrón, la sesión no abre AU-RA: tampoco WhatsApp.
       assert.equal((await como(ANA, '/api/whatsapp/chats')).status, 403);
@@ -786,7 +787,7 @@ test('el puente lleno: CUPO_LLENO honesto, no se vincula nada', async () => {
   await conPuente(p.url, JOSE, async () => {
     const { como, cerrar } = await appDePrueba();
     try {
-      const r = await como(MEDARDO, '/api/whatsapp/vincular', { method: 'POST', body: JSON.stringify({ telefono: '50499990000' }) });
+      const r = await como(RAMIRO, '/api/whatsapp/vincular', { method: 'POST', body: JSON.stringify({ telefono: '50499990000' }) });
       assert.equal(r.status, 507);
       const j = await r.json();
       assert.equal(j.code, 'CUPO_LLENO');
@@ -802,12 +803,12 @@ test('la clave de cada cuenta en el puente: legado para los dueños; para los de
   const { claveCuentaWhatsapp } = W13;
   await conPuente('http://127.0.0.1:9', JOSE, async () => {
     assert.equal(claveCuentaWhatsapp(JOSE), 'legado');
-    assert.equal(claveCuentaWhatsapp('jose@ordenglobal.org'), 'legado', 'cualquier correo de José, si es dueño por correo de su persona');
+    assert.equal(claveCuentaWhatsapp('jose.h@ordenglobal.org'), 'legado', 'cualquier correo de José, si es dueño por correo de su persona');
     const a = claveCuentaWhatsapp(ANA);
     assert.match(a, /^[a-f0-9]{40}$/);
     assert.equal(claveCuentaWhatsapp(ANA.toUpperCase()), a, 'estable');
-    assert.notEqual(claveCuentaWhatsapp(MEDARDO), a);
-    assert.equal(claveCuentaWhatsapp('medardo@ordenglobal.org'), claveCuentaWhatsapp(MEDARDO), 'la misma persona del padrón, el mismo WhatsApp');
+    assert.notEqual(claveCuentaWhatsapp(RAMIRO), a);
+    assert.equal(claveCuentaWhatsapp('ramiro@ordenglobal.org'), claveCuentaWhatsapp(RAMIRO), 'la misma persona del padrón, el mismo WhatsApp');
     assert.equal(claveCuentaWhatsapp(''), '');
     // Otro secreto, otra clave; sin secreto, ninguna (nunca la clave del puente: revisión del 5-oct). Los dueños, igual.
     process.env.WHATSAPP_CUENTA_SECRETO = 'otro-secreto-de-cuentas-de-24+';
@@ -817,11 +818,11 @@ test('la clave de cada cuenta en el puente: legado para los dueños; para los de
     assert.equal(claveCuentaWhatsapp(JOSE), 'legado');
   });
   // Si José figura por su id del padrón, también va al legado; sin dueños, su persona tiene su propia clave.
-  await conPuente('http://127.0.0.1:9', 'jose', async () => assert.equal(claveCuentaWhatsapp('jose@ordenglobal.org'), 'legado'));
+  await conPuente('http://127.0.0.1:9', 'jose', async () => assert.equal(claveCuentaWhatsapp('jose.h@ordenglobal.org'), 'legado'));
   await conPuente('http://127.0.0.1:9', '', async () => {
     const k = claveCuentaWhatsapp(JOSE);
     assert.match(k, /^[a-f0-9]{40}$/);
-    assert.equal(claveCuentaWhatsapp('jose@ordenglobal.org'), k);
+    assert.equal(claveCuentaWhatsapp('jose.h@ordenglobal.org'), k);
   });
 });
 

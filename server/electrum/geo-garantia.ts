@@ -3,7 +3,7 @@
  *
  * Visto en producción (28-09): José tocó «Mapas geológicos» en la ficha de La Escalera y el doctor
  * contestó «Ahí tenés los tres, José» SIN llamar a `mapa_geologico`: no había ningún mapa. Con
- * Medardo, el mismo botón sí los dibujó. Es lo mismo que pasaba con el mapa (mapa-garantia.ts): el
+ * otra persona, el mismo botón sí los dibujó. Es lo mismo que pasaba con el mapa (mapa-garantia.ts): el
  * modelo imita una respuesta que ya vio. Pedírselo en el prompt no alcanza; esto lo hace imposible:
  *
  *  · Si se pidieron mapas geológicos y en el turno no salió ninguno, se dibujan aquí con la misma

@@ -14,6 +14,7 @@
  *  · Dos concesiones con el mismo nombre daban «coincide con varias: X, X».
  *  · El PDF que armaba un turno de Telegram nunca se mandaba a quien lo pidió.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

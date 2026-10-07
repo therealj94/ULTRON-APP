@@ -76,7 +76,7 @@ async function muestra(metodo: string, args: any): Promise<unknown> {
     case 'estado': return structuredClone(estadoMuestra);
     case 'entrar.genesis':
     case 'entrar.clave':
-      estadoMuestra.sesion = { nombre: 'José', correo: 'jose@ordenglobal.org', rol: 'Junta Directiva · Orden Global', nivel: 'junta' };
+      estadoMuestra.sesion = { nombre: 'José', correo: 'jose.h@ordenglobal.org', rol: 'Junta Directiva · Orden Global', nivel: 'junta' };
       return { miembro: estadoMuestra.sesion };
     case 'salir': estadoMuestra.sesion = null; return true;
     case 'app.cerrar': return true;

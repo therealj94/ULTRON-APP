@@ -29,7 +29,7 @@ function labelTexture(){
 }
 export function createAntonio({quality='high'}={}){
   const root=new THREE.Group();root.name='ANT_ONIO';
-  root.userData={author:'Orden Global / Medardo',version:'2.0.0',rig:'articulated node hierarchy with facial morph targets',reference:'ANT-ONIO approved glasses design'};
+  root.userData={author:'Orden Global',version:'2.0.0',rig:'articulated node hierarchy with facial morph targets',reference:'ANT-ONIO approved glasses design'};
   const rig={},anim=[];
   const joint=(p,n,pos)=>{const g=group(p,n,pos);rig[n]=g;anim.push(g);return g;};
   const skinMaps=detailTextures('skin'),clothMaps=detailTextures('cloth');

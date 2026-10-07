@@ -6,6 +6,7 @@
  * vigente 14 días y pasaba a abrir AU-RA. Ahora el miembro de la comunidad lleva la marca firmada en su
  * sesión (la pone AU-RA al dejarlo entrar), y sin ella un correo desconocido no abre nada.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { emitirSesion, mesaAutorizada, sesionAbreAura, sesionDe } from '../server/seguridad';
@@ -70,7 +71,7 @@ test('la marca va firmada: no se puede agregar a mano', () =>
 
 test('sesionAbreAura: los códigos temporales nunca, la junta siempre', () => {
   assert.equal(sesionAbreAura('x@temporal.drelectrum', true), false);
-  assert.equal(sesionAbreAura('j.ordonez@ordenglobal.org'), true);
+  assert.equal(sesionAbreAura('j.herrera@ordenglobal.org'), true);
   assert.equal(sesionAbreAura('nadie.prueba@ejemplo.org'), false);
   assert.equal(sesionAbreAura('nadie.prueba@ejemplo.org', true), true);
 });

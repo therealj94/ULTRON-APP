@@ -2,7 +2,7 @@
  * LA BIENVENIDA.
  *
  * Al abrir, con la cara a pantalla completa, Dr Electrum saluda según la hora de Honduras y por el
- * nombre de quien entró (José, Medardo, o el nombre que se le puso al código temporal) y ofrece
+ * nombre de quien entró (su nombre de pila, o el que se le puso al código temporal) y ofrece
  * un recorrido: herramientas, legal, geológico o completo. «Saltar» lo cierra por esta vez y «No
  * volver a mostrar» lo apaga para esa persona en este aparato. Elegir o saltar lleva al mapa.
  */

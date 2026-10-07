@@ -30,7 +30,7 @@
  */
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsPcmUrl, ttsUrl } from './api';
+import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, renovarTokenVoz, sessionHeaders, ttsPcmUrl, ttsUrl } from './api';
 import { moduloVoz } from './auraVoz';
 import { CentralVoz, SonidoVivo, type FalloVoz, type Reproducible } from './sonidoVivo';
 import { cabecerasVoz, falloDeSesion } from './vozNativa';
@@ -519,7 +519,8 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
   const key = claveAudio(avatar, idioma, perf, emocion, text, v);
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
-  const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
+  let headers: Record<string, string> = { Accept: 'audio/*', ...(await sessionHeaders()) };
+  let renovado = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (corte?.abortado) return null;
     const path = tmpPath('ultron', 'wav');
@@ -529,6 +530,15 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
         // Abortada: ni se reintenta ni se guarda lo que haya quedado a medias.
         await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
         return null;
+      }
+      // La voz pide sesión (lo no guardado): con el token vencido se renueva una vez y se vuelve a pedir.
+      if (r.status === 401 && !renovado) {
+        renovado = true;
+        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+        if (!(await renovarTokenVoz())) return null;
+        headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
+        attempt -= 1;
+        continue;
       }
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
@@ -559,9 +569,17 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
  * POST JSON → audio → disco. FileSystem.downloadAsync solo hace GET, así que /api/cantar y el POST de
  * /api/tts van por XHR (blob → base64 → archivo).
  */
-async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number, corte?: CorteIO): Promise<string | null> {
+async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number, corte?: CorteIO, renovado = false): Promise<string | null> {
   const headers = await sessionHeaders();
   if (corte?.abortado) return null;
+  const r = await postAudio(url, body, timeoutMs, headers, corte);
+  // Token vencido (la voz, el canto o la oración que no estaban guardados piden sesión): se renueva una vez y se repite.
+  if (r === 401 && !renovado && !corte?.abortado && (await renovarTokenVoz())) return downloadPost(url, body, timeoutMs, corte, true);
+  return typeof r === 'string' ? r : null;
+}
+
+/** El POST de audio: la ruta del archivo, 401 si el servidor pidió sesión, o null. */
+function postAudio(url: string, body: Record<string, unknown>, timeoutMs: number, headers: Record<string, string>, corte?: CorteIO): Promise<string | 401 | null> {
   return new Promise((resolve) => {
     try {
       const xhr = new XMLHttpRequest();
@@ -583,6 +601,7 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
       xhr.onerror = () => resolve(null);
       xhr.ontimeout = () => resolve(null);
       xhr.onload = () => {
+        if (xhr.status === 401) return resolve(401);
         if (xhr.status !== 200 || !xhr.response) return resolve(null);
         const blob: Blob = xhr.response;
         const ct = String(xhr.getResponseHeader('content-type') || blob.type || '');

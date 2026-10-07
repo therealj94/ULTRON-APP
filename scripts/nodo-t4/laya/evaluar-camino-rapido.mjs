@@ -26,7 +26,7 @@ const { ordenPorReglas, ordenRapida } = await import(pathToFileURL(resolve(LIB, 
 const { detectarIdioma } = await import(pathToFileURL(resolve(LIB, 'idioma-detectar.ts')).href)
 
 // Los contactos del teléfono: los nombres que usan los datos, como se guardarían en la agenda.
-const NOMBRES = ['Mamá', 'Papá', 'Beto', 'Ana', 'Esposa', 'Esposo', 'Hermano', 'Hermana', 'Don Chepe', 'Karla', 'Profe Carlos', 'Abuela', 'Medardo',
+const NOMBRES = ['Mamá', 'Papá', 'Beto', 'Ana', 'Esposa', 'Esposo', 'Hermano', 'Hermana', 'Don Chepe', 'Karla', 'Profe Carlos', 'Abuela', 'Ramiro',
   'Jefe', 'Tía Rosa', 'José', 'Hija', 'Hijo', 'Licenciado', 'María José', 'Compadre', 'Prima', 'Primo', 'Doctor Ramírez', 'Vecina', 'Suegra',
   'Pastor', 'Lupita', 'Cuñado', 'Don Ramón', 'Seño Marta', 'Kevin', 'Doña Chayo', 'Carlos', 'Maria', 'Uncle Tony', 'Rosa', 'Pastor Mike', 'Landlord']
 const contactos = NOMBRES.map((n, i) => ({ correo: `c${i}@prueba.hn`, nombre: n }))

@@ -11,7 +11,7 @@ import { modoDesarrollo } from './lib/entorno';
 import { sanearDiag } from './lib/diag-saneador';
 import { anotarEventoTurno, medirTurno } from './server/registro-turno';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
-import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
+import { cuentaDeJunta, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, saludEleven, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server/voz-agente';
@@ -147,7 +147,7 @@ import { correrTriajeConEstado } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { fichaMenuPrompt } from './lib/menu-app';
 import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
-import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, cupoPorFrase, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
+import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, exigirMesaOClip, soloClipGuardado, negarClipSinSesion, limitar, urlPublica, mesaAutorizada, cuerpoHttp, cupoPorFrase, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, proponerCapturaTaller, vinculoTallerVigente, type PropuestaTallerVista } from './lib/taller';
@@ -289,7 +289,7 @@ import { memoriaSinLeer,
   type CanalMem,
 } from './lib/memoria';
 import { anotarRespuestaSinMemoria, avatarQuedoAtras, esOrdenDeAvatar, esSaludoCorto, fusionarHilo, pedidoRed, resolverReferencia, respuestasSinMemoria, urlsParaLeer, type MsgHilo } from './lib/conversacion';
-import { nombreDe, puedeCambiarSistema } from './lib/junta';
+import { nombreDe, puedeCambiarSistema, quienesMandan } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
   ayudaTelegram,
@@ -1756,7 +1756,7 @@ app.get('/api/vault/status', exigirJunta, async (_req, res) => {
 app.post('/api/vault/voicebox', exigirSesion, (req, res) => {
   const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
-    return res.status(403).json({ error: 'ACCESO: consulta. Solo José o Medardo con sesión escriben la bóveda.', honesto: true });
+    return res.status(403).json({ error: `ACCESO: consulta. Solo ${quienesMandan()} con sesión escriben la bóveda.`, honesto: true });
   }
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
@@ -1892,7 +1892,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       return res.status(403).json({ error: 'Tu cuenta no tiene acceso a AU-RA FP. Pedilo desde «Solicitar acceso».', codigo: 'SIN_ACCESO' });
     }
     anotarExitoEntrada(correo, ipEntrada);
-    const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
+    const nombre = data.miembro?.nombre || cuentaDeJunta(correo)?.nombre || correo.split('@')[0];
     /*
      * En Dr Electrum entra gente que no es de la junta —un ingeniero con nivel de trabajo, un
      * cliente de la demostración— y se le daba la bienvenida a AU-RA FP con el rol «Junta
@@ -1900,7 +1900,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
      */
     // Y en AU-RA, quien no está en el padrón no es de la junta aunque el cerebro remoto le abra:
     // entra como miembro (server/nivel.ts), con el rol de miembro.
-    const rol = ES_ELECTRUM ? JUNTA[correo]?.rol || 'Dr Electrum FP' : rolVisible(correo);
+    const rol = ES_ELECTRUM ? cuentaDeJunta(correo)?.rol || 'Dr Electrum FP' : rolVisible(correo);
     const s = emitirSesion({ correo, nombre, rol }, { comunidad: deComunidad });
     const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
     return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
@@ -1915,8 +1915,8 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
  * «Miembro · Genesis ID», nunca «Junta Directiva». Ese rol viaja al pase de voz, al nodo y al prompt.
  */
 function nombreYRolDe(correo: string, nombreCuenta?: string) {
-  const nombre = nombreCuenta || JUNTA[correo]?.nombre || personaPorCorreoExacto(correo)?.nombre || correo.split('@')[0];
-  const rol = ES_ELECTRUM ? JUNTA[correo]?.rol || 'Dr Electrum FP' : rolVisible(correo);
+  const nombre = nombreCuenta || cuentaDeJunta(correo)?.nombre || personaPorCorreoExacto(correo)?.nombre || correo.split('@')[0];
+  const rol = ES_ELECTRUM ? cuentaDeJunta(correo)?.rol || 'Dr Electrum FP' : rolVisible(correo);
   return { nombre, rol };
 }
 
@@ -2025,14 +2025,15 @@ if (!ES_ELECTRUM) {
 
 app.post('/api/ultron/biometric-login', limitar(12), async (req, res) => {
   const correo = normalizarCorreo(req.body?.correo);
-  if (!correo || !JUNTA[correo]) {
+  const cuentaJunta = correo ? cuentaDeJunta(correo) : undefined;
+  if (!correo || !cuentaJunta) {
     return res.status(403).json({ error: 'biometría solo para junta registrada', honesto: true });
   }
   const previa = sesionDe(req);
   if (!previa || previa.correo !== correo) {
     return res.status(401).json({ error: 'entra primero con clave; la huella no abre la casa sola', honesto: true });
   }
-  const s = emitirSesion({ correo, nombre: JUNTA[correo].nombre, rol: JUNTA[correo].rol });
+  const s = emitirSesion({ correo, nombre: cuentaJunta.nombre, rol: cuentaJunta.rol });
   return res.json({ ok: true, authenticated: true, token: s.token, user: { nombre: s.nombre, correo, rol: s.rol }, honesto: true });
 });
 
@@ -2120,7 +2121,7 @@ app.post('/api/playwright/scrape', exigirSesion, exigirJunta, limitar(10), async
 /** Una foto de la mesa a 640 px pesa ~60 KB en base64; 3 MB deja sitio a un PDF corto y corta el abuso. */
 const VISION_MAX_CAR = 3_000_000;
 
-app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) => {
+app.post('/api/vision/analyze', exigirMesa, limitar(20), async (req, res) => {
   // El teléfono corta a los 35 s (describeImage): lo que el ojo tarde de más no lo ve nadie.
   const reloj = presupuesto(PRESUPUESTO_VISION_MS);
   const { mediaType, fileName, base64Data } = req.body || {};
@@ -2421,9 +2422,13 @@ async function responderVoz(req: express.Request, res: express.Response) {
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
   // Un miembro que ya gastó sus minutos de voz de ElevenLabs de hoy sigue oyendo a AU-RA, con la voz
   // del servidor propio (Voicebox), que no gasta créditos.
+  // Sin sesión (exigirMesaOClip): solo lo que ya está guardado. Lo privado nunca lo está.
+  const soloCache = soloClipGuardado(res);
+  if (soloCache && p.privado) return negarClipSinSesion(res);
   const cuenta = cuentaDeVozMiembro(req);
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, previo: p.previo, siguiente: p.siguiente, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}) });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, previo: p.previo, siguiente: p.siguiente, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}), ...(soloCache ? { soloCache: true } : {}) });
+  if (!out && soloCache) return negarClipSinSesion(res);
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   if (cuenta && !out.cache && out.motor.startsWith('elevenlabs')) anotarVoz(cuenta, msDeHabla(p.texto));
   if (sinEleven) res.setHeader('X-Ultron-Tope-Voz', '1');
@@ -2449,7 +2454,8 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
   const cuenta = cuentaDeVozMiembro(req);
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
-  if (p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
+  // Sin sesión no hay nada en vivo que generar: lo guardado sale entero por el camino de siempre.
+  if (soloClipGuardado(res) || p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
   try {
     const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar, previo: p.previo, siguiente: p.siguiente });
     if (!vivo) return responderVoz(req, res);
@@ -2473,21 +2479,25 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
   }
 }
 
-app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
-app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVozVivo);
+// Con sesión, la voz entera; sin ella, solo los clips ya guardados (server/seguridad.ts exigirMesaOClip, auditoría C-2).
+app.all('/api/tts', exigirMesaOClip, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/tts/stream', exigirMesaOClip, limitar(60, 60_000, 'voz'), responderVozVivo);
 // La voz en streaming del teléfono (PCM, sonando con el primer trozo): mismas puertas, cupo y minutos (server/voz-pcm.ts).
-montarVozPcm(app, { exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla, devolver: (res) => devolverLimite(res, 'voz') });
-app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+montarVozPcm(app, { exigir: exigirMesaOClip, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla, devolver: (res) => devolverLimite(res, 'voz') });
+app.all('/api/voz', exigirMesaOClip, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
-app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
+app.all('/api/orar', exigirMesaOClip, limitar(12), async (req, res) => {
   const tema = String(req.body?.tema || req.query?.tema || '').slice(0, 120);
   const idiomaOrar = normalizarIdioma(req.body?.idioma ?? req.query?.idioma);
+  // Sin sesión, solo la oración ya grabada (la del día o una por tema que ya se generó): generarla gasta voz.
+  const soloGuardada = soloClipGuardado(res);
   // Una oración por tema se genera con ElevenLabs (~40 s de voz): cuenta en los minutos del miembro.
   // La del día ya está grabada después de la primera vez y no se le niega a nadie.
   const cuenta = tema.trim().length >= 3 ? cuentaDeVozMiembro(req) : null;
   if (cuenta && restanteVozMs(cuenta) <= 0) return res.status(429).json({ error: fraseTopeVoz(idiomaOrar), codigo: 'TOPE_VOZ', honesto: true });
-  const out = await orar({ tema, avatar: normalizarAvatar(req.body?.avatar ?? req.query?.avatar), idioma: idiomaOrar });
+  const out = await orar({ tema, avatar: normalizarAvatar(req.body?.avatar ?? req.query?.avatar), idioma: idiomaOrar, soloGuardada });
+  if (!out && soloGuardada) return negarClipSinSesion(res);
   if (!out) return res.status(503).json({ error: 'No pude orar ahora (voz sin respuesta).', honesto: true });
   if (cuenta && out.motor.startsWith('elevenlabs')) anotarVoz(cuenta, 40_000);
   res.setHeader('Content-Type', out.contentType);
@@ -2529,7 +2539,7 @@ app.get('/api/cantar', (_req, res) => {
  * Canta: `{ id }` del repertorio (clip grabado, audio/mpeg), `{ pedido }` en lenguaje natural o
  * `{ letra, titulo }` libre, que Kokoro dice en vez de cantar (audio/wav).
  */
-app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
+app.post('/api/cantar', exigirMesaOClip, limitar(12), async (req, res) => {
   const id = String(req.body?.id || '').trim();
   const letra = String(req.body?.letra || '').trim();
   const titulo = String(req.body?.titulo || '').trim();
@@ -2537,7 +2547,10 @@ app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
   const cancion = id || (pedido ? cancionPorPedido(pedido)?.id : '') || '';
   const avatar = normalizarAvatar(req.body?.avatar);
   const idioma = normalizarIdioma(req.body?.idioma);
-  const out = await cantar(cancion ? { id: cancion, avatar, idioma } : { letra, titulo, avatar, idioma });
+  // Sin sesión, solo lo grabado (el repertorio, o una letra que ya se dijo): decir una letra nueva gasta voz.
+  const soloGuardada = soloClipGuardado(res);
+  const out = await cantar(cancion ? { id: cancion, avatar, idioma, soloGuardada } : { letra, titulo, avatar, idioma, soloGuardada });
+  if (!out && soloGuardada && !cancion && letra) return negarClipSinSesion(res);
   if (!out && cancion && avatar !== 'aura') {
     return res.status(409).json({ error: idioma === 'en' ? "That song is recorded in AU-RA's voice." : 'Esa canción está grabada con la voz de AU-RA.', canciones: repertorio(), honesto: true });
   }
@@ -2567,7 +2580,7 @@ app.post('/api/stt/turbo/permiso', exigirMesaODesk, limitar(40), async (req, res
   return res.json({ ...permiso, honesto: true });
 });
 
-app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
+app.post('/api/stt', exigirMesa, limitar(60), async (req, res) => {
   const t0 = Date.now();
   // El teléfono corta a los 16 s (transcribe): pasado eso, cada proveedor más es una factura sin oyente.
   const reloj = presupuesto(PRESUPUESTO_OIDO_MS);
@@ -3373,7 +3386,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // El registro del cambio va encadenado al taller: si la voz no espera, igual queda anotado.
     const tallerPedido = despacharTaller(message, {
       usuario: nombre,
-      quien: mando ? quien : quien === 'jose' || quien === 'medardo' ? null : quien,
+      quien: mando ? quien : puedeCambiarSistema(quien) ? null : quien,
       nivel: nivelTurno,
       prueba,
       canal,
@@ -3426,7 +3439,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
             ? 'ACCESO: con miembros de la comunidad no corro código en el servidor. Puedes explicar el código o ayudar a escribirlo.'
             : opciones.soloConsulta
               ? 'ACCESO (conversación de voz): solo consulta. Desde la voz no corro el ejecutor; se pide en la mesa, con la sesión.'
-              : 'ACCESO: consulta. No corro el ejecutor. José o Medardo sí pueden.'
+              : `ACCESO: consulta. No corro el ejecutor. ${quienesMandan()} sí pueden.`
         );
       } else {
         const py = extraerPython(message);
@@ -4153,7 +4166,7 @@ async function correrHerramientaPedida(
         return texto ? { texto: `HARNESS leer (${pub.url}): ${texto}`, estado: 'succeeded' } : fallo(`HARNESS leer (${pub.url}): página vacía o no HTML.`);
       },
       ejecutor: async (codigo) => {
-        if (!mando) return fallo('ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo con sesión sí pueden.');
+        if (!mando) return fallo(`ACCESO: consulta. No ejecuto código ni cambio el sistema. ${quienesMandan()} con sesión sí pueden.`);
         const no = await permisoDeSistema('ejecutor', { quien: trazaActual()?.t.quien ?? null, mando, prueba: 'sesion', args: { codigo } });
         if (no) return fallo(no);
         const r = await ejecutarCodigo(codigo);
@@ -6417,7 +6430,7 @@ app.get('/api/taller/archivo/:id', exigirJunta, limitar(30), (req, res) => {
 app.post('/api/ejecutar', exigirSesion, limitar(10), async (req, res) => {
   const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
-    return res.status(403).json({ error: 'ACCESO: consulta. Solo José o Medardo con sesión corren el ejecutor.', honesto: true, ok: false });
+    return res.status(403).json({ error: `ACCESO: consulta. Solo ${quienesMandan()} con sesión corren el ejecutor.`, honesto: true, ok: false });
   }
   if (!ejecutorActivo()) return res.status(503).json({ error: 'Ejecutor desactivado', honesto: true, ok: false });
   const codigo = String(req.body?.codigo || extraerPython(String(req.body?.texto || '')) || '');

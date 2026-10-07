@@ -156,6 +156,7 @@ module.exports = {
     CANTAR_ENDPOINT: 'https://prueba/api/cantar',
     ORAR_ENDPOINT: 'https://prueba/api/orar',
     sessionHeaders: async () => ({}),
+    renovarTokenVoz: async () => false,
     ttsUrl: (text) => `https://prueba/api/tts?text=${encodeURIComponent(text)}`,
     ttsPcmUrl: (text) => `https://prueba/api/tts/pcm?text=${encodeURIComponent(text)}`,
   },

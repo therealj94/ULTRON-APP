@@ -8,6 +8,7 @@
  *     turno pasado el tope solo dice, con amabilidad, que sigamos por escrito;
  *   · la junta, sin tope y con su nivel de siempre.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,7 +34,7 @@ const { anotarVoz, restanteVozMs, vozUsadaMs, topeVozMinDia, fraseTopeVoz, msDeH
 type TurnoVoz = import('../server/voz-agente').TurnoVoz;
 
 const BEARER = `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}`;
-const JOSE = 'j.ordonez@ordenglobal.org';
+const JOSE = 'j.herrera@ordenglobal.org';
 let n = 0;
 const miembro = () => emitirSesion({ correo: `miembro${++n}@gmail.com`, nombre: 'José', rol: 'Miembro · Genesis ID' });
 const jose = () => emitirSesion({ correo: JOSE, nombre: 'José', rol: 'Junta Directiva · Orden Global' });

@@ -105,7 +105,7 @@ const REPERTORIO: Array<[RegExp, string]> = [
   [/\bcuna\b|arrull|\bnana\b|para dormir|buenas noches/, 'cuna'],
   [/bohemian|rhapsody|queen|\b(1|uno)\b/, 'bohemian'],
   [/ligera|soda|cerati|\b(2|dos)\b/, 'ligera'],
-  [/bitter|sweet|symphony|sinfonia|verve|medardo|\b(3|tres)\b/, 'bittersweet'],
+  [/bitter|sweet|symphony|sinfonia|verve|\b(3|tres)\b/, 'bittersweet'],
   [/runaway|kanye|toast|\b(4|cuatro)\b/, 'runaway'],
   [/bruno|die with|smile|si el mundo|\b(5|cinco)\b/, 'bruno'],
 ];
@@ -154,7 +154,7 @@ export const GENEROS: Genero[] = [
     id: 'corrido',
     etiqueta: 'corrido',
     titulo: 'Corrido de Orden Global',
-    letra: 'Voy a contarles la historia del escritorio leal. José y Medardo al mando, AU-RA en el umbral. No se vende la junta, no se rinde el metal. Corrido de Orden Global, pa que quede en el jornal.',
+    letra: 'Voy a contarles la historia del escritorio leal. La junta al mando, AU-RA en el umbral. No se vende la junta, no se rinde el metal. Corrido de Orden Global, pa que quede en el jornal.',
   },
   {
     id: 'jazz',

@@ -5,7 +5,7 @@
  * la junta. Aquí se decide, en UN solo sitio y siempre en el servidor, con qué AU-RA habla cada quien:
  *
  *   · `junta`   — está en el padrón de AU-RA (lib/acceso.ts: `puedeEntrar(identificar({ correo }))`)
- *                 o en JUNTA (server/desk.ts). Todo como siempre: cerebro de la junta, taller,
+ *                 o en AURA_JUNTA (server/desk.ts). Todo como siempre: cerebro de la junta, taller,
  *                 Telegram de la organización, memoria de junta.
  *   · `miembro` — entró por Genesis abierto y NO está en el padrón. AU-RA como asistente personal de
  *                 la comunidad de Orden Global: conocimiento público, sin taller, sin Telegram de la
@@ -19,7 +19,7 @@ import type { NextFunction, Request, Response } from 'express';
 import crypto from 'crypto';
 import { identificar, puedeEntrar, type Plataforma } from '../lib/acceso';
 import type { NivelAura } from '../lib/perfiles/tipos';
-import { JUNTA, normalizarCorreo } from './desk';
+import { cuentaDeJunta, normalizarCorreo } from './desk';
 import { mesaAutorizada, sesionDe } from './seguridad';
 import { modoDesarrollo } from '../lib/entorno';
 import { esIdVeta, ROL_MIEMBRO_VETA } from './veta-entrar';
@@ -28,24 +28,24 @@ export type { NivelAura } from '../lib/perfiles/tipos';
 
 /** El rol visible de quien entró por Genesis abierto sin estar en el padrón. */
 export const ROL_MIEMBRO = 'Miembro · Genesis ID';
-/** El rol visible de la junta que no tiene uno propio en JUNTA. */
+/** El rol visible de la junta que no tiene uno propio en AURA_JUNTA. */
 export const ROL_JUNTA = 'Junta Directiva · Orden Global';
 
-/** Junta o miembro, a partir del correo (padrón o JUNTA). Sin correo válido: miembro. */
+/** Junta o miembro, a partir del correo (padrón o AURA_JUNTA). Sin correo válido: miembro. */
 export function nivelDeCorreo(correo: unknown, plataforma: Plataforma = 'ultron'): NivelAura {
   const c = normalizarCorreo(correo);
   if (!c || !c.includes('@')) return 'miembro';
-  if (JUNTA[c]) return 'junta';
+  if (cuentaDeJunta(c)) return 'junta';
   // Solo por correo: `identificar` con un nombre dejaría pasar por José a cualquiera llamado José.
   return puedeEntrar(identificar({ correo: c }), plataforma) ? 'junta' : 'miembro';
 }
 
-/** El rol con que se saluda y se firma la sesión: el propio de JUNTA, el de la junta o el de miembro. */
+/** El rol con que se saluda y se firma la sesión: el propio de AURA_JUNTA, el de la junta o el de miembro. */
 export function rolVisible(correo: unknown, nivel: NivelAura = nivelDeCorreo(correo)): string {
   const c = normalizarCorreo(correo);
   // Quien entró solo con Veta Wallet (server/veta-entrar.ts) tiene su propio rol de miembro.
   if (nivel === 'miembro') return esIdVeta(c) ? ROL_MIEMBRO_VETA : ROL_MIEMBRO;
-  return JUNTA[c]?.rol || ROL_JUNTA;
+  return cuentaDeJunta(c)?.rol || ROL_JUNTA;
 }
 
 function mismaClave(a: string, b: string): boolean {

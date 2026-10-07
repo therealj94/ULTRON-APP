@@ -72,7 +72,7 @@ prueba('los dos idiomas, frases cortas y esperas con indicación', () => {
 
 prueba('el nombre: el primero, y sin nombre la frase queda limpia', () => {
   const l = ESCENAS[0].lineas[0];
-  assert.equal(textoDe(l, 'es', 'José Enamorado'), '¡Hola, José! Soy Claudio, y hoy te voy a enseñar todo lo que puede hacer AU-RA.');
+  assert.equal(textoDe(l, 'es', 'José Villeda'), '¡Hola, José! Soy Claudio, y hoy te voy a enseñar todo lo que puede hacer AU-RA.');
   assert.equal(textoDe(l, 'es', ''), '¡Hola! Soy Claudio, y hoy te voy a enseñar todo lo que puede hacer AU-RA.');
   assert.equal(textoDe(ESCENAS.at(-1).lineas.at(-1), 'en', ''), 'Now it’s your turn. What do you want to try first?');
   for (const e of ESCENAS) for (const l of e.lineas) for (const i of ['es', 'en']) assert.ok(!textoDe(l, i, 'Ana').includes('{'), 'no queda ninguna llave');

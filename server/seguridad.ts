@@ -450,10 +450,11 @@ export async function autoridadSinSesion(correo: string): Promise<'permitida' | 
 }
 
 /**
- * Lo público e inocuo que sigue aunque no se pueda comprobar (o se sepa suspendida) la cuenta de la sesión: oír, la voz,
- * el canto, el diagnóstico (RUTAS_SIN_CEREBRO, sin datos de nadie ni efectos) y cerrar la sesión.
+ * Lo público e inocuo que sigue aunque no se pueda comprobar (o se sepa suspendida) la cuenta de la sesión: la voz, el
+ * canto y la oración (RUTAS_DE_CLIP: con la sesión, la ruta decide; sin ella, solo lo ya guardado), el diagnóstico y
+ * cerrar la sesión. El oído y los ojos ya no: piden sesión de AU-RA, y con ella su autoridad vigente.
  */
-const SIGUE_SIN_AUTORIDAD = ['/api/ultron/salir', '/api/health'];
+const SIGUE_SIN_AUTORIDAD = ['/api/ultron/salir', '/api/health', '/api/diag'];
 
 /**
  * SEC-04 · AUTORIDAD VIGENTE DE LA SESIÓN. Toda petición a /api con una sesión válida pasa por aquí antes de su ruta:
@@ -462,14 +463,14 @@ const SIGUE_SIN_AUTORIDAD = ['/api/ultron/salir', '/api/health'];
  *  · autoridad desconocida (el registro falló o tardó, o no hay registro y el despliegue no declaró política): 503
  *    `autoridad_desconocida` — salvo la identidad configurada en el despliegue (identidadDelEntorno), que sigue;
  *  · permitida (registro «activa» de hace < 30 s, o AURA_SUSPENSIONES=ninguna): sigue.
- * Sin sesión, o en lo público inocuo (SIGUE_SIN_AUTORIDAD y RUTAS_SIN_CEREBRO), no se mira: cada ruta sigue con su
+ * Sin sesión, o en lo público inocuo (SIGUE_SIN_AUTORIDAD y RUTAS_DE_CLIP), no se mira: cada ruta sigue con su
  * propia puerta. Política y presupuesto de revocación: server/autoridad-cuenta.ts y SECURITY.md.
  */
 export async function exigirAutoridadVigente(req: Request, res: Response, next: NextFunction) {
   const t = tokenDe(req);
   if (!t) return next();
   const ruta = String(req.originalUrl || req.url || '').split('?')[0].replace(/\/+$/, '');
-  if (SIGUE_SIN_AUTORIDAD.includes(ruta) || RUTAS_SIN_CEREBRO.includes(ruta)) return next();
+  if (SIGUE_SIN_AUTORIDAD.includes(ruta) || RUTAS_DE_CLIP.includes(ruta)) return next();
   // Una cuenta que ya se sabe suspendida (sesionDe la rechaza): se confirma con el registro si lo sabido es viejo (una
   // reactivación entra en el mismo presupuesto); si sigue suspendida, ESE token se cierra y se dice por qué.
   const firmada = leerSesionFirmada(t);
@@ -554,29 +555,65 @@ export function mesaAutorizada(req: Request): boolean {
 }
 
 /**
- * Lo que pasa SIN sesión, con límite por IP (decisión de la junta, 19-sep: la APK no debe quedar muda
- * si su token muere): oír, ver, la voz y el canto. Ninguna de estas rutas despierta al cerebro.
+ * Lo que pasa SIN sesión: SOLO los clips ya guardados (auditoría del 7-oct, C-2).
  *
- * `/api/turno` (y su stream) ESTABA aquí: cualquiera sin cuenta corría turnos en el 27B sin censura del
- * nodo de José (1-oct, Fase 0.3). Ahora un turno pide sesión de AU-RA o la clave de la mesa; el
- * teléfono renueva su token con la clave guardada ante el 401, y con ULTRON_SESION_SECRETO fijo el
- * token ya no muere en un redespliegue. La web abre «Entrar» ante el 401.
+ * Antes (decisión de la junta, 19-sep: «la APK no debe quedar muda si su token muere») la voz, el oído, los ojos, el
+ * canto y la oración corrían sin sesión, con un límite por IP. Cualquiera, rotando IPs, gastaba ElevenLabs, Scribe y
+ * la visión de Bedrock/Gemini de José. Ahora:
+ *  · `/api/stt` y `/api/vision/analyze` piden sesión de AU-RA (o la clave de la mesa), como un turno;
+ *  · la voz (`/api/tts`, `/api/tts/stream`, `/api/tts/pcm`, `/api/voz`), el canto y la oración dejan pasar sin
+ *    sesión SOLO lo que ya está guardado: el repertorio grabado, la oración del día ya grabada y las frases conocidas
+ *    (saludos, «un momento») que ya están en la caché. Generar algo nuevo pide sesión. La ruta lo sabe por
+ *    `res.locals.soloClip` (lo pone `exigirMesaOClip`).
+ * El teléfono y Windows renuevan su token ante el 401 y vuelven a pedir; la web abre «Entrar».
  *
- * `/api/electrum` tampoco va aquí: Dr Electrum se gobierna con `exigirPlataforma('electrum')`.
+ * `/api/turno` (y su stream) ESTUVO aquí hasta el 1-oct (Fase 0.3); `/api/electrum` nunca: Dr Electrum se gobierna con
+ * `exigirPlataforma('electrum')`. `/api/diag` no pasa por aquí (una app que se cae no puede autenticarse).
  *
  * Coincidencia EXACTA a propósito: con prefijo, `/api/voz` dejaba pasar `/api/voz/agente` (abrir una
  * conversación de ElevenLabs, que sí piensa con el 27B) por ser «una ruta de voz».
  */
-const RUTAS_SIN_CEREBRO = ['/api/tts', '/api/tts/stream', '/api/tts/pcm', '/api/voz', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/diag'];
+const RUTAS_DE_CLIP = ['/api/tts', '/api/tts/stream', '/api/tts/pcm', '/api/voz', '/api/cantar', '/api/orar'];
 
-function rutaConversacion(path: string) {
+function rutaDeClip(path: string) {
   const p = String(path || '').split('?')[0].replace(/\/+$/, '');
-  return RUTAS_SIN_CEREBRO.includes(p);
+  return RUTAS_DE_CLIP.includes(p);
 }
 
+/** ¿Esta petición sin sesión puede pedir un clip ya guardado? (Solo eso: la ruta no genera nada para ella.) */
+export function clipPublicoPermitido(req: Request): boolean {
+  return rutaDeClip(req.path) || rutaDeClip((req as any).originalUrl);
+}
+
+/**
+ * La mesa de AU-RA. Ya no hay rutas de la mesa abiertas sin sesión (ver arriba): queda con este nombre porque lo usan
+ * el turno, la voz en vivo y el motor de voz.
+ */
 export function mesaDeskAutorizada(req: Request): boolean {
-  if (mesaAutorizada(req)) return true;
-  return rutaConversacion(req.path) || rutaConversacion((req as any).originalUrl);
+  return mesaAutorizada(req);
+}
+
+/** ¿Esta petición va sin sesión y solo puede llevarse lo ya guardado? Lo pone `exigirMesaOClip`. */
+export function soloClipGuardado(res: Response): boolean {
+  return res.locals?.soloClip === true;
+}
+
+/**
+ * La voz, el canto y la oración: con sesión, todo; sin ella, solo los clips ya guardados (`res.locals.soloClip`, la
+ * ruta no genera nada nuevo y contesta 401 si no lo tiene). Otra ruta sin sesión: 401.
+ */
+export function exigirMesaOClip(req: Request, res: Response, next: NextFunction) {
+  if (mesaAutorizada(req)) return next();
+  if (clipPublicoPermitido(req)) {
+    res.locals.soloClip = true;
+    return next();
+  }
+  return res.status(401).json({ error: 'AU-RA es privado. Entra con sesión de junta.', code: 'sesion_requerida', honesto: true });
+}
+
+/** Lo que contesta una ruta de voz sin sesión cuando lo pedido no estaba guardado: generarlo pide entrar. */
+export function negarClipSinSesion(res: Response) {
+  return res.status(401).json({ error: 'Para que hable algo nuevo, entra con tu cuenta.', code: 'sesion_requerida', honesto: true });
 }
 
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {

@@ -5,6 +5,7 @@
  * a mi viejo» porque la memoria de la voz se anota al confirmarse, con la hora de ese momento). lib/hilo-orden.ts, y por
  * dentro de lib/memoria.ts (la de la junta) y lib/memoria-miembro.ts. Frases inventadas.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

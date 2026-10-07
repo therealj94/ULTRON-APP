@@ -7,6 +7,7 @@
  *  · lo que se ejecuta después de aprobar es exactamente lo que se aprobó;
  *  · una regla que se rompe cierra la puerta, no la abre.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -51,12 +52,12 @@ test('lo crítico va a dos firmas; con dos firmas ya no vuelve a la cola', () =>
   const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens' }));
   assert.equal(d.veredicto, 'revision');
   assert.equal(d.necesarias, 2);
-  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['medardo'] } })).veredicto, 'revision');
-  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['medardo', 'carlos'] } })).veredicto, 'permitir');
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['ramiro'] } })).veredicto, 'revision');
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['ramiro', 'carlos'] } })).veredicto, 'permitir');
 });
 
 test('R6/A12: sin KYC comprobado lo crítico no pasa, ni con dos firmas (matriz del KYC)', () => {
-  const firmas = { id: 'a', firmas: ['medardo', 'carlos'] };
+  const firmas = { id: 'a', firmas: ['ramiro', 'carlos'] };
   // El caso de la auditoría: transferir, crítico, mando, dos firmas y SIN hechos → antes «permitir».
   const sinHechos = evaluar({ herramienta: 'transferir', efecto: 'critico', plataforma: 'ultron', args: {}, quien: 'jose', nivel: 'mando', prueba: 'sesion', aprobada: firmas });
   assert.equal(sinHechos.veredicto, 'bloquear');
@@ -75,7 +76,7 @@ test('R6/A12: sin KYC comprobado lo crítico no pasa, ni con dos firmas (matriz 
 });
 
 test('sin KYC aprobado no se mueve valor, ni con la junta entera firmando', () => {
-  const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: { kyc: 'pendiente' }, aprobada: { id: 'a', firmas: ['medardo', 'carlos'] } }));
+  const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: { kyc: 'pendiente' }, aprobada: { id: 'a', firmas: ['ramiro', 'carlos'] } }));
   assert.equal(d.veredicto, 'bloquear');
   assert.equal(d.regla, 'kyc-antes-de-mover-valor');
 });
@@ -144,22 +145,22 @@ async function cicloDeAprobacion() {
   const id = d.aprobacionId!;
   assert.equal((await firmar({ id, quien: 'jose', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false, 'no se firma lo propio');
   assert.equal((await firmar({ id, quien: 'carlos', nivel: 'lee', plataforma: 'electrum', decision: 'aprobar' })).ok, false, 'consulta no firma');
-  assert.equal((await firmar({ id, quien: 'medardo', nivel: 'mando', plataforma: 'ultron', decision: 'aprobar' })).ok, false, 'de otra plataforma no se ve');
+  assert.equal((await firmar({ id, quien: 'ramiro', nivel: 'mando', plataforma: 'ultron', decision: 'aprobar' })).ok, false, 'de otra plataforma no se ve');
 
-  const r1 = await firmar({ id: id.slice(0, 8), quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+  const r1 = await firmar({ id: id.slice(0, 8), quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
   assert.equal(r1.ok, true);
   assert.equal(r1.aprobacion?.estado, 'pendiente');
   assert.match(r1.motivo, /Falta 1 firma/);
-  assert.equal((await firmar({ id, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false, 'no firma dos veces');
+  assert.equal((await firmar({ id, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false, 'no firma dos veces');
 
-  const r2 = await firmar({ id, quien: 'melany', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+  const r2 = await firmar({ id, quien: 'fabiola', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
   assert.equal(r2.aprobacion?.estado, 'ejecutada', r2.motivo);
   assert.deepEqual(hechas, [{ a: 'wallet-1', monto: 50 }], 'se ejecutó exactamente lo aprobado');
-  assert.equal((await firmar({ id, quien: 'leonardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false, 'ya ejecutada');
+  assert.equal((await firmar({ id, quien: 'rodrigo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false, 'ya ejecutada');
 
   // Rechazar: una negativa basta.
   const otra = await autorizar(con({ efecto: 'critico', herramienta: 'transferir_tokens', args: { a: 'wallet-2', monto: 9 }, quien: 'jose', hechos: { kyc: 'aprobado' } }));
-  const rr = await firmar({ id: otra.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'rechazar', nota: 'no conozco esa wallet' });
+  const rr = await firmar({ id: otra.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'rechazar', nota: 'no conozco esa wallet' });
   assert.equal(rr.aprobacion?.estado, 'rechazada');
   assert.equal(hechas.length, 1);
 
@@ -179,7 +180,7 @@ test('si alguien cambia los argumentos en la cola, no se ejecuta', () =>
     const d = await autorizar(con({ efecto: 'externo', herramienta: 'mandar_informe', destino: 'tercero', args: { a: 'cliente@ejemplo.com' } }));
     const f = path.join(process.env.COGNITIVO_DIR!, 'aprobaciones.jsonl');
     fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('cliente@ejemplo.com', 'otro@ejemplo.com'));
-    const r = await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    const r = await firmar({ id: d.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
     assert.equal(r.aprobacion?.estado, 'fallida');
     assert.match(r.motivo, /huella/);
     assert.equal(corrio, false);
@@ -193,17 +194,17 @@ test('una solicitud vencida ya no se firma', () =>
     await new Promise((r) => setTimeout(r, 5));
     const ap = await aprobacionPorId(d.aprobacionId!);
     assert.equal(ap?.estado, 'vencida');
-    assert.equal((await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false);
+    assert.equal((await firmar({ id: d.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' })).ok, false);
   }));
 
 test('los comandos de Telegram firman solo con mando', () =>
   conArchivos(async () => {
     const d = await autorizar(con({ efecto: 'externo', herramienta: 'x_tel', destino: 'tercero', args: { n: 2 }, plataforma: 'ultron' }));
     const corto = d.aprobacionId!.slice(0, 8);
-    assert.equal(await comandoDeAprobacion({ comando: '/hola', texto: '/hola', quien: 'medardo', nivel: 'mando', plataforma: 'ultron' }), null);
+    assert.equal(await comandoDeAprobacion({ comando: '/hola', texto: '/hola', quien: 'ramiro', nivel: 'mando', plataforma: 'ultron' }), null);
     assert.match((await comandoDeAprobacion({ comando: '/aprobar', texto: `/aprobar ${corto}`, quien: 'carlos', nivel: 'lee', plataforma: 'ultron' }))!, /mando/);
-    assert.match((await comandoDeAprobacion({ comando: '/solicitudes', texto: '/solicitudes', quien: 'medardo', nivel: 'mando', plataforma: 'ultron' }))!, new RegExp(corto));
-    assert.match((await comandoDeAprobacion({ comando: '/rechazar', texto: `/rechazar ${corto} no va`, quien: 'medardo', nivel: 'mando', plataforma: 'ultron' }))!, /Rechazada/);
+    assert.match((await comandoDeAprobacion({ comando: '/solicitudes', texto: '/solicitudes', quien: 'ramiro', nivel: 'mando', plataforma: 'ultron' }))!, new RegExp(corto));
+    assert.match((await comandoDeAprobacion({ comando: '/rechazar', texto: `/rechazar ${corto} no va`, quien: 'ramiro', nivel: 'mando', plataforma: 'ultron' }))!, /Rechazada/);
   }));
 
 test('el bucle del agente no corre una herramienta crítica: la deja en la cola', () =>
@@ -241,7 +242,7 @@ test('aprobaciones en Postgres', { skip: !conBase && 'sin base de pruebas' }, as
 test('un nombre escrito no da cupo de identificado: rotando nombres no se multiplican los envíos', () =>
   conArchivos(async () => {
     resetRitmoTest();
-    const nombres = ['jose', 'medardo', 'melany', 'carlos', 'leonardo', 'pedro'];
+    const nombres = ['jose', 'ramiro', 'fabiola', 'carlos', 'rodrigo', 'pedro'];
     const decisiones = [];
     for (const n of nombres) decisiones.push((await autorizar(con({ efecto: 'externo', destino: 'junta', quien: n, nivel: 'escribe', prueba: 'nombre', plataforma: 'ultron' }))).veredicto);
     assert.deepEqual(decisiones.slice(0, TOPE_EXTERNOS_HORA.anonimo), Array(TOPE_EXTERNOS_HORA.anonimo).fill('permitir'));
@@ -258,7 +259,7 @@ test('sin solicitante verificado hacen falta dos personas distintas', () =>
     const r1 = await firmar({ id: d.aprobacionId!, quien: 'jose', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
     assert.equal(r1.aprobacion?.estado, 'pendiente', 'una sola firma no basta: podría ser quien lo pidió');
     assert.equal(corrio, false);
-    const r2 = await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    const r2 = await firmar({ id: d.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
     assert.equal(r2.aprobacion?.estado, 'ejecutada', r2.motivo);
   }));
 
@@ -271,8 +272,8 @@ test('al ejecutar se miran los hechos de nuevo: un KYC revocado después de pedi
     const d = await autorizar(con({ efecto: 'critico', herramienta: 'transferir_fresco', args: { a: 'w', monto: 1 }, quien: 'jose', hechos: { kyc: 'aprobado' } }));
     assert.equal(d.veredicto, 'revision');
     kyc = 'revocado';
-    await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
-    const r = await firmar({ id: d.aprobacionId!, quien: 'melany', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    await firmar({ id: d.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    const r = await firmar({ id: d.aprobacionId!, quien: 'fabiola', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
     assert.equal(corrio, false);
     assert.equal(r.aprobacion?.estado, 'fallida');
     assert.match(r.motivo, /KYC/);
@@ -284,8 +285,8 @@ test('A12: lo crítico no se ejecuta con los hechos guardados al pedir; sin fuen
     registrarEjecutor('mover_sin_fuente', async () => ((corrio = true), { ok: true, texto: 'movido' }));
     const d = await autorizar(con({ efecto: 'critico', herramienta: 'mover_sin_fuente', args: { a: 'w', monto: 5 }, quien: 'jose', hechos: { kyc: 'aprobado' } }));
     assert.equal(d.veredicto, 'revision');
-    await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
-    const r = await firmar({ id: d.aprobacionId!, quien: 'melany', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    await firmar({ id: d.aprobacionId!, quien: 'ramiro', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    const r = await firmar({ id: d.aprobacionId!, quien: 'fabiola', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
     assert.equal(corrio, false, 'los hechos que se guardaron al pedir no bastan');
     assert.equal(r.aprobacion?.estado, 'fallida');
     assert.match(r.aprobacion?.resultado?.texto || '', /comprobar/);
@@ -304,7 +305,7 @@ test('A26: aprobada y caída antes de ejecutar → al arrancar se retoma UNA vez
     registrarEjecutor('avisar_proveedor', async () => (veces++, { ok: true, texto: 'avisado' }));
     // Pedida y aprobada, pero el proceso murió antes de ejecutar (quedó «aprobada»).
     const d = await autorizar(con({ efecto: 'externo', destino: 'tercero', herramienta: 'avisar_proveedor', args: { a: 'prov-1' }, quien: 'jose' }));
-    forzar(d.aprobacionId!, { estado: 'aprobada', firmas: [{ quien: 'medardo', decision: 'aprobar', t: new Date().toISOString() }] });
+    forzar(d.aprobacionId!, { estado: 'aprobada', firmas: [{ quien: 'ramiro', decision: 'aprobar', t: new Date().toISOString() }] });
     const [r1, r2] = await Promise.all([reconciliarAprobaciones(), reconciliarAprobaciones()]);
     assert.equal(veces, 1, 'dos recuperaciones a la vez: una sola ejecución');
     assert.equal(r1.retomadas + r2.retomadas >= 1, true);

@@ -14,6 +14,7 @@
  * Primero con las piezas (taller + panel de tareas sobre lo durable en memoria + un fetch espía) y al final con el
  * servidor de verdad (server.ts) arrancado aparte, su `fetch` espiado (tests/fixtures/espia-canales.mjs).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -28,10 +29,10 @@ import express, { type RequestHandler } from 'express';
 const RAIZ = path.resolve(import.meta.dirname, '..');
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'taller-aprobacion-'));
 const JOSE = 'jose.prueba@ordenglobal.test';
-const MEDARDO = 'medardo.prueba@ordenglobal.test';
+const RAMIRO = 'ramiro.prueba@ordenglobal.test';
 /** El Telegram privado de José (el chat que pregunta en la prueba de la captura por Telegram). */
 const TG_JOSE = '777000111';
-const PADRON = [`jose | José Prueba | ${JOSE} | ${TG_JOSE} | ultron=mando`, `medardo | Medardo Prueba | ${MEDARDO} | | ultron=mando`].join('\n');
+const PADRON = [`jose | José Prueba | ${JOSE} | ${TG_JOSE} | ultron=mando`, `ramiro | Ramiro Prueba | ${RAMIRO} | | ultron=mando`].join('\n');
 const CANALES = {
   TELEGRAM_BOT_TOKEN: 'tok-de-prueba',
   TELEGRAM_CHAT_ID: '-100123',
@@ -162,7 +163,7 @@ test('MEDIO-C: aprobada → se ejecuta UNA vez; repetir la aprobación no manda 
       const r = await T.despacharTaller(FRASES_QUE_SALEN[0], ctxJunta());
       const prop = r.propuesta!;
       // Otra cuenta (también de la junta) no la ve ni la aprueba.
-      const ajena = await p.aprobar(prop, MEDARDO);
+      const ajena = await p.aprobar(prop, RAMIRO);
       assert.equal(ajena.status, 404, 'la propuesta es de la cuenta que la pidió');
       assert.equal(salidas.length, 0);
       const a = await p.aprobar(prop);
@@ -199,7 +200,7 @@ test('MEDIO-C: contenido, destino o cuenta alterados entre la propuesta y la apr
       assert.equal(a1.json.codigo, 'propuesta-cambiada');
       // Cuenta alterada: el vínculo dice otra cuenta.
       const r2 = (await T.despacharTaller('avísame urgente que llegó el contrato', ctxJunta())).propuesta!;
-      const t2 = await TD.cambiarTarea(JOSE, r2.tarea, (reg) => ({ decision: { ...reg.decision!, vinculo: { ...(reg.decision!.vinculo as any), cuenta: MEDARDO } } }));
+      const t2 = await TD.cambiarTarea(JOSE, r2.tarea, (reg) => ({ decision: { ...reg.decision!, vinculo: { ...(reg.decision!.vinculo as any), cuenta: RAMIRO } } }));
       const a2 = await p.aprobar({ ...r2, version: t2.ok ? t2.tarea.version : 0 });
       assert.equal(a2.status, 409);
       // Destino alterado: el chat de Telegram configurado cambió después de proponer.
@@ -279,7 +280,7 @@ test('MEDIO-1: la captura para el grupo de la junta queda PROPUESTA con el hash 
       assert.equal(v.huella, T.huellaTaller({ cuenta: JOSE, accion: 'foto', args: v.args, version: v.version }));
       assert.notEqual(v.huella, T.huellaTaller({ cuenta: JOSE, accion: 'foto', args: { ...v.args, foto: shaDe(Buffer.from('otra')) }, version: v.version }), 'otra imagen, otra huella');
       // Otra cuenta no la aprueba; la dueña sí, y sale una vez.
-      assert.equal((await p.aprobar(r.propuesta!, MEDARDO)).status, 404);
+      assert.equal((await p.aprobar(r.propuesta!, RAMIRO)).status, 404);
       const a = await p.aprobar(r.propuesta!);
       assert.equal(a.status, 200, JSON.stringify(a.json).slice(0, 200));
       assert.equal(a.json.tarea.state, 'completed');
@@ -408,7 +409,7 @@ test('servidor de verdad: POST /api/turno (y el stream) con las 4 frases → nad
   const { emitirSesion } = await import('../server/seguridad');
   const sesion = (correo: string, nombre: string) => emitirSesion({ correo, nombre, rol: 'Junta' }).token;
   const hJose = { 'content-type': 'application/json', 'x-ultron-sesion': sesion(JOSE, 'José Prueba') };
-  const hMedardo = { 'content-type': 'application/json', 'x-ultron-sesion': sesion(MEDARDO, 'Medardo Prueba') };
+  const hRamiro = { 'content-type': 'application/json', 'x-ultron-sesion': sesion(RAMIRO, 'Ramiro Prueba') };
   const pedir = (ruta: string, cuerpo: unknown, h: Record<string, string> = hJose) => fetchReal(`${BASE}${ruta}`, { method: 'POST', headers: h, body: JSON.stringify(cuerpo), signal: AbortSignal.timeout(60_000) });
   const propuestas: any[] = [];
   for (const [i, f] of FRASES_QUE_SALEN.entries()) {
@@ -431,7 +432,7 @@ test('servidor de verdad: POST /api/turno (y el stream) con las 4 frases → nad
   // Otra cuenta de la junta no aprueba la de José.
   const prop = propuestas[0];
   const decidir = (p: any, h = hJose) => pedir(`/api/trabajos/${p.tarea}/decisiones`, { decisionId: p.decision, expectedVersion: p.version, opcion: 'aprobar' }, h);
-  assert.equal((await decidir(prop, hMedardo)).status, 404);
+  assert.equal((await decidir(prop, hRamiro)).status, 404);
   assert.equal(salidasServidor().length, 0);
   // José la aprueba: sale UNA vez.
   const a = await decidir(prop);

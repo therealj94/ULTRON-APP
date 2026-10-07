@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { cantar, oracionPorTema, ORACION_DEL_DIA_EN } from '../server/voz';
 import { afinarParaBocaIngles } from '../server/habla';
 import { lineaAvatar, NOMBRE_AVATAR, normalizarAvatar, normalizarIdioma, vozEleven, VOCES_ELEVEN, VOZ_CLAUDIO_ELEVEN, VOZ_ELECTRUM_ELEVEN } from '../server/eleven';
-import { AGENTES, MODO_DE_AVATAR } from '../server/voz-agente';
+import { AGENTES_ENV, MODO_DE_AVATAR, agenteDe } from '../server/voz-agente';
 import { AVATARES_AGENTE, PALABRAS_ASR, avataresPedidos } from '../scripts/elevenlabs-agentes';
 
 const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'] as const;
@@ -37,18 +37,23 @@ test('idioma: inglés solo si lo pide; todo lo demás es español', () => {
   assert.equal(normalizarIdioma(undefined), 'es');
 });
 
-test('las voces y los agentes de Guardián, AU-RA y Claudio siguen siendo los mismos (ANT-ONIO no los tocó)', () => {
+test('las voces de Guardián, AU-RA y Claudio siguen siendo las mismas (ANT-ONIO no las tocó); los agentes, por entorno', () => {
   // Si alguien cambia uno de estos ids, esta prueba tiene que fallar: son las voces que eligió José.
   assert.deepEqual(VOCES_ELEVEN.ojos, { es: 'jR5VcWrKqhJJTTbtXtU5', en: '1krh7GKGPtz8i429a6kk' });
   assert.deepEqual(VOCES_ELEVEN.aura, { es: 'AoT6sxPBYB0OGpSnIiwc', en: 'NPil3puXYP3J45yudmVD' });
   assert.deepEqual(VOCES_ELEVEN.claudio, { es: '5hNQxGboC72zatTcGoJN', en: 'mm5ADfbOYUswycjGCmWd' });
   assert.deepEqual(VOCES_ELEVEN.antonio, { es: 'wXojZ3FhzsE0AumH6Oym', en: 'I1ejplf72DWHJzwAiw4n' });
   assert.deepEqual(Object.keys(VOCES_ELEVEN), [...AVATARES]);
-  assert.deepEqual(AGENTES.ojos, { es: 'agent_3401m3qbvq59eqcv17ecpxxdp7en', en: 'agent_1801m3qbvrrye0zbpgxawy3cqfqt' });
-  assert.deepEqual(AGENTES.aura, { es: 'agent_6801m3qbvv83fzgvg42eev85m8m5', en: 'agent_3301m3qbvws7ez6rajshn8akxjbs' });
-  assert.deepEqual(AGENTES.claudio, { es: 'agent_3501m3qbvyc5e9b946hm5byv3c7g', en: 'agent_4901m3qbw01me4kt40nqkgy60ykm' });
-  assert.deepEqual(AGENTES.antonio, { es: 'agent_6901m3r708f4e15vgc39yj4g8vw7', en: 'agent_3501m3r70c76e6nrvch0ewjcqkys' });
-  assert.deepEqual(Object.keys(AGENTES), [...AVATARES]);
+  // Los agentes ya no viven en el repositorio (es público): cada uno en su variable de Render (auditoría C-1).
+  assert.deepEqual(AGENTES_ENV.ojos, { es: 'ELEVENLABS_AGENTE_OJOS_ES', en: 'ELEVENLABS_AGENTE_OJOS_EN' });
+  assert.deepEqual(AGENTES_ENV.antonio, { es: 'ELEVENLABS_AGENTE_ANTONIO_ES', en: 'ELEVENLABS_AGENTE_ANTONIO_EN' });
+  assert.deepEqual(Object.keys(AGENTES_ENV), [...AVATARES]);
+  const antes = process.env.ELEVENLABS_AGENTE_CLAUDIO_EN;
+  process.env.ELEVENLABS_AGENTE_CLAUDIO_EN = 'agent_inventado_claudio_en';
+  assert.equal(agenteDe('claudio', 'en'), 'agent_inventado_claudio_en');
+  delete process.env.ELEVENLABS_AGENTE_CLAUDIO_EN;
+  assert.equal(agenteDe('claudio', 'en'), '', 'sin la variable no hay agente (la ruta contesta 503), no un id escrito en el código');
+  if (antes !== undefined) process.env.ELEVENLABS_AGENTE_CLAUDIO_EN = antes;
   assert.deepEqual(NOMBRE_AVATAR.antonio, { es: 'ANT-ONIO', en: 'ANT-ONIO' });
   assert.deepEqual(MODO_DE_AVATAR, { ojos: 'GUARDIAN', aura: 'CONVERSACION', claudio: 'CREATIVE', antonio: 'ANALYTICAL' });
 });

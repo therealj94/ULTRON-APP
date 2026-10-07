@@ -67,3 +67,26 @@ export function quienEsUltron(opts: Parameters<typeof quienEs>[0]): { persona: P
   if (!id || !nivelDe(id.persona, 'ultron')) return null;
   return id;
 }
+
+/**
+ * Los nombres (de pila, como están en el padrón) de quienes tienen ese nivel en AU-RA, en el orden del padrón. Los
+ * textos que antes nombraban a la junta a mano («A o B») los sacan de aquí: los nombres viven en el entorno,
+ * no en el repositorio público (auditoría del 7-oct, C-1).
+ */
+export function nombresConNivel(nivel: 'mando' | 'escribe' | 'lee', excepto?: MiembroId | null): string[] {
+  return padron()
+    .filter((p) => p.id !== excepto && nivelDe(p, 'ultron') === nivel && p.nombre)
+    .map((p) => p.nombre);
+}
+
+/** «A», «A y B», «A, B y C»; con `o`, «A o B». Vacío: `siNadie`. */
+export function enumerar(nombres: string[], conjuncion: 'y' | 'o' | 'ni' = 'y', siNadie = ''): string {
+  if (!nombres.length) return siNadie;
+  if (nombres.length === 1) return nombres[0];
+  return `${nombres.slice(0, -1).join(', ')} ${conjuncion} ${nombres[nombres.length - 1]}`;
+}
+
+/** Quién cambia el sistema, para decirlo en una frase: «A o B», o «alguien con mando» si no hay nombres. */
+export function quienesMandan(conjuncion: 'y' | 'o' = 'o'): string {
+  return enumerar(nombresConNivel('mando'), conjuncion, 'alguien de la junta con mando');
+}

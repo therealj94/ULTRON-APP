@@ -92,7 +92,13 @@ export function cargarCasos(archivo: string): Caso[] {
     });
 }
 
-const re = (s: string) => new RegExp(s, 'i');
+/**
+ * `{{AURA_EVAL_…}}` en una expresión se cambia por el valor de esa variable de entorno: lo que el caso espera oír de la
+ * junta (quién fundó, quién cofundó) no se escribe en el repositorio, que es público (auditoría del 7-oct, C-1). Sin la
+ * variable, el caso no puede pasar (no se adivina qué nombre era).
+ */
+const conEntorno = (s: string) => s.replace(/\{\{(AURA_EVAL_[A-Z0-9_]+)\}\}/g, (_m, k: string) => String(process.env[k] || '').trim() || '(?!)');
+const re = (s: string) => new RegExp(conEntorno(s), 'i');
 
 /**
  * Revisa una respuesta de verdad contra lo que el caso espera. El texto solo no basta (auditoría 3-oct,

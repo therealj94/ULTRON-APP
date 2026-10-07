@@ -10,6 +10,7 @@
  *   · cantidad insuficiente (pidió tres y el modelo mandó dos: parcial, «falta carta.pdf»),
  *   · un crash entre generar y entregar (al retomar se comprueba y entrega UNA vez: sin entrega duplicada).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -64,7 +65,7 @@ const ENTRADA = {
           saludo: 'Estimada señora López:',
           cuerpo: ['Le adjunto el presupuesto de materiales para la ampliación del almacén, con el ISV incluido.', '¿Podríamos revisarlo juntos el lunes?'],
           despedida: 'Atentamente,',
-          firma: ['José Enamorado', 'Orden Global'],
+          firma: ['José Villeda', 'Orden Global'],
         },
       },
     },
@@ -141,7 +142,7 @@ async function comprobarTres(r: ReciboLote, dueno: string, env: ReturnType<typeo
   const pdf = await bajar('carta.pdf');
   const leido = await textoPorPaginas(pdf);
   const textoPdf = leido!.paginas.join('\n');
-  for (const s of ['Estimada señora López:', '¿Podríamos revisarlo juntos el lunes?', 'José Enamorado', 'Tegucigalpa, 6 de octubre de 2026']) assert.ok(textoPdf.includes(s), s);
+  for (const s of ['Estimada señora López:', '¿Podríamos revisarlo juntos el lunes?', 'José Villeda', 'Tegucigalpa, 6 de octubre de 2026']) assert.ok(textoPdf.includes(s), s);
 }
 
 test('FILE-02: una petición produce informe.docx, presupuesto.xlsx y carta.pdf, comprobados y para bajar solo por su dueño', async () => {

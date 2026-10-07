@@ -1,6 +1,6 @@
 # AURA · Avatares 3D para Claude
 
-Entrega del 30 de septiembre de 2026. Incluye ANT-ONIO v2 aprobado por Medardo y nuevas propuestas funcionales de Claudio y AU-RA. Los tres son geometría 3D articulada; la demo, las capturas y el video muestran los modelos reales.
+Entrega del 30 de septiembre de 2026. Incluye ANT-ONIO v2 aprobado por la junta y nuevas propuestas funcionales de Claudio y AU-RA. Los tres son geometría 3D articulada; la demo, las capturas y el video muestran los modelos reales.
 
 Abre **AVATARES-AURA-DEMO.html** en un navegador con WebGL. Es autónomo y funciona sin conexión. Si el visor de adjuntos bloquea JavaScript, descarga el HTML y ábrelo en el navegador. Selecciona el personaje, gira la cámara, prueba las expresiones y gestos, o carga un audio local. No se envía ese audio a ningún servicio.
 

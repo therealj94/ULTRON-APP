@@ -2,7 +2,7 @@
  * «OTRAS FORMAS DE ENTRAR»: el correo y la clave de AU-RA, la huella y el modo local de la mesa.
  *
  * La puerta principal es Genesis ID (src/app/pantallas/Entrar.tsx). Esto queda para la junta —las
- * cuentas de José y Medardo, que entran con su clave o con la huella— y para abrir la mesa sin
+ * cuentas que entran con su clave o con la huella— y para abrir la mesa sin
  * servidor. Toda la lógica de antes sigue igual (clave guardada que no se muestra, huella solo con la
  * clave guardada, modo local si el servidor no contesta, crear cuenta y recuperar la clave); cambia
  * cómo se ve: la cabecera grande que colapsa, las cuentas en una lista del sistema y los campos, los
@@ -61,7 +61,8 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   // El idioma se elige en la entrada: toda la pantalla se redibuja al cambiarlo.
   useIdioma();
   const tema = useTema();
-  const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0]);
+  // Sin cuentas fijas en la app (config.ts): se empieza por «Otra cuenta», con el correo escrito o el recordado.
+  const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0] ?? OTRO_TEMPLATE);
   const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<Fase>('pick');
   // Crear cuenta y olvidé la clave: sus propios campos y su respuesta del servidor.
@@ -180,7 +181,9 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           setCustomCorreo(correo);
           setClaveGuardada(!!creds.conHuella);
           setSavedName(creds.name || correo);
-          setPhase('clave');
+          setRemember(true);
+          // La cuenta recordada en este teléfono abre con la huella igual que las de la lista de antes.
+          setPhase(huellaActiva && hw && enrolled && !!creds.clave ? 'quick' : 'clave');
         }
       } catch {
         // Lo guardado no se pudo leer o actualizar: se entra con la clave escrita (el aviso sale en esa fase;

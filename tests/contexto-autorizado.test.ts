@@ -7,6 +7,7 @@
  *
  * Disco temporal, sin S3 ni red.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

@@ -36,7 +36,7 @@ export const BANCO: Clip[] = [
   { id: 'bruno', file: '/voz/bruno.mp3', keys: /bruno|die with a smile|si el mundo|canta\s*5/i, cara: 'SING', texto: 'Die With A Smile · Bruno Mars' },
   { id: 'bohemian', file: '/voz/bohemian.mp3', keys: /bohemian|rhapsody|queen|\bcanta\s*1\b/i, cara: 'SING', texto: 'Bohemian Rhapsody · Queen' },
   { id: 'ligera', file: '/voz/ligera.mp3', keys: /m[uú]sica ligera|soda|cerati|\bcanta\s*2\b/i, cara: 'SING', texto: 'De música ligera · Soda Stereo' },
-  { id: 'bittersweet', file: '/voz/bittersweet.mp3', keys: /bitter\s*sweet|sinfon[ií]a|the verve|favorita de medardo|\bcanta\s*3\b/i, cara: 'SING', texto: 'Bitter Sweet Symphony · The Verve' },
+  { id: 'bittersweet', file: '/voz/bittersweet.mp3', keys: /bitter\s*sweet|sinfon[ií]a|the verve|\bcanta\s*3\b/i, cara: 'SING', texto: 'Bitter Sweet Symphony · The Verve' },
   { id: 'runaway', file: '/voz/runaway.mp3', keys: /runaway|kanye|toast|favorita de jos[eé]|\bcanta\s*4\b/i, cara: 'SING', texto: 'Runaway · Kanye West' },
   // Quién es y qué hace
   { id: 'puedo', file: '/voz/puedo.mp3', keys: /^puedo$|^qu[eé] (puedes|pod[eé]s|hac[eé]s|sabes hacer)\??$|^capacidades$/i, texto: 'Esto es lo que puedo hacer.' },
@@ -77,9 +77,7 @@ export const BANCO: Clip[] = [
   // Bienvenida, saludos y respuestas de todos los días (Dora, scripts/grabar-banco.ts)
   { id: 'bienvenido', file: '/voz/bienvenido.mp3', keys: /^bienvenid[oa] a au-?ra\.?\s*¿?en qu[eé] te ayudo\??$/i, cara: 'HAPPY', texto: 'Bienvenido a AU-RA. ¿En qué te ayudo?' },
   { id: 'vertejose', file: '/voz/vertejose.mp3', keys: /^qu[eé] bueno verte,? jos[eé]\.?$/i, cara: 'HAPPY', texto: 'Qué bueno verte, José.' },
-  { id: 'vertemedardo', file: '/voz/vertemedardo.mp3', keys: /^qu[eé] bueno verte,? medardo\.?$/i, cara: 'HAPPY', texto: 'Qué bueno verte, Medardo.' },
   { id: 'vertecarlos', file: '/voz/vertecarlos.mp3', keys: /^qu[eé] bueno verte,? carlos\.?$/i, cara: 'HAPPY', texto: 'Qué bueno verte, Carlos.' },
-  { id: 'vertemayra', file: '/voz/vertemayra.mp3', keys: /^qu[eé] bueno verte,? mayra\.?$/i, cara: 'HAPPY', texto: 'Qué bueno verte, Mayra.' },
   { id: 'holadenuevo', file: '/voz/holadenuevo.mp3', keys: /^hola de nuevo\.?$/i, cara: 'HAPPY', texto: 'Hola de nuevo.' },
   { id: 'mealegra', file: '/voz/mealegra.mp3', keys: /^me alegra verte\.?$/i, cara: 'HAPPY', texto: 'Me alegra verte.' },
   { id: 'unmomento', file: '/voz/unmomento.mp3', keys: /^un momento\.?$/i, texto: 'Un momento.' },

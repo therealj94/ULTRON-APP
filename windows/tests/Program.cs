@@ -717,9 +717,9 @@ Check(AutorizarOrden.Autorizar("cierra spotify y abre excel", "cierra spotify y 
 Check(AutorizarOrden.Autorizar("cierra spotify", "") == Veredicto.Rechazar && AutorizarOrden.Autorizar("blablá", "abre excel") == Veredicto.Rechazar, "sin dicho o sin mano, nada");
 
 // ── H04 · correo, agenda y conexiones son de UNA identidad AURA ──
-Check(DuenoCuentas.Identidad("tok", " Jose@OrdenGlobal.org ") == "jose@ordenglobal.org" && DuenoCuentas.Identidad("", "jose@ordenglobal.org") == "", "identidad: correo con sesión, nada sin sesión");
-Check(DuenoCuentas.Sirven("jose@ordenglobal.org", "JOSE@ordenglobal.org") && !DuenoCuentas.Sirven("jose@ordenglobal.org", "karla@ordenglobal.org"), "las cuentas de A no sirven a B");
-Check(!DuenoCuentas.Sirven("", "jose@ordenglobal.org") && !DuenoCuentas.Sirven("jose@ordenglobal.org", "") && !DuenoCuentas.Sirven("", ""), "sin dueño o sin sesión, no sirven");
+Check(DuenoCuentas.Identidad("tok", " Jose.H@OrdenGlobal.org ") == "jose.h@ordenglobal.org" && DuenoCuentas.Identidad("", "jose.h@ordenglobal.org") == "", "identidad: correo con sesión, nada sin sesión");
+Check(DuenoCuentas.Sirven("jose.h@ordenglobal.org", "JOSE.H@ordenglobal.org") && !DuenoCuentas.Sirven("jose.h@ordenglobal.org", "karla@ordenglobal.org"), "las cuentas de A no sirven a B");
+Check(!DuenoCuentas.Sirven("", "jose.h@ordenglobal.org") && !DuenoCuentas.Sirven("jose.h@ordenglobal.org", "") && !DuenoCuentas.Sirven("", ""), "sin dueño o sin sesión, no sirven");
 Check(DuenoCuentas.HayQueLimpiar("a@x.org", "b@x.org") && DuenoCuentas.HayQueLimpiar("", "b@x.org") && !DuenoCuentas.HayQueLimpiar("a@x.org", "A@x.org"), "al entrar otra persona (o sin dueño) se limpia");
 Check(DuenoCuentas.Migrar("", "a@x.org") == "a@x.org" && DuenoCuentas.Migrar("", "") == "" && DuenoCuentas.Migrar("a@x.org", "b@x.org") == "a@x.org", "migrar al arrancar: solo con sesión y sin dueño");
 var genCuentas = new GeneracionCuentas();

@@ -19,7 +19,7 @@
  * Tres decisiones que importan:
  *
  *  - **Se guarda por persona y por canal.** El hilo de la mesa no es el de Telegram: son dos
- *    conversaciones distintas, aunque sea la misma persona. Y el de José nunca es el de Medardo.
+ *    conversaciones distintas, aunque sea la misma persona. Y el de una persona nunca es el de otra.
  *  - **Caduca.** Un hilo de anteayer no es contexto, es ruido — y encima ruido con nombres de
  *    concesionarios dentro. A las seis horas se olvida solo.
  *  - **El navegador también manda lo suyo.** El servidor de Render se reinicia cuando quiere y se

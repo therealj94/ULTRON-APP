@@ -10,6 +10,7 @@
  *   · el token no aparece en ningún registro (consola capturada) ni en nada guardado;
  *   · AURA_VETA_ABIERTO=0 → 403; suspendida → 403; topes por conexión y por dirección.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -152,7 +153,7 @@ test('la wallet dice 401 (token falso, revocado o vencido): 401 y ninguna sesió
 test('un correo del padrón (o de la junta) por este camino sigue siendo miembro, nunca junta', async () => {
   const m = await montar();
   try {
-    respWallet = { status: 200, body: { email: 'j.ordonez@ordenglobal.org', name: 'José' } };
+    respWallet = { status: 200, body: { email: 'j.herrera@ordenglobal.org', name: 'José' } };
     const r = await m.entrar({ token: TOKEN });
     assert.equal(r.status, 200);
     assert.equal(r.body.miembro.correo, ID, 'la sesión es de la dirección, no del correo de la junta');
@@ -162,7 +163,7 @@ test('un correo del padrón (o de la junta) por este camino sigue siendo miembro
     // Y el servidor, en cada petición, la sigue viendo como miembro con su rol propio.
     assert.equal(nivelDeCorreo(ID), 'miembro');
     assert.equal(rolVisible(ID), ROL_MIEMBRO_VETA);
-    assert.equal(nivelDeCorreo('j.ordonez@ordenglobal.org'), 'junta', 'la junta sigue siendo junta por su propio camino');
+    assert.equal(nivelDeCorreo('j.herrera@ordenglobal.org'), 'junta', 'la junta sigue siendo junta por su propio camino');
   } finally {
     await m.cerrar();
   }

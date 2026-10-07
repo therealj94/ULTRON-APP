@@ -28,7 +28,7 @@
       "espera_s": 10
     },
     "entrada": {
-      "sonda": { "tipo": "tls", "host": "127.0.0.1", "puerto": 443, "sni": "35-175-175-203.sslip.io", "menor_que": 500 },
+      "sonda": { "tipo": "tls", "host": "127.0.0.1", "puerto": 443, "sni": "__DOMINIO_T4__", "menor_que": 500 },
       "remedios": ["docker:caddy"],
       "espera_s": 10
     }

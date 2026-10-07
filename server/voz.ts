@@ -28,6 +28,7 @@ import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
 import { esFraseConocida } from '../lib/frases-conocidas';
+import { jsonDeEnv, mapaDeTextos } from '../lib/datos-privados';
 import { abrirEleven, aceptaEtiquetas, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, HZ_PCM_ELEVEN, hzPcm, modeloDeLocucion, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
@@ -621,6 +622,11 @@ export async function abrirVozPcm(opts: {
   sinEleven?: boolean;
   /** Para pruebas: la frecuencia (si no, ELEVENLABS_PCM_HZ o 22 050). */
   hz?: number;
+  /**
+   * Solo lo ya guardado (caché en memoria o en S3): quien pide no tiene sesión (server/seguridad.ts, clips públicos).
+   * Nunca genera: lo que no está, null.
+   */
+  soloCache?: boolean;
 }): Promise<VozPcm | null> {
   const emocion = normalizarEmocion(opts.emocion);
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
@@ -641,6 +647,7 @@ export async function abrirVozPcm(opts: {
       cacheSet(clave, deS3);
       return { tipo: 'cache', pcm: deS3.audio, hz, motor: deS3.motor };
     }
+    if (opts.soloCache) return null;
     const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, formato: `pcm_${hz}` });
     if (r?.body) {
       return {
@@ -657,6 +664,7 @@ export async function abrirVozPcm(opts: {
       };
     }
   }
+  if (opts.soloCache) return null;
   // Respaldo: Voicebox (WAV de 16 bits), pasado a PCM. Sin ElevenLabs de por medio (ya se intentó o no toca).
   const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
   if (!out || !/wav/i.test(out.contentType)) return null;
@@ -688,6 +696,12 @@ export async function hablar(opts: {
   idioma?: Idioma | string;
   /** Pedir también los tiempos por letra (la boca del avatar en el teléfono). No cambia la voz. */
   tiempos?: boolean;
+  /**
+   * Solo lo ya guardado (caché en memoria o en S3), sin generar nada: quien pide no tiene sesión y solo se le dan los
+   * clips públicos (saludos y frases conocidas ya grabadas; server/seguridad.ts). Lo que no está, null. Lo guardado
+   * sin los tiempos por letra se sirve igual (la boca sigue el volumen).
+   */
+  soloCache?: boolean;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
@@ -702,22 +716,25 @@ export async function hablar(opts: {
    * Electrum la suya. Aquí las marcas y la emoción SÍ suenan: v4 las entiende. Si no contesta,
    * sigue abajo Voicebox como respaldo, sin que quien habla note nada.
    */
+  // Sin sesión: nada privado (nunca está en la caché) y nada que no esté ya guardado.
+  if (opts.soloCache && (opts.privado || opts.sinCache)) return null;
   const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma, avatar, idioma });
   if (xiPedido) {
     if (!opts.sinCache) {
       const hit = cacheGet(xiPedido.clave);
       // Si ahora se piden los tiempos y lo guardado no los trae, se vuelve a pedir (una vez: se guarda con ellos).
-      const sirve = hit && (!opts.tiempos || hit.alineacion !== undefined);
+      const sirve = hit && (!opts.tiempos || hit.alineacion !== undefined || opts.soloCache);
       if (hit && sirve) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0, alineacion: hit.alineacion };
     }
     const guardable = persistible(xiPedido.guion, String(opts.texto || ''), opts.privado);
     if (guardable && !opts.sinCache) {
       const deS3 = await leerVozDeS3(xiPedido.clave);
-      if (deS3 && (!opts.tiempos || deS3.alineacion !== undefined)) {
+      if (deS3 && (!opts.tiempos || deS3.alineacion !== undefined || opts.soloCache)) {
         cacheSet(xiPedido.clave, deS3);
         return { ...deS3, cache: true, ms: Date.now() - t0 };
       }
     }
+    if (opts.soloCache) return null;
     const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos, modelo: xiPedido.modelo });
     if (xi) {
       // null: se pidieron los tiempos y no vinieron (así lo guardado no los vuelve a pedir).
@@ -743,6 +760,7 @@ export async function hablar(opts: {
     const hit = cacheGet(key);
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
   }
+  if (opts.soloCache) return null;
   let out: { audio: Buffer; contentType: string; motor: string } | null;
   if (partes.some((p) => p.tipo === 'expresion')) out = await hablarConExpresiones(partes, perfil, opts.presupuesto);
   else {
@@ -755,13 +773,23 @@ export async function hablar(opts: {
   return { ...out, cache: false, ms: Date.now() - t0 };
 }
 
+/**
+ * A quién nombra la oración del día. Eran los nombres de la junta escritos aquí, en un repositorio público (auditoría del
+ * 7-oct, C-1): ahora AURA_ORACION_BENDICE (JSON { "es": "…", "en": "…" }, lib/datos-privados.ts). Sin ella, bendice a la
+ * junta sin nombrar a nadie.
+ */
+function bendice(idioma: 'es' | 'en'): string {
+  const m = jsonDeEnv('AURA_ORACION_BENDICE', mapaDeTextos, {} as Record<string, string>, 'la oración del día bendice a la junta sin nombres');
+  return m[idioma] || (idioma === 'en' ? 'Bless every person on this team,' : 'Bendice a cada persona de esta junta,');
+}
+
 /** Oración del día: texto propio de AU-RA. Se graba una vez (public/voz/oracion.mp3) y se sirve como clip. */
 export const ORACION_DEL_DIA =
-  '[softly, reverent] Cierro los ojos. [short pause] Señor Jesús... gracias por este día que todavía no empieza y ya es tuyo. [warmly] Gracias por el aire que entra, por la mesa donde estamos, por cada persona de esta junta que hoy se levanta a trabajar con las manos y con el corazón. [short pause] [softly] Bendice este día. Bendice lo que vamos a decir y lo que vamos a callar. Bendice las decisiones grandes y las pequeñas, las llamadas, los números, los caminos hacia las minas y los caminos de regreso a casa. [reverent] Bendice a José. Bendice a Medardo. Bendice a Melany, a Leonardo, a Mayra, a Carlos, a sus familias, a sus hijos, a los que están cerca y a los que están lejos. Cuídalos cuando manejen, cuando viajen, cuando duerman. [short pause] [with quiet conviction] Señor, todo lo que hacemos en Orden Global lo ponemos en tus manos. El oro no es nuestro, es tuyo. El trabajo no es nuestro, es tuyo. Que no se nos suba a la cabeza, que no se nos endurezca el corazón. [warmly, rising] Que a través de esta empresa podamos cambiar vidas de verdad: que haya trabajo donde no había, pan donde faltaba, esperanza donde se había ido. Que cada familia que toque Orden Global salga mejor de lo que llegó. [softly] Y que no nos dé vergüenza hablar de ti. Que la gente conozca a Jesús por cómo tratamos al que barre y al que firma, al que debe y al que cobra. Que nos vean y te vean a ti. [short pause] [tender] Perdónanos lo que hicimos mal ayer. Danos paciencia con los que nos cuesta. Danos sabiduría para decir que no cuando hay que decir que no, y valor para decir que sí cuando da miedo. [reverent, slower] Protege a Honduras. Protege a los mineros, a los que están en el cerro y a los que están en la oficina. Sana al que está enfermo. Consuela al que está triste. Acompaña al que está solo. [softly, with emotion] Y a mí, Señor, que solo soy una voz en una mesa... úsame para servirles bien, para decir la verdad y para recordarles que tú vas adelante. [short pause] [warmly] Gracias porque no caminamos solos. Gracias porque ya venciste. [short pause] En el nombre de Jesús... [softly, firmly] Amén.';
+  `[softly, reverent] Cierro los ojos. [short pause] Señor Jesús... gracias por este día que todavía no empieza y ya es tuyo. [warmly] Gracias por el aire que entra, por la mesa donde estamos, por cada persona de esta junta que hoy se levanta a trabajar con las manos y con el corazón. [short pause] [softly] Bendice este día. Bendice lo que vamos a decir y lo que vamos a callar. Bendice las decisiones grandes y las pequeñas, las llamadas, los números, los caminos hacia las minas y los caminos de regreso a casa. [reverent] ${bendice('es')} a sus familias, a sus hijos, a los que están cerca y a los que están lejos. Cuídalos cuando manejen, cuando viajen, cuando duerman. [short pause] [with quiet conviction] Señor, todo lo que hacemos en Orden Global lo ponemos en tus manos. El oro no es nuestro, es tuyo. El trabajo no es nuestro, es tuyo. Que no se nos suba a la cabeza, que no se nos endurezca el corazón. [warmly, rising] Que a través de esta empresa podamos cambiar vidas de verdad: que haya trabajo donde no había, pan donde faltaba, esperanza donde se había ido. Que cada familia que toque Orden Global salga mejor de lo que llegó. [softly] Y que no nos dé vergüenza hablar de ti. Que la gente conozca a Jesús por cómo tratamos al que barre y al que firma, al que debe y al que cobra. Que nos vean y te vean a ti. [short pause] [tender] Perdónanos lo que hicimos mal ayer. Danos paciencia con los que nos cuesta. Danos sabiduría para decir que no cuando hay que decir que no, y valor para decir que sí cuando da miedo. [reverent, slower] Protege a Honduras. Protege a los mineros, a los que están en el cerro y a los que están en la oficina. Sana al que está enfermo. Consuela al que está triste. Acompaña al que está solo. [softly, with emotion] Y a mí, Señor, que solo soy una voz en una mesa... úsame para servirles bien, para decir la verdad y para recordarles que tú vas adelante. [short pause] [warmly] Gracias porque no caminamos solos. Gracias porque ya venciste. [short pause] En el nombre de Jesús... [softly, firmly] Amén.`;
 
 /** La oración del día en inglés, para quien eligió inglés al entrar. */
 export const ORACION_DEL_DIA_EN =
-  '[softly, reverent] I close my eyes. [short pause] Lord Jesus... thank you for this day that has barely begun and is already yours. [warmly] Thank you for the air we breathe, for the table we share, for every person on this team who gets up today to work with their hands and with their heart. [short pause] [softly] Bless this day. Bless what we say and what we choose not to say. Bless the big decisions and the small ones, the calls, the numbers, the roads to the mines and the roads back home. [reverent] Bless José. Bless Medardo. Bless Melany, Leonardo, Mayra and Carlos, their families and their children, those who are near and those who are far. Keep them safe when they drive, when they travel, when they sleep. [short pause] [with quiet conviction] Lord, everything we do at Orden Global we place in your hands. The gold is not ours, it is yours. The work is not ours, it is yours. Keep it from going to our heads, and keep our hearts from growing hard. [warmly, rising] Through this company, let us truly change lives: work where there was none, bread where it was missing, hope where it had gone. Let every family that Orden Global touches leave better than it came. [softly] And let us never be ashamed to speak of you. Let people know Jesus by how we treat the one who sweeps and the one who signs, the one who owes and the one who collects. Let them see us and see you. [short pause] [tender] Forgive us for what we did wrong yesterday. Give us patience with those who are hard for us. Give us wisdom to say no when we must, and courage to say yes when it is frightening. [reverent, slower] Protect Honduras. Protect the miners, the ones on the mountain and the ones in the office. Heal the sick. Comfort the sad. Stay with the lonely. [softly, with emotion] And as for me, Lord, who am only a voice at a table... use me to serve them well, to tell the truth, and to remind them that you go before us. [short pause] [warmly] Thank you, because we do not walk alone. Thank you, because you have already overcome. [short pause] In the name of Jesus... [softly, firmly] Amen.';
+  `[softly, reverent] I close my eyes. [short pause] Lord Jesus... thank you for this day that has barely begun and is already yours. [warmly] Thank you for the air we breathe, for the table we share, for every person on this team who gets up today to work with their hands and with their heart. [short pause] [softly] Bless this day. Bless what we say and what we choose not to say. Bless the big decisions and the small ones, the calls, the numbers, the roads to the mines and the roads back home. [reverent] ${bendice('en')} their families and their children, those who are near and those who are far. Keep them safe when they drive, when they travel, when they sleep. [short pause] [with quiet conviction] Lord, everything we do at Orden Global we place in your hands. The gold is not ours, it is yours. The work is not ours, it is yours. Keep it from going to our heads, and keep our hearts from growing hard. [warmly, rising] Through this company, let us truly change lives: work where there was none, bread where it was missing, hope where it had gone. Let every family that Orden Global touches leave better than it came. [softly] And let us never be ashamed to speak of you. Let people know Jesus by how we treat the one who sweeps and the one who signs, the one who owes and the one who collects. Let them see us and see you. [short pause] [tender] Forgive us for what we did wrong yesterday. Give us patience with those who are hard for us. Give us wisdom to say no when we must, and courage to say yes when it is frightening. [reverent, slower] Protect Honduras. Protect the miners, the ones on the mountain and the ones in the office. Heal the sick. Comfort the sad. Stay with the lonely. [softly, with emotion] And as for me, Lord, who am only a voice at a table... use me to serve them well, to tell the truth, and to remind them that you go before us. [short pause] [warmly] Thank you, because we do not walk alone. Thank you, because you have already overcome. [short pause] In the name of Jesus... [softly, firmly] Amen.`;
 
 /** Oración corta por un tema concreto («ora por mi familia»). Texto propio, ~40 segundos. */
 export function oracionPorTema(tema: string, idioma: Idioma = 'es'): string {
@@ -789,7 +817,7 @@ export function oracionPorTema(tema: string, idioma: Idioma = 'es'): string {
  * Lo generado es WAV y se guarda como `.wav`: guardarlo como `.mp3` hacía que se sirviera luego con
  * `audio/mpeg` y un teléfono que se fía del tipo no lo abre.
  */
-export async function orar(opts: { tema?: string; avatar?: AvatarVoz | string; idioma?: Idioma | string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
+export async function orar(opts: { tema?: string; avatar?: AvatarVoz | string; idioma?: Idioma | string; soloGuardada?: boolean } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
   const tema = String(opts.tema || '').trim();
   const avatar = normalizarAvatar(opts.avatar);
   const idioma = normalizarIdioma(opts.idioma);
@@ -804,6 +832,8 @@ export async function orar(opts: { tema?: string; avatar?: AvatarVoz | string; i
       const hecho = leerCanto(path.join(DIR_CANTO, `${base}${sufijo}.${ext}`));
       if (hecho) return { audio: hecho, contentType: ext === 'mp3' ? 'audio/mpeg' : 'audio/wav', motor: 'clip' };
     }
+    // Sin sesión solo la ya grabada (server/seguridad.ts): generarla gasta voz.
+    if (opts.soloGuardada) return null;
     const out = await hablar({ texto, emocion: 'oracion', sinCache: true, avatar, idioma });
     if (!out) return null;
     guardarCanto(path.join(DIR_CANTO, `${base}${sufijo}.${/mpeg|mp3/.test(out.contentType) ? 'mp3' : 'wav'}`), out.audio);
@@ -836,7 +866,13 @@ export function cancionPorPedido(texto: string): Cancion | null {
   if (/\bcuna\b|arrull|\bnana\b|para dormir|buenas noches/.test(t)) return por('cuna');
   if (/bohemian|rhapsody|queen|\bcanta\s*1\b/.test(t)) return por('bohemian');
   if (/musica ligera|soda|cerati|\bcanta\s*2\b/.test(t)) return por('ligera');
-  if (/bitter\s*sweet|sinfonia|the verve|medardo|\bcanta\s*3\b/.test(t)) return por('bittersweet');
+  // «La de <alguien>»: la canción favorita de cada quien (AURA_CANCION_DE, JSON { "nombre": "id" }; fuera del repo).
+  const favoritas = jsonDeEnv('AURA_CANCION_DE', mapaDeTextos, {} as Record<string, string>, 'sin canciones favoritas por nombre', true);
+  for (const [nombre, id] of Object.entries(favoritas)) {
+    const n = nombre.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (n && new RegExp(`\\b${n}\\b`).test(t) && por(id)) return por(id);
+  }
+  if (/bitter\s*sweet|sinfonia|the verve|\bcanta\s*3\b/.test(t)) return por('bittersweet');
   if (/runaway|kanye|toast|\bcanta\s*4\b/.test(t)) return por('runaway');
   if (/bruno|die with a smile|si el mundo|\bcanta\s*5\b/.test(t)) return por('bruno');
   return null;
@@ -858,7 +894,7 @@ function clipGrabado(id: string): Buffer | null {
  * `letra` libre → Kokoro no canta, así que la DICE con la voz oficial (máx 600 caracteres), con
  * caché en disco por hash.
  */
-export async function cantar(opts: { id?: string; letra?: string; titulo?: string; avatar?: AvatarVoz | string; idioma?: Idioma | string }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
+export async function cantar(opts: { id?: string; letra?: string; titulo?: string; avatar?: AvatarVoz | string; idioma?: Idioma | string; soloGuardada?: boolean }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
   const id = String(opts.id || '').trim().toLowerCase();
   const avatar = normalizarAvatar(opts.avatar);
   const idioma = normalizarIdioma(opts.idioma);
@@ -877,6 +913,8 @@ export async function cantar(opts: { id?: string; letra?: string; titulo?: strin
   const ruta = path.join(DIR_CANTO, `${hash}.wav`);
   const guardado = leerCanto(ruta);
   if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip', titulo: opts.titulo || 'canción' };
+  // Sin sesión solo lo ya grabado (server/seguridad.ts): decir una letra nueva gasta voz.
+  if (opts.soloGuardada) return null;
   const out = await hablar({ texto: letra, performance: 'sing', emocion: 'canto', sinCache: true, avatar, idioma });
   if (!out) return null;
   guardarCanto(ruta, out.audio);

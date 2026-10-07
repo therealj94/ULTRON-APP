@@ -14,6 +14,7 @@
  */
 import { CONOCIMIENTO_OG_PUBLICO } from '../../src/05-cerebro-og/conocimiento-publico';
 import { GENESIS } from './genesis';
+import { aliasDePersonas, listaDeEnv } from '../datos-privados';
 import type { PerfilCerebro } from './tipos';
 
 export const GENESIS_MIEMBRO: PerfilCerebro = {
@@ -41,7 +42,11 @@ export const GENESIS_MIEMBRO: PerfilCerebro = {
     [/\bondk\b|\bgobernanza\b/, ['ondk', 'gobernanza']],
     [/\bmina|\bminer|\bdanli\b|\bcholuteca\b|\bconcesi|\bkiri\b|\binhgeomin\b/, ['mina', 'minas', 'danli', 'choluteca', 'concesion', 'kiri', 'inhgeomin', 'metal']],
     [/\bprospera\b|\broatan\b|\bzede\b|\bciadi\b|\brfsa\b/, ['prospera', 'roatan', 'zede', 'ciadi', 'rfsa', 'brimen', 'cafta']],
-    [/\bfundador|\bcofundador|\bmedardo\b|\bjose\b|\bmelany\b|\bpaguada\b|\bleonardo\b|\bjackson\b/, ['fundador', 'cofundador', 'medardo', 'jose', 'melany', 'paguada', 'jackson']],
+    // Los nombres públicos de la junta llegan por AURA_NOMBRES_JUNTA_PUBLICO (fuera del repo; lib/datos-privados.ts).
+    aliasDePersonas(listaDeEnv('AURA_NOMBRES_JUNTA_PUBLICO', 'el cerebro de la comunidad no reconoce a nadie de la junta por su nombre'), {
+      patron: ['\\bfundador', '\\bcofundador', '\\bjackson\\b'],
+      palabras: ['fundador', 'cofundador', 'jackson'],
+    }),
     [/\bveta\b|\bwallet\b|\bbilletera\b|\bremesa/, ['veta', 'wallet', 'remesas']],
     [/\bgenesis id\b|\bidentidad\b/, ['genesis id', 'identidad']],
     [/\bordenex\b|\bcasa de cambio\b/, ['ordenex', 'cambio']],

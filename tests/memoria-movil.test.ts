@@ -4,6 +4,7 @@
  * Antes había una sola lista para todos y cada turno le mandaba al cerebro lo de cualquiera. Aquí se
  * prueba que cada quien tiene su clave y que el reparto de la lista vieja no le pasa a nadie lo ajeno.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -19,10 +20,10 @@ import {
 const h = (hecho: string, at = '2026-09-01T00:00:00.000Z') => ({ hecho, at });
 
 test('cada persona tiene su clave: por correo, y sin correo por nombre', () => {
-  const jose = claveMemoria({ name: 'José', correo: 'jose@ordenglobal.org' });
-  const medardo = claveMemoria({ name: 'Medardo', correo: 'medardo@ordenglobal.org' });
-  assert.notEqual(jose, medardo);
-  assert.equal(jose, claveMemoria({ name: 'Otro nombre', correo: '  JOSE@ordenglobal.org ' }), 'el correo manda, sin mayúsculas ni espacios');
+  const jose = claveMemoria({ name: 'José', correo: 'jose.h@ordenglobal.org' });
+  const ramiro = claveMemoria({ name: 'Ramiro', correo: 'ramiro@ordenglobal.org' });
+  assert.notEqual(jose, ramiro);
+  assert.equal(jose, claveMemoria({ name: 'Otro nombre', correo: '  JOSE.H@ordenglobal.org ' }), 'el correo manda, sin mayúsculas ni espacios');
   assert.notEqual(claveMemoria({ name: 'Ana', correo: '' }), claveMemoria({ name: 'Luis', correo: '' }));
   assert.equal(claveMemoria({ name: ' Ana ' }), claveMemoria({ name: 'ana' }));
   assert.notEqual(jose, CLAVE_MEMORIA_COMPARTIDA);
@@ -30,13 +31,13 @@ test('cada persona tiene su clave: por correo, y sin correo por nombre', () => {
 });
 
 test('la lista vieja se reparte sin pasarle a nadie lo de otro', () => {
-  const vieja = [h('Medardo: su hija se llama Sofía'), h('José: la junta es los lunes'), h('José: prefiere café sin azúcar'), h('suelto sin firma')];
+  const vieja = [h('Ramiro: su hija se llama Sofía'), h('José: la junta es los lunes'), h('José: prefiere café sin azúcar'), h('suelto sin firma')];
   const deJose = migrarCompartida(vieja, null, 'José');
   assert.deepEqual(
     deJose.map((f) => f.hecho),
     ['José: la junta es los lunes', 'José: prefiere café sin azúcar'],
   );
-  assert.ok(!deJose.some((f) => f.hecho.includes('Sofía')), 'lo de Medardo no pasa a José');
+  assert.ok(!deJose.some((f) => f.hecho.includes('Sofía')), 'lo de Ramiro no pasa a José');
   assert.ok(!deJose.some((f) => f.hecho === 'suelto sin firma'), 'lo que no tiene dueño claro se descarta');
 });
 

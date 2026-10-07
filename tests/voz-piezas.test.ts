@@ -8,6 +8,7 @@
  *  · el script de los agentes no imprime cuerpos de error (no se corre: se importa);
  *  · el streaming suelta la primera frase larga en una coma.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

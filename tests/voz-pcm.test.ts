@@ -5,7 +5,8 @@
  *  · lo que ElevenLabs genera llega al teléfono A TROZOS, antes de que termine (no se junta en el servidor);
  *  · misma voz y modelo que /api/tts, PCM a 22 050 Hz, la frecuencia en la cabecera;
  *  · la caché guarda solo lo que llegó entero; un corte a media frase ROMPE la conexión y no se guarda;
- *  · las mismas puertas que /api/tts/stream (ruta abierta de voz exacta, cupo 'voz', minutos del miembro → Voicebox);
+ *  · las mismas puertas que /api/tts/stream (sin sesión, solo lo ya guardado y por la ruta exacta; cupo 'voz'; minutos
+ *    del miembro → Voicebox);
  *  · y cuánto antes empieza a sonar contra bajar la frase entera, con un ElevenLabs que suelta los bytes despacio.
  */
 import test, { after } from 'node:test';
@@ -17,7 +18,7 @@ import type { AddressInfo } from 'node:net';
 import { VOCES_ELEVEN, _reiniciarFrenoEleven, hzPcm, modeloDeLocucion } from '../server/eleven';
 import { _vaciarCacheVoz, pcmDeWav } from '../server/voz';
 import { montarVozPcm, type PeticionVozPcm } from '../server/voz-pcm';
-import { mesaDeskAutorizada } from '../server/seguridad';
+import { clipPublicoPermitido, exigirMesaOClip, mesaDeskAutorizada } from '../server/seguridad';
 import { voiceboxFalso, conVoicebox, CLAVE_FALSA, wavDePrueba } from './voicebox-falso';
 import { VOZ_VIVO, bytesDeMs, msDeBytes } from '../mobile/src/lib/vozNativa';
 
@@ -74,8 +75,8 @@ let devueltos = 0;
 const app = express();
 app.use(express.json());
 montarVozPcm(app, {
-  // La puerta de verdad de las rutas de voz (seguridad.ts), con la ruta como la ve express.
-  exigir: (req, res, next) => (mesaDeskAutorizada(req) ? next() : res.status(401).json({ error: 'sin sesión' })),
+  // La puerta de verdad de las rutas de voz (seguridad.ts): con la clave de la mesa, todo; sin nada, solo lo guardado.
+  exigir: exigirMesaOClip,
   limitar: (max, ventana, grupo) => {
     limites.push([max, ventana, grupo]);
     return (_req, _res, next) => next();
@@ -97,10 +98,11 @@ after(() => {
 });
 
 /** GET con http (no fetch): se ve cada trozo cuando llega, y si la conexión se rompió. */
-function pedir(ruta: string, alTrozo?: (b: Buffer, t: number) => void): Promise<{ status: number; headers: http.IncomingHttpHeaders; cuerpo: Buffer; roto: boolean; trozos: Array<[number, number]>; fin: number }> {
+/** `sinSesion`: sin la clave de la mesa (lo que pediría cualquiera desde afuera). */
+function pedir(ruta: string, alTrozo?: (b: Buffer, t: number) => void, sinSesion = false): Promise<{ status: number; headers: http.IncomingHttpHeaders; cuerpo: Buffer; roto: boolean; trozos: Array<[number, number]>; fin: number }> {
   const t0 = Date.now();
   return new Promise((ok) => {
-    const req = http.get(`${base}${ruta}`, (res) => {
+    const req = http.get(`${base}${ruta}`, { headers: sinSesion ? {} : { 'x-ultron-mesa': String(process.env.ULTRON_MESA_CLAVE) } }, (res) => {
       const partes: Buffer[] = [];
       const trozos: Array<[number, number]> = [];
       let roto = false;
@@ -306,17 +308,40 @@ test('minutos del miembro: con minutos se anotan (en vivo); sin minutos, Voicebo
   }
 });
 
-test('las puertas: las de /api/tts/stream (ruta de voz EXACTA, cupo «voz» de 60/min compartido); server.ts la monta así', async () => {
+test('las puertas: las de /api/tts/stream (sin sesión solo lo guardado, por la ruta EXACTA; cupo «voz» de 60/min compartido); server.ts la monta así', async () => {
   assert.deepEqual(limites, [[60, 60_000, 'voz']], 'el mismo cupo que /api/tts y /api/tts/stream');
-  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/pcm', query: {} } as any), true);
-  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/pcm/', query: {} } as any), true);
-  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/pcmx', query: {} } as any), false, 'exacta: sin prefijos');
-  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/pcm/otra', query: {} } as any), false);
+  // Sin sesión la mesa no está abierta para nadie (auditoría C-2): solo el clip ya guardado, por la ruta exacta.
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts/pcm', query: {} } as any), false);
+  assert.equal(clipPublicoPermitido({ headers: {}, body: {}, path: '/api/tts/pcm', query: {} } as any), true);
+  assert.equal(clipPublicoPermitido({ headers: {}, body: {}, path: '/api/tts/pcm/', query: {} } as any), true);
+  assert.equal(clipPublicoPermitido({ headers: {}, body: {}, path: '/api/tts/pcmx', query: {} } as any), false, 'exacta: sin prefijos');
+  assert.equal(clipPublicoPermitido({ headers: {}, body: {}, path: '/api/tts/pcm/otra', query: {} } as any), false);
   const vacio = await pedir('/api/tts/pcm?text=');
   assert.equal(vacio.status, 400);
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-  assert.match(src, /montarVozPcm\(app, \{ exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla, devolver: \(res\) => devolverLimite\(res, 'voz'\) \}\);/);
-  assert.match(src, /app\.all\('\/api\/tts\/stream', exigirMesaODesk, limitar\(60, 60_000, 'voz'\), responderVozVivo\);/, '/api/tts/stream sigue igual');
+  assert.match(src, /montarVozPcm\(app, \{ exigir: exigirMesaOClip, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla, devolver: \(res\) => devolverLimite\(res, 'voz'\) \}\);/);
+  assert.match(src, /app\.all\('\/api\/tts\/stream', exigirMesaOClip, limitar\(60, 60_000, 'voz'\), responderVozVivo\);/, '/api/tts/stream sigue igual');
+});
+
+test('sin sesión: lo que no está guardado no se genera (401, ElevenLabs ni se toca); lo ya guardado sí sale', async () => {
+  limpio();
+  responder = () => new Response(new Uint8Array(4410 * 2), { status: 200, headers: { 'content-type': 'audio/pcm' } });
+  const nuevo = await pedir(q('Una frase nueva sin sesión.'), undefined, true);
+  assert.equal(nuevo.status, 401);
+  assert.equal(JSON.parse(nuevo.cuerpo.toString()).code, 'sesion_requerida');
+  assert.equal(llamadas.length, 0, 'nadie le pidió nada a ElevenLabs');
+  // Con sesión se genera (y queda guardada entera)…
+  const conSesion = await pedir(q('Una frase que ya se dijo.'));
+  assert.equal(conSesion.status, 200);
+  assert.equal(llamadas.length, 1);
+  // …y desde ahí sale de la caché también sin sesión, sin volver a ElevenLabs.
+  const guardada = await pedir(q('Una frase que ya se dijo.'), undefined, true);
+  assert.equal(guardada.status, 200);
+  assert.ok(guardada.cuerpo.length > 0);
+  assert.equal(llamadas.length, 1, 'de la caché');
+  // Lo privado nunca está guardado: sin sesión, 401.
+  const privada = await pedir(q('Una frase que ya se dijo.', '&privado=1'), undefined, true);
+  assert.equal(privada.status, 401);
 });
 
 test('devolverLimite: el lugar que cobró `limitar` a ESTE pedido vuelve; a lo más el cupo por ventana (el freno sigue)', async () => {

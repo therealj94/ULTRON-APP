@@ -34,7 +34,7 @@ function labelTexture(){
 }
 export function createClaudio({quality='high'}={}){
   const root=new THREE.Group();root.name='CLAUDIO';
-  root.userData={author:'Orden Global / Medardo',version:'1.0.0',rig:'articulated node hierarchy with facial morph targets',reference:'Existing Claudio fox, amber glasses, black crown sweatshirt'};
+  root.userData={author:'Orden Global',version:'1.0.0',rig:'articulated node hierarchy with facial morph targets',reference:'Existing Claudio fox, amber glasses, black crown sweatshirt'};
   const rig={},anim=[];
   const joint=(p,n,pos)=>{const g=group(p,n,pos);rig[n]=g;anim.push(g);return g;};
   const skinMaps=detailTextures('skin'),clothMaps=detailTextures('cloth');

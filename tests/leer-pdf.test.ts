@@ -1,3 +1,4 @@
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import zlib from 'node:zlib';
@@ -22,7 +23,7 @@ describe('Leer PDF e imágenes subidas', () => {
   });
 
   it('infla un stream FlateDecode y saca el Tj', () => {
-    const inner = 'BT /F1 12 Tf 72 720 Td (Contrato Medardo 5550) Tj ET';
+    const inner = 'BT /F1 12 Tf 72 720 Td (Contrato Ramiro 5550) Tj ET';
     const defl = zlib.deflateSync(Buffer.from(inner, 'latin1'));
     const stream = Buffer.concat([
       Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length ' + defl.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1'),
@@ -30,7 +31,7 @@ describe('Leer PDF e imágenes subidas', () => {
       Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1'),
     ]);
     const r = extraerPdf(stream);
-    assert.match(r.texto, /Contrato Medardo 5550/);
+    assert.match(r.texto, /Contrato Ramiro 5550/);
   });
 
   it('no finge un archivo que no es PDF', () => {
@@ -108,7 +109,7 @@ describe('Leer PDF e imágenes subidas', () => {
     const p = await parsearUpdateTelegram({
       message: {
         chat: { id: 1 },
-        from: { id: 1, first_name: 'Medardo' },
+        from: { id: 1, first_name: 'Ramiro' },
         caption: 'mira esto',
         document: { file_name: 'acta.pdf', mime_type: 'application/pdf', file_id: 'x' },
       },

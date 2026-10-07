@@ -66,7 +66,7 @@ const salud = (o = {}) => ({
   voz: { llave: true, perfil: 'Alex' },
   catastro: { viva: true, motivo: null, concesiones: 1043 },
   herramientas: 14,
-  quien: 'José Ordóñez',
+  quien: 'José Herrera',
   nivel: 'mando',
   bot: true,
   honesto: true,
@@ -160,7 +160,7 @@ function rutas(extra = {}) {
         honesto: true,
       }),
     'POST /api/electrum/entrar': () =>
-      json(200, { ok: true, token: 'u1.eyJjIjoiai5vcmRvbmV6In0.firma', miembro: { nombre: 'José', correo: 'j.ordonez@ordenglobal.org', rol: 'Junta Directiva · Orden Global' }, message: 'Bienvenido a AU-RA FP, José', remoteUrl: 'https://cerebro' }),
+      json(200, { ok: true, token: 'u1.eyJjIjoiai5oZXJyZXJhIn0.firma', miembro: { nombre: 'José', correo: 'j.herrera@ordenglobal.org', rol: 'Junta Directiva · Orden Global' }, message: 'Bienvenido a AU-RA FP, José', remoteUrl: 'https://cerebro' }),
     'POST /api/ultron/salir': () => json(200, { ok: true, cerrada: true, message: 'Sesión cerrada.' }),
     // GET /api/electrum/informe/:id: el PDF crudo (application/pdf), como `res.end(r.informe.pdf)`.
     'GET /api/electrum/informe/*': () => ({ status: 200, contentType: 'application/pdf', body: PDF }),
@@ -190,7 +190,7 @@ const ESCENARIOS = [
     {
       api: { 'POST /api/electrum/entrar': () => 'colgar' },
       antes: async (p) => {
-        await escribir(p, 'Correo', 'j.ordonez@ordenglobal.org');
+        await escribir(p, 'Correo', 'j.herrera@ordenglobal.org');
         await escribir(p, 'Clave', 'secreta-larga');
         await tocar(p, 'Entrar');
       },
@@ -202,7 +202,7 @@ const ESCENARIOS = [
     {
       api: { 'POST /api/electrum/entrar': () => json(401, { error: 'credenciales inválidas' }) },
       antes: async (p) => {
-        await escribir(p, 'Correo', 'j.ordonez@ordenglobal.org');
+        await escribir(p, 'Correo', 'j.herrera@ordenglobal.org');
         await escribir(p, 'Clave', 'mala');
         await tocar(p, 'Entrar');
       },
@@ -214,7 +214,7 @@ const ESCENARIOS = [
     {
       api: { 'POST /api/electrum/entrar': () => 'red' },
       antes: async (p) => {
-        await escribir(p, 'Correo', 'j.ordonez@ordenglobal.org');
+        await escribir(p, 'Correo', 'j.herrera@ordenglobal.org');
         await escribir(p, 'Clave', 'secreta');
         await tocar(p, 'Entrar');
       },
@@ -229,7 +229,7 @@ const ESCENARIOS = [
           json(429, { error: 'Demasiados intentos con esta cuenta. Probá de nuevo en 12 minutos.', code: 'demasiados_intentos', reintentarEnS: 700, honesto: true }),
       },
       antes: async (p) => {
-        await escribir(p, 'Correo', 'j.ordonez@ordenglobal.org');
+        await escribir(p, 'Correo', 'j.herrera@ordenglobal.org');
         await escribir(p, 'Clave', 'secreta');
         await tocar(p, 'Entrar');
       },
@@ -266,7 +266,7 @@ const ESCENARIOS = [
       espera: 400,
       antes: async (p) => {
         await p.waitForTimeout(3000);
-        await escribir(p, 'Correo', 'j.ordonez@ordenglobal.org');
+        await escribir(p, 'Correo', 'j.herrera@ordenglobal.org');
         await escribir(p, 'Clave', 'secreta');
         await tocar(p, 'Entrar');
         await p.waitForTimeout(1500);

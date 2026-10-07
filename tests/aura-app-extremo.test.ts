@@ -12,6 +12,7 @@
  *    cerebro sabe que lo interrumpieron (no vuelve a pedir perdón);
  *  · la latencia hasta la primera palabra, con cifras (se imprimen en la salida de la prueba).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -1043,7 +1044,7 @@ test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni
   // Entró por Genesis abierto; se llama «José», pero su correo no está en el padrón.
   const m = emitirSesion({ correo: 'comunidad.prueba@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' }, { comunidad: true });
   const hm = { 'content-type': 'application/json', 'x-ultron-sesion': m.token };
-  const interno = ['8443', 'watchdog', 'NameSilo', 'nonce 0', 'Emisión interna', 'Mayra', 'express-js-on-vercel', 'asistente de la junta', 'HECHOS COMPARTIDOS DE LA JUNTA', 'TALLER: listos'];
+  const interno = ['8443', 'watchdog', 'NameSilo', 'nonce 0', 'Emisión interna', 'Brenda', 'express-js-on-vercel', 'asistente de la junta', 'HECHOS COMPARTIDOS DE LA JUNTA', 'TALLER: listos'];
   contestar = () => '[EMO: neutral] Te cuento lo público.';
   alNodo.length = 0;
   const t = await (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hm, body: JSON.stringify({ message: 'cuéntame de la cadena 5550, sus validadores y los servidores de AU-RA' }) })).json();

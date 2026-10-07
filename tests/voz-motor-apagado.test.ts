@@ -23,6 +23,9 @@ process.env.ULTRON_MEMORIA_BUCKET = '';
 // el despliegue declara que no hay suspensiones (como AURA_SUSPENSIONES=ninguna en desarrollo).
 process.env.AURA_SUSPENSIONES = 'ninguna';
 process.env.ELEVENLABS_API_KEY = 'llave-falsa-de-prueba';
+// Los agentes de ElevenLabs llegan por entorno (el repo es público): ids inventados.
+process.env.ELEVENLABS_AGENTE_AURA_ES = 'agent_inventado_aura_es';
+process.env.ELEVENLABS_AGENTE_CLAUDIO_ES = 'agent_inventado_claudio_es';
 delete process.env.AURA_MOTOR_VOZ;
 
 const { montarVozAgente, ETIQUETA_SECRETO_LLM, leerPase } = await import('../server/voz-agente');
@@ -89,9 +92,9 @@ test('apagado: /api/voz/agente pide el token del agente de siempre y contesta lo
   assert.equal(r.status, 200);
   assert.deepEqual(r.claves, ['token', 'agente', 'avatar', 'idioma', 'pase', 'cid', 'vence', 'restanteMs', 'honesto'], 'sin campos nuevos (ni motor ni primer mensaje)');
   assert.equal(r.j.token, 'tok-el');
-  assert.equal(r.j.agente, 'agent_6801m3qbvv83fzgvg42eev85m8m5', 'el agente de AU-RA en español, como siempre');
+  assert.equal(r.j.agente, 'agent_inventado_aura_es', 'el agente de AU-RA en español, como siempre');
   assert.equal(r.pedidas.length, 1);
-  assert.equal(r.pedidas[0].url, 'https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=agent_6801m3qbvv83fzgvg42eev85m8m5');
+  assert.equal(r.pedidas[0].url, 'https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=agent_inventado_aura_es');
   assert.deepEqual(Object.keys(r.pedidas[0].headers), ['xi-api-key']);
   assert.equal(r.pase?.avatar, 'aura');
 });

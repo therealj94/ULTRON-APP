@@ -9,35 +9,22 @@ export const APP_VERSION = Constants.expoConfig?.version || '4.7.0';
 export const VOICE_NAME = 'AU-RA (Dora · servidor propio)';
 
 export type DeskUser = {
-  id: 'jose' | 'medardo' | 'otro';
+  id: string;
   name: string;
   correo: string;
   role: string;
 };
 
-/** Correos oficiales de junta (Orden Global). */
-export const DESK_USERS: DeskUser[] = [
-  {
-    id: 'jose',
-    name: 'José',
-    correo: 'j.ordonez@ordenglobal.org',
-    role: 'Junta Directiva · Orden Global',
-  },
-  {
-    id: 'medardo',
-    name: 'Medardo',
-    correo: 'm.ordonez@ordenglobal.org',
-    role: 'Junta Directiva · Orden Global',
-  },
-];
+/**
+ * Las cuentas de la junta para elegir en «Otras formas de entrar». Eran correos y nombres reales metidos en el JS de la
+ * app (el repositorio es público; auditoría del 7-oct, C-1). La lista va vacía: se entra con el correo (la app lo
+ * recuerda en este teléfono tras la primera vez, con su huella) y el SERVIDOR pasa los correos viejos o personales al
+ * de la casa (server/desk.ts normalizarCorreo, AURA_CORREOS_ALIAS en Render).
+ */
+export const DESK_USERS: DeskUser[] = [];
 
-/** Alias antiguos → correo canónico (migración login / SecureStore). */
-export const EMAIL_ALIASES: Record<string, string> = {
-  'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
-  'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
-  'j.ordonez@ordenglobal.org': 'j.ordonez@ordenglobal.org',
-  'm.ordonez@ordenglobal.org': 'm.ordonez@ordenglobal.org',
-};
+/** Alias de correo del lado del teléfono: ninguno (los resuelve el servidor al entrar). */
+export const EMAIL_ALIASES: Record<string, string> = {};
 
 export function normalizeDeskEmail(correo: string): string {
   const raw = String(correo || '').trim().toLowerCase();

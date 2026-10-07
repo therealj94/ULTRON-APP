@@ -1,3 +1,4 @@
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { transcribirAudio, esAudioNombre, mimeDeAudio } from '../lib/oido';
@@ -40,7 +41,7 @@ describe('Oír nota de voz en Telegram', () => {
     const p = await parsearUpdateTelegram({
       message: {
         chat: { id: 1 },
-        from: { id: 1, first_name: 'Medardo' },
+        from: { id: 1, first_name: 'Ramiro' },
         document: { file_name: 'junta.m4a', mime_type: 'audio/mp4', file_id: 'a1' },
       },
     });

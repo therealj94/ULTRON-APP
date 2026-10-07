@@ -224,7 +224,7 @@ Engine podría ganar): `scripts/voz-comparar-eleven.ts` (solo lectura) resume la
 ElevenLabs guarda en cada conversación, más `interrupted` e `ignored_as_backchannel`:
 
 ```
-ELEVENLABS_API_KEY=… npx tsx scripts/voz-comparar-eleven.ts --agente agent_6801m3qbvv83fzgvg42eev85m8m5 --motor seng_… --desde 2026-10-07T15:00:00Z
+ELEVENLABS_API_KEY=… npx tsx scripts/voz-comparar-eleven.ts --agente "$ELEVENLABS_AGENTE_AURA_ES" --motor seng_… --desde 2026-10-07T15:00:00Z
 ```
 
 **Procedimiento** (la guía de muestras de la auditoría: **≥ 20 respuestas comparables de ≥ 5 llamadas distintas

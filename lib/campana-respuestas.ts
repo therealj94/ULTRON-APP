@@ -1,15 +1,15 @@
 /**
  * CAMPAÑA SFSP: QUIÉN CONTESTÓ.
  *
- * Todos los días a las 7:00 de Honduras, AU-RA abre el buzón de José (j.ordonez@ordenglobal.org)
+ * Todos los días a las 7:00 de Honduras, AU-RA abre el buzón de la campaña (CAMPANA_IMAP_USUARIO)
  * por IMAP, SOLO PARA LEER (EXAMINE: no marca nada como leído, no mueve ni borra), y le manda por
  * Telegram quién contestó el correo de la campaña en las últimas 24 horas. Aparta los rebotes y a
  * quien pidió no recibir más, para anotarlo en la lista de bajas.
  *
  * Variables:
- *  · CAMPANA_IMAP_CLAVE (obligatoria): la contraseña del buzón. Sin ella no arranca.
- *  · CAMPANA_IMAP_USUARIO (j.ordonez@ordenglobal.org), CAMPANA_IMAP_HOST (mail.ordenglobal.org),
- *    CAMPANA_IMAP_PUERTO (993).
+ *  · CAMPANA_IMAP_CLAVE y CAMPANA_IMAP_USUARIO (obligatorias): la contraseña y el buzón. Sin ellas no arranca
+ *    (el buzón ya no tiene un correo personal por omisión: el repositorio es público).
+ *  · CAMPANA_IMAP_HOST (mail.ordenglobal.org), CAMPANA_IMAP_PUERTO (993).
  *
  * El IMAP es un cliente mínimo sobre TLS (LOGIN, EXAMINE, SEARCH, FETCH de cabeceras y el inicio
  * del texto, LOGOUT): cinco órdenes no justifican una dependencia más en el servidor.
@@ -127,7 +127,7 @@ export function resumen(c: Clasificadas, desde: Date): string {
     lineas.push('', `Contestaron ${c.respuestas.length}:`);
     for (const r of c.respuestas) lineas.push(`• ${r.de} <${r.correo}>${r.extracto ? `\n  «${r.extracto}»` : ''}`);
   }
-  lineas.push('', 'Todo está en j.ordonez@ordenglobal.org.');
+  lineas.push('', `Todo está en ${String(process.env.CAMPANA_IMAP_USUARIO || '').trim() || 'el buzón de la campaña'}.`);
   return lineas.join('\n');
 }
 
@@ -206,9 +206,10 @@ export class Imap {
 export async function leerBuzon(desde: Date, espera = 30_000) {
   const host = process.env.CAMPANA_IMAP_HOST || 'mail.ordenglobal.org';
   const puerto = Number(process.env.CAMPANA_IMAP_PUERTO || 993);
-  const usuario = process.env.CAMPANA_IMAP_USUARIO || 'j.ordonez@ordenglobal.org';
+  const usuario = String(process.env.CAMPANA_IMAP_USUARIO || '').trim();
   const clave = process.env.CAMPANA_IMAP_CLAVE || '';
   if (!clave) throw new Error('Falta CAMPANA_IMAP_CLAVE.');
+  if (!usuario) throw new Error('Falta CAMPANA_IMAP_USUARIO.');
   const imap = new Imap();
   await imap.abrir(host, puerto, espera);
   try {
@@ -279,6 +280,10 @@ let reloj: ReturnType<typeof setTimeout> | null = null;
 export function iniciarRevisionCampana(): string {
   if (reloj) return 'ya estaba en marcha';
   if (!process.env.CAMPANA_IMAP_CLAVE) return 'apagada: falta CAMPANA_IMAP_CLAVE';
+  if (!String(process.env.CAMPANA_IMAP_USUARIO || '').trim()) {
+    console.warn('[AU-RA] CAMPANA_IMAP_USUARIO sin poner: la revisión de la campaña queda apagada. Ponla en Render (dato privado, fuera del repo público).');
+    return 'apagada: falta CAMPANA_IMAP_USUARIO';
+  }
   const programar = () => {
     const cuando = proximaRevision();
     reloj = setTimeout(async () => {

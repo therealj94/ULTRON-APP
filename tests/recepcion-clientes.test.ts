@@ -15,6 +15,7 @@
  *  · el teléfono (mobile/src/lib/recepcionDescriptor.ts) y la web (src/10-infra/recepcion.ts) arman lo que el
  *    servidor entiende; la web renueva su id al cambiar la sesión y lleva el SHA de la página.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';

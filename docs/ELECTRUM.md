@@ -764,7 +764,7 @@ pegado, y con razón: es contexto de *esta* pregunta, no de las anteriores.
 Tres decisiones (`server/electrum/hilo.ts`):
 
 - **Por persona y por canal.** El hilo de la mesa no es el de Telegram aunque sea la misma persona,
-  y el de José nunca es el de Medardo. Mezclarlos hace que el Doctor conteste en la pantalla algo
+  y el de una persona nunca es el de otra. Mezclarlos hace que el Doctor conteste en la pantalla algo
   que se dijo en el teléfono.
 - **Caduca a las seis horas.** Un hilo de anteayer no es contexto, es ruido — y encima ruido con
   nombres de concesionarios adentro.

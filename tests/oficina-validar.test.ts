@@ -4,6 +4,7 @@
  * presupuesto se vuelven a calcular desde lo releído. Aquí también se prueba que la validación SÍ detecta lo malo:
  * un ZIP cortado, un total alterado, una fórmula colada, un párrafo que falta, un enlace de afuera.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
@@ -58,7 +59,7 @@ const CARTA = {
       saludo: 'Estimada señora López:',
       cuerpo: ['Le envío el presupuesto «actualizado» de la ampliación, con el ISV incluido y un descuento del 5 %.', '¿Podríamos reunirnos el lunes para revisarlo? ¡Gracias de antemano!'],
       despedida: 'Atentamente,',
-      firma: ['José Enamorado', 'Orden Global'],
+      firma: ['José Villeda', 'Orden Global'],
     },
   },
 };

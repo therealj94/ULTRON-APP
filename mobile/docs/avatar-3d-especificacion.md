@@ -306,7 +306,7 @@ hueso `head` y la caja del cuerpo.
 ## 13. Los avatares de Codex (perfil «nodos»)
 
 La entrega de Codex (`vendor/aura-avatar-suite`, no se edita desde la app: se consume) trae AU-RA
-(Grafito · Orbe), Claudio (zorro) y ANT-ONIO (hormiga, aprobado por Medardo). Cada GLB tiene 30 clips
+(Grafito · Orbe), Claudio (zorro) y ANT-ONIO (hormiga, aprobado por la junta). Cada GLB tiene 30 clips
 (19 emociones, escuchar, dormir y 9 gestos), una jerarquía de nodos articulados y seis morph targets de
 boca (`open`, `laugh`, `round`, `wide`, `frown`, `closed`). Sin esqueleto con piel, sin ARKit.
 

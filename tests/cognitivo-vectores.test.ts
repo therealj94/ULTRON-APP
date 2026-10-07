@@ -7,6 +7,7 @@
  * con el documento («¿quién tiene el permiso del cerro?» / «titular de la concesión Cerro Azul»)
  * tiene que encontrarlo por significado, y solo por significado.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -96,9 +97,9 @@ test('el cerebro por significado encuentra la línea aunque no comparta palabras
   process.env.EMBED_UMBRAL_CEREBRO = '0.25';
   resetIndicesTest();
   try {
-    const lineas = ['- Fundador: Medardo José Ordóñez.', '- Chain id 5550, Besu QBFT.', '- AUKA = una onza de oro.'];
+    const lineas = ['- Fundador: Ramiro José Herrera.', '- Chain id 5550, Besu QBFT.', '- AUKA = una onza de oro.'];
     const r = await lineasPorSignificado('prueba', lineas, '¿quién arrancó esto?');
-    assert.deepEqual(r, ['- Fundador: Medardo José Ordóñez.']);
+    assert.deepEqual(r, ['- Fundador: Ramiro José Herrera.']);
     // La segunda vez no vuelve a vectorizar las líneas: están en disco y en memoria.
     const antes = t.llamadas.length;
     await lineasPorSignificado('prueba', lineas, '¿quién fundó la empresa?');

@@ -5,6 +5,7 @@
  * - Después de leer un correo o un WhatsApp, AURA no abre direcciones ni usa la computadora por su cuenta.
  * - El motor de pago de la computadora es de la junta.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { _olvidarCargaTest, cargarMemoria, juntarAlmacen, olvidarQuien, recordarTurno, estadoMemoria, type Almacen } from '../lib/memoria';
@@ -71,7 +72,7 @@ test('cuentas de correo: S3 sin leer → agregar una cuenta no borra las otras (
 function borradorDePrueba() {
   const estado = { hay: true, enviados: 0 };
   const base = {
-    quien: 'jose@ordenglobal.org',
+    quien: 'jose.h@ordenglobal.org',
     ambito: 'prueba',
     canal: 'CORREO' as const,
     para: 'beto@ejemplo.com',
@@ -128,9 +129,9 @@ test('harness: lo que devuelve una herramienta no puede pedir otra, y no queda n
 });
 
 test('computadora: el motor de pago es de la junta; a un miembro le corre el gratis', () => {
-  assert.equal(motorDelPerfil('pago', 'jose@ordenglobal.org'), 'claude');
+  assert.equal(motorDelPerfil('pago', 'jose.h@ordenglobal.org'), 'claude');
   assert.equal(motorDelPerfil('pago', 'alguien-de-la-comunidad@ejemplo.com'), 'holo');
-  assert.equal(motorDelPerfil('gratis', 'jose@ordenglobal.org'), 'holo');
+  assert.equal(motorDelPerfil('gratis', 'jose.h@ordenglobal.org'), 'holo');
 });
 
 test('olvidar: si S3 no lo borró, no se dice «borrado» (la copia guardada volvería)', async () => {

@@ -5,6 +5,7 @@
  *
  * Necesita ELECTRUM_DB_URL; sin base, se salta lo que toca la base.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buscarEnExpedientes, cerrarBase, consulta, hayBase, leerSeguido } from '../server/electrum/db';
@@ -15,7 +16,7 @@ import { capasPorRol } from '../server/electrum/entorno';
 import { asegurarOrganizacion, CASA, conOrganizacion, organizacionDePersona, slugOrganizacion } from '../server/electrum/organizacion';
 
 test('de qué organización es cada persona', () => {
-  assert.equal(organizacionDePersona({ id: 'jose', correos: ['jose@ordenglobal.org'] }), CASA);
+  assert.equal(organizacionDePersona({ id: 'jose', correos: ['jose.h@ordenglobal.org'] }), CASA);
   assert.equal(organizacionDePersona({ id: 'tg', correos: [] }), CASA, 'la junta por Telegram, sin correo, es de la casa');
   assert.equal(organizacionDePersona({ id: 'perez', correos: ['perez@mina.hn'], origen: 'web' }), 'mina.hn');
   assert.equal(organizacionDePersona({ id: 'ana', correos: ['ana@gmail.com'], origen: 'web' }), 'persona-ana', 'dos cuentas de gmail no son colegas');
