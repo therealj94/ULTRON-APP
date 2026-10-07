@@ -369,6 +369,7 @@ type cuentaFalsa struct {
 	ids      []string
 	leidos   []string
 	errEnvio error
+	medios   []MediaSaliente
 	alm      *Almacen
 	nombres  map[string]string
 	// Con carpeta (las del registro), «vinculada» es que exista su sesion.db, como la de verdad.
@@ -452,6 +453,21 @@ func (c *cuentaFalsa) VincularCodigo(tel string) (string, error) {
 	c.estado.Vinculando = true
 	return "ABCD-EFGH", nil
 }
+func (c *cuentaFalsa) EnviarMedia(chat string, m MediaSaliente, id string) (Mensaje, error) {
+	if c.errEnvio != nil {
+		return Mensaje{}, c.errEnvio
+	}
+	c.medios = append(c.medios, m)
+	c.ids = append(c.ids, id)
+	if id == "" {
+		id = "M1"
+	}
+	tipo := map[string]string{"imagen": "imagen", "documento": "documento", "audio": "audio", "nota": "audio"}[m.Tipo]
+	msg := Mensaje{ID: id, Chat: chat, Mio: true, Tipo: tipo, Texto: m.Pie, Archivo: m.Nombre, Duracion: m.Segundos, Hora: ahoraMs()}
+	_, _ = c.alm.GuardarMensaje(msg, nil, []byte{1})
+	return msg, nil
+}
+
 func (c *cuentaFalsa) Enviar(chat, texto, id string) (Mensaje, error) {
 	if c.errEnvio != nil {
 		return Mensaje{}, c.errEnvio

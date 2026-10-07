@@ -26,6 +26,7 @@ import { montarRutasCaras } from './server/caras-rutas';
 import { montarRutasVoces } from './server/voces-rutas';
 import { reglaQuienHablaDeTurno } from './lib/voces-miembro';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
+import { arrancarAlertasCorreo, capturarCuerpoAviso, montarRutasAlertas } from './server/alertas-mensajes';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -134,8 +135,8 @@ import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe,
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
-import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
+import { accionIniciativa, bloqueIniciativaTurno, CADA_MS_INICIATIVA, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
 import type { VistaTexto } from './lib/conocer-persona';
@@ -331,7 +332,8 @@ app.use(redirigirADominio);
  * y solo si la petición ya trae su credencial (se mira en las cabeceras, antes de leer el cuerpo).
  * Sin ella, un cuerpo grande se corta con 413 sin llegar a la ruta.
  */
-const leerJson = express.json({ limit: '1mb' });
+// El aviso del puente de WhatsApp (server/alertas-mensajes.ts) se firma sobre el cuerpo TAL CUAL: se guarda solo para esa ruta.
+const leerJson = express.json({ limit: '1mb', verify: capturarCuerpoAviso });
 const leerJsonGrande = express.json({ limit: '12mb' });
 /** AU-RA: turnos con foto o PDF, la visión y el oído (el teléfono manda el audio dos veces, en base64). */
 const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt', '/api/voces/aprender'];
@@ -1628,6 +1630,8 @@ alAvisarApp((quien, aviso, aparato) => {
 });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+// A-6: el puente avisa cada WhatsApp nuevo (firmado) y la persona marca sus contactos importantes.
+montarRutasAlertas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Lo que AU-RA propone por su cuenta y las misiones de cada persona (server/iniciativa.ts).
 // UN adaptador de contadores (correo y WhatsApp de cada quien, server/fuentes-iniciativa.ts) para las rutas y para
 // el reloj: lo que se ve al pensar una propuesta y al revalidarla antes de mostrarla o avisarla sale de lo mismo.
@@ -1668,7 +1672,7 @@ montarRutasTrabajos(app, {
         return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: r.borrador.para, desde: r.borrador.desde, asunto: r.borrador.asunto, texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
       }
       const r = editarBorradorWhatsapp(correo, ambito, intento, huella, cambios);
-      return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: destinoWhatsapp(r.borrador), texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
+      return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: destinoWhatsapp(r.borrador), texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella, ...(r.borrador.media ? { adjunto: descripcionMedia(r.borrador) } : {}) } };
     },
   },
   // Lo que propuso el taller de la junta (revisión 10, MEDIO-C): lo aprueba la misma cuenta, si sigue en la junta y el
@@ -4258,7 +4262,7 @@ async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambit
   const w = borradorWhatsappDe(dueno, ambito);
   // La tarjeta dice a quién va de verdad (WhatsApp: el nombre Y el número del chat) y queda atada a la huella del borrador.
   if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella }, (i) => i !== intento && !!borradorCorreoPorIntento(dueno, ambito, i));
-  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella }, (i) => i !== intento && !!borradorWhatsappPorIntento(dueno, ambito, i));
+  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella, ...(w.media ? { adjunto: descripcionMedia(w) } : {}) }, (i) => i !== intento && !!borradorWhatsappPorIntento(dueno, ambito, i));
   return r;
 }
 
@@ -6684,6 +6688,8 @@ async function startServer() {
         },
         nivelDe: (c) => nivelDeCorreo(c),
       });
+      // A-6: los correos importantes también avisan (a la misma gente y con la misma cadencia de 30 minutos).
+      arrancarAlertasCorreo({ personas: () => personasRecientes(), cadaMs: CADA_MS_INICIATIVA });
     }
   });
 }

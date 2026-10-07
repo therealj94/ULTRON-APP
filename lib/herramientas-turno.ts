@@ -58,9 +58,13 @@ const GRUPOS: Record<string, readonly string[]> = {
   app: ['abrir_pantalla', 'ajustar_app'],
   idioma: ['cambiar_idioma'],
   chats: ['chat_aura', 'leer_mensajes', 'buscar_en_chats'],
-  whatsapp: ['whatsapp', 'ordenar_mensajes'],
-  correo: ['correo', 'ordenar_mensajes'],
-  mensajes: ['chat_aura', 'leer_mensajes', 'buscar_en_chats', 'whatsapp', 'correo', 'circulo', 'ordenar_mensajes'],
+  whatsapp: ['whatsapp', 'ordenar_mensajes', 'contactos_vip'],
+  correo: ['correo', 'ordenar_mensajes', 'contactos_vip'],
+  mensajes: ['chat_aura', 'leer_mensajes', 'buscar_en_chats', 'whatsapp', 'correo', 'circulo', 'ordenar_mensajes', 'contactos_vip'],
+  // A-5 / M-12: leer un adjunto o un archivo, mandar una nota de voz o un archivo (por WhatsApp o del correo).
+  archivos: ['whatsapp', 'correo'],
+  // A-6: su lista de contactos importantes (los avisos de mensajes).
+  vip: ['contactos_vip', 'whatsapp', 'correo'],
   pendientes: ['ordenar_mensajes', 'tarea', 'mision'],
   llamada: ['llamar_contacto', 'llamarme', 'circulo'],
   recordatorio: ['recordatorio', 'llamarme'],
@@ -94,6 +98,11 @@ const PIDE: Array<[string, RegExp]> = [
     /\b(mensaje\w*|chat\w*|escrib\w*|mand(a|e|o|ar|ale|ales|alo|ala|amelo|aselo|aselos|enle)\b|envi(a|e|o|ar|ale|ales|alo|amelo|aselo)\b|respond\w*|contest\w*|reenvi\w*|redact\w*|borrador\w*|dile|diles|decile|digale|dig(a|o)le|avisa(le|les)|preguntale|recado|textea\w*|novedad\w*|(me|te|le) (escribio|mando|contesto|respondio|dijo)|que (me|te) (dijo|dice|escribio|mando)|leeme|lee(r)? (mis|el|los|lo)|revisa(r)? (mis|el|los|lo)|send|reply|text me|message)\b/,
   ],
   ['pendientes', /\b(pendiente\w*|que tengo (hoy|para hoy|manana)|que me falta)\b/],
+  [
+    'archivos',
+    /\b(adjunt\w*|anexo\w*|attachment\w*|nota(s)? de voz|audio(s)?|reenvi\w*|el (pdf|archivo|documento|excel|word) que me (mando|mandaron|envio|enviaron|llego)|que dice (el|la) (pdf|archivo|documento|nota|foto))\b/,
+  ],
+  ['vip', /\b(vip|contactos? importantes?|avisame (cuando|si) (me )?(escrib\w*|mand\w*)|marca(lo|la|r)? (a \w+ )?como importante|mis importantes)\b/],
   ['llamada', /\b(llam(a|ame|ale|alo|ala|ar|arle|arme|e|en|ada|adas|amos)|marc(a|ame|ale|ar|arle)|marques|telefone\w*|timbr\w*|videollamad\w*|call me|call)\b/],
   [
     'recordatorio',

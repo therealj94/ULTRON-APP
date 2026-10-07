@@ -37,3 +37,6 @@ data/voces/
 data/modelos-voz/
 # Los archivos de oficina que genera AU-RA sin S3 (lib/oficina/almacen.ts): documentos privados de cada cuenta.
 data/documentos/
+# De quién es cada cuenta del puente de WhatsApp y los contactos importantes de cada persona (A-6): datos privados.
+data/whatsapp-duenos/
+data/vip-mensajes/
