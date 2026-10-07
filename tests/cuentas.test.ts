@@ -15,7 +15,6 @@ process.env.CUENTAS_DB_URL = process.env.CUENTAS_DB_URL || process.env.ELECTRUM_
 process.env.AWS_ACCESS_KEY_ID = 'AKIAPRUEBA000000000';
 process.env.AWS_SECRET_ACCESS_KEY = 'secreto-de-prueba';
 process.env.ULTRON_SESION_SECRETO = process.env.ULTRON_SESION_SECRETO || 'secreto-de-sesion-para-pruebas-largo-1234';
-delete process.env.CUENTAS_APROBADOR;
 delete process.env.CUENTAS_ORIGEN;
 delete process.env.PUBLIC_BASE;
 
