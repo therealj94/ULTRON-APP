@@ -45,6 +45,33 @@ Este documento dice qué ve la persona, qué hace cada pieza y **qué hay que de
    AURA dice el resultado en voz.
 7. **Historial.** Abajo están sus misiones recientes (hasta 10). Al tocar una se abre su tarjeta, aunque la instancia ya haya olvidado la tarea (la olvida tras una hora).
 
+## La tarjeta de la tarea y la computadora apagada (7-oct)
+
+José: «no me ha convencido», ni cómo funciona ni cómo se ve. Las capturas del banco (`scripts/qa/computadora-movil`) mostraban:
+- «● en vivo» encima de la captura del último paso, aunque no llegaran noticias;
+- la ruedita de «En fila» y la frase de AURA girando junto a «no me llega lo que hace»;
+- su sí y los mandos fuera de la vista;
+- el resultado debajo del plan;
+- la imagen más ancha que su tarjeta.
+
+Ahora la hoja es una tarjeta, en este orden:
+1. La etiqueta de ESTA tarea (Trabajando, En fila, Espera tu sí, En pausa, Tienes el control, Sin noticias, o cómo terminó) y el tiempo.
+2. La misión y «Ahora: …».
+3. Su sí, arriba de todo y con botones grandes.
+4. La pantalla: la de ahora (`GET …/pantalla?ancho=640` cada 2 s mientras AURA trabaja). Lleva «EN VIVO» solo si tiene menos de 5 s y llegan noticias; si no, dice lo que es («Paso 4», «Imagen de hace 9 s»). Al tocarla, se abre el visor completo o la imagen en grande.
+5. Pausar / Tomar el control.
+6. Al terminar, el resultado primero, con la **evidencia** (la pantalla al terminar, que se abre en grande) y «Pedir otra vez» si falló.
+7. El plan y los pasos.
+
+Sin noticias no hay ruedita ni «en vivo», ni se ofrecen Pausar o Tomar el control, que fallarían. La tarjeta dice desde cuándo no llega nada y que no se sabe si la tarea sigue. Detener sigue fijo abajo. La lógica pura está en `compa/computadora.ts` (`fotoPc`, `chipPc`, `pasoAhoraPc`, `avisoSinNoticias`) y la prueban `tests/computadora-tarjeta.test.ts`.
+
+**Apagada para ahorrar.** Encargar a un nodo que no contesta antes esperaba dos plazos de 15 s más el reintento (medio minuto de voz callada). Ahora:
+- si la conexión falla y su `/salud` tampoco contesta (3 s), lo dice al momento y no encarga nada: «Tu computadora no contesta ahora (puede estar apagada para ahorrar o caída)»;
+- durante 90 s después de una caída, cada encargo mira primero su salud y no manda el pedido a un nodo mudo;
+- la app recibe 503 con `code: 'apagada'`, y la hoja quita el campo de encargar y lo explica.
+
+Lo prueba `tests/computadora-apagada.test.ts`.
+
 ## Robustez
 
 | Situación | Qué pasa |
@@ -255,3 +282,5 @@ Variables opcionales en `/etc/computadora.env`:
 - `npx tsx --test tests/computadora.test.ts tests/acciones-app.test.ts`: el servidor contra un nodo falso como el agente.py nuevo (y como el viejo).
 - `npx tsx --test tests/visor-computadora.test.ts`: el visor, sin teléfono. Prueba la capa de coordenadas (zoom, pan, rotación y teclado), los gestos, el teclado (IME y combinaciones, con la misma lista que el servidor), la frescura y la sesión (secuencia, ACK y que nada se reproduzca al reconectar).
 - `cd mobile && npx tsx src/compa/pruebas/compa.prueba.mjs` y `npx tsx pruebas/mesa/mesa.prueba.mjs`: la lógica y la vista de la app.
+- `npx tsx --test tests/computadora-tarjeta.test.ts tests/computadora-apagada.test.ts`: la tarjeta (qué se dice y cuándo «en vivo») y la computadora apagada.
+- `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node scripts/qa/computadora-movil/capturas.mjs <salida>`: la hoja real con react-native-web en Chromium, a 360 y 412 de ancho, en cada momento de una tarea (apagada, lista, en fila, trabajando, su sí, con el control, terminada, fallida, sin noticias). Mide que los mandos queden dentro y midan 44 px o más.
