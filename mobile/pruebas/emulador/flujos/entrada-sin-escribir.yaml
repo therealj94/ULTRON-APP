@@ -1,0 +1,23 @@
+# Sin cuenta de prueba: comprobar que el camino de la entrada existe, SIN escribir nada. «Otras formas de entrar» →
+# «Otra cuenta» → el campo del correo y el de la clave a la vista. Es el mismo camino que entrar-correo.yaml.
+appId: link.ordenglobal.ultronfp
+name: Llegar al formulario de correo y clave sin escribir
+---
+- runFlow: abrir.yaml
+- scrollUntilVisible:
+    element: "Otras formas de entrar"
+    direction: DOWN
+    timeout: 20000
+- tapOn: "Otras formas de entrar"
+- extendedWaitUntil:
+    visible: "Otra cuenta"
+    timeout: 20000
+- tapOn: "Otra cuenta"
+- extendedWaitUntil:
+    visible: "correo@ordenglobal.org"
+    timeout: 20000
+- assertVisible:
+    text: "Clave"
+    index: 1
+- assertVisible: "Entrar"
+- assertVisible: "Entrar solo al escritorio"

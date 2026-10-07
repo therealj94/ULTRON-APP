@@ -6,6 +6,11 @@ appId: link.ordenglobal.ultronfp
 name: Entrar con la cuenta de prueba (correo)
 ---
 - runFlow: abrir.yaml
+# «Otras formas de entrar» va al pie de la pantalla de Genesis ID, debajo del formulario de Veta Wallet.
+- scrollUntilVisible:
+    element: "Otras formas de entrar"
+    direction: DOWN
+    timeout: 20000
 - tapOn: "Otras formas de entrar"
 - extendedWaitUntil:
     visible: "Otra cuenta"

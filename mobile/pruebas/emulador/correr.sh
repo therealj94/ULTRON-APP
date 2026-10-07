@@ -234,21 +234,36 @@ sleep 2
 lanzar
 sleep 20
 captura "segundo-arranque"
-OTA_VISTA="no"
-if [ -n "${OTA_ESPERADA:-}" ] && grep -qi "$OTA_ESPERADA" "$LOGCAT"; then OTA_VISTA="sí"; fi
+# La actualización que la app guardó y carga (expo-updates: «Stored update found: ID = …»), frente a la publicada.
+OTA_CARGADA=$(grep -oE 'Stored update found: ID = [0-9a-fA-F-]+' "$LOGCAT" | tail -n 1 | awk '{print $NF}')
+if [ -z "$OTA_CARGADA" ]; then
+  OTA_VISTA="no (la app sigue con el JS de la APK)"
+elif [ -n "${OTA_ESPERADA:-}" ] && [ "$(echo "$OTA_CARGADA" | tr 'A-F' 'a-f')" = "$(echo "$OTA_ESPERADA" | tr 'A-F' 'a-f')" ]; then
+  OTA_VISTA="sí, la publicada ($OTA_CARGADA)"
+else
+  OTA_VISTA="otra: $OTA_CARGADA"
+fi
 
 ANTES=$(cierres)
 if maestro_flujo "abrir" no abrir.yaml && enfocada; then
   captura "entrada"
-  registrar "0 · La app abre (sin cuenta)" PASA "Abre, trae la OTA y llega a la entrada. OTA esperada: ${OTA_ESPERADA:-(sin ficha)}; vista en el logcat: $OTA_VISTA. Cierres: $(( $(cierres) - ANTES ))."
+  registrar "0 · La app abre (sin cuenta)" PASA "Abre y llega a la entrada. OTA publicada: ${OTA_ESPERADA:-(sin ficha)}; la que carga la app: $OTA_VISTA. Cierres: $(( $(cierres) - ANTES ))."
 else
   captura "entrada-fallo"
-  registrar "0 · La app abre (sin cuenta)" FALLA "No llegó a la entrada (o la app no está delante). Cierres en el logcat: $(cierres)."
+  registrar "0 · La app abre (sin cuenta)" FALLA "No llegó a la entrada (o la app no está delante). OTA que carga: $OTA_VISTA. Cierres en el logcat: $(cierres)."
 fi
 
 # ── sin cuenta segura: lo que necesita entrar se salta, diciendo por qué ─────────────────────────────────────
 
 if [ "${CUENTA_SEGURA:-false}" != "true" ]; then
+  # Lo que sí se puede sin cuenta: llegar al formulario de correo y clave (sin escribir nada).
+  if maestro_flujo "entrada-sin-escribir" no entrada-sin-escribir.yaml; then
+    captura "formulario-de-entrada"
+    registrar "0 · El formulario de correo y clave (sin escribir)" PASA "«Otras formas de entrar» → «Otra cuenta»: el campo del correo, el de la clave y «Entrar» están donde los busca la entrada con cuenta."
+  else
+    captura "formulario-de-entrada-fallo"
+    registrar "0 · El formulario de correo y clave (sin escribir)" FALLA "No se llegó al formulario de correo y clave (ver datos/maestro-*-entrada-sin-escribir.log)."
+  fi
   MOTIVO="${CUENTA_MOTIVO:-Faltan los secretos AURA_PRUEBA_CORREO / AURA_PRUEBA_CLAVE.}"
   for e in "1 · Abre, entra y la mesa se ve" "2 · Cambiar a Claudio pide confirmación" "3 · La misma pregunta dos veces" "4 · «¿me oyes?» no se come la pregunta" "5 · La cámara aguanta 20 s"; do
     registrar "$e" OMITIDO "Sin cuenta de prueba segura: $MOTIVO"

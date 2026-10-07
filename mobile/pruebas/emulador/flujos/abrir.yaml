@@ -12,5 +12,5 @@ name: Abrir AU-RA hasta la entrada
     commands:
       - tapOn: "Saltar"
 - extendedWaitUntil:
-    visible: "Otras formas de entrar|Mensaje|Más opciones.*"
+    visible: "Entra con tu identidad|Otras formas de entrar|Mensaje|Más opciones.*"
     timeout: 30000
