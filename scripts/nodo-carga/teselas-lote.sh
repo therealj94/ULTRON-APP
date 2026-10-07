@@ -201,7 +201,8 @@ echo "  listos en ${SAL}: $(find "$SAL" -maxdepth 1 -name '*.pmtiles' | wc -l) a
 # ── 4 ──────────────────────────────────────────────────────────────────────────────────────────
 if [ "$PUBLICAR" != 1 ]; then
   echo
-  echo "No publiqué nada. Para que aparezcan en el mapa:  teselas-lote ${LOTE} $(printf -- '--mosaico "%s" ' "${MOSAICOS[@]}")--publicar"
+  OPC=""; for c in "${MOSAICOS[@]}"; do OPC+="--mosaico \"${c}\" "; done
+  echo "No publiqué nada. Para que aparezcan en el mapa:  teselas-lote \"${LOTE}\" ${OPC}--publicar"
   exit 0
 fi
 

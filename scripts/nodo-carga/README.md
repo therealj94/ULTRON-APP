@@ -60,8 +60,7 @@ Lo que se aparta a propósito, y qué hacer con ello:
 
 - **Shapefiles de más de 300 MB**: el cargador los lee enteros en memoria. Si son catastro, partirlos con
   `ogr2ogr`; si son relieve o curvas de nivel, van como teselas.
-- **Rásteres** (`.tif`, `.ecw`, `.jp2`, `.img`…): no van a la base. Se convierten a PMTiles y se publican en
-  `biblioteca/teselas/` (ver `server/electrum/teselas.ts`).
+- **Rásteres** (`.tif`, `.ecw`, `.jp2`, `.img`…): no van a la base. Los convierte `teselas-lote` (abajo).
 - **Comprimidos rotos o con clave**.
 
 ## Antes de cargar 26 GB, mirar
@@ -85,3 +84,22 @@ Lo que se aparta a propósito, y qué hacer con ello:
 
 La clave de la base no se guarda en el nodo: se teclea en cada carga, o va en `ELECTRUM_CLAVE_DB` solo para
 esa terminal.
+
+## Rásteres → teselas del mapa (`teselas-lote`)
+
+Las hojas cartográficas y los mapas georreferenciados no van a la base: se convierten en PMTiles y salen como
+capas del mapa de Dr Electrum, igual que los de JICA y Sentinel-2.
+
+```bash
+teselas-lote lote-1                                      # convierte y deja todo en /datos/lote-1/teselas
+teselas-lote lote-1 --mosaico "HOJAS CARTOGRAFICAS"      # las hojas de esa carpeta, cosidas en una capa
+teselas-lote lote-1 --mosaico "HOJAS CARTOGRAFICAS" --publicar
+```
+
+- Aparta (con la razón, en `informe/teselas-apartados.txt`) lo que no tiene georreferencia y lo que no es imagen
+  de 8 bits, como un modelo de elevación.
+- Web Mercator, WebP, hasta zoom 15 (`ZOOM_MAX`). Una hoja 1606 de 0,5 GB quedó en 209 MB, zoom 9 a 15.
+- `--publicar` sube a `biblioteca/teselas/` y **fusiona** `indice.json`: lo que ya estaba se queda y antes se guarda
+  `indice.antes-<fecha>.json` en el cubo para volver atrás. Dr Electrum relee el índice cada 5 minutos.
+- Ojo: `biblioteca/` está bajo la regla de 60 días del cubo de trasvase (ver arriba). Sin cambiarla, las teselas
+  publicadas, incluidas las de JICA y Sentinel-2 del 28-sep, desaparecen a los 60 días.
