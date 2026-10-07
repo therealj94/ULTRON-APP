@@ -87,12 +87,12 @@ export const ESCENAS: readonly Escena[] = [
   {
     id: 'mesa',
     titulo: { es: 'La mesa', en: 'The desk' },
-    fuente: 'components/BarraMesa.tsx (Chat · Hablar · Más) · components/HojaMas.tsx (la hoja «Más»)',
+    fuente: 'components/BarraMesa.tsx (Mensajes · Hablar · Más) · components/HojaMas.tsx (la hoja «Más»)',
     pasos: ['barra', 'hablar', 'chat', 'mas', 'hoja'],
     lineas: [
       { quien: A, paso: 'barra', gesto: 'senalar', texto: { es: 'Empecemos por la mesa, la pantalla principal. Abajo hay solo tres botones.', en: 'Let’s start with the desk, the main screen. There are just three buttons at the bottom.' } },
       { quien: C, paso: 'hablar', emocion: 'curioso', texto: { es: 'El grande del centro es Hablar: AU-RA te oye siempre, sin palabra clave. Un toque la silencia; otro, y vuelve.', en: 'The big one in the middle is Talk: AU-RA always hears you, no wake word. One tap mutes her; another brings her back.' } },
-      { quien: A, paso: 'chat', gesto: 'senalar', texto: { es: 'El de la izquierda es Chat: tus conversaciones de PULSE2CHAT, tu WhatsApp y tus correos.', en: 'The one on the left is Chat: your PULSE2CHAT conversations, your WhatsApp and your email.' } },
+      { quien: A, paso: 'chat', gesto: 'senalar', texto: { es: 'El de la izquierda es Mensajes: tus conversaciones de PULSE2CHAT, tu WhatsApp y tus correos. Para escribirle a tu avatar, «Escríbele…», justo encima.', en: 'The one on the left is Messages: your PULSE2CHAT conversations, your WhatsApp and your email. To write to your avatar, «Write to…», right above.' } },
       {
         quien: C,
         paso: 'mas',
@@ -183,7 +183,7 @@ export const ESCENAS: readonly Escena[] = [
     fuente: 'pulse/* (PULSE2CHAT) · lib/manos-app.ts (leer, buscar) · lib/acciones-app.ts (redactar, enviar solo tras el «sí»)',
     pasos: ['lee', 'borrador', 'enviado'],
     lineas: [
-      { quien: A, paso: 'lee', texto: { es: 'Tus mensajes de PULSE2CHAT están en el botón Chat. Y ella te ayuda: pregúntale, ¿qué me dijo Beto?', en: 'Your PULSE2CHAT messages are under the Chat button. And she helps: ask her, what did Beto say?' } },
+      { quien: A, paso: 'lee', texto: { es: 'Tus mensajes de PULSE2CHAT están en el botón Mensajes. Y ella te ayuda: pregúntale, ¿qué me dijo Beto?', en: 'Your PULSE2CHAT messages are under the Messages button. And she helps: ask her, what did Beto say?' } },
       { quien: C, emocion: 'curioso', texto: { es: 'Te lo lee: ¿llegas a la reunión de las tres?', en: 'She reads it to you: are you coming to the three o’clock meeting?' } },
       {
         quien: A,

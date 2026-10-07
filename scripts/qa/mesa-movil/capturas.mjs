@@ -46,6 +46,10 @@ const ESCENAS = [
   ['barra-412', '?p=barra', 412, 915],
   ['barra-360-letra-grande', '?p=barra&escala=1.6', 360, 780],
   ['barra-en-vivo-360', '?p=vivo', 360, 780],
+  // Acostado (auditoría visual del 7-oct, C1): el riel de la derecha en vez de la barra que tapaba la cara.
+  ['barra-apaisada', '?p=barra', 915, 412],
+  ['barra-apaisada-360', '?p=barra', 780, 360],
+  ['barra-apaisada-letra-1.6', '?p=barra&escala=1.6', 915, 412],
   ['mas-360', '?p=mas', 360, 780],
   ['mas-412-letra-grande', '?p=mas&escala=1.6', 412, 915],
   // La hoja «Más» (José: en su Samsung las tarjetas salían apiladas): letra 1.0, 1.3 y 2.0; 360/412; acostado.
@@ -110,9 +114,11 @@ for (const [nombre, qs, w, h] of ESCENAS) {
   const botones = await pag.evaluate(() =>
     [...document.querySelectorAll('[aria-label]')]
       .map((e) => ({ l: e.getAttribute('aria-label'), r: e.getBoundingClientRect() }))
-      .filter((b) => /Abrir tus chats|micrófono|Más opciones/.test(b.l || ''))
-      .map((b) => ({ l: b.l.slice(0, 28), x: Math.round(b.r.left), d: Math.round(b.r.right), alto: Math.round(b.r.height) }))
+      .filter((b) => /^Mensajes:|micrófono|Más opciones/.test(b.l || ''))
+      .map((b) => ({ l: b.l.slice(0, 28), x: Math.round(b.r.left), d: Math.round(b.r.right), arriba: Math.round(b.r.top), abajo: Math.round(b.r.bottom), alto: Math.round(b.r.height) }))
   );
+  // Acostado, el riel entero dentro del alto de la pantalla (nada cortado arriba ni abajo).
+  if (w > h) for (const b of botones) if (b.arriba < 0 || b.abajo > h) b.d = w + 1;
   // En la llamada del avatar: cada botón (rechazar, contestar, silenciar, altavoz, minimizar, colgar, la píldora) dentro y de 48 px o más.
   if (qs.includes('p=llamada')) {
     const deLlamada = await pag.evaluate(() =>
@@ -129,7 +135,7 @@ for (const [nombre, qs, w, h] of ESCENAS) {
   if (qs.includes('p=mas')) {
     const t = await pag.evaluate(() => {
       const tarjetas = [...document.querySelectorAll('[aria-label]')]
-        .filter((e) => /^(Conversar|Que |Colgar|Escribir|Cámara|Caras|Avatar|Modo |Qué puedo|Ajustes|Chats)/.test(e.getAttribute('aria-label') || '') && e.getAttribute('aria-label').includes('. '))
+        .filter((e) => /^(Conversar|Que |Colgar|Escribir|Cámara|Caras|Avatar|Modo |Qué puedo|Ajustes|Chats|Mensajes)/.test(e.getAttribute('aria-label') || '') && e.getAttribute('aria-label').includes('. '))
         .map((e) => {
           const r = e.getBoundingClientRect();
           let p = e.parentElement;

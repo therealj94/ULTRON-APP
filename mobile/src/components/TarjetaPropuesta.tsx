@@ -101,11 +101,11 @@ const s = StyleSheet.create({
   cerrarTexto: { color: T.texto2, fontSize: 12 },
   texto: { color: '#F2EEE8', fontSize: 15.5, lineHeight: 22, fontWeight: '500' },
   botones: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' },
-  // minHeight 44: el mínimo cómodo para un dedo.
-  boton: { minHeight: 44, paddingHorizontal: 18, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  // minHeight 48: el mínimo de Android para un dedo (auditoría visual del 7-oct).
+  boton: { minHeight: 48, paddingHorizontal: 18, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
   contorno: { borderWidth: 1.5, backgroundColor: 'transparent' },
   botonTexto: { fontSize: 14.5, fontWeight: '800' },
-  botonNo: { minHeight: 44, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  botonNo: { minHeight: 48, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
   botonNoTexto: { color: T.texto2, fontSize: 14.5, fontWeight: '700' },
   hundido: { opacity: 0.8, transform: [{ scale: 0.97 }] },
 });

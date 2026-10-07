@@ -40,6 +40,8 @@ const ESPERA_LISTO_MS = 10_000;
 /** El orbe no necesita más de ~15 niveles por segundo, y cada envío cruza el puente. */
 const BOCA_CADA_MS = 66;
 const FONDO = '#05070C';
+/** El fondo del orbe: acostado, detrás del riel de la mesa, para que no quede una franja de otro color. */
+export const FONDO_ORBE = FONDO;
 
 /**
  * El orbe con sus opciones ya puestas DENTRO de la página: sin barra ni panel de prueba, sin voz propia
