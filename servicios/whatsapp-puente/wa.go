@@ -49,9 +49,12 @@ type CuentaWA struct {
 	web        *http.Client
 	fin        chan struct{} // se cierra al cerrar la cuenta (se fue o se apaga el puente): el ordenador termina
 	cerrar     sync.Once
+	// Cada mensaje NUEVO de otra persona que llega en vivo (aviso.go: se le avisa al servidor de AU-RA). nil: nada.
+	// Se fija al crear la cuenta y no cambia (el manejador de eventos lo lee sin candado).
+	alLlegar func(m Mensaje, grupo bool, nombreChat string)
 }
 
-func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almacen, log waLog.Logger) (*CuentaWA, error) {
+func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almacen, log waLog.Logger, alLlegar func(Mensaje, bool, string)) (*CuentaWA, error) {
 	// Así se ve en «Dispositivos vinculados» del teléfono.
 	store.SetOSInfo("AU-RA", [3]uint32{1, 0, 0})
 	cont, err := sqlstore.New(ctx, "sqlite3", "file:"+rutaSesion+"?_foreign_keys=on&_busy_timeout=5000", soloAvisos(log.Sub("sesion")))
@@ -62,7 +65,7 @@ func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almace
 	if err != nil {
 		return nil, err
 	}
-	c := &CuentaWA{contenedor: cont, alm: alm, log: log, orden: make(chan struct{}, 1), fin: make(chan struct{}), web: &http.Client{Timeout: 15 * time.Second}}
+	c := &CuentaWA{contenedor: cont, alm: alm, log: log, orden: make(chan struct{}, 1), fin: make(chan struct{}), web: &http.Client{Timeout: 15 * time.Second}, alLlegar: alLlegar}
 	c.fotos = NuevaCacheFotos(dirFotos, c.traerFoto)
 	c.usar(dev)
 	go c.ordenador()
@@ -776,6 +779,11 @@ func (c *CuentaWA) guardar(ev *events.Message, vivo bool) {
 			_ = c.alm.FijarNoLeidos(chat, 0)
 		} else {
 			_ = c.alm.SumarNoLeido(chat)
+		}
+		// Lo nuevo de otra persona se le avisa al servidor de AU-RA (aviso.go): él decide si es importante.
+		if c.alLlegar != nil && debeAvisar(m, vivo, time.Now()) {
+			m.Chat = c.alm.resolver(m.Chat)
+			c.alLlegar(m, grupo, nombreChat)
 		}
 	}
 }

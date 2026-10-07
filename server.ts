@@ -24,8 +24,10 @@ import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, ol
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
 import { montarRutasVoces } from './server/voces-rutas';
-import { reglaQuienHablaDeTurno } from './lib/voces-miembro';
-import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
+import { migrarVocesAlSobre, reglaQuienHablaDeTurno } from './lib/voces-miembro';
+import { migrarCarasAlSobre } from './lib/caras-miembro';
+import { avisarComputadoraPorPush, avisarPush, enviarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
+import { arrancarAlertasCorreo, capturarCuerpoAviso, montarRutasAlertas } from './server/alertas-mensajes';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -84,6 +86,10 @@ import {
   type Propuesta,
   type EventoAccion,
 } from './lib/acciones-app';
+import { conRidServidor, contextoConRecordatorios, datosPushRecordatorio, efectoServidorDeAccion, precargarRecordatorios, RelojRecordatorios } from './lib/recordatorios-servidor';
+import { montarRutasRecordatorios } from './server/recordatorios-rutas';
+import { resolverMarcar } from './server/marcar';
+import { dichoSinContacto, preguntaCualMarcar, type ResolucionMarcar } from './lib/marcar';
 import { detectarIdioma } from './lib/idioma-detectar';
 import { mismoTextoBorrador, propuestaDeEnvio } from './lib/borrador-propuesto';
 import { anotarEfectoReal, efectosRecientes, guardaDeHonestidad, motivosDeHonestidad, promesaSinCumplir, recibosDeAcciones, recibosDePasos, sinLoRespaldado, trozoAfirmaHecho, trozoPrometeAccion, type ContextoHonestidad, type ReciboEfecto } from './lib/honestidad';
@@ -104,9 +110,10 @@ import {
   nuevoContextoTrabajos,
 } from './server/trabajos';
 import { correrDocumento, montarRutasDocumentos } from './server/documentos';
+import { avisosCalendario, correrCalendarioConEstado, montarRutasCalendario, propuestaEventoDe } from './server/calendario';
 import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
 import { trozoPromete, trozoPrometeUOfrece, vigilarPromesas, type PasoVigilado } from './lib/promesas';
-import { vezDelEvento } from './lib/envios';
+import { primeraVezEvento, vezDelEvento } from './lib/envios';
 import { respuestaFija } from './lib/respuestas-fijas';
 import {
   alAvisarApp,
@@ -134,8 +141,8 @@ import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe,
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
-import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
+import { accionIniciativa, bloqueIniciativaTurno, CADA_MS_INICIATIVA, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
 import type { VistaTexto } from './lib/conocer-persona';
@@ -331,7 +338,8 @@ app.use(redirigirADominio);
  * y solo si la petición ya trae su credencial (se mira en las cabeceras, antes de leer el cuerpo).
  * Sin ella, un cuerpo grande se corta con 413 sin llegar a la ruta.
  */
-const leerJson = express.json({ limit: '1mb' });
+// El aviso del puente de WhatsApp (server/alertas-mensajes.ts) se firma sobre el cuerpo TAL CUAL: se guarda solo para esa ruta.
+const leerJson = express.json({ limit: '1mb', verify: capturarCuerpoAviso });
 const leerJsonGrande = express.json({ limit: '12mb' });
 /** AU-RA: turnos con foto o PDF, la visión y el oído (el teléfono manda el audio dos veces, en base64). */
 const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt', '/api/voces/aprender'];
@@ -1627,7 +1635,11 @@ alAvisarApp((quien, aviso, aparato) => {
   return n;
 });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+// Su calendario (Microsoft y Google) desde el teléfono: conectar, ver el día y lo que crea AU-RA con su «sí».
+montarRutasCalendario(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+// A-6: el puente avisa cada WhatsApp nuevo (firmado) y la persona marca sus contactos importantes.
+montarRutasAlertas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Lo que AU-RA propone por su cuenta y las misiones de cada persona (server/iniciativa.ts).
 // UN adaptador de contadores (correo y WhatsApp de cada quien, server/fuentes-iniciativa.ts) para las rutas y para
 // el reloj: lo que se ve al pensar una propuesta y al revalidarla antes de mostrarla o avisarla sale de lo mismo.
@@ -1668,7 +1680,7 @@ montarRutasTrabajos(app, {
         return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: r.borrador.para, desde: r.borrador.desde, asunto: r.borrador.asunto, texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
       }
       const r = editarBorradorWhatsapp(correo, ambito, intento, huella, cambios);
-      return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: destinoWhatsapp(r.borrador), texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
+      return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: destinoWhatsapp(r.borrador), texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella, ...(r.borrador.media ? { adjunto: descripcionMedia(r.borrador) } : {}) } };
     },
   },
   // Lo que propuso el taller de la junta (revisión 10, MEDIO-C): lo aprueba la misma cuenta, si sigue en la junta y el
@@ -1707,6 +1719,8 @@ montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
 montarRutasVoces(app, { exigirMesa, limitar, sesionDe });
 // Avisos al teléfono con la app cerrada (FCM): registrar el token, quitarlo, probar y estado (server/push.ts).
 montarRutasPush(app, { exigirMesa, limitar, sesionDe });
+// Sus recordatorios en el servidor (A-3): la lista, crear, cambiar, borrar y marcar hecho (lib/recordatorios-servidor.ts).
+montarRutasRecordatorios(app, { exigirMesa, limitar, sesionDe });
 
 // AURA para Windows (el .exe): Laya «windows» del nodo. Cerebro, voz y oído son las rutas de siempre.
 montarRutasWindows(app, { exigirMesa, limitar });
@@ -2874,7 +2888,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const mando = !miembro && !opciones.soloConsulta && puedeCambiarSistema(verificado);
   // Lo de la app (contexto, borrador y propuesta que esperan el «sí») es de este aparato, no de la cuenta.
   const ambito = correoApp ? ambitoApp(correoApp, body?.aparato) : '';
-  const contextoApp: ContextoApp | null = correoApp ? contextoDe(ambito) : null;
+  // Con sus recordatorios del servidor (A-3): AU-RA los dice y los cancela por voz igual que los del teléfono.
+  if (correoApp) precargarRecordatorios(correoApp);
+  const contextoApp: ContextoApp | null = correoApp ? contextoConRecordatorios(contextoDe(ambito), correoApp) : null;
   // Las reglas de la app solo se le enseñan al modelo si el turno viene de la app (o la voz) y hay un
   // teléfono que pueda hacerlas. Lo que el modelo pida en un turno de la web no llega al teléfono.
   const conApp = !!correoApp && turnoDeLaApp(body, opciones) && (!!contextoApp || oyentesDe(correoApp) > 0);
@@ -2997,6 +3013,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const ambitoTurno = ambitoDelTurno(body, opciones);
   // Lo que un envío confirmado en la voz terminó después de contestar (el resultado real, una vez).
   if (duenoComputadora) hechos.push(...avisosDeEnvio(duenoComputadora, ambitoTurno));
+  // Lo mismo con el evento que su «sí» hablado mandó crear en su calendario (el recibo real de la API, una vez).
+  if (duenoComputadora) hechos.push(...avisosCalendario(duenoComputadora, ambitoTurno));
   // Novena ronda: lo de la app que no salió al confirmar el turno de voz (cambió lo que esperaba): una vez.
   if (correoApp) hechos.push(...avisosAppDe(ambitoApp(correoApp, body?.aparato)));
   // Lo que investigó en segundo plano (server/investigar.ts): lo que terminó y no se le dijo, y lo que sigue
@@ -3620,6 +3638,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     investigar: !!duenoComputadora && investigacionDisponible(),
     // Crear Word, Excel y PDF con la API (server/documentos.ts): los archivos quedan en SU cuenta.
     documentos: !!duenoComputadora,
+    // Su calendario (server/calendario.ts): con sesión siempre; sin calendario conectado, la herramienta lo dice (no inventa).
+    calendario: !!duenoComputadora,
   };
   // Un invitado: ninguna herramienta privada ni del teléfono de la dueña (server/modo-invitado.ts).
   if (invitado) Object.assign(manosTurno, manosDeInvitado(manosTurno));
@@ -4235,6 +4255,8 @@ async function correrHerramientaPedida(
       // Word, Excel y PDF por la API (FILE-01): generar → comprobar → entregar con recibo; los requisitos salen de lo que
       // la persona pidió en este turno (tal cual), no de la paráfrasis del modelo.
       documento: (arg) => correrDocumento({ dueno, arg, pedido: compu?.pedido, senal }),
+      // Su calendario: leer y PROPONER (agendar nunca crea solo: lo crea el servidor con su «sí», server/decision-turno.ts).
+      calendario: (arg) => correrCalendarioConEstado(dueno, arg, ambito),
     },
     extraerPython(reply),
     nivel
@@ -4258,7 +4280,7 @@ async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambit
   const w = borradorWhatsappDe(dueno, ambito);
   // La tarjeta dice a quién va de verdad (WhatsApp: el nombre Y el número del chat) y queda atada a la huella del borrador.
   if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella }, (i) => i !== intento && !!borradorCorreoPorIntento(dueno, ambito, i));
-  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella }, (i) => i !== intento && !!borradorWhatsappPorIntento(dueno, ambito, i));
+  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella, ...(w.media ? { adjunto: descripcionMedia(w) } : {}) }, (i) => i !== intento && !!borradorWhatsappPorIntento(dueno, ambito, i));
   return r;
 }
 
@@ -4503,7 +4525,8 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   if (!turnoDeLaApp(body, opciones)) return null;
   // Contexto, borrador y propuesta: los de ESTE aparato (dos teléfonos de la misma cuenta no se cruzan).
   const amb = ambitoApp(correo, body?.aparato);
-  const contexto = contextoDe(amb);
+  precargarRecordatorios(correo);
+  const contexto = contextoConRecordatorios(contextoDe(amb), correo);
   if (!contexto && oyentesDe(correo) === 0) return null;
   // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
   // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
@@ -4650,8 +4673,15 @@ async function empujarDelTurno(
   // Lo que deja algo afuera (mandar, marcar, agendar) se persiste en el turno ANTES de empujarlo (revisión
   // externa, 4-oct): sin registro durable, en un turno sin efectos o ya de otro proceso, no sale. Así un
   // reintento del turno no lo vuelve a mandar con otro id.
-  const { salen: acciones, frenadas } = await accionesQueSalen(todas, (que) => efectoDelTurno(que));
   const amb = ambitoApp(correo, o.aparato);
+  // A-3: un recordatorio para un teléfono que sincroniza con el servidor lleva su id del servidor (`rid`): el teléfono pone
+  // la alarma de esa vez con él y el servidor lo guarda (con su repetición) cuando la acción SALE (abajo, `conServidor`).
+  const ctxAparato = o.atada?.contexto ?? contextoDe(amb);
+  const { salen: acciones, frenadas } = await accionesQueSalen(
+    todas.map((a) => conRidServidor(a, ctxAparato)),
+    (que) => efectoDelTurno(que)
+  );
+  const conServidor = (a: AccionApp) => void efectoServidorDeAccion(correo, a);
   if (o.vigente && !o.vigente()) {
     if (acciones.length) console.log(`[mesa] respuesta tardía: llegó otra frase; no salen ${acciones.map((a) => a.tipo).join(', ')}`);
     return { eventos: [], frenadas: [] };
@@ -4660,7 +4690,11 @@ async function empujarDelTurno(
     // Fuera de la voz, al momento: también una sola vez por decisión.
     const salen = o.atada ? alConfirmarAccionesApp(amb, o.atada, acciones.map((accion) => ({ id: '', accion }))).map((e) => e.accion) : acciones;
     o.antes?.();
-    const eventos = salen.map((a) => empujarAccion(correo, a, { aparato: o.aparato }).evento);
+    const eventos = salen.map((a) => {
+      const e = empujarAccion(correo, a, { aparato: o.aparato }).evento;
+      conServidor(a);
+      return e;
+    });
     o.despues?.();
     return { eventos, frenadas };
   }
@@ -4676,7 +4710,11 @@ async function empujarDelTurno(
     // Novena ronda: al confirmar el turno se vuelve a mirar lo que espera la app (y que esta decisión no salió ya).
     const salen = o.atada ? alConfirmarAccionesApp(amb, o.atada, eventos) : eventos;
     o.antes?.();
-    for (const e of salen) if (!repetidaEnVoz(amb, e.accion)) empujarAccion(correo, e.accion, { aparato: o.aparato, id: e.id });
+    for (const e of salen) {
+      if (repetidaEnVoz(amb, e.accion)) continue;
+      empujarAccion(correo, e.accion, { aparato: o.aparato, id: e.id });
+      conServidor(e.accion);
+    }
     o.despues?.();
   });
   return { eventos, frenadas };
@@ -4729,9 +4767,11 @@ function contextoHonestidad(p: TurnoHonesto, o: { recibos?: ReciboEfecto[]; acci
     const app = appEsperandoDe(ambitoApp(p.correoApp, p.aparato), p.contextoApp || null);
     if (app?.que === 'mensaje') borrador = { canal: 'chat', para: app.para };
   }
+  const ev = p.dueno ? propuestaEventoDe(p.dueno, p.ambito || '') : null;
   return {
     recibos,
     previos: quien ? efectosRecientes(quien) : [],
+    evento: ev ? { titulo: ev.titulo } : null,
     mensaje: p.crudo || p.message,
     anterior: [...(p.hilo || [])].reverse().find((m) => m.role === 'assistant')?.content,
     borrador,
@@ -4759,6 +4799,8 @@ async function accionesDelCerebro(
   texto: string,
   p: {
     correoApp: string;
+    /** De quién es el turno (su WhatsApp y su círculo, para buscar a quién marcarle: server/marcar.ts). */
+    dueno?: string;
     contextoApp: ContextoApp | null;
     crudo: string;
     conApp: boolean;
@@ -4805,6 +4847,17 @@ async function accionesDelCerebro(
   const previa = bloqueada ? null : propuestaAnterior(amb);
   const pendiente = bloqueada ? null : pendienteAnterior(amb);
   const avatarNuevo: { v: AvatarApp | null; cambio: { antes: AvatarApp | null; ahora: AvatarApp } | null } = { v: null, cambio: null };
+  // A-4: a quién se le marca. Se busca ANTES (sus chats de WhatsApp, su círculo, los contactos de la app; con tope de
+  // tiempo) y se pregunta siempre con el número que se encontró. Lo que no se resuelve a uno se pregunta (abajo).
+  const marcables = new Map<string, ResolucionMarcar>();
+  const previaMarcar = !bloqueada ? propuestaAnterior(amb) : null;
+  for (const a of acciones) {
+    if (a.tipo !== 'marcar' || marcables.has(a.a)) continue;
+    // El «sí» que repite el mismo pedido: es la propuesta que oyó (sin volver a preguntar al puente).
+    if (previaMarcar?.tipo === 'marcar' && previaMarcar.dicho === a.a) marcables.set(a.a, { tipo: 'uno', nombre: previaMarcar.nombre || previaMarcar.numero, numero: previaMarcar.numero });
+    else marcables.set(a.a, await resolverMarcar({ dueno: p.dueno || p.correoApp, dicho: a.a, contexto: p.contextoApp, ms: p.retener ? 1500 : 2500 }));
+  }
+  const dudaMarcar: { v: { dicho: string; r: ResolucionMarcar } | null } = { v: null };
   const listas = prepararAcciones(acciones, {
     mensaje: p.crudo,
     contexto: p.contextoApp,
@@ -4816,6 +4869,8 @@ async function accionesDelCerebro(
     avatarPropuesto: bloqueada ? null : avatarPropuestoAnterior(amb),
     alProponerAvatar: (v) => (avatarNuevo.v = v),
     alCambioAvatar: (c) => (avatarNuevo.cambio = c),
+    marcables,
+    alDudaMarcar: (dicho, r) => (dudaMarcar.v ??= { dicho, r }),
   });
   const propuesta = nueva.p;
   const avatarPreguntado = avatarNuevo.v;
@@ -4882,10 +4937,25 @@ async function accionesDelCerebro(
           : 'No mandé nada: ese borrador ya venció. Dime otra vez qué mando y a quién.';
     return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
   }
+  /*
+   * A-4, MARCAR: lo que se dice es lo verdadero, no lo que escribió el modelo. Al pedirlo, SIEMPRE la pregunta con el
+   * nombre y el número («¿Le marco a Don Carlos al +504 9876-5432?»); con su «sí», el recibo de lo que pasó («Te abrí el
+   * marcador…», nunca «ya hablé con él»); si no se encontró a uno solo, a cuál o el número.
+   */
+  const marcaEmo = /^\s*\[[^\]]{1,40}\]/.exec(limpio)?.[0]?.trim() || '';
+  // Si el modelo ya dijo algo (pudo sonar), se REEMPLAZA (`corregido`); si solo escribió la línea, se dice (`sustituido`).
+  const callado = !extraerEmocion(limpio).texto.trim();
+  const verdadMarcar = (t: string) => ({ texto: `${marcaEmo ? `${marcaEmo} ` : ''}${t}`, acciones: eventos, sustituido: callado, ...(callado ? {} : { corregido: true }) });
+  if (previa?.tipo === 'marcar' && listas.some((a) => a.tipo === 'marcar')) return verdadMarcar(dichoDePropuesta(previa, p.idioma));
+  if (propuesta?.tipo === 'marcar') return verdadMarcar(preguntaDePropuesta(propuesta, p.idioma));
+  if (dudaMarcar.v && !propuesta) {
+    const { dicho, r } = dudaMarcar.v;
+    return verdadMarcar(r.tipo === 'varios' ? preguntaCualMarcar(r.opciones, p.idioma) : dichoSinContacto(dicho, p.idioma, r.tipo === 'ninguno' ? r.sinNumero : undefined));
+  }
   const mudo = !extraerEmocion(limpio).texto.trim();
   // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
   // Una llamada o un recordatorio que se cumplió: con el nombre y la hora que la persona confirmó.
-  const cumplida = previa && listas[0] && (listas[0].tipo === 'llamar' || listas[0].tipo === 'recordatorio') && listas[0].tipo === previa.tipo;
+  const cumplida = previa && listas[0] && (listas[0].tipo === 'llamar' || listas[0].tipo === 'recordatorio' || listas[0].tipo === 'marcar') && listas[0].tipo === previa.tipo;
   if (mudo && eventos.length) return { texto: cumplida ? dichoDePropuesta(previa, p.idioma) : dichoDeAcciones(listas, p.idioma), acciones: eventos, sustituido: true };
   if (mudo && propuesta) return { texto: preguntaDePropuesta(propuesta, p.idioma), acciones: [], sustituido: true };
   return { texto: limpio, acciones: eventos, sustituido: false };
@@ -5864,6 +5934,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           esperaSi: algoEsperaSuSi(),
           esperaWhatsapp: !!p.dueno && (!!borradorWhatsappDe(p.dueno, p.ambito) || apartadosWhatsappDe(p.dueno, p.ambito).length > 0),
           esperaCorreo: !!p.dueno && (!!borradorDe(p.dueno, p.ambito) || apartadosCorreoDe(p.dueno, p.ambito).length > 0),
+          esperaCalendario: !!p.dueno && !!propuestaEventoDe(p.dueno, p.ambito || ''),
           contactos: (p.contextoApp?.contactos || []).map((c) => String(c?.nombre || '')),
           conTarea: tools.includes('tarea'),
         })
@@ -6644,6 +6715,15 @@ async function startServer() {
       console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
     }
     iniciarCentinela(180_000);
+    // Los recordatorios del servidor (A-3): el reloj lee el índice y entrega lo que toca por push (FCM). Una vez = un aviso,
+    // también tras un reinicio (lib/recordatorios-servidor.ts reclama antes de mandar y primeraVezEvento lo marca).
+    if (ES_ULTRON) {
+      relojRecordatorios = new RelojRecordatorios({
+        enviar: async (correo, r, vez) => (await enviarPush(correo, datosPushRecordatorio(r, vez), { ttlS: r.llamada ? 60 : 30 * 60 }).catch(() => ({ enviados: 0 }))).enviados > 0,
+        unaVez: (correo, clave) => primeraVezEvento('recordatorio', correo, clave),
+      });
+      void relojRecordatorios.arrancar().catch((e) => console.warn('[recordatorios] reloj', String(e?.message || e).slice(0, 160)));
+    }
     // Cada mañana a las 7:00 de Honduras, quién contestó el correo de la campaña SFSP.
     if (ES_ULTRON) console.log('[AU-RA] campaña SFSP', iniciarRevisionCampana());
     // SEC-04: qué política de suspensiones rige (con registro, o sin él y declarada / cerrada).
@@ -6663,6 +6743,17 @@ async function startServer() {
         })
         .catch((e) => console.warn('[cognitivo] aprobaciones a medias', String(e?.message || e).slice(0, 160)));
     setTimeout(() => reconciliar(false), 15_000).unref?.();
+    // A-7: las caras y voces que sigan en claro (disco y S3) se re-sellan (lib/biometria-sobre.ts). Idempotente y con la
+    // condición del ETag: dos instancias arrancando a la vez no se pisan; el disco va síncrono (nada se mete en medio). Dos
+    // minutos después de arrancar: en un despliegue sin cortes, la instancia con el código de antes ya se fue y no lee sobres.
+    if (ES_ULTRON) {
+      setTimeout(() => {
+        for (const migrar of [migrarCarasAlSobre, migrarVocesAlSobre])
+          void migrar()
+            .then((r) => (r.s3.sellados || r.disco.sellados || r.s3.estado !== 'ok' ? console.log('[biometría] sobre', JSON.stringify(r)) : undefined))
+            .catch((e) => console.warn('[biometría] sobre', String(e?.message || e).slice(0, 160)));
+      }, 120_000).unref?.();
+    }
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));
@@ -6684,9 +6775,14 @@ async function startServer() {
         },
         nivelDe: (c) => nivelDeCorreo(c),
       });
+      // A-6: los correos importantes también avisan (a la misma gente y con la misma cadencia de 30 minutos).
+      arrancarAlertasCorreo({ personas: () => personasRecientes(), cadaMs: CADA_MS_INICIATIVA });
     }
   });
 }
+
+/** El reloj de los recordatorios del servidor (lo arranca startServer). */
+let relojRecordatorios: RelojRecordatorios | null = null;
 
 startServer();
 

@@ -19,10 +19,11 @@ type Idioma = 'es' | 'en';
 
 /**
  * Las pantallas de más que «abrir» entiende para lo de AURA (como compa/computadora.ts PANTALLAS_MAS): sus
- * misiones, lo que sabe de ti y tu círculo. El servidor todavía no las manda; si un día lo hace con
+ * misiones, lo que sabe de ti, tu círculo y «Hoy» (tu calendario, agenda/HojaHoy.tsx). El servidor todavía no las manda; si un día lo hace con
  * {"tipo":"abrir","pantalla":"misiones"}, la app ya las abre.
  */
-export const PANTALLAS_CEREBRO = ['misiones', 'conocer', 'circulo'] as const;
+// `recordatorios` (A-3): la hoja de sus recordatorios (ajustes/Recordatorios.tsx), con la mano `recordatorios_servidor`.
+export const PANTALLAS_CEREBRO = ['misiones', 'conocer', 'circulo', 'agenda', 'recordatorios'] as const;
 export type PantallaCerebro = (typeof PANTALLAS_CEREBRO)[number];
 
 export function esPantallaCerebro(p: unknown): p is PantallaCerebro {

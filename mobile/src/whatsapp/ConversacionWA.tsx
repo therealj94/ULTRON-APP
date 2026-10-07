@@ -83,7 +83,11 @@ async function abrirEnWhatsapp(digitos: string, nombre: string) {
   );
 }
 
-export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () => void }) {
+/**
+ * `borradorInicial` (A-6): la respuesta sugerida del aviso de un mensaje importante. Queda escrita en la caja de texto
+ * para que la persona la cambie o la mande ella con «Enviar»; aquí no se manda nada.
+ */
+export function ConversacionWA({ chat, onAtras, borradorInicial = '' }: { chat: ChatWA; onAtras: () => void; borradorInicial?: string }) {
   const p = useTema();
   const w = useMemo(() => paletaWA(p), [p]);
   const ins = useSafeAreaInsets();
@@ -91,7 +95,11 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
   const idioma = idiomaActual() === 'en' ? 'en' : 'es';
   const [mensajes, setMensajes] = useState<MensajeWA[] | null>(null);
   const [locales, setLocales] = useState<MensajeWA[]>([]);
-  const [texto, setTexto] = useState('');
+  const [texto, setTexto] = useState(borradorInicial);
+  // Un aviso nuevo para el MISMO chat (ya abierto): su sugerencia reemplaza lo escrito solo si la caja estaba vacía.
+  useEffect(() => {
+    if (borradorInicial) setTexto((t) => (t.trim() ? t : borradorInicial));
+  }, [borradorInicial]);
   const [error, setError] = useState('');
   const [foto, setFoto] = useState<{ uri: string; titulo: string; detalle: string } | null>(null);
   const [video, setVideo] = useState<string | null>(null);

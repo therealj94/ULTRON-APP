@@ -559,11 +559,11 @@ async function abrirSinCobrar(opts: PedidoEleven): Promise<Response | null> {
   if (opts.reloj && !opts.reloj.alcanza()) return null;
   const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
   const cuerpo = cuerpoEleven(opts);
-  const formato = opts.formato && /^(mp3|pcm)_\d{4,5}(_\d{2,3})?$/.test(opts.formato) ? opts.formato : FORMATO;
+  const formato = opts.formato && (/^(mp3|pcm)_\d{4,5}(_\d{2,3})?$/.test(opts.formato) || FORMATOS_OPUS.test(opts.formato)) ? opts.formato : FORMATO;
   try {
     const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/stream?output_format=${formato}`, {
       method: 'POST',
-      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: formato.startsWith('pcm') ? 'audio/pcm' : 'audio/mpeg' },
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: formato.startsWith('pcm') ? 'audio/pcm' : formato.startsWith('opus') ? 'audio/ogg' : 'audio/mpeg' },
       body: JSON.stringify(cuerpo),
       signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
     });
@@ -579,6 +579,55 @@ async function abrirSinCobrar(opts: PedidoEleven): Promise<Response | null> {
   } catch (e: any) {
     ultimoFallo = String(e?.message || e).slice(0, 120);
     console.warn('[voz eleven]', ultimoFallo);
+    return null;
+  }
+}
+
+/* ---------------- La nota de voz de WhatsApp (Ogg/Opus, sin ffmpeg) ---------------- */
+
+/**
+ * Los formatos Opus que da ElevenLabs (`output_format`): Opus a 48 kHz en su contenedor Ogg, lo mismo que graba un
+ * teléfono para una nota de voz de WhatsApp. Render no trae ffmpeg (server/voz.ts): así la nota sale sin convertir nada.
+ */
+const FORMATOS_OPUS = /^opus_48000_(32|64|96|128|192)$/;
+export const FORMATO_NOTA_VOZ = 'opus_48000_64';
+
+/** ¿Es Ogg con Opus dentro? «OggS» y la cabecera «OpusHead» al principio de la primera página. */
+export function esOggOpus(b: Buffer | null | undefined): boolean {
+  if (!b || b.length < 47 || b.subarray(0, 4).toString('latin1') !== 'OggS') return false;
+  const cuerpo = 27 + b[26];
+  return b.length >= cuerpo + 19 && b.subarray(cuerpo, cuerpo + 8).toString('latin1') === 'OpusHead';
+}
+
+/** Lo que se dice en la nota: sin las marcas de expresión del cerebro ([risa]…), en una línea y con tope. */
+export function textoNotaDeVoz(texto: string, max = 900): string {
+  return String(texto || '')
+    .replace(/\[[^\]]{0,40}\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+/**
+ * Una NOTA DE VOZ para WhatsApp con la voz de AURA (server/whatsapp.ts, `whatsapp nota`): ElevenLabs en Ogg/Opus. null
+ * si no hay ElevenLabs (o se pasó el tope del día), si no contestó o si lo que llegó no es Ogg/Opus de verdad (entonces
+ * no se manda como nota: nunca un audio roto con el micrófono verde). Cuenta en el freno de gasto como cualquier voz.
+ */
+export async function notaDeVozEleven(texto: string, o: { avatar?: AvatarVoz; idioma?: Idioma } = {}): Promise<Buffer | null> {
+  const dicho = textoNotaDeVoz(texto);
+  const voz = vozEleven('ultron', o.avatar || 'aura', o.idioma || 'es');
+  if (dicho.length < 2 || !voz) return null;
+  const r = await abrirEleven({ texto: dicho, voz, formato: FORMATO_NOTA_VOZ, idioma: o.idioma || 'es', timeoutMs: 30_000 });
+  if (!r) return null;
+  try {
+    const audio = Buffer.from(await r.arrayBuffer());
+    if (!esOggOpus(audio)) {
+      console.warn('[voz eleven] la nota de voz no vino en Ogg/Opus: no se manda como nota', audio.subarray(0, 4).toString('hex'));
+      return null;
+    }
+    return audio;
+  } catch (e: any) {
+    console.warn('[voz eleven] nota de voz:', String(e?.message || e).slice(0, 120));
     return null;
   }
 }

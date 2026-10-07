@@ -14,12 +14,20 @@
  *   · Modo trabajo      — el avatar compacto y la conversación escrita debajo, para leer y volver a
  *                         consultar lo dicho (y «Modo charla» para volver al avatar grande);
  *   · Misiones          — las metas que AURA te ayuda a cumplir (ajustes/Misiones.tsx);
+ *   · Mi círculo        — tu gente cercana y sus recordatorios (app/HojasCerebro.tsx);
+ *   · Cartera           — tus saldos de Veta Wallet (cartera/);
+ *   · Hoy               — tu calendario de hoy, mañana o la semana (agenda/HojaHoy.tsx; se conecta en Ajustes);
+ *   · Recordatorios     — los que AURA te recuerda, también los que se repiten (ajustes/Recordatorios.tsx);
  *   · Su computadora    — lo que hace la computadora en la nube del avatar, y encargarle algo
  *                         (ajustes/Computadora.tsx); solo si el servidor la tiene;
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
  *   · Ajustes           — la pantalla de Ajustes (voz, oído, memoria, su cara, tema, perfil, permisos
  *                         y sesión). «Más» es la única hoja de opciones de la mesa.
  * Cada mosaico dice su estado debajo del nombre (p. ej. «Solo ahora · 8 min»).
+ *
+ * Debajo de los mosaicos, `extra`: lo del avatar que vivía en el menú viejo de la derecha (DeskMenu, que se fue con la
+ * auditoría del 7-oct, M-7): sus atajos, tono y presencia, orar y cantar, investigar y el catálogo (MasDelAvatar.tsx).
+ * La orden de voz «menú» abre esta hoja.
  *
  * El layout, a prueba de Android (José, Samsung con Android 16: las tarjetas salían apiladas como una
  * baraja y la hoja cortada): antes la caja y el mosaico llevaban `flex: 1`, que en Yoga es base 0; con
@@ -29,7 +37,7 @@
  * comprime) y cada celda es una fracción del ancho real de la rejilla. Nada depende de una animación:
  * sin ella se ve igual.
  */
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
@@ -37,7 +45,7 @@ import { Hoja } from '../ui/Hoja';
 import { Icono, type NombreIcono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
 
-export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'voces' | 'avatar' | 'modo' | 'misiones' | 'computadora' | 'tutorial' | 'ajustes';
+export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'voces' | 'avatar' | 'modo' | 'misiones' | 'circulo' | 'cartera' | 'agenda' | 'recordatorios' | 'computadora' | 'tutorial' | 'ajustes';
 
 type Props = {
   visible: boolean;
@@ -60,6 +68,8 @@ type Props = {
   /** Lo que se lee debajo de «Su computadora» («Lista», «Trabajando…»); sin él, no se muestra. */
   estadoComputadora?: string | null;
   computadoraTrabajando?: boolean;
+  /** Lo que va debajo de los mosaicos (lo del avatar: MasDelAvatar.tsx). */
+  extra?: ReactNode;
 };
 
 type Mosaico = { id: OpcionMas; icono: NombreIcono; titulo: string; sub: string; activo?: boolean };
@@ -95,6 +105,10 @@ export function HojaMas(p: Props) {
       activo: p.trabajando,
     },
     { id: 'misiones', icono: 'palomita', titulo: tr('Misiones', 'Missions'), sub: tr('Tus metas, paso a paso', 'Your goals, step by step') },
+    { id: 'circulo', icono: 'personaMas', titulo: tr('Mi círculo', 'My circle'), sub: tr('Tu gente cercana y sus recordatorios', 'Your close people and their reminders') },
+    { id: 'cartera', icono: 'dinero', titulo: tr('Cartera', 'Wallet'), sub: tr('Saldos de Veta Wallet. Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña', 'Veta Wallet balances. Card: AU-RA can show its details and top it up with your password') },
+    { id: 'agenda', icono: 'reloj', titulo: tr('Hoy', 'Today'), sub: tr('Tu calendario del día', 'Your calendar for the day') },
+    { id: 'recordatorios', icono: 'reloj', titulo: tr('Recordatorios', 'Reminders'), sub: tr('Lo que te recuerdo, y cuándo', 'What I remind you of, and when') },
     ...(p.estadoComputadora != null
       ? [{ id: 'computadora' as const, icono: 'pantalla' as const, titulo: tr('Su computadora', 'Their computer'), sub: p.estadoComputadora, activo: !!p.computadoraTrabajando }]
       : []),
@@ -129,6 +143,7 @@ export function HojaMas(p: Props) {
           </View>
         ))}
       </View>
+      {p.extra}
     </Hoja>
   );
 }

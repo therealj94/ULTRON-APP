@@ -7,6 +7,7 @@ import { arrancarPulso, ponerAvisoBloqueo, pulsoJs } from '../lib/pulsoJs';
 import { RellenoTurno, esperaDeRelleno } from '../lib/relleno';
 // ── latencia de la voz: el turno especulativo (lib/turnoEspeculativo.ts) ──
 import { TurnoEspeculativo } from '../lib/turnoEspeculativo';
+import { CORTADO, TurnoMesa, type FichaTurno } from '../lib/turnoMesa';
 import { cancelarTurnoEspeculativo, confirmarTurnoEspeculativo, type StreamHandlers, type TurnoOpts } from '../lib/api';
 import { pedidoDeVoces } from '../voces/voces';
 import { pedidoDeCaras } from '../caras/caras';
@@ -27,7 +28,8 @@ import { T, SOMBRA } from '../tema';
 import { DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
 // La cámara de la mesa: la nueva en vivo o la de fotos (components/CamaraMesa.tsx decide; mismas props).
 import { CamaraMesa } from '../components/CamaraMesa';
-import { DeskMenu } from '../components/DeskMenu';
+import { MasDelAvatar } from '../components/MasDelAvatar';
+import { abrirCartera } from '../cartera/estado';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { esVencida } from '../lib/intentoEntrada';
@@ -352,24 +354,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [vistaCamara, setVistaCamara] = useState(false);
   /** La cámara de la mesa: frontal (te ve a ti) o trasera. Se guarda en los ajustes. */
   const [ladoCamara, setLadoCamara] = useState<Lado>('frontal');
-  const [menuOpen, setMenuOpen] = useState(false);
   /** El selector de avatar abierto desde el menú (al entrar se elige en App, antes de la mesa). */
   const [eligiendo, setEligiendo] = useState<'menu' | null>(null);
   // La mesa no se apaga sola: si la pantalla se bloquea, deja de escuchar y de verte.
   useKeepAwake('mesa');
-  // Botón atrás de Android: cierra el menú; con el menú cerrado hace lo de siempre.
+  // Botón atrás de Android: cierra el selector de avatar; con él cerrado hace lo de siempre («Más» se cierra solo: ui/Hoja).
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (eligiendo === 'menu') {
-        setEligiendo(null);
-        return true;
-      }
-      if (!menuOpen) return false;
-      setMenuOpen(false);
+      if (eligiendo !== 'menu') return false;
+      setEligiendo(null);
       return true;
     });
     return () => sub.remove();
-  }, [menuOpen, eligiendo]);
+  }, [eligiendo]);
   const [catalogRequest, setCatalogRequest] = useState(0);
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
@@ -596,19 +593,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const recentTaps = useRef<number[]>([]);
   const proactiveRef = useRef(true);
   const grabFrame = useRef<FrameGrabber | null>(null);
-  /** Cortar el turno en curso (el stream) y marcar que se canceló: «callar» no espera al cerebro. */
-  const abortTurno = useRef<(() => void) | null>(null);
-  const turnoCancelado = useRef(false);
-  /** En el turno en camino empezó una herramienta con efectos (un envío, un borrador): ya no se corta (revisión del 7-oct, G2). */
-  const efectoTurno = useRef(false);
+  /**
+   * Cada turno con su propia ficha (lib/turnoMesa.ts, auditoría A-2): cortar el turno N (el stream, o la espera del JSON con
+   * foto) nunca toca al N+1, y lo tardío del N ya no habla. «Callar» no espera al cerebro. La ficha también dice si en el turno
+   * empezó una herramienta con efectos (un envío, un borrador): ese ya no se corta (revisión del 7-oct, G2).
+   */
+  const turnoMesa = useRef(new TurnoMesa()).current;
   /** La mesa sigue montada: al irse, lo que quedó en cola (lo que dijo la persona anterior) ya no se manda. */
   const mesaMontada = useRef(true);
   // La mesa se va (salió, venció o entró otra persona): el turno en vuelo se corta y lo que llegue ya no se dice ni se hace.
   useEffect(
     () => () => {
       mesaMontada.current = false;
-      turnoCancelado.current = true;
-      abortTurno.current?.();
+      turnoMesa.cancelar('mesa_se_va');
       pending.current = null;
       pendienteOidaEn.current = 0;
     },
@@ -681,8 +678,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       pauseMicForTts,
       stopSpeaking,
       cancelarTurno: () => {
-        turnoCancelado.current = true;
-        abortTurno.current?.();
+        turnoMesa.cancelar('oido');
         pending.current = null;
       },
       // Solo si el oído ya se abrió una vez con el permiso (no se abre «a ciegas» al volver de otra pantalla).
@@ -1146,7 +1142,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [say]);
 
   const askBrain = useCallback(
-    async (cmd: string, opts?: { image?: string; visto?: string; foco?: FocoVision }) => {
+    async (cmd: string, opts?: { image?: string; visto?: string; foco?: FocoVision; ficha?: FichaTurno }) => {
+      // La ficha de ESTE turno (la de «¿qué ves?» si la trae; si esa ya se cortó o la reemplazó otra, no sale): todo lo de
+      // abajo pregunta a ella.
+      if (opts?.ficha && !opts.ficha.vigente) return;
+      const tk = opts?.ficha ?? turnoMesa.empezar();
       trazaTurno.marcar('pide');
       setFace('THINKING');
       setStatus('thinking');
@@ -1206,7 +1206,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const relleno = new RellenoTurno({
         esperaMs: ESPERA_FRASE_MS,
         decir: (corte) => {
-          if (!oidoMesa.current?.puedeHablar()) return;
+          if (!tk.vigente || !oidoMesa.current?.puedeHablar()) return;
           trazaTurno.marcar('relleno');
           const quien = avatarActual();
           const estado = opts?.image ? 'mirando' : estadoDeEspera(cmd);
@@ -1237,12 +1237,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const applyMode = (m?: Mode) => {
         if (m && m !== 'CONOCER' && m !== modeRef.current) setMode(m);
       };
-      turnoCancelado.current = false;
-      efectoTurno.current = false;
       const t0Turno = Date.now();
       /** Por qué cayó el stream (su error, nunca lo que dijo la persona): va en la miga si el turno no trae respuesta. */
       let errorStream: string | null | undefined = opts?.image ? undefined : null;
       try {
+        // Cortado mientras buscaba quién habla (antes ese «callar» se borraba al arrancar el turno): no sale.
+        if (!tk.vigente) return;
         // 1) Streaming: la cara reacciona con `emocion` antes del primer delta y habla por oraciones.
         if (!opts?.image) {
           let speaker: StreamSpeaker | null = null;
@@ -1270,7 +1270,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             avatar: avatarActual(),
             idioma: idiomaActual() === 'en' ? 'en' : 'es',
             memoria: memoriaNarrador.current,
-            puedeHablar: () => !speaker && !speakingRef.current && !turnoCancelado.current && !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar(),
+            puedeHablar: () => !speaker && !speakingRef.current && tk.vigente && !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar(),
             hablar: (texto, corte) =>
               void speak(texto, {
                 emocion: 'neutral',
@@ -1329,8 +1329,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               },
               onProgreso: (e) => {
                 // Una herramienta que puede dejar algo afuera ya empezó: desde aquí una frase nueva no corta el turno (G2).
-                if (e.fase === 'empece' && e.herramienta !== 'web' && e.herramienta !== 'leer') efectoTurno.current = true;
-                if (!turnoCancelado.current) trabajoTurno.evento(e);
+                if (e.fase === 'empece' && e.herramienta !== 'web' && e.herramienta !== 'leer') tk.marcarEfecto();
+                if (tk.vigente) trabajoTurno.evento(e);
               },
               onTools: (tools) => {
                 const t = tareaDeHerramientas(tools);
@@ -1342,14 +1342,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
                 if (leeConHerramientas(tools)) ponerLee(true);
               },
             });
-            abortTurno.current = st.abort;
+            tk.ponerCorte(st.abort);
             let result = await st.promise.finally(() => {
-              abortTurno.current = null;
+              tk.ponerCorte(null);
               trabajoTurno.terminar();
               if (trabajoActual.current === trabajoTurno) trabajoActual.current = null;
             });
             cancelMmm();
-            if (turnoCancelado.current) {
+            if (!tk.vigente) {
               if (speaker) (speaker as StreamSpeaker).cancel();
               return;
             }
@@ -1357,8 +1357,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             // entera. Con el MISMO idTurno, el JSON devuelve ese turno ya corrido (server/turno-unico.ts),
             // sin repetir sus herramientas; de lo que trae se dice solo lo que falta detrás de lo oído.
             if (result.cierre === 'eof' && Date.now() - t0Turno < 30_000) {
-              const recuperado = await turno(base, genTurno);
-              if (turnoCancelado.current) {
+              const recuperado = await tk.hasta(turno(base, genTurno));
+              if (recuperado === CORTADO || !tk.vigente) {
                 if (speaker) (speaker as StreamSpeaker).cancel();
                 return;
               }
@@ -1374,7 +1374,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               await (speaker as StreamSpeaker).done;
             }
             // La interrumpieron mientras decía el final: lo que oyó la persona ya quedó en el hilo.
-            if (turnoCancelado.current) return;
+            if (!tk.vigente) return;
             setToolHint('');
             if (result.parcial) miga(`mesa: respuesta cortada (${result.error || result.via || 'el cerebro se cortó'})`);
             if (result.reply) {
@@ -1396,7 +1396,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             if (speaker) (speaker as StreamSpeaker).cancel();
             cancelMmm();
             // De una sesión que ya no está (salió o entró otra persona): ni se repite por JSON ni se dice nada.
-            if (turnoCancelado.current || esVencida(e)) return;
+            if (!tk.vigente || esVencida(e)) return;
             errorStream = String((e as Error)?.message || e || 'error');
             // Si el stream ya se comió más de 20 s, el servidor sí tiene stream y está lento: repetir la
             // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
@@ -1416,18 +1416,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // 2) JSON clásico (visión o servidor sin stream).
         if (!reacted) setFace('THINKING');
         trazaTurno.marcar('envio');
-        let out = await turno(base, genTurno);
+        // Con foto también se corta (A-2): mientras espera, una frase nueva o «callar» lo sueltan al instante (antes hasta 35 s).
+        let out = await tk.hasta(turno(base, genTurno));
         let intentosJson = 1;
         cancelMmm();
-        if (turnoCancelado.current || out.vencida) return;
+        if (out === CORTADO || !tk.vigente || out.vencida) return;
         const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
         // Un 429 no se repite: pedirApi ya esperó lo que pidió el servidor, y otro pedido gastaría otro turno.
         if (failed(out) && reintentarFallo(out) && Date.now() - t0Turno < 30_000) {
-          await new Promise((r) => setTimeout(r, 800));
-          if (turnoCancelado.current || !sigueVigente(genTurno)) return;
-          out = await turno(base, genTurno);
+          await tk.hasta(new Promise((r) => setTimeout(r, 800)));
+          if (!tk.vigente || !sigueVigente(genTurno)) return;
+          out = await tk.hasta(turno(base, genTurno));
           intentosJson += 1;
-          if (turnoCancelado.current || out.vencida) return;
+          if (out === CORTADO || !tk.vigente || out.vencida) return;
         }
         setToolHint('');
         emitirAccionesDelTurno(out);
@@ -1470,11 +1471,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion, parcial: !!out.parcial });
       } finally {
         // Cortado por la persona o de otra sesión: no es resultado ni fallo (queda enviada; lo siguiente que mande cuenta).
-        if (paraPrimer && !turnoCancelado.current && sigueVigente(genTurno)) {
+        if (paraPrimer && !tk.cancelado && sigueVigente(genTurno)) {
           const r = paraPrimer;
           void anotarPrimer(user.correo, { tipo: 'turno', idTurno, resultado: clasificarTurno(r), trazaId: r.trazaId });
         }
         cancelMmm();
+        turnoMesa.terminar(tk);
         ponerLee(false);
         avisarMesa({ pensando: false });
         if (!speakingRef.current) {
@@ -1531,12 +1533,21 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     const alSacar = () => ({ lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0 });
     const io = (foto: () => Promise<string | null>, escena = alSacar) => ({ ahora: Date.now, foto, escena, ver: (b64: string, f: FocoVision) => verCamara(b64, f) });
     const opciones = { lado: ladoCamaraRef.current, personas: escenaFresca(escenaRef.current) ? escenaRef.current.personas : undefined };
+    // A-2: el turno con foto tiene su ficha desde que empieza a mirar: una frase nueva o «callar» lo cortan también mientras
+    // espera la cámara o la vista (lib/turnoMesa.ts), y askBrain sigue con la misma ficha. Si nadie la usa, la próxima la
+    // reemplaza (no queda nada en camino).
+    const tk = turnoMesa.empezar();
     if (apuntar) setPreviaCamara(true);
     try {
       // Con la cámara ya prendida y algo que mostrar: un momento para ponerlo delante y que enfoque.
-      if (apuntar && grabFrame.current) await new Promise((r) => setTimeout(r, 900));
+      if (apuntar && grabFrame.current) await tk.hasta(new Promise((r) => setTimeout(r, 900)));
       const g = grabFrame.current;
-      if (g) vt = await vistaParaTurno(io(() => g({ calidad })), foco, opciones);
+      if (g && tk.vigente) {
+        const v = await tk.hasta(vistaParaTurno(io(() => g({ calidad })), foco, opciones));
+        if (v === CORTADO) return;
+        vt = v;
+      }
+      if (!tk.vigente) return;
       if (!vt || vt.tipo === 'sin_foto') {
         // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
         // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
@@ -1550,7 +1561,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
         setToolHint(tr('mirando con la cámara', 'looking with the camera'));
         try {
-          frame = await esperarFrame(tomar, { maxMs: 7000 });
+          const f = await tk.hasta(esperarFrame(tomar, { maxMs: 7000 }));
+          if (f === CORTADO) return;
+          frame = f;
         } finally {
           setToolHint('');
         }
@@ -1558,11 +1571,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         const alSacarFrame = alSacar();
         // La foto ya está: lo que diga el servidor tampoco traba el turno más de ~1,5 s.
         const listo = frame;
-        if (listo) vt = await vistaParaTurno(io(async () => listo, () => alSacarFrame), foco, { ...opciones, lado: alSacarFrame.lado });
+        if (listo) {
+          const v = await tk.hasta(vistaParaTurno(io(async () => listo, () => alSacarFrame), foco, { ...opciones, lado: alSacarFrame.lado }));
+          if (v === CORTADO) return;
+          vt = v;
+        }
       }
     } finally {
       setPreviaCamara(false);
     }
+    if (!tk.vigente) return;
     if (vt && vt.tipo !== 'sin_foto') {
       const [es, en] = PEDIDO_VISTA[foco];
       const pedido = tr(es, en);
@@ -1574,7 +1592,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (etiquetas.length) setObjects(etiquetas);
         // Solo la de «¿qué ves?» queda como vista fresca: el hecho de «léeme esto» lleva otra instrucción.
         if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: vt.alSacar.lado, personas: vt.alSacar.personas, foto: vt.foto });
-        await askBrain(pedido, { visto: vt.visto, foco });
+        await askBrain(pedido, { visto: vt.visto, foco, ficha: tk });
         if (vt.foto) cerrarVisorEn(VISOR_MS);
         return;
       }
@@ -1591,7 +1609,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (r.etiquetas.length) setObjects(r.etiquetas);
         if (foco === 'escena') vistaFresca.guardar({ vista: r.vista, visto: r.estructurada ? r.visto : '', ts: tomadaEn, lado: ladoFoto, personas: personasFoto, foto });
       });
-      await askBrain(pedido, { image: `data:image/jpeg;base64,${foto}`, foco });
+      await askBrain(pedido, { image: `data:image/jpeg;base64,${foto}`, foco, ficha: tk });
       cerrarVisorEn(VISOR_MS);
       return;
     }
@@ -1647,8 +1665,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       if (handling.current) {
         // «Callar» no se encola: corta lo que esté pensando o diciendo, ya.
         if (interpretar(cmd, { dormido: false, enConocer: false }).tipo === 'callar') {
-          turnoCancelado.current = true;
-          abortTurno.current?.();
+          turnoMesa.cancelar('callar');
           pending.current = null;
           await stopSpeaking();
           // La voz cortada no llama a su onEnd: la pausa del micrófono se suelta aquí.
@@ -1667,14 +1684,13 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // nueva va después (el servidor le manda la de antes como contexto). Si ya suena, como siempre: se juntan en orden y
         // van después (Codex, 3-oct: «se juntan, no se pisan»). Revisión del 7-oct (G2): «¿hola?», «¿me oyes?» o un «ajá»
         // no cortan (el turno contesta), y un turno con una herramienta con efectos en curso nunca se corta (lib/fraseNueva.ts).
-        const d = fraseDuranteTurno({ cmd, pendiente: pending.current, pensando: !!abortTurno.current, hablando: speakingRef.current, efecto: efectoTurno.current });
+        const d = fraseDuranteTurno({ cmd, pendiente: pending.current, pensando: turnoMesa.pensando(), hablando: speakingRef.current, efecto: turnoMesa.efecto() });
         if (d.descartada) {
           miga('mesa: frase de relleno mientras pensaba; el turno sigue');
           return;
         }
         if (d.cortar) {
-          turnoCancelado.current = true;
-          abortTurno.current?.();
+          turnoMesa.cancelar('frase_nueva');
           miga('mesa: llegó otra frase antes de contestar; la respuesta a la de antes ya no suena');
         }
         pending.current = d.pendiente;
@@ -1823,10 +1839,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             setPresence(intent.modo === 'EXPLORER' ? 'explore' : 'stay');
             return void (await say(intent.frase, intent.modo === 'GOLD' ? 'PROUD' : intent.modo === 'EXPLORER' ? 'SCAN' : 'IDLE', { emocion: intent.modo === 'GOLD' ? 'orgullo' : 'neutral' }));
           case 'menu':
-            setMenuOpen(true);
+            // Un solo menú (M-7): «menú» abre «Más».
+            setMasAbierto(true);
             return void (await playClip('listo', 'IDLE'));
           case 'catalogo':
-            setMenuOpen(true);
+            setMasAbierto(true);
             setCatalogRequest((n) => n + 1);
             return void (await playClip('todo', 'IDLE'));
           case 'conocer':
@@ -1882,7 +1899,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             return void (await askBrain(tr('Cuéntame un chiste corto, limpio y bueno. Solo el chiste.', 'Tell me a short, clean, good joke. Just the joke.')));
           case 'clip': {
             if (intent.id === 'puedo') {
-              setMenuOpen(true);
+              setMasAbierto(true);
               setCatalogRequest((n) => n + 1);
             }
             return void (await playClip(intent.id, 'HAPPY'));
@@ -2117,11 +2134,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     dragging.current = false;
     pausarMirada(800);
   }, [pausarMirada]);
-  const onSwipe = useCallback((dir: 'left' | 'right') => setMenuOpen(dir === 'left'), []);
+  const onSwipe = useCallback((dir: 'left' | 'right') => void (dir === 'left' && setMasAbierto(true)), []);
 
-  // El orbe: tocarlo es como tocarle la barbilla (le da cosquillas); deslizar hacia arriba abre el menú.
+  // El orbe: tocarlo es como tocarle la barbilla (le da cosquillas); deslizar hacia arriba abre «Más».
   const onTocarOrbe = useCallback(() => onTap('chin', 0, 0), [onTap]);
-  const onDeslizarOrbe = useCallback((dir: 'arriba' | 'abajo') => setMenuOpen(dir === 'arriba'), []);
+  const onDeslizarOrbe = useCallback((dir: 'arriba' | 'abajo') => void (dir === 'arriba' && setMasAbierto(true)), []);
   const onFalloOrbe = useCallback((motivo: string) => {
     miga(`orbe no disponible: ${motivo}`);
     setConOrbe(false);
@@ -2241,8 +2258,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       onBargeIn: () => {
         const oido = registroVoz.cortar(fraccionSonando());
         interrumpida.current = oido.slice(-TOPE_CORTADA);
-        turnoCancelado.current = true;
-        abortTurno.current?.();
+        turnoMesa.cancelar('barge_in');
         pending.current = null;
         void stopSpeaking();
         oidoMesa.current?.vozCortada();
@@ -2545,7 +2561,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Cambiar de avatar desde el menú: su voz desde ya, se guarda y se presenta él mismo. */
   const elegirAvatar = async (id: AvatarId) => {
     setEligiendo(null);
-    setMenuOpen(false);
+    setMasAbierto(false);
     await stopSpeaking();
     setAvatar(id);
     setAvatarVoz(id);
@@ -2563,7 +2579,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   const toggleConversar = () => {
     void haptic('medium');
-    setMenuOpen(false);
+    setMasAbierto(false);
     // En llamada, cuelga; sonando, rechaza; si no, la conversación se abre al instante (sin timbre).
     voz.alternar();
   };
@@ -2702,8 +2718,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         enLlamadaRef.current = !!activa;
         setEnLlamada(!!activa);
         if (activa) {
-          turnoCancelado.current = true;
-          abortTurno.current?.();
+          turnoMesa.cancelar('llamada');
           pending.current = null;
           void stopSpeaking();
           speakingRef.current = false;
@@ -2802,7 +2817,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (next) playSfx('tap');
   };
   const probarVoz = () => {
-    setMenuOpen(false);
+    setMasAbierto(false);
     const a = avatarPorId(avatar || 'aura');
     void say(
       tr(
@@ -2921,7 +2936,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     const conversandoAhora = conversandoRef.current;
     if (!mandarTurno(t)) return;
     setDraft('');
-    if (!conversandoAhora) setMenuOpen(false);
+    if (!conversandoAhora) setMasAbierto(false);
   };
 
   /* ── lo que AURA propone por su cuenta (compa/iniciativa.ts, server/iniciativa.ts) ──────────── */
@@ -3010,7 +3025,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // mesa, de a una y en orden. Espera a que no haya nada encima (chat, panel, recorrido, su computadora).
   const ventana = useVentanaDecision({
     trabajos,
-    activa: mesaVisible && !tutorialAbierto && !panelTrabajos && !menuOpen && !masAbierto && !pcAbierta && !pcVivoAbierta && !eligiendo && !visor && !hojaCerebro && !preguntasAbiertas,
+    activa: mesaVisible && !tutorialAbierto && !panelTrabajos && !masAbierto && !pcAbierta && !pcVivoAbierta && !eligiendo && !visor && !hojaCerebro && !preguntasAbiertas,
     idioma: idiomaActual() === 'en' ? 'en' : 'es',
     conversando: () => conversandoRef.current,
     hablando: () => speakingRef.current,
@@ -3022,12 +3037,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
 
-  // Borde derecho: tocar o arrastrar hacia la izquierda abre el menú (la cara deja libre esa franja).
+  // Borde derecho: tocar o arrastrar hacia la izquierda abre «Más» (la cara deja libre esa franja).
   const edgePan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onPanResponderRelease: (_e, g) => {
-        if (g.dx < -30 || (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12)) setMenuOpen(true);
+        if (g.dx < -30 || (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12)) setMasAbierto(true);
       },
     })
   ).current;
@@ -3258,7 +3273,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const acciones = avatarPorId(avatarId).acciones;
   // Calma en la mesa: le oye sin que nadie hable ni piense, sin frase a medias ni nada abierto encima.
   const calmaMesa =
-    (status === 'listening' || status === 'muted') && !partial && !dicho && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !menuOpen && !tutorialAbierto && !eligiendo;
+    (status === 'listening' || status === 'muted') && !partial && !dicho && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !tutorialAbierto && !eligiendo;
   /*
    * Colgó la llamada del avatar con la mesa delante: el avatar grande vuelve ENTRANDO desde un lado y
    * se acomoda en su lugar (en los chats lo hace la compañera, caminando). Con «reducir movimiento», no.
@@ -3318,7 +3333,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       case 'envivo':
         return toggleConversar();
       case 'escribir':
-        // El cursor en «Escríbele…» (o en el chat del modo trabajo). Ya no abre el menú viejo (DeskMenu).
+        // El cursor en «Escríbele…» (o en el chat del modo trabajo). Ya no hay menú viejo: un solo menú, «Más» (M-7).
         return void setTimeout(() => entradaEscribir.current?.focus(), 350);
       case 'camara':
         return menuCamara();
@@ -3335,6 +3350,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return setPcAbierta(true);
       case 'misiones':
         return setHojaCerebro('misiones');
+      case 'circulo':
+        return setHojaCerebro('circulo');
+      case 'cartera':
+        return abrirCartera();
+      case 'agenda':
+        return setHojaCerebro('agenda');
+      case 'recordatorios':
+        return setHojaCerebro('recordatorios');
       case 'ajustes':
         // La pantalla de Ajustes entera (voz, oído, memoria, su cara, tema, perfil, permisos y sesión).
         return emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });
@@ -3584,6 +3607,64 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         conChat={enCuadro}
         estadoComputadora={pcEstado?.configurada ? estadoEnPalabras(pcEstado, idiomaActual() === 'en' ? 'en' : 'es').texto : null}
         computadoraTrabajando={pcTrabajando(pcEstado?.actual?.estado)}
+        // Lo del avatar que vivía en el menú viejo de la derecha (M-7): un solo menú, «Más».
+        extra={
+          <MasDelAvatar
+            visible={masAbierto}
+            avatar={avatarId}
+            online={online}
+            mode={mode}
+            presence={presence}
+            canciones={canciones}
+            caraClasica={vista === 'clasica'}
+            conOrbe={enOrbe}
+            catalogRequest={catalogRequest}
+            onCommand={(t) => {
+              setMasAbierto(false);
+              mandarTurnoRef.current(t);
+            }}
+            onSetMode={(m) => {
+              setMasAbierto(false);
+              if (m === 'CONOCER') void startConocer(false);
+              else mandarTurnoRef.current(`modo ${m.toLowerCase()}`);
+            }}
+            onSetPresence={(p) => {
+              setMasAbierto(false);
+              setPresenceUI(p);
+            }}
+            onConocer={() => {
+              setMasAbierto(false);
+              void startConocer(false);
+            }}
+            onBlaster={() => {
+              setMasAbierto(false);
+              void fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.'));
+            }}
+            onSaber={() => {
+              setMasAbierto(false);
+              void fireSaber();
+            }}
+            onSingSong={(id) => {
+              setMasAbierto(false);
+              const c = canciones.find((s) => s.id === id);
+              mandarTurnoRef.current(c?.pedir || `canta ${id}`);
+            }}
+            onSingGenre={(g) => {
+              setMasAbierto(false);
+              mandarTurnoRef.current(`canta ${g}`);
+            }}
+            onOrar={() => {
+              setMasAbierto(false);
+              mandarTurnoRef.current('ora por el día');
+            }}
+            onRemember={(f) => mandarTurnoRef.current(`recuerda que ${f}`)}
+            onSearch={(q) => {
+              setMasAbierto(false);
+              mandarTurnoRef.current(`busca ${q}`);
+            }}
+            onProbarVoz={probarVoz}
+          />
+        }
       />
 
       <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
@@ -3640,7 +3721,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       {/* Lo que AURA propone por su cuenta: arriba (debajo del aviso de su computadora), sin tapar al avatar.
           En una conversación de voz se queda a la vista, sin sonar: no interrumpe. */}
-      {propuesta && mesaVisible && !tutorialAbierto && !eligiendo && !menuOpen && !masAbierto ? (
+      {propuesta && mesaVisible && !tutorialAbierto && !eligiendo && !masAbierto ? (
         <TarjetaPropuesta
           propuesta={propuesta}
           nombreAvatar={de(avatarPorId(avatarId).nombre)}
@@ -3659,82 +3740,6 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       {/* La ventana de bienvenida: ofrece el recorrido y las preguntas para conocerle (bienvenida/). */}
       <VentanaBienvenida correo={user.correo} nombre={user.name} onRecorrido={() => setTutorialAbierto(true)} onHablando={() => void startConocer(false)} onTapa={setPreguntasAbiertas} />
-
-      <DeskMenu
-        visible={menuOpen}
-        userName={user.name}
-        mode={mode}
-        presence={presence}
-        micMuted={micApagado}
-        listening={listening}
-        visionOn={visionOn && !!camPerm?.granted}
-        online={online}
-        objects={objects}
-        draft={draft}
-        catalogRequest={catalogRequest}
-        canciones={canciones}
-        onChangeDraft={setDraft}
-        onSendDraft={sendDraft}
-        onClose={() => setMenuOpen(false)}
-        onSetMode={(m) => {
-          setMenuOpen(false);
-          if (m === 'CONOCER') void startConocer(false);
-          else mandarTurnoRef.current(`modo ${m.toLowerCase()}`);
-        }}
-        onSetPresence={(p) => {
-          setMenuOpen(false);
-          setPresenceUI(p);
-        }}
-        onToggleMic={() => void toggleMute()}
-        onToggleVision={() => void toggleVision()}
-        onConocer={() => {
-          setMenuOpen(false);
-          void startConocer(false);
-        }}
-        onBlaster={() => {
-          setMenuOpen(false);
-          void fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.'));
-        }}
-        onSaber={() => {
-          setMenuOpen(false);
-          void fireSaber();
-        }}
-        onSingSong={(id) => {
-          setMenuOpen(false);
-          const c = canciones.find((s) => s.id === id);
-          mandarTurnoRef.current(c?.pedir || `canta ${id}`);
-        }}
-        onSingGenre={(g) => {
-          setMenuOpen(false);
-          mandarTurnoRef.current(`canta ${g}`);
-        }}
-        onOrar={() => {
-          setMenuOpen(false);
-          mandarTurnoRef.current('ora por el día');
-        }}
-        onWhatDoYouSee={() => {
-          setMenuOpen(false);
-          mandarTurnoRef.current('qué ves');
-        }}
-        onRemember={(f) => mandarTurnoRef.current(`recuerda que ${f}`)}
-        onCommand={(t) => {
-          setMenuOpen(false);
-          mandarTurnoRef.current(t);
-        }}
-        onProbarVoz={probarVoz}
-        onAbrirHoja={(h) => {
-          setMenuOpen(false);
-          setHojaCerebro(h);
-        }}
-        onSearch={(q) => {
-          setMenuOpen(false);
-          mandarTurnoRef.current(`busca ${q}`);
-        }}
-        conOrbe={enOrbe}
-        avatar={avatarId}
-        onSetAvatar={(id) => void elegirAvatar(id)}
-        caraClasica={vista === 'clasica'}
-      />
 
       {eligiendo && (
         <SelectorAvatar

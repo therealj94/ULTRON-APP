@@ -33,8 +33,13 @@ import { claveDe } from './durable';
 
 /* ------------------------------------------------------------------ tipos */
 
-export type TipoPush = 'llamada' | 'mensaje' | 'propuesta' | 'recordatorio' | 'computadora';
-export const TIPOS_PUSH: readonly TipoPush[] = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora'];
+/**
+ * `mensaje-externo` (auditoría del 7-oct, A-6): un WhatsApp o un correo importante que le llegó (lib/alertas-mensajes.ts):
+ * {canal, titulo, texto (una línea), sugerencia, chat, nombre, abrir}. Al tocarlo, la app abre ese chat con la respuesta
+ * sugerida como BORRADOR en la caja de texto (no sale nada sin que la persona toque «Enviar»).
+ */
+export type TipoPush = 'llamada' | 'mensaje' | 'propuesta' | 'recordatorio' | 'computadora' | 'mensaje-externo';
+export const TIPOS_PUSH: readonly TipoPush[] = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora', 'mensaje-externo'];
 
 export type Plataforma = 'android' | 'ios' | 'web';
 export type Dispositivo = { token: string; aparato: string; plataforma: Plataforma; app: string; fecha: number };
@@ -352,7 +357,7 @@ export async function enviarPush(correo: string, datos: DatosPush, o: { ttlS?: n
 function enviarComoWeb(correo: string, datos: DatosPush, o: { ttlS?: number; ahora?: () => number }) {
   if (!TIPOS_PUSH.includes(datos?.tipo)) return Promise.resolve(null);
   const txt = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
-  const titulos: Record<TipoPush, string> = { llamada: 'AURA te llama', mensaje: txt(datos.titulo) || 'AURA', propuesta: 'AURA te propone algo', recordatorio: 'Recordatorio', computadora: 'Tu computadora' };
+  const titulos: Record<TipoPush, string> = { llamada: 'AURA te llama', mensaje: txt(datos.titulo) || 'AURA', propuesta: 'AURA te propone algo', recordatorio: 'Recordatorio', computadora: 'Tu computadora', 'mensaje-externo': txt(datos.titulo) || 'Mensaje importante' };
   const texto = datos.tipo === 'llamada' ? txt(datos.motivo) || 'Quiere hablar contigo.' : txt(datos.texto);
   const abrir = txt(datos.abrir) || (datos.tipo === 'computadora' ? 'computadora' : 'mesa');
   const ahora = (o.ahora || Date.now)();

@@ -70,8 +70,9 @@ const CONTACTOS = [
   { correo: 'ana.ruiz@x.com', nombre: 'Ana Ruiz' },
 ];
 // Las manos de un APK anterior (sin `llamame`): llamar y recordar esperan el «sí». La mano nueva (el
-// avatar llama y los recordatorios se ponen directo) tiene sus pruebas al final.
-const TODAS = MANOS.filter((m) => m !== 'llamame');
+// avatar llama y los recordatorios se ponen directo) tiene sus pruebas al final. Tampoco `recordatorios_servidor` (A-3: la
+// hoja de recordatorios y su sincronía, con sus pruebas en tests/recordatorios-servidor.test.ts).
+const TODAS = MANOS.filter((m) => m !== 'llamame' && m !== 'recordatorios_servidor');
 const conManos: ContextoApp = { pantalla: 'mesa', contactos: CONTACTOS, manos: TODAS };
 const viejo: ContextoApp = { pantalla: 'mesa', contactos: CONTACTOS };
 

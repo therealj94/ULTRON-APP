@@ -107,6 +107,14 @@ export const MENU_APP: readonly LugarApp[] = [
     fuente: ['mobile/src/ajustes/Correos.tsx', 'mobile/src/correo/PantallaCorreos.tsx', 'server/correo.ts'],
   },
   {
+    id: 'calendario',
+    nombre: { es: 'Calendario', en: 'Calendar' },
+    donde: { es: 'Ajustes → «Calendario»; el día: Más → «Hoy»', en: 'Settings → “Calendar”; the day: More → “Today”' },
+    que: { es: 'Outlook o Google: AURA lee su agenda y propone eventos (se crean con su «sí»)', en: 'Outlook or Google: AURA reads the schedule and proposes events (created after a yes)' },
+    corto: { es: 'Calendario: Ajustes → «Calendario»; Más → «Hoy»', en: 'Calendar: Settings → “Calendar”; More → “Today”' },
+    fuente: ['mobile/src/ajustes/Calendario.tsx', 'mobile/src/agenda/HojaHoy.tsx', 'server/calendario.ts'],
+  },
+  {
     id: 'cartera',
     nombre: { es: 'Veta Wallet (cartera)', en: 'Veta Wallet (wallet)' },
     donde: { es: 'Ajustes → AURA → «Veta Wallet», o el menú de la mesa → Cartera, o decir «enséñame mi wallet»; para pagar: en un chat de PULSE2CHAT, la moneda de arriba («Enviar dinero») o «mándale 5 ORIGEN a Ana»', en: 'Settings → AURA → “Veta Wallet”, or the desk menu → Wallet, or say “show me my wallet”; to pay: in a PULSE2CHAT chat, the coin at the top (“Send money”) or “send Ana 5 ORIGEN”' },
@@ -185,7 +193,7 @@ export const MENU_APP: readonly LugarApp[] = [
     donde: { es: 'Más → Cámara: Apagada, Solo ahora o Siempre (empieza apagada); «¿qué ves?» la prende solo ahora. «Comenta lo que ve» (que comente sola): Más → Ajustes. Caras: Más → Caras', en: 'More → Camera: Off, Just now or Always (starts off); “what do you see?” turns it on just now. “Comments on what it sees” (unprompted remarks): More → Settings. Faces: More → Faces' },
     que: { es: 've y dice qué hay, lee papeles y reconoce a quien le presente, con permiso', en: 'sees and says what is there, reads papers and recognizes people introduced, with permission' },
     corto: { es: 'Cámara: Más → Cámara (Apagada, Solo ahora, Siempre)', en: 'Camera: More → Camera (Off, Just now, Always)' },
-    fuente: ['mobile/src/lib/camaraModo.ts', 'mobile/src/components/DeskMenu.tsx'],
+    fuente: ['mobile/src/lib/camaraModo.ts', 'mobile/src/components/HojaMas.tsx'],
   },
   {
     id: 'ajustes',

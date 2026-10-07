@@ -12,6 +12,8 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { HojaCirculo } from '../ajustes/Circulo';
 import { HojaConocer } from '../ajustes/LoQueSeDeTi';
 import { HojaMisiones } from '../ajustes/Misiones';
+import { HojaHoy } from '../agenda/HojaHoy';
+import { HojaRecordatorios } from '../ajustes/Recordatorios';
 import type { PantallaCerebro } from '../compa/cerebro';
 import { abrirHoja, cerrarHoja, hayAnfitrion, hojasAhora, suscribirHojas } from './hojas';
 
@@ -22,6 +24,8 @@ export function HojasCerebro() {
       <HojaMisiones visible={hojas.abierta === 'misiones'} onCerrar={cerrarHoja} />
       <HojaConocer visible={hojas.abierta === 'conocer'} onCerrar={cerrarHoja} />
       <HojaCirculo visible={hojas.abierta === 'circulo'} onCerrar={cerrarHoja} />
+      <HojaHoy visible={hojas.abierta === 'agenda'} onCerrar={cerrarHoja} />
+      <HojaRecordatorios visible={hojas.abierta === 'recordatorios'} onCerrar={cerrarHoja} />
     </>
   );
 }
@@ -41,6 +45,8 @@ export function HojaCerebro({ cual, onCerrar }: PropsHoja) {
       <HojaMisiones visible={cual === 'misiones'} onCerrar={onCerrar} />
       <HojaConocer visible={cual === 'conocer'} onCerrar={onCerrar} />
       <HojaCirculo visible={cual === 'circulo'} onCerrar={onCerrar} />
+      <HojaHoy visible={cual === 'agenda'} onCerrar={onCerrar} />
+      <HojaRecordatorios visible={cual === 'recordatorios'} onCerrar={onCerrar} />
     </>
   );
 }

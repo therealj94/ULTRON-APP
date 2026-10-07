@@ -437,7 +437,18 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
 /** Lo más largo del texto entero de un borrador que viaja en su decisión (la ventana lo muestra y lo deja editar). */
 export const TEXTO_PROPUESTA_MAX = 6000;
 
-export type BorradorParaDecidir = { canal: 'correo' | 'whatsapp'; intento: string; para: string[] | string; desde?: string; asunto?: string; texto: string; vence: number; huella?: string };
+export type BorradorParaDecidir = {
+  canal: 'correo' | 'whatsapp';
+  intento: string;
+  para: string[] | string;
+  desde?: string;
+  asunto?: string;
+  texto: string;
+  vence: number;
+  huella?: string;
+  /** M-12: lo que sale además del texto (una nota de voz con la voz de AURA, un archivo): la tarjeta lo dice. */
+  adjunto?: string;
+};
 
 function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion: number, ahora: number): Decision {
   const destinatario = trozo(Array.isArray(b.para) ? b.para.join(', ') : b.para, 160) || 'sin destinatario';
@@ -451,7 +462,7 @@ function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion:
       accion,
       cuenta: b.canal === 'correo' ? linea(b.desde, 120) || 'Tu correo' : 'Tu WhatsApp',
       destinatario,
-      datos: [b.asunto ? `Asunto: «${trozo(b.asunto, 140)}»` : '', `Texto: «${trozo(b.texto, 400)}»`].filter(Boolean),
+      datos: [b.asunto ? `Asunto: «${trozo(b.asunto, 140)}»` : '', b.adjunto ? `Sale: ${trozo(b.adjunto, 160)}` : '', `Texto: «${trozo(b.texto, 400)}»`].filter(Boolean),
       alcance: 'Solo este mensaje, una vez y sin cambios. No autoriza envíos futuros.',
       // El texto entero (la ventana de decisión lo muestra tal cual y lo deja editar). Con su tope: un correo larguísimo
       // se ve recortado, pero lo que se aprueba sigue siendo la huella del borrador entero.

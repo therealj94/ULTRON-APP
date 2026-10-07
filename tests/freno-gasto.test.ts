@@ -14,10 +14,13 @@ import {
   estadoGasto,
   gastarCupoDiario,
   MAX_PERMISOS_ANTICIPADOS,
+  reservarPermisoAnticipado,
   segundosDeAudio,
+  soltarPermisoAnticipado,
   SEGUNDOS_POR_PERMISO_TURBO,
   topeGasto,
   TOPES_GASTO_OMISION,
+  VIGENCIA_PERMISO_ANTICIPADO_MS,
   _reiniciarFrenoGasto,
 } from '../lib/freno-gasto';
 import { abrirEleven, hablarEleven, _reiniciarFrenoEleven } from '../server/eleven';
@@ -200,7 +203,7 @@ test('mando: el ámbito sigue vivo a través de express (después de leer el cue
   assert.match(server.slice(i, i + 220), /puedeMandar\(id, 'ultron'\) \|\| puedeMandar\(id, 'electrum'\)/);
 });
 
-test('oído Turbo: el permiso adelantado no se cobra hasta usarlo; el que vence sin usarse no cuenta', async () => {
+test('oído Turbo: el permiso adelantado no se cobra hasta usarlo o hasta que vence sin avisar', async () => {
   _reiniciarFrenoGasto();
   process.env.ELEVENLABS_API_KEY = 'xi-de-prueba';
   process.env.AURA_TOPE_DIA_STT_SEGUNDOS = String(10 * SEGUNDOS_POR_PERMISO_TURBO);
@@ -219,9 +222,9 @@ test('oído Turbo: el permiso adelantado no se cobra hasta usarlo; el que vence 
   // El pedido para usarlo YA (sin `anticipado`): se cobra al darlo, como siempre.
   assert.ok(await permisoTurbo('es'));
   assert.equal(estadoGasto().stt.usado, 2 * SEGUNDOS_POR_PERMISO_TURBO);
-  // Los que vencen sin usarse no cuentan nunca (20 min después se olvidan).
+  // Revisión E4: los que vencen sin aviso (20 min) se cobran al vencer, una vez; avisar tarde ya no cobra otra vez.
   assert.equal(cobrarPermisoUsado(ids[1], 'jose@x', Date.now() + 21 * 60_000), false);
-  assert.equal(estadoGasto().stt.usado, 2 * SEGUNDOS_POR_PERMISO_TURBO);
+  assert.equal(estadoGasto().stt.usado, 4 * SEGUNDOS_POR_PERMISO_TURBO, 'ids[1] e ids[2] vencieron: cobrados');
   // ElevenLabs no da el token: el adelantado se suelta sin cobrar.
   (globalThis as any).__sinTokenTurbo = true;
   try {
@@ -229,7 +232,32 @@ test('oído Turbo: el permiso adelantado no se cobra hasta usarlo; el que vence 
   } finally {
     (globalThis as any).__sinTokenTurbo = false;
   }
-  assert.equal(estadoGasto().stt.usado, 2 * SEGUNDOS_POR_PERMISO_TURBO);
+  assert.equal(estadoGasto().stt.usado, 4 * SEGUNDOS_POR_PERMISO_TURBO);
+});
+
+test('oído Turbo (E4): un adelantado que vence sin aviso se cobra una sola vez, a la cuenta que toca; el suelto no', async () => {
+  _reiniciarFrenoGasto();
+  process.env.AURA_TOPE_DIA_STT_SEGUNDOS = String(10 * SEGUNDOS_POR_PERMISO_TURBO);
+  const t0 = Date.now();
+  const vence = t0 + VIGENCIA_PERMISO_ANTICIPADO_MS + 1;
+  const a = reservarPermisoAnticipado('mudo@x', t0)!;
+  const b = reservarPermisoAnticipado('mudo@x', t0)!;
+  const suelto = reservarPermisoAnticipado('mudo@x', t0)!;
+  soltarPermisoAnticipado(suelto); // ElevenLabs no lo dio: nunca se cobra.
+  assert.equal(estadoGasto(t0).stt.usado, 0, 'antes de vencer, nada');
+  assert.equal(estadoGasto(t0 + VIGENCIA_PERMISO_ANTICIPADO_MS - 1).stt.usado, 0, 'al borde, todavía nada');
+  // Con solo mirar el estado pasado el plazo, los dos vencidos ya cuentan (sin esperar a otro pedido).
+  assert.equal(estadoGasto(vence).stt.usado, 2 * SEGUNDOS_POR_PERMISO_TURBO);
+  assert.equal(cobrarPermisoUsado(a, 'mudo@x', vence), false, 'avisar tarde no cobra otra vez');
+  assert.equal(cobrarPermisoUsado(b, 'mudo@x', vence + 1000), false);
+  assert.equal(reservarPermisoAnticipado('otro@x', vence) !== null, true);
+  assert.equal(estadoGasto(vence).stt.usado, 2 * SEGUNDOS_POR_PERMISO_TURBO, 'una sola vez');
+  // Uno de mando que vence sin aviso: se anota aparte (exento), no en el tope del resto.
+  const m = conPagadorGasto(() => true, () => reservarPermisoAnticipado('jose@x', vence))!;
+  assert.ok(m);
+  const e = estadoGasto(vence + VIGENCIA_PERMISO_ANTICIPADO_MS + 1).stt;
+  assert.equal(e.exento, SEGUNDOS_POR_PERMISO_TURBO);
+  assert.equal(e.usado, 3 * SEGUNDOS_POR_PERMISO_TURBO, 'el de otro@x también venció y se cobró');
 });
 
 test('oído Turbo: un teléfono que nunca avisa no oye gratis (más de MAX adelantados: el más viejo se cobra); pasado el tope, sin permiso', async () => {

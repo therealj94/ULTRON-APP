@@ -41,6 +41,8 @@ import { fuenteDisplay } from '../ui/tipografia';
 import { SIN_CUMPLE, cumpleDeSeleccion, seleccionDeCumple, type SeleccionCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
+import { HojaCalendario, useEstadoCalendario } from './Calendario';
+import { resumenFila } from '../agenda/logica';
 import { HojaComputadora } from './Computadora';
 import { HojaAvisos } from './Avisos';
 import { HojaCerebro } from '../app/HojasCerebro';
@@ -71,7 +73,7 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | 'avisos' | 'whatsapp-desvincular' | PantallaCerebro | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'calendario' | 'computadora' | 'avisos' | 'whatsapp-desvincular' | PantallaCerebro | null;
 
 /** Lo que se lee debajo de «Iniciativa de AURA», según el nivel elegido. */
 function pieIniciativa(n: NivelIniciativa): string {
@@ -93,6 +95,8 @@ export function Ajustes({ navigation }: Props) {
   const [permisosOk, setPermisosOk] = useState<number | null>(null);
   const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
   const { cuentas: correos } = useCuentasCorreo(hoja === 'correos');
+  // Su calendario: el estado honesto de cada proveedor (conectado, reconectar, sin conectar, falta configurar).
+  const { estado: calendario, sinLeer: calendarioSinLeer } = useEstadoCalendario(hoja === 'calendario');
   // Su WhatsApp (cada cuenta el suyo): «Agregar mi WhatsApp» si puede y no lo tiene; «Desvincular» si ya lo tiene.
   const [wa, setWa] = useState<EstadoWA | null>(null);
   const [errorWa, setErrorWa] = useState('');
@@ -225,12 +229,20 @@ export function Ajustes({ navigation }: Props) {
             <Fila titulo={tr('Lo que AURA aprendió de ti', 'What AURA learned about you')} detalle={tr('Lo que sacó al hablar contigo y lo que quedó a medias', 'What she picked up talking with you and what was left halfway')} icono="chispas" onPress={() => abrir('conocer')} />
             <Fila titulo={tr('Mi círculo', 'My circle')} detalle={tr('Tu gente cercana y qué puede hacer AURA por ellos', 'Your close people and what AURA can do for them')} icono="familia" onPress={() => abrir('circulo')} />
             <Fila titulo={tr('Misiones', 'Missions')} detalle={tr('Las metas que AURA te ayuda a cumplir', 'The goals AURA helps you reach')} icono="estrella" onPress={() => abrir('misiones')} />
+            <Fila titulo={tr('Recordatorios', 'Reminders')} detalle={tr('Lo que AURA te recuerda, también lo que se repite', 'What AURA reminds you of, including repeats')} icono="campana" onPress={() => abrir('recordatorios')} />
             <Fila
               titulo={tr('Tus correos', 'Your email')}
               detalle={tr('Para que AURA los revise y te ayude a contestar', 'So AURA can check them and help you reply')}
               icono="correo"
               valor={correos === null ? '' : String(correos.length)}
               onPress={() => abrir('correos')}
+            />
+            <Fila
+              titulo={tr('Calendario', 'Calendar')}
+              detalle={tr('Outlook o Google: AURA lee tu agenda y propone eventos (con tu «sí»)', 'Outlook or Google: AURA reads your schedule and suggests events (with your yes)')}
+              icono="reloj"
+              valor={resumenFila(calendario, calendarioSinLeer, idioma === 'en' ? 'en' : 'es')}
+              onPress={() => abrir('calendario')}
             />
             {entradaWa === 'agregar' ? (
               <Fila titulo={tr('Agregar mi WhatsApp', 'Add my WhatsApp')} detalle={tr('Para verlo y contestarlo aquí, aparte de PULSE2CHAT, y que AURA te ayude', 'To see and answer it here, apart from PULSE2CHAT, with AURA’s help')} icono="chat" onPress={abrirWhatsapp} />
@@ -410,9 +422,10 @@ export function Ajustes({ navigation }: Props) {
       </Hoja>
 
       <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
+      <HojaCalendario visible={hoja === 'calendario'} onCerrar={() => setHoja(null)} />
       <HojaAvisos visible={hoja === 'avisos'} onCerrar={() => setHoja(null)} />
       <HojaComputadora visible={hoja === 'computadora'} onCerrar={() => setHoja(null)} nombreAvatar={de(avatar.nombre)} />
-      <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' ? hoja : null} onCerrar={() => setHoja(null)} />
+      <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' || hoja === 'recordatorios' ? hoja : null} onCerrar={() => setHoja(null)} />
 
       <Hoja visible={hoja === 'permisos'} onCerrar={() => setHoja(null)} titulo={tr('Permisos', 'Permissions')} subtitulo={tr('Toca un permiso para darlo. Si lo bloqueaste, te llevo a los ajustes del teléfono.', 'Tap one to allow it. If you blocked it, I’ll take you to your phone settings.')}>
         <ListaPermisos />

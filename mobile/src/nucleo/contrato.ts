@@ -122,7 +122,19 @@ export type AccionApp =
    * Aviso local a esa hora (epoch ms). Con `llamada`, a esa hora AURA «te llama» (aviso de llamada
    * entrante a pantalla completa; al contestar, te lo dice con su voz). Solo tras el «sí» de la persona.
    */
-  | { tipo: 'recordatorio'; texto: string; cuando: number; llamada?: boolean }
+  | {
+      tipo: 'recordatorio';
+      texto: string;
+      cuando: number;
+      llamada?: boolean;
+      /**
+       * A-3: el id del recordatorio en el servidor (lo guarda allá, con su repetición). El teléfono pone la alarma de ESTA
+       * vez con él (compa/recordatoriosServidor.ts baseServidor) y la reconcilia con el servidor. Sin él, como antes.
+       */
+      rid?: string;
+      /** Cada cuánto se repite (lo lleva el servidor; aquí solo se pone la próxima vez). */
+      repetir?: { tipo: string; dia?: number };
+    }
   /** Quita un recordatorio (por el id que el teléfono contó en su contexto). Solo tras el «sí». */
   | { tipo: 'cancelar_recordatorio'; id: string }
   /** «Llámame»: el avatar llama a la persona, ya (la pantalla «te está llamando»; compa/llamadaCiclo.ts). */
@@ -134,6 +146,12 @@ export type AccionApp =
    * en Veta Wallet con su contraseña: AURA nunca paga sola (cartera/HojaPagar.tsx).
    */
   | { tipo: 'pagar'; con: string; monto?: string; moneda?: string }
+  /**
+   * A-4: «llama a don Carlos del banco», «márcale al 9876 5432». Abre el MARCADOR del teléfono con ese número (`tel:`), o
+   * el chat de WhatsApp de ese número si dijo «por WhatsApp», para que la persona toque llamar. Sin permiso nuevo: el
+   * marcador no llama solo. El servidor la manda SOLO tras el «sí» a «¿Le marco a … al +504…?» (compa/marcar.ts).
+   */
+  | { tipo: 'marcar'; a: string; via: 'telefono' | 'whatsapp'; numero?: string; nombre?: string }
   /*
    * LOS CONTROLES DE VOZ SEPARADOS (AUR10, lib/controlesVoz.ts; mano `controles`), cada uno con UN efecto.
    * Los decide el servidor con lo que dijo la persona (el modelo no los puede pedir):
@@ -152,7 +170,11 @@ export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
  * exactos, 4-oct): este teléfono comprueba que su borrador sea el texto aprobado (`enviar.texto`) antes de mandarlo; sin
  * ella el servidor no le da ningún `enviar`.
  */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'] as const;
+/*
+ * `marcar` (A-4): abre el marcador o WhatsApp con un número, tras el «sí». `recordatorios_servidor` (A-3): sus recordatorios
+ * viven en el servidor (con repetición) y aquí se reconcilian con las alarmas de notifee; tiene la hoja «Recordatorios».
+ */
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */

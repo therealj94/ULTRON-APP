@@ -55,7 +55,15 @@ const ENV: Record<string, string[]> = {
   // Correo de cada persona: la llave con que se cifran sus claves (si falta, la de la sesión) y la app de
   // Microsoft para entrar a Outlook/Microsoft 365 con OAuth (lib/correo).
   correo_cifrado: ['CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],
-  ms_client_id: ['MS_CLIENT_ID'],
+  // Las caras y voces guardadas (lib/biometria-sobre.ts): su llave, o la del correo, o la de la sesión (sin KMS).
+  biometria_cifrado: ['BIOMETRIA_CLAVE_CIFRADO', 'CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],
+  // MICROSOFT_CLIENT_ID es la de la app de Windows (server/windows-rutas.ts): UNA app registrada en Azure sirve para
+  // las tres cosas (Windows, el correo y el calendario del servidor) si tiene «flujos de cliente público» activados.
+  ms_client_id: ['MS_CLIENT_ID', 'MICROSOFT_CLIENT_ID'],
+  // El calendario de Google desde el servidor (lib/calendario): una app «Aplicación web» de Google Cloud con la vuelta
+  // https://<servidor>/api/calendario/google/vuelta. No sirve la «de escritorio» de Windows (su vuelta es 127.0.0.1).
+  google_web_id: ['GOOGLE_WEB_CLIENT_ID'],
+  google_web_secreto: ['GOOGLE_WEB_CLIENT_SECRET'],
   // Los avisos al teléfono con la app cerrada (lib/push.ts): el JSON entero de la cuenta de servicio de Firebase.
   firebase_cuenta: ['FIREBASE_SERVICE_ACCOUNT'],
   // El relevo de PULSE2CHAT avisa a AU-RA de un mensaje nuevo (server/push.ts /api/push/relevo): clave compartida.

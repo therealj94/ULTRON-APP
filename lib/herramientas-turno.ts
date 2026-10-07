@@ -24,6 +24,7 @@
 import type { Tool } from '@aws-sdk/client-bedrock-runtime';
 import { analizarRespuesta } from './afirmacion';
 import { anteriorOfreceAccion } from './cerebro-rapido';
+import { esSoloNumero } from './marcar';
 
 /** Lo que se sabe del turno para elegir. */
 export type ContextoHerramientas = {
@@ -37,6 +38,8 @@ export type ContextoHerramientas = {
   esperaWhatsapp?: boolean;
   /** Un borrador o un apartado de correo espera su decisión. */
   esperaCorreo?: boolean;
+  /** Un evento propuesto espera su «sí» (server/calendario.ts). */
+  esperaCalendario?: boolean;
   /** Los contactos del teléfono (nombrar a uno es hablar de escribirle o llamarle). */
   contactos?: readonly string[];
   /** Hay una tarea de varios pasos en curso (lib/tarea-en-curso.ts). */
@@ -58,12 +61,19 @@ const GRUPOS: Record<string, readonly string[]> = {
   app: ['abrir_pantalla', 'ajustar_app'],
   idioma: ['cambiar_idioma'],
   chats: ['chat_aura', 'leer_mensajes', 'buscar_en_chats'],
-  whatsapp: ['whatsapp', 'ordenar_mensajes'],
-  correo: ['correo', 'ordenar_mensajes'],
-  mensajes: ['chat_aura', 'leer_mensajes', 'buscar_en_chats', 'whatsapp', 'correo', 'circulo', 'ordenar_mensajes'],
+  whatsapp: ['whatsapp', 'ordenar_mensajes', 'contactos_vip'],
+  correo: ['correo', 'ordenar_mensajes', 'contactos_vip'],
+  mensajes: ['chat_aura', 'leer_mensajes', 'buscar_en_chats', 'whatsapp', 'correo', 'circulo', 'ordenar_mensajes', 'contactos_vip'],
+  // A-5 / M-12: leer un adjunto o un archivo, mandar una nota de voz o un archivo (por WhatsApp o del correo).
+  archivos: ['whatsapp', 'correo'],
+  // A-6: su lista de contactos importantes (los avisos de mensajes).
+  vip: ['contactos_vip', 'whatsapp', 'correo'],
   pendientes: ['ordenar_mensajes', 'tarea', 'mision'],
-  llamada: ['llamar_contacto', 'llamarme', 'circulo'],
+  // llamar_numero (A-4): un número o alguien de su WhatsApp, con el marcador del teléfono.
+  llamada: ['llamar_contacto', 'llamar_numero', 'llamarme', 'circulo'],
   recordatorio: ['recordatorio', 'llamarme'],
+  // Su calendario (server/calendario.ts): leer lo que tiene y proponer eventos.
+  calendario: ['agenda', 'agendar'],
   computadora: ['computadora', 'leer_pagina'],
   documentos: ['crear_documento'],
   investigar: ['investigar'],
@@ -94,6 +104,15 @@ const PIDE: Array<[string, RegExp]> = [
     /\b(mensaje\w*|chat\w*|escrib\w*|mand(a|e|o|ar|ale|ales|alo|ala|amelo|aselo|aselos|enle)\b|envi(a|e|o|ar|ale|ales|alo|amelo|aselo)\b|respond\w*|contest\w*|reenvi\w*|redact\w*|borrador\w*|dile|diles|decile|digale|dig(a|o)le|avisa(le|les)|preguntale|recado|textea\w*|novedad\w*|(me|te|le) (escribio|mando|contesto|respondio|dijo)|que (me|te) (dijo|dice|escribio|mando)|leeme|lee(r)? (mis|el|los|lo)|revisa(r)? (mis|el|los|lo)|send|reply|text me|message)\b/,
   ],
   ['pendientes', /\b(pendiente\w*|que tengo (hoy|para hoy|manana)|que me falta)\b/],
+  [
+    'calendario',
+    /\b(calendario\w*|agenda\w*|agend\w*|cita\w*|reunion\w*|junta con|evento\w*|meeting\w*|calendar|schedule\w*|libre\w*|disponib\w*|hueco\w*|ocupad[oa]s?|outlook|google calendar)\b|\bque tengo (hoy|para hoy|manana|pasado manana|esta semana|la semana|el (lunes|martes|miercoles|jueves|viernes|sabado|domingo)|el \d)\b|\b(tengo|hay) algo (hoy|manana|el (lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b|\bmi (dia|semana)\b/,
+  ],
+  [
+    'archivos',
+    /\b(adjunt\w*|anexo\w*|attachment\w*|nota(s)? de voz|audio(s)?|reenvi\w*|el (pdf|archivo|documento|excel|word) que me (mando|mandaron|envio|enviaron|llego)|que dice (el|la) (pdf|archivo|documento|nota|foto))\b/,
+  ],
+  ['vip', /\b(vip|contactos? importantes?|avisame (cuando|si) (me )?(escrib\w*|mand\w*)|marca(lo|la|r)? (a \w+ )?como importante|mis importantes)\b/],
   ['llamada', /\b(llam(a|ame|ale|alo|ala|ar|arle|arme|e|en|ada|adas|amos)|marc(a|ame|ale|ar|arle)|marques|telefone\w*|timbr\w*|videollamad\w*|call me|call)\b/],
   [
     'recordatorio',
@@ -135,6 +154,9 @@ function gruposDe(texto: string, contactos: readonly string[] = []): Set<string>
   const p = plano(texto);
   const out = new Set<string>();
   for (const [g, re] of PIDE) if (re.test(p)) out.add(g);
+  // Un número de teléfono dicho solo («el 9876 5432», «+504 9876-5432»): es para marcarlo (o contestar «¿me dices el
+  // número?»).
+  if (esSoloNumero(texto)) out.add('llamada');
   // Nombrar a un contacto del teléfono para comunicarse con él («¿y Beto?», «necesito hablar con Ana»): escribirle o
   // llamarle. Solo nombrarlo en una charla larga («Ana me contó lo de la mina») no es pedir un mensaje (José, 7-oct).
   const nombres = contactos
@@ -177,10 +199,12 @@ export function herramientasSegunFrase(todas: readonly Tool[], ctx: ContextoHerr
   // Lo que espera su decisión: sus herramientas (cambiarlo, releerlo, mandarlo).
   if (ctx.esperaWhatsapp) grupos.add('whatsapp');
   if (ctx.esperaCorreo) grupos.add('correo');
-  if (ctx.esperaSi && !ctx.esperaWhatsapp && !ctx.esperaCorreo) {
+  if (ctx.esperaCalendario) grupos.add('calendario');
+  if (ctx.esperaSi && !ctx.esperaWhatsapp && !ctx.esperaCorreo && !ctx.esperaCalendario) {
     grupos.add('mensajes');
     grupos.add('llamada');
     grupos.add('recordatorio');
+    grupos.add('calendario');
   }
   if (ctx.conTarea) grupos.add('tarea');
   // Ante la duda, todas: un verbo de acción que ningún grupo reconoce, o un «sí» a algo que no se sabe qué es.

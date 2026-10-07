@@ -31,7 +31,11 @@ import { analizarRespuesta } from './afirmacion';
 /* ------------------------------------------------------------------ los recibos */
 
 /** De qué es un efecto real. */
-export type CanalEfecto = 'whatsapp' | 'correo' | 'chat' | 'recordatorio' | 'llamada' | 'guardado';
+/**
+ * `marcador` (A-4): se le ABRIÓ el marcador del teléfono (o WhatsApp) con un número para que ella llame. No respalda que
+ * se habló con nadie, ni que la llamada se hizo: solo eso.
+ */
+export type CanalEfecto = 'whatsapp' | 'correo' | 'chat' | 'recordatorio' | 'llamada' | 'guardado' | 'calendario' | 'marcador';
 
 /**
  * Un efecto que consta: `confirmado` (el proveedor lo aceptó, el teléfono recibió la acción, quedó guardado) o
@@ -45,9 +49,9 @@ export function recibosDePasos(pasos: ReadonlyArray<{ herramienta?: string; esta
   for (const p of pasos || []) {
     const h = String(p?.herramienta || '');
     const ef = p?.recibo?.efecto;
-    if (p?.estado === 'succeeded' && ef === 'confirmado') out.push({ canal: h === 'correo' ? 'correo' : h === 'whatsapp' || h === 'circulo' ? 'whatsapp' : 'guardado', estado: 'confirmado' });
+    if (p?.estado === 'succeeded' && ef === 'confirmado') out.push({ canal: h === 'correo' ? 'correo' : h === 'whatsapp' || h === 'circulo' ? 'whatsapp' : h === 'calendario' ? 'calendario' : 'guardado', estado: 'confirmado' });
     else if (p?.estado === 'succeeded' && ef === 'guardado') out.push({ canal: 'guardado', estado: 'confirmado' });
-    else if (p?.estado === 'succeeded' && ef === 'borrador' && p.recibo?.codigo === 'pendiente-del-turno') out.push({ canal: h === 'correo' ? 'correo' : 'whatsapp', estado: 'en-curso' });
+    else if (p?.estado === 'succeeded' && ef === 'borrador' && p.recibo?.codigo === 'pendiente-del-turno') out.push({ canal: h === 'correo' ? 'correo' : h === 'calendario' ? 'calendario' : 'whatsapp', estado: 'en-curso' });
     // Los documentos que el servidor generó y dejó para bajar.
     else if (p?.estado === 'succeeded' && h === 'documento') out.push({ canal: 'guardado', estado: 'confirmado' });
   }
@@ -62,13 +66,15 @@ export function recibosDeAcciones(acciones: ReadonlyArray<{ tipo?: string; para?
     if (t === 'enviar') out.push({ canal: 'chat', estado: 'confirmado', ...(a?.para ? { destino: a.para } : {}) });
     else if (t === 'recordatorio' || t === 'cancelar_recordatorio') out.push({ canal: 'recordatorio', estado: 'confirmado' });
     else if (t === 'llamar' || t === 'llamame') out.push({ canal: 'llamada', estado: 'confirmado', ...(a?.con ? { destino: a.con } : {}) });
+    // Abrir el marcador NO es una llamada hecha: la hace ella, y nadie sabe si contestó.
+    else if (t === 'marcar') out.push({ canal: 'marcador', estado: 'confirmado' });
     else if (t === 'perfil') out.push({ canal: 'guardado', estado: 'confirmado' });
   }
   return out;
 }
 
 /** Los recibos del «sí» que resolvió el servidor al empezar el turno (server/decision-turno.ts). */
-export function reciboDeDecision(canal: 'whatsapp' | 'correo', r: { estado?: string; recibo?: { efecto?: string; codigo?: string } } | null | undefined, destino?: string): ReciboEfecto | null {
+export function reciboDeDecision(canal: 'whatsapp' | 'correo' | 'calendario', r: { estado?: string; recibo?: { efecto?: string; codigo?: string } } | null | undefined, destino?: string): ReciboEfecto | null {
   if (!r || r.estado !== 'succeeded') return null;
   if (r.recibo?.efecto === 'confirmado') return { canal, estado: 'confirmado', ...(destino ? { destino } : {}) };
   if (r.recibo?.efecto === 'borrador' && r.recibo.codigo === 'pendiente-del-turno') return { canal, estado: 'en-curso', ...(destino ? { destino } : {}) };
@@ -106,7 +112,11 @@ export function _olvidarEfectos() {
 /* ------------------------------------------------------------------ lo que da por hecho */
 
 type Clase = 'envio' | 'recordatorio' | 'llamada' | 'guardado' | 'generico';
-export type Afirmacion = { frase: string; clase: Clase; canal?: 'whatsapp' | 'correo' | 'chat'; destino?: string };
+/**
+ * `calendario`: lo que afirma habla de su CALENDARIO («quedó en tu calendario», «el evento quedó agendado en Outlook»):
+ * solo lo respalda el recibo de la API del calendario (server/calendario.ts), no un recordatorio del teléfono.
+ */
+export type Afirmacion = { frase: string; clase: Clase; canal?: 'whatsapp' | 'correo' | 'chat'; destino?: string; calendario?: boolean };
 
 /** Lo que va antes y la vuelve futura, condicional o de otro («para ser enviado», «quieres que le mande», «si lo agendo»). */
 const NO_ES_HECHO_ANTES = /\b(que|si|cuando|para|para ser|sera|seran|va a ser|van a ser|quedara|quedaria|puede ser|puedo|podria|quieres|queres|quiere|deseas|prefieres|antes de|hasta que|en cuanto|apenas|will be|to be|can be|should be|if|once|when|want me to)\s+(\S+\s+){0,2}$/;
@@ -167,12 +177,17 @@ const RECORDATORIO = [
   rx(String.raw`${INI}${ART}(?:${COSA_REC} )?(?:ya )?(?:agendad|programad)[oa]s?\b`),
   rx(String.raw`${INI}${ART}${COSA_REC} (?:ya )?(?:quedo|queda|ha sido|fue|ya esta|ya quedo) (?:puest|cread|guardad|programad|agendad|list)[oa]s?\b`),
   rx(String.raw`${INI}ya (?:quedo|esta) (?:puest|programad|agendad)[oa]\b`),
+  // Su calendario (server/calendario.ts): «Listo, quedó en tu calendario», «ya quedó agendado en tu agenda». Solo el
+  // «quedó» de lo que acaba de hacer; «tu reunión ya está en tu calendario» lee un dato (G2).
+  rx(String.raw`${INI}(?:ya )?(?:quedo|queda) (?:agendad[oa] |guardad[oa] |puest[oa] )?en (?:tu|su) (?:calendario|agenda)\b`),
+  /\bi(?:'ve| have)? (?:just |already )?(?:added|put) (?:it |that |the event |the meeting )?(?:to|on|in) your calendar\b/,
   // «Te llamo a las 3» (lo que AU-RA dejó puesto); «Te recuerdo que a las 3 tienes la reunión» lee un dato (G2).
   /\bte (llamo|marco|aviso)\b[^.?!]{0,40}\ba las \d/,
   /\breminder( is| has been|'s)? (set|scheduled|saved|created)\b/,
   /\bi(?:'ve| have)? (set|scheduled|added|created) (a |an |the |your )?(reminder|alarm|timer|appointment|event|meeting)\b/,
 ];
-const LLAMADA = [/\b(ya )?(le |te |la |lo )(llame|marque)\b/, /\bi (called|dialed|rang)\b/];
+// «ya hablé con él» (A-4): con el marcador abierto la llamada la hace ella; AU-RA no habló con nadie.
+const LLAMADA = [/\b(ya )?(le |te |la |lo )(llame|marque)\b/, /\bi (called|dialed|rang)\b/, /\bya (hable|platique|converse) con\b/, /\bi(?:'ve| have)? (already |just )?(talked|spoke|spoken) (to|with)\b/];
 const GUARDADO = [
   /\b(ya |listo,? )?(te |se )?(lo |la )?(guarde|anote|apunte|registre)\b/,
   rx(String.raw`${INI}${ART}(?:${COSA_GUARDA} )?(?:ya )?(?:guardad|anotad|apuntad|registrad)[oa]s?\b`),
@@ -195,7 +210,7 @@ const GENERICO = [
  * reescribían enteros (y se perdía el texto que se le mostraba). Una frase con su cita y una pregunta de aprobación
  * después, o lo que habla del borrador mismo, se deja tal cual; lo que dice que algo SALIÓ («Ya se lo mandé»), no.
  */
-const APRUEBA = /¿[^?]*\b((se |te |le )?(lo|la|los|las) (envio|mando|mandamos|enviamos|despacho|apruebas|confirmo|confirmas|dejo asi|cambio)|(te )?parece( bien)?|(asi )?(esta|queda) bien|le cambio algo|send it|shall i send|should i send|ok to send|good to go|sound good|looks? good)\b[^?]*\?/;
+const APRUEBA = /¿[^?]*\b((se |te |le )?(lo|la|los|las) (envio|mando|mandamos|enviamos|despacho|apruebas|confirmo|confirmas|dejo asi|cambio|agendo|agendamos|pongo)|(te )?parece( bien)?|(asi )?(esta|queda) bien|le cambio algo|send it|shall i send|should i send|ok to send|good to go|sound good|looks? good)\b[^?]*\?/;
 const DEL_BORRADOR = /\b(borrador|draft)\b/;
 const CON_CITA = /[«"“]/;
 
@@ -218,6 +233,8 @@ const DE_ENVIO = /\b(mand\w*|envi\w*|escrib\w*|mensaje\w*|whatsapp|wasap|correo\
 const DE_RECORDATORIO = /\b(recuerd\w*|record\w*|alarma|despert\w*|agend\w*|program\w*|cita|timer|temporizador|remind\w*|schedul\w*)\b|\bte (llamo|marco|aviso)\b[^.?!]{0,40}\ba las\b/;
 const DE_GUARDAR = /\b(guard\w*|anot\w*|apunt\w*|save|note)\b/;
 const DE_LLAMADA = /\b(llam\w*|marc\w*|call)\b/;
+/** Lo que nombra su calendario (no un recordatorio del teléfono). */
+const DE_CALENDARIO = /\b(calendario|agenda|outlook|google calendar|evento|eventos|calendar|event)\b/;
 
 /** El canal de un envío por sus palabras (la frase, o lo que se habló). */
 function canalDe(p: string): Afirmacion['canal'] {
@@ -280,6 +297,7 @@ export function afirmacionesDeHecho(texto: string, contexto: { mensaje?: string;
       clase = propiaDe ?? (clase === 'guardado' ? 'guardado' : (de(resto) ?? de(pedido) ?? 'generico'));
     }
     const a: Afirmacion = { frase: f.texto, clase };
+    if (clase === 'recordatorio' && DE_CALENDARIO.test(s)) a.calendario = true;
     if (clase === 'envio') {
       const c = canalDe(s) || canalDe(ctx);
       if (c) a.canal = c;
@@ -328,12 +346,14 @@ function mismaClase(a: Afirmacion, r: ReciboEfecto): boolean {
   return a.clase === 'envio'
     ? (r.canal === 'whatsapp' || r.canal === 'correo' || r.canal === 'chat') && (!a.canal || a.canal === r.canal)
     : a.clase === 'recordatorio'
-      ? r.canal === 'recordatorio' || r.canal === 'llamada'
+      ? a.calendario
+        ? r.canal === 'calendario'
+        : r.canal === 'recordatorio' || r.canal === 'llamada' || r.canal === 'calendario'
       : a.clase === 'llamada'
         ? r.canal === 'llamada'
         : a.clase === 'guardado'
           ? r.canal === 'guardado' || r.canal === 'recordatorio'
-          : true;
+          : r.canal !== 'marcador';
 }
 
 /** Lo último de AU-RA ofrecía una acción («¿Lo envío?», «¿Te lo agendo?», «¿Le escribo esto?»): un «sí» la aprueba. */
@@ -381,6 +401,8 @@ export type ContextoHonestidad = {
   anterior?: string;
   /** Un borrador de correo o de WhatsApp (o el mensaje de la app) espera su «sí»: prueba que no salió. */
   borrador?: { canal?: 'whatsapp' | 'correo' | 'chat'; para?: string } | null;
+  /** Un evento propuesto (server/calendario.ts) espera su «sí»: prueba que todavía no está en su calendario. */
+  evento?: { titulo?: string } | null;
   idioma?: 'es' | 'en';
   /** La hora del turno (pruebas). */
   ahora?: number;
@@ -394,7 +416,8 @@ export type ContextoHonestidad = {
  */
 function respaldada(a: Afirmacion, ctx: ContextoHonestidad): boolean {
   if (ctx.recibos.some((r) => respalda(a, r))) return true;
-  if (pideAhora(ctx.mensaje, ctx) || (a.clase === 'envio' && ctx.borrador)) return false;
+  // Un evento propuesto que espera su «sí» prueba que lo de ahora todavía no está en su calendario.
+  if (pideAhora(ctx.mensaje, ctx) || (a.clase === 'envio' && ctx.borrador) || (a.clase === 'recordatorio' && ctx.evento)) return false;
   const ahora = ctx.ahora ?? Date.now();
   const ventana = /[¿?]/.test(String(ctx.mensaje || '')) ? EFECTO_RECIENTE_MS : EFECTO_CORTESIA_MS;
   return (ctx.previos || []).some((r) => ahora - (r.t ?? ahora) <= ventana && respalda(a, r));
@@ -428,8 +451,23 @@ function verdad(a: Afirmacion, ctx: ContextoHonestidad): string {
       ? "I haven't sent it: there's no message ready to send. Tell me who to write to and what to say, and I'll show you the draft to approve."
       : 'Todavía no lo envié: no hay ningún mensaje listo para mandar. Dime a quién y qué le escribo, y te muestro el borrador para que lo apruebes.';
   }
-  if (a.clase === 'recordatorio') return en ? "That reminder isn't set yet: tell me the time and I'll set it." : 'Todavía no quedó puesto ese recordatorio: dime la hora y lo pongo.';
-  if (a.clase === 'llamada') return en ? "I haven't made that call yet." : 'Todavía no hice esa llamada.';
+  if (a.clase === 'recordatorio') {
+    // El calendario (server/calendario.ts): se está creando (voz), espera su «sí», o no hay recibo de la API.
+    if (ctx.recibos.some((r) => r.estado === 'en-curso' && r.canal === 'calendario'))
+      return en ? "I'm adding it to your calendar now; I'll confirm as soon as it's there." : 'Lo estoy agendando ahora; te confirmo en cuanto quede en tu calendario.';
+    if (ctx.evento)
+      return en
+        ? `It's not on your calendar yet: ${ctx.evento.titulo ? `«${ctx.evento.titulo}» ` : 'the event '}is waiting for your yes.`
+        : `Todavía no está en tu calendario: ${ctx.evento.titulo ? `«${ctx.evento.titulo}» ` : 'el evento '}espera tu «sí».`;
+    if (a.calendario) return en ? "It's not on your calendar yet." : 'Todavía no quedó en tu calendario.';
+    return en ? "That reminder isn't set yet: tell me the time and I'll set it." : 'Todavía no quedó puesto ese recordatorio: dime la hora y lo pongo.';
+  }
+  if (a.clase === 'llamada') {
+    // Con el marcador abierto en este turno: eso es lo único que pasó.
+    if (ctx.recibos.some((r) => r.canal === 'marcador' && r.estado === 'confirmado'))
+      return en ? "I only opened the dialer: you make the call, and I don't know if they answered." : 'Solo te abrí el marcador: la llamada la haces tú, y no sé si contestó.';
+    return en ? "I haven't made that call yet." : 'Todavía no hice esa llamada.';
+  }
   if (a.clase === 'guardado') return en ? "I haven't saved it yet." : 'Todavía no lo guardé.';
   return en ? "I haven't done that yet." : 'Todavía no lo hice.';
 }
