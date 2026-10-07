@@ -10,7 +10,7 @@
  *
  * Sin React Native: un dato de módulo con oyentes (useSyncExternalStore en la vista).
  */
-export type HojaGlobal = 'computadora' | 'correos' | 'misiones' | 'conocer' | 'circulo';
+export type HojaGlobal = 'computadora' | 'correos' | 'misiones' | 'conocer' | 'circulo' | 'recordatorios';
 type EstadoHojas = { abierta: HojaGlobal | null; tareaId: string | null };
 
 let estado: EstadoHojas = { abierta: null, tareaId: null };

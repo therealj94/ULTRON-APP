@@ -225,6 +225,7 @@ export function Ajustes({ navigation }: Props) {
             <Fila titulo={tr('Lo que AURA aprendió de ti', 'What AURA learned about you')} detalle={tr('Lo que sacó al hablar contigo y lo que quedó a medias', 'What she picked up talking with you and what was left halfway')} icono="chispas" onPress={() => abrir('conocer')} />
             <Fila titulo={tr('Mi círculo', 'My circle')} detalle={tr('Tu gente cercana y qué puede hacer AURA por ellos', 'Your close people and what AURA can do for them')} icono="familia" onPress={() => abrir('circulo')} />
             <Fila titulo={tr('Misiones', 'Missions')} detalle={tr('Las metas que AURA te ayuda a cumplir', 'The goals AURA helps you reach')} icono="estrella" onPress={() => abrir('misiones')} />
+            <Fila titulo={tr('Recordatorios', 'Reminders')} detalle={tr('Lo que AURA te recuerda, también lo que se repite', 'What AURA reminds you of, including repeats')} icono="campana" onPress={() => abrir('recordatorios')} />
             <Fila
               titulo={tr('Tus correos', 'Your email')}
               detalle={tr('Para que AURA los revise y te ayude a contestar', 'So AURA can check them and help you reply')}
@@ -412,7 +413,7 @@ export function Ajustes({ navigation }: Props) {
       <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
       <HojaAvisos visible={hoja === 'avisos'} onCerrar={() => setHoja(null)} />
       <HojaComputadora visible={hoja === 'computadora'} onCerrar={() => setHoja(null)} nombreAvatar={de(avatar.nombre)} />
-      <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' ? hoja : null} onCerrar={() => setHoja(null)} />
+      <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' || hoja === 'recordatorios' ? hoja : null} onCerrar={() => setHoja(null)} />
 
       <Hoja visible={hoja === 'permisos'} onCerrar={() => setHoja(null)} titulo={tr('Permisos', 'Permissions')} subtitulo={tr('Toca un permiso para darlo. Si lo bloqueaste, te llevo a los ajustes del teléfono.', 'Tap one to allow it. If you blocked it, I’ll take you to your phone settings.')}>
         <ListaPermisos />

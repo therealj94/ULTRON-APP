@@ -43,6 +43,7 @@ cuenta, el mismo de `mobile/src/lib/cuenta.ts`), `enviado` (ms).
 | `mensaje` | `titulo`, `texto`, `abrir?` (`mesa`/`chats`/`ajustes`/`computadora`/`correos`) | Aviso alto; al tocarlo se abre la mesa (o `abrir`) y AURA lo lee. |
 | `propuesta` | `id` (el de la iniciativa), `texto`, `pedido` | «Sí»: abre la app, `POST /api/iniciativa/responder {id, respuesta:'si'}` y hace el `pedido` como turno (AURA dice la respuesta). «Luego»: `responder 'luego'` sin abrir la app. |
 | `recordatorio` | `texto` | Aviso; al tocarlo, AURA lo dice. |
+| `recordatorio` / `llamada` del servidor | `rid`, `cuando` (+ `texto` o `motivo`) | La vez de un recordatorio guardado en el servidor (`lib/recordatorios-servidor.ts`, A-3). Lo manda el reloj del servidor a la hora, una sola vez (reclama antes de mandar y lo marca en el registro durable; tras un reinicio no se repite). El teléfono que ya tenía puesta la alarma de ESA vez (notifee) no lo enseña (no suena dos veces) y, con o sin aviso, reconcilia sus alarmas con `GET /api/recordatorios` (`mobile/src/compa/recordatoriosSync.ts`). |
 | `computadora` | `id` (tarea), `texto` | «Terminé en mi computadora: …»; al tocarlo, la vista en vivo de esa tarea. |
 
 En un teléfono compartido, un aviso cuyo `para` no es de quien está registrado no se enseña. Cada aviso

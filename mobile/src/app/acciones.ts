@@ -15,12 +15,15 @@
  *                 servidor ya pidió el «sí»); cancelar_recordatorio lo quita
  *   presencia   → cómo se presenta AURA (chiquita caminando, al lado de los chats, a pantalla
  *                 completa): se guarda en el perfil y la ven la compañera, el panel y la pantalla completa
+ *   marcar      → abre el marcador del teléfono con el número (`tel:`), o el chat de WhatsApp de ese número, para que
+ *                 la persona llame (compa/marcar.ts; el servidor ya preguntó «¿Le marco a … al +504…?»). No llama solo.
  *
  * Las demás acciones (redactar, enviar, descartar, silencio, llamar, leer, buscar) son del chat y de
  * la compañera: aquí no se tocan. La `iniciativa` (lo que AURA propone sola) la atiende la mesa (su tarjeta). Cada acción atendida se contesta con `emitir('hecho', …)` para que
  * AURA diga «listo» o «no pude».
  */
 import { useEffect } from 'react';
+import { Linking } from 'react-native';
 import { setAvatarVoz } from '../lib/tts';
 import { cumpleValido, guardarPerfil } from '../lib/perfil';
 import { emitir, escuchar, type AccionApp, type Pantalla, type Perfil } from '../nucleo/contrato';
@@ -35,6 +38,8 @@ import { abrirHoja, hayAnfitrion } from './hojas';
 import type { PantallaMas } from '../compa/computadora';
 import { esPantallaCerebro, type PantallaCerebro } from '../compa/cerebro';
 import { usuarioActual } from './sesion';
+import { abrirMarcador } from '../compa/marcar';
+import { anotarAlarmaServidor } from '../compa/recordatoriosSync';
 
 /* ── el oyente del bus ────────────────────────────────────────────────────────────────────── */
 
@@ -114,7 +119,15 @@ export function atenderAccion(a: AccionApp) {
       return hecho(a, !!p, p ? undefined : tr('Todavía no tengo tu perfil a mano; inténtalo en un momento.', "I don't have your profile yet; try again in a moment."));
     }
     case 'recordatorio':
-      void programarRecordatorio(a, depsRecordatorios).then((r) => hecho(a, r.ok, r.detalle));
+      void programarRecordatorio(a, depsRecordatorios).then((r) => {
+        // Uno del servidor (A-3): se anota que su alarma de esta vez está aquí (el push de esa vez no se enseña).
+        if (r.ok && a.rid) void anotarAlarmaServidor(a.rid, a.cuando);
+        hecho(a, r.ok, r.detalle);
+      });
+      return;
+    case 'marcar':
+      // A-4: el marcador (o WhatsApp) con el número que la persona aprobó. La llamada la hace ella.
+      void abrirMarcador(a, (url) => Linking.openURL(url), tr).then((r) => hecho(a, r.ok, r.detalle));
       return;
     case 'cancelar_recordatorio':
       void cancelarRecordatorio(a.id, depsRecordatorios).then((r) => hecho(a, r.ok, r.detalle));

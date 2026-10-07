@@ -39,6 +39,7 @@
  */
 import { tr } from '../i18n';
 import type { RecordatorioPuesto } from '../nucleo/contrato';
+import { baseServidor, RE_ID_SERVIDOR } from './recordatoriosServidor';
 
 /** Lo que se usa de notifee (el de verdad o uno falso). */
 export type NotifeeMin = {
@@ -131,7 +132,9 @@ export function idsDe(base: string): string[] {
 const limpiar = (s: unknown) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
 
 function datos(base: string, texto: string, cuando: number, paso: Paso, llamada: boolean, dueno: string): Record<string, string> {
-  return { aura: 'recordatorio', base, texto, cuando: String(cuando), paso, llamada: llamada ? '1' : '0', dueno };
+  // A-3: la alarma de un recordatorio del servidor lleva su id (`rid`): así se reconcilia (compa/recordatoriosServidor.ts).
+  const rid = /^(aura-rec-s[a-z0-9]{8,20})-[a-z0-9]{1,12}$/.exec(base)?.[1];
+  return { aura: 'recordatorio', base, texto, cuando: String(cuando), paso, llamada: llamada ? '1' : '0', dueno, ...(rid ? { rid } : {}) };
 }
 
 /** El aviso de llamada entrante de AURA (la primera y el reintento). */
@@ -186,7 +189,7 @@ async function alarmaExacta(m: NotifeeMin, k: ConstantesNotifee): Promise<boolea
 }
 
 /** Pone el recordatorio (aviso o llamada). Nunca lanza: lo que falle se contesta con un motivo que AURA puede decir. */
-export async function programarRecordatorio(a: { texto: string; cuando: number; llamada?: boolean }, d: DepsRecordatorio): Promise<Resultado> {
+export async function programarRecordatorio(a: { texto: string; cuando: number; llamada?: boolean; rid?: string }, d: DepsRecordatorio): Promise<Resultado> {
   const ahora = (d.ahora || Date.now)();
   const texto = limpiar(a.texto);
   const llamada = a.llamada === true;
@@ -221,7 +224,8 @@ export async function programarRecordatorio(a: { texto: string; cuando: number; 
     const alarma = { type: exacto ? (k.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE as number) : k.AlarmType.SET_AND_ALLOW_WHILE_IDLE };
     const cuando = (t: number) => ({ type: k.TriggerType.TIMESTAMP, timestamp: t, alarmManager: alarma });
     await m.createChannel({ id: CANAL_RECORDATORIOS, name: tr('Recordatorios de AURA', 'AURA reminders'), importance: k.AndroidImportance.HIGH, sound: 'default' });
-    const base = idRecordatorio(a.cuando, texto, dueno);
+    // Uno del servidor (A-3): la alarma de ESTA vez lleva su id (`<rid>-<vez>`), para reconciliarla con el servidor.
+    const base = a.rid && RE_ID_SERVIDOR.test(a.rid) ? baseServidor(a.rid, a.cuando) : idRecordatorio(a.cuando, texto, dueno);
     if (llamada) {
       await m.createChannel({
         id: CANAL_LLAMADA,
@@ -297,6 +301,16 @@ export async function cancelarRecordatorio(id: string, d: DepsRecordatorio): Pro
   const n = d.notifee();
   if (!n?.m.cancelTriggerNotifications) return { ok: false, detalle: tr('En este teléfono no puedo quitar avisos.', "I can't remove reminders on this phone.") };
   const puestos = await listarRecordatorios(d);
+  // Uno del servidor (A-3): el servidor ya lo borró al mandar la orden; aquí se quitan sus alarmas (las de cada vez).
+  if (RE_ID_SERVIDOR.test(id)) {
+    const suyas = puestos.filter((r) => r.id.startsWith(`${id}-`));
+    try {
+      if (suyas.length) await n.m.cancelTriggerNotifications(suyas.flatMap((r) => idsDe(r.id)));
+      return { ok: true, detalle: tr('Recordatorio cancelado.', 'Reminder cancelled.') };
+    } catch {
+      return { ok: false, detalle: tr('No pude quitar el recordatorio.', "I couldn't remove the reminder.") };
+    }
+  }
   if (!puestos.some((r) => r.id === id)) return { ok: false, detalle: tr('Ese recordatorio ya no está.', "That reminder isn't there anymore.") };
   try {
     await n.m.cancelTriggerNotifications(idsDe(id));

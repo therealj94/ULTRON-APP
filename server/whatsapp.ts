@@ -1239,6 +1239,31 @@ export function cupoDeVincular(llaves: Array<[string, number]>, ahora = Date.now
   return 0;
 }
 
+/**
+ * A-4 (llamar a alguien de su WhatsApp): los chats de uno a uno y los contactos guardados que se parecen a `buscar`, con su
+ * número («+504…»), para abrirle el marcador del teléfono (lib/marcar.ts). Sin grupos ni chats sin número. Con un tope
+ * corto (`ms`): si el puente no contesta, vacío (y el turno pregunta el número). Nunca lanza.
+ */
+export async function contactosParaMarcarWA(quien: string, buscar: string, ms = 2500): Promise<Array<{ nombre: string; numero: string }>> {
+  const q = String(buscar || '').trim().slice(0, 60);
+  if (!q || !whatsappDisponible()) return [];
+  const hasta = Date.now() + ms;
+  const [chats, contactos] = await Promise.all([
+    pedir<{ chats: ChatWA[] }>(quien, `/chats?limite=8&buscar=${encodeURIComponent(q)}`, { ms, hasta })
+      .then((j) => j.chats || [])
+      .catch(() => [] as ChatWA[]),
+    pedir<{ contactos: ContactoWA[] }>(quien, `/contactos?limite=8&buscar=${encodeURIComponent(q)}`, { ms, hasta })
+      .then((j) => j.contactos || [])
+      .catch(() => [] as ContactoWA[]),
+  ]);
+  const out: Array<{ nombre: string; numero: string }> = [];
+  for (const c of [...chats.filter((x) => !x.grupo && !/@g\.us$/.test(x.jid)), ...contactos]) {
+    const numero = numeroDeChat(c);
+    if (numero && c.nombre && !out.some((o) => o.numero === numero)) out.push({ nombre: String(c.nombre).slice(0, 80), numero });
+  }
+  return out;
+}
+
 /** Los nombres de sus chats (por cuenta), un rato: para saber quién más se llama así sin pedirlos en cada turno. */
 const NOMBRES_CHATS = new Map<string, { t: number; nombres: string[]; completo: boolean }>();
 const NOMBRES_CHATS_VIVE_MS = 60_000;

@@ -43,8 +43,19 @@ export function manosDe(plataforma: PlataformaManos): Mano[] {
 export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
   app: [
     { de: 'llamame', es: 'llamarte cuando quieras, ahora o a la hora que digas', en: 'call you whenever you want, now or at a set time', ejemplo: { es: '«llámame mañana a las seis»', en: '“call me tomorrow at six”' } },
-    { de: 'recordatorio', es: 'recordarte cosas a la hora que digas', en: 'remind you of things at any time you say', ejemplo: { es: '«recuérdame a las tres llamar al banco»', en: '“remind me at three to call the bank”' } },
+    {
+      de: 'recordatorio',
+      es: 'recordarte cosas a la hora que digas, también cada día o cada semana, y tenerlas en tu lista de Recordatorios',
+      en: 'remind you of things at any time you say, also daily or weekly, kept in your Reminders list',
+      ejemplo: { es: '«recuérdame cada lunes a las ocho la junta»', en: '“remind me every Monday at eight about the meeting”' },
+    },
     { de: 'llamar', es: 'llamar o videollamar a tus contactos de PULSE2CHAT', en: 'call or video call your PULSE2CHAT contacts', ejemplo: { es: '«llama a Beto»', en: '“call Beto”' } },
+    {
+      de: 'marcar',
+      es: 'abrirte el marcador con el número de alguien de tu WhatsApp o el que me digas (tú tocas llamar)',
+      en: 'open your dialer with the number of someone in your WhatsApp or one you tell me (you tap call)',
+      ejemplo: { es: '«llama a don Carlos del banco»', en: '“call Carlos from the bank”' },
+    },
     { de: 'redactar', es: 'escribir y mandar mensajes por ti', en: 'write and send messages for you', ejemplo: { es: '«dile a Beto que ya voy»', en: '“tell Beto I’m on my way”' } },
     { de: 'leer', es: 'leerte tus mensajes', en: 'read your messages to you', ejemplo: { es: '«¿qué me escribió Ana?»', en: '“what did Ana write me?”' } },
     { de: 'buscar', es: 'buscar en tus chats', en: 'search your chats', ejemplo: { es: '«busca la dirección que me mandaron»', en: '“find the address they sent me”' } },

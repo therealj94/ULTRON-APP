@@ -49,6 +49,10 @@ const tool = (name: string, description: string, properties: Props, required: st
 const str = (description: string, extra: Props = {}) => ({ type: 'string', description, ...extra });
 
 const PANTALLAS = ['mesa', 'chats', 'ajustes', 'perfil', 'computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo'];
+/** La hoja de sus recordatorios (A-3): solo para un teléfono con la mano `recordatorios_servidor`. */
+const PANTALLA_RECORDATORIOS = 'recordatorios';
+/** Cada cuánto se repite un recordatorio (lib/recurrencia.ts). */
+const REPETIR = ['nunca', 'diario', 'laborables', 'semanal', 'mensual'];
 // Los cuatro avatares (mobile/src/avatares/catalogo.ts): el Guardián, AU-RA, Claudio y ANT-ONIO (auditoría del 7-oct, M-1:
 // «ponme a ANT-ONIO» dicho libre llegaba al modelo y su herramienta no tenía cómo).
 const CAMBIOS_APP = ['atras', 'tema_oscuro', 'tema_claro', 'tema_sistema', 'silencio', 'pantalla_completa', 'al_lado', 'paseo', 'avatar_guardian', 'avatar_aura', 'avatar_claudio', 'avatar_antonio'];
@@ -58,8 +62,9 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
   const t: Tool[] = [];
   const mano = (m: Mano) => d.manos.includes(m);
   if (d.app) {
+    const pantallas = mano('recordatorios_servidor') ? [...PANTALLAS, PANTALLA_RECORDATORIOS] : PANTALLAS;
     t.push(
-      tool('abrir_pantalla', 'Abrir una pantalla de su app. «abre ajustes», «mis correos», «tu computadora» (verla en vivo), «mi círculo».', { pantalla: str('Cuál.', { enum: PANTALLAS }) }, ['pantalla']),
+      tool('abrir_pantalla', `Abrir una pantalla de su app. «abre ajustes», «mis correos», «tu computadora» (verla en vivo), «mi círculo»${mano('recordatorios_servidor') ? ', «mis recordatorios»' : ''}.`, { pantalla: str('Cuál.', { enum: pantallas }) }, ['pantalla']),
       tool('ajustar_app', 'Cambiar algo de la app: atrás, tema, callarte, cómo te ves, qué avatar. «vete atrás», «ponlo oscuro», «cállate», «ponte en grande», «cambia a Claudio», «ponme a ANT-ONIO» (el avatar solo si lo pidió claro: la app pregunta antes de cambiar; no digas que ya cambiaste).', { cambio: str('Qué cambio.', { enum: CAMBIOS_APP }) }, ['cambio']),
       tool(
         'chat_aura',
@@ -80,6 +85,18 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
         'Llamar o videollamar a un contacto desde su teléfono. La primera vez queda propuesta: pregunta «¿Le marco a …?». Si en el turno siguiente dice que sí (sí, ok, okey, dale, va), usa esta herramienta otra vez igual y se marca. Solo alguien de CONTACTOS; si no está o hay dos parecidos, pregunta a quién.',
         { contacto: str('El nombre tal como está en CONTACTOS.'), video: { type: 'boolean', description: 'true = videollamada.' } },
         ['contacto']
+      )
+    );
+  if (mano('marcar'))
+    t.push(
+      tool(
+        'llamar_numero',
+        'Llamar a un número de teléfono normal o a alguien de su WhatsApp o su teléfono que NO es de los chats de AU-RA: «llama a don Carlos del banco», «márcale al 9876 5432», «llámale a mi compadre por WhatsApp». Le ABRES el marcador de su teléfono (o WhatsApp) con el número puesto; la llamada la hace ella: tú no hablas con nadie. El servidor busca el número entre sus contactos y SIEMPRE pregunta «¿Le marco a … al +504…?»; si en el turno siguiente dice que sí, usa esta herramienta otra vez igual. Nunca digas que ya hablaste con esa persona, que contestó ni que la llamada se hizo. Para alguien de los chats de AU-RA (CONTACTOS) es llamar_contacto.',
+        {
+          a: str('A quién: el nombre como lo dijo («don Carlos del banco») o el número tal cual («9876 5432», «+504 9876-5432»).'),
+          por: str('telefono (el marcador) o whatsapp (solo si dijo «por WhatsApp»).', { enum: ['telefono', 'whatsapp'] }),
+        },
+        ['a']
       )
     );
   if (mano('llamame'))
@@ -107,20 +124,29 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
         ['en_segundos']
       )
     );
-  if (mano('recordatorio'))
+  if (mano('recordatorio')) {
+    // Con la mano `recordatorios_servidor` (A-3): se guardan en el servidor, se repiten y se listan en su hoja.
+    const conServidor = mano('recordatorios_servidor');
     t.push(
       tool(
         'recordatorio',
-        `Poner (o cancelar) un recordatorio, timer o despertador a una hora. ${mano('llamame') ? 'A esa hora TÚ la llamas y se lo dices. Se pone directo y confirmas con la hora exacta.' : 'Queda propuesto: pregunta con la hora exacta; se pone cuando diga que sí, usando la herramienta otra vez igual.'} Si la hora no está clara, pregunta. Para «en N minutos» calcula la hora con AHORA.`,
+        `Poner (o cancelar) un recordatorio, timer o despertador a una hora. ${mano('llamame') ? 'A esa hora TÚ la llamas y se lo dices. Se pone directo y confirmas con la hora exacta.' : 'Queda propuesto: pregunta con la hora exacta; se pone cuando diga que sí, usando la herramienta otra vez igual.'} Si la hora no está clara, pregunta. Para «en N minutos» calcula la hora con AHORA.${conServidor ? ' Si se repite («todos los días», «cada lunes», «de lunes a viernes», «cada mes el 15»), dilo en repetir (y en cuando, la PRIMERA vez). listar abre su lista de recordatorios («¿qué recordatorios tengo?»).' : ''}`,
         {
-          accion: str('poner o cancelar.', { enum: ['poner', 'cancelar'] }),
+          accion: str(conServidor ? 'poner, cancelar o listar.' : 'poner o cancelar.', { enum: conServidor ? ['poner', 'cancelar', 'listar'] : ['poner', 'cancelar'] }),
           cuando: str('AAAA-MM-DDTHH:MM en hora de Honduras (para poner).'),
           texto: str('Lo que hay que recordarle, corto («Llamar al banco»).'),
           id: str('Para cancelar: el id de RECORDATORIOS PUESTOS. Pregunta antes cuál; se cancela con su sí.'),
+          ...(conServidor
+            ? {
+                repetir: str('Cada cuánto se repite (omitido = una vez): diario, laborables (lunes a viernes), semanal o mensual.', { enum: REPETIR }),
+                dia: str('Para semanal: el día («lunes»); para mensual: el número del día («15»). Omitido = el de la primera vez.'),
+              }
+            : {}),
         },
         ['accion']
       )
     );
+  }
   if (mano('leer'))
     t.push(
       tool('leer_mensajes', 'Leerle sus mensajes de los chats de AU-RA (van cifrados: tú no los ves; el teléfono los lee con tu voz). «¿qué me dijo Beto?», «léeme mis mensajes». Di solo «A ver…»; nunca inventes lo que dicen.', { de: str('De quién; vacío = lo no leído de todos.') })
@@ -355,7 +381,7 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
   const i = input && typeof input === 'object' ? input : {};
   switch (nombre) {
     case 'abrir_pantalla':
-      return PANTALLAS.includes(i.pantalla) ? accionApp({ tipo: 'abrir', pantalla: i.pantalla }) : null;
+      return PANTALLAS.includes(i.pantalla) || i.pantalla === PANTALLA_RECORDATORIOS ? accionApp({ tipo: 'abrir', pantalla: i.pantalla }) : null;
     case 'ajustar_app': {
       const c = String(i.cambio || '');
       if (c === 'atras') return accionApp({ tipo: 'atras' });
@@ -381,6 +407,11 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
       const con = limpio(i.contacto, 120);
       return con ? accionApp({ tipo: 'llamar', con, video: i.video === true }) : null;
     }
+    case 'llamar_numero': {
+      // Solo a quién y por dónde: el número lo busca el servidor y la llamada se pregunta (lib/marcar.ts).
+      const a = limpio(i.a ?? i.numero ?? i.contacto, 120);
+      return a ? accionApp({ tipo: 'marcar', a, via: i.por === 'whatsapp' || i.via === 'whatsapp' ? 'whatsapp' : 'telefono' }) : null;
+    }
     case 'llamarme': {
       const s = Math.round(Number(i.en_segundos) || 0);
       if (s <= 0 && llamarAhora) return accionApp({ tipo: 'llamame' });
@@ -390,9 +421,12 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
     }
     case 'recordatorio': {
       if (i.accion === 'cancelar') return i.id ? accionApp({ tipo: 'cancelar_recordatorio', id: String(i.id) }) : null;
+      if (i.accion === 'listar') return accionApp({ tipo: 'abrir', pantalla: PANTALLA_RECORDATORIOS });
       const texto = limpio(i.texto, 140);
       const cuando = String(i.cuando || '').trim();
-      return texto && cuando ? accionApp({ tipo: 'recordatorio', texto, cuando, ...(conLlamada ? { llamada: true } : {}) }) : null;
+      // La repetición (lib/recurrencia.ts la valida en validarMano: una mal escrita deja el recordatorio de una vez).
+      const rep = REPETIR.includes(String(i.repetir || '')) && i.repetir !== 'nunca' ? { repetir: { tipo: String(i.repetir), ...(limpio(i.dia, 20) ? { dia: limpio(i.dia, 20) } : {}) } } : {};
+      return texto && cuando ? accionApp({ tipo: 'recordatorio', texto, cuando, ...(conLlamada ? { llamada: true } : {}), ...rep }) : null;
     }
     case 'leer_mensajes':
       return limpio(i.de) ? accionApp({ tipo: 'leer', de: limpio(i.de, 120) }) : accionApp({ tipo: 'leer' });
@@ -716,7 +750,7 @@ export function herramientasPara(texto: string): Set<string> {
   for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
   // Llamar: «te llamo» / «llámame» es que AU-RA la llame a ella; «le marco a Beto», llamar a otro.
   if (LLAMARLA.test(p)) out.add('llamarme');
-  else if (/\b(llam|marc|timbr|call)|\bles? hable\b/.test(p)) for (const h of ['llamar_contacto', 'circulo']) out.add(h);
+  else if (/\b(llam|marc|timbr|call)|\bles? hable\b/.test(p)) for (const h of ['llamar_contacto', 'llamar_numero', 'circulo']) out.add(h);
   return out;
 }
 
@@ -878,7 +912,7 @@ export function frasesACorregir(texto: string, o: { borradorPendiente?: boolean 
 }
 
 /** Todas las manos que `herramientasPara` puede nombrar (para saber qué cumpliría lo prometido, haya o no en el turno). */
-const TODAS_LAS_MANOS = [...new Set([...QUE_PROMETE.flatMap(([, hs]) => hs), ...RESPALDAN_AVISO, 'llamarme', 'llamar_contacto', 'circulo'])];
+const TODAS_LAS_MANOS = [...new Set([...QUE_PROMETE.flatMap(([, hs]) => hs), ...RESPALDAN_AVISO, 'llamarme', 'llamar_contacto', 'llamar_numero', 'circulo'])];
 /** La mano y su herramienta del harness cuando se llaman distinto (lo que corre de verdad es el paso del harness). */
 const HARNESS_DE_MANO: Record<string, string> = { buscar_web: 'web', leer_pagina: 'leer', estado_sistema: 'sistema', ordenar_mensajes: 'triaje', cartera_saldo: 'cartera' };
 const pasoQueCumple = (herramienta: string, cumplen: ReadonlySet<string>) => cumplen.has(herramienta) || [...cumplen].some((m) => HARNESS_DE_MANO[m] === herramienta);
