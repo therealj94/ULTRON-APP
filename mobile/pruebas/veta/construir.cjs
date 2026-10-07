@@ -17,6 +17,8 @@ const piezas = {
   recarga: 'cartera/veta/recarga',
   conexion: 'cartera/conexion',
   cuenta: 'lib/cuenta',
+  // La entrada con clave de AU-RA: la clave solo detrás de la huella (auditoría del 7-oct, M-9).
+  creds: 'lib/credsSeguras',
 };
 const entrada = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))

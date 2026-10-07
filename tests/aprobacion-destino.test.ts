@@ -13,6 +13,7 @@
  *
  * Sin SMTP ni puente de verdad: un buzón y un puente de mentira que cuentan lo que sale. Lo durable, en memoria.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -178,7 +179,7 @@ test('correo (ya seguro, evidencia): un «sí» de voz para Ana no manda si el b
 /* ------------------------------------------------------------------ WhatsApp */
 
 const CLAVE = 'clave-del-puente-de-prueba-123';
-const JOSE = 'j.ordonez@ordenglobal.org';
+const JOSE = 'j.herrera@ordenglobal.org';
 const sinT = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /** Un puente de mentira: `chats` (lo que lista), `buscados` (lo que contesta una búsqueda, si se da) y lo que sale. */

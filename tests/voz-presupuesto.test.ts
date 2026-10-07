@@ -245,8 +245,21 @@ test('un turno hablado pesado y realista cabe en el presupuesto y conserva lo qu
   assert.match(m.system, /primero queda listo y le preguntas; cuando diga que sí/);
   assert.match(m.system, /Nunca digas que algo salió, se creó o se hizo si el resultado de la herramienta no lo dice/);
   assert.match(m.system, /ESCENA \(tu cámara, ahora mismo\): Reconozco a José/);
-  assert.match(m.herramientas, /solo deja un BORRADOR: léeselo y pregunta si lo mandas/);
-  assert.ok(m.nombres.includes('whatsapp') && m.nombres.includes('llamar_contacto') && m.nombres.includes('correo'), 'las manos siguen todas');
+  // Auditoría del 7-oct (C1): hablando, las herramientas van según lo que pide la frase (lib/herramientas-turno.ts). «Analiza
+  // a fondo los riesgos» lleva buscar e investigar, no las manos de mensajes ni de llamadas (antes iban las 25 siempre).
+  assert.ok(m.nombres.includes('buscar_web') && m.nombres.includes('investigar'), m.nombres.join(', '));
+  assert.ok(!m.nombres.includes('whatsapp') && !m.nombres.includes('llamar_contacto') && !m.nombres.includes('correo'), m.nombres.join(', '));
+  // El mismo turno pesado pidiendo mensajes, correo y a un contacto: esas manos van, con su «sí» antes de mandar, y cabe.
+  contestar = () => '[EMO: neutral] Va, déjame ver.';
+  const accion = await turno('Contéstale a Ana que sí voy mañana, revisa si Beto me escribió al correo y después márcale', { escena: ESCENA_PESADA });
+  assert.equal(accion.nuevos.length >= 1, true, 'llegó al modelo');
+  const ma = medir(accion.nuevos[0]);
+  const fichasAccion = fichasEstimadas(ma.total);
+  console.log(`[presupuesto voz] con acción: herramientas ${ma.nombres.length}: ${ma.herramientas.length} car. · total ~${fichasAccion} fichas`);
+  assert.match(ma.herramientas, /solo deja un BORRADOR: léeselo y pregunta si lo mandas/);
+  assert.ok(ma.nombres.includes('whatsapp') && ma.nombres.includes('llamar_contacto') && ma.nombres.includes('correo'), `las manos de lo que pidió: ${ma.nombres.join(', ')}`);
+  assert.ok(fichasAccion <= PRESUPUESTO_VOZ_FICHAS, `con acción: ~${fichasAccion} fichas > ${PRESUPUESTO_VOZ_FICHAS}`);
+  contestar = () => `[EMO: neutral] ${respuestas[vuelta++ % respuestas.length]}`;
   // Lo que casi nunca hace falta, fuera del camino caliente.
   assert.doesNotMatch(m.system, /MENÚ DE LA APP/);
   assert.doesNotMatch(m.system, /TUS MANOS AQUÍ/);

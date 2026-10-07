@@ -5,7 +5,8 @@
  *      a la vista se dice, y no hay dónde escribirla a mano (ahí es donde la gente pierde el dinero).
  *   2. El resumen: a quién, a qué dirección, cuánto y desde qué cartera.
  *   3. «Confirmar y abrir Veta Wallet»: se abre la wallet con el envío ya llenado y ALLÁ se firma con tu
- *      contraseña. AU-RA no mueve dinero ni ve tu contraseña.
+ *      contraseña. Este envío no sale sin tu firma allá, y AU-RA no ve esa contraseña. (La tarjeta Visa es otra
+ *      cosa: AU-RA sí puede mostrar sus datos y recargarla con tu contraseña de Veta, veta/SeccionTarjeta.tsx.)
  *   4. Al volver, el vigía (cartera/vigia.ts) mira la cadena hasta ver el envío (tope de 15 min, se puede
  *      cancelar) y entonces deja el comprobante en el hilo, que sale como tarjeta de pago verificado.
  *
@@ -227,7 +228,7 @@ export function HojaPagar({ visible, onCerrar, correo, nombre, monto: montoInici
       visible={visible}
       onCerrar={cerrar}
       titulo={tr(`Enviar dinero a ${nombre}`, `Send money to ${nombre}`)}
-      subtitulo={tr('Se firma en Veta Wallet con tu contraseña. AURA no mueve tu dinero.', 'You sign it in Veta Wallet with your password. AURA never moves your money.')}
+      subtitulo={tr('Se firma en Veta Wallet con tu contraseña: este envío no sale sin que lo confirmes allá.', 'You sign it in Veta Wallet with your password: this payment doesn’t go out until you confirm it there.')}
     >
       {suya === undefined || mia === undefined ? (
         <View style={{ alignItems: 'center', gap: MEDIDA.espacio.s, paddingVertical: MEDIDA.espacio.xl }}>
@@ -305,8 +306,8 @@ export function HojaPagar({ visible, onCerrar, correo, nombre, monto: montoInici
           <Resumen tema={tema} nombre={nombre} direccion={revisado?.direccion || suya} monto={revisado?.monto || monto || ''} moneda={revisado?.moneda || moneda} desde={mia.direccion} />
           <Texto v="chica" color="texto2">
             {tr(
-              'AURA no mueve tu dinero: abre Veta Wallet con el envío ya llenado y tú lo confirmas allá con tu contraseña. Cuando la cadena lo confirme, dejo el comprobante en este chat.',
-              'AURA never moves your money: it opens Veta Wallet with the payment filled in and you confirm it there with your password. Once the chain confirms it, I post the receipt in this chat.',
+              'Este envío lo firmas tú: AU-RA abre Veta Wallet con todo ya llenado y lo confirmas allá con tu contraseña. Cuando la cadena lo confirme, dejo el comprobante en este chat.',
+              'You sign this payment: AU-RA opens Veta Wallet with everything filled in and you confirm it there with your password. Once the chain confirms it, I post the receipt in this chat.',
             )}
           </Texto>
           {!!error && (

@@ -6,8 +6,9 @@
  *
  *  · la MISMA locución que /api/tts (server/voz.ts `abrirVozPcm`: misma voz, modelo, guion, vecinos y tono), pedida a
  *    ElevenLabs en PCM por /stream y reenviada TAL CUAL llega (chunked, sin juntar ni recodificar);
- *  · las MISMAS puertas que /api/tts/stream: `exigirMesaODesk`, el cupo de voz compartido (`limitar(60, 60_000,
- *    'voz')`) y los minutos de ElevenLabs del miembro (sin minutos: Voicebox, pasado a PCM, y `X-Ultron-Tope-Voz`);
+ *  · las MISMAS puertas que /api/tts/stream: `exigirMesaOClip` (sin sesión, solo lo ya guardado: `res.locals.soloClip`;
+ *    lo que no está contesta 401), el cupo de voz compartido (`limitar(60, 60_000, 'voz')`) y los minutos de ElevenLabs
+ *    del miembro (sin minutos: Voicebox, pasado a PCM, y `X-Ultron-Tope-Voz`);
  *  · caché propia (la clave lleva el formato), que solo guarda lo que llegó ENTERO; un audio cortado no se guarda y la
  *    conexión se rompe (no se cierra bien): un PCM crudo no tiene largo, y un final limpio lo haría pasar por entero;
  *  · el tiempo para la boca: `X-Ultron-Pcm-Hz` (y canales/bits). El teléfono calcula la posición con los cuadros que
@@ -109,14 +110,19 @@ export function montarVozPcm(app: express.Express, d: DepsVozPcm) {
   app.all(RUTA_VOZ_PCM, d.exigir, d.limitar(60, 60_000, 'voz'), async (req, res) => {
     const p = d.leer(req);
     if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
+    // Sin sesión (server/seguridad.ts exigirMesaOClip): solo lo ya guardado; lo privado nunca lo está.
+    const soloCache = res.locals?.soloClip === true;
+    const sinSesion = () => res.status(401).json({ error: 'Para que hable algo nuevo, entra con tu cuenta.', code: 'sesion_requerida', honesto: true });
+    if (soloCache && p.privado) return sinSesion();
     const cuenta = d.cuentaMiembro(req);
     const sinEleven = !!cuenta && d.restanteMs(cuenta) <= 0;
     let voz: Awaited<ReturnType<typeof abrirVozPcm>> = null;
     try {
-      voz = await abrirVozPcm({ ...p, sinEleven });
+      voz = await abrirVozPcm({ ...p, sinEleven, ...(soloCache ? { soloCache: true } : {}) });
     } catch (e: any) {
       console.warn('[voz pcm]', String(e?.message || e).slice(0, 160));
     }
+    if (!voz && soloCache) return sinSesion();
     // Un audio vacío (caché o Voicebox) no es una frase: 503, como sin voz.
     if (voz && voz.tipo !== 'vivo' && voz.pcm.length < MINIMO_AUDIO) voz = null;
     // En vivo: las cabeceras esperan al primer audio; si ElevenLabs no dio ni un byte, todavía se contesta 503.

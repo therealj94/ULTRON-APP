@@ -31,6 +31,9 @@ import {
   guardiaAlSoltar,
   guardiaBloqueada,
   guardiaValida,
+  causaDelCierre,
+  duracionEnPalabras,
+  motivoDeSalidaTrasMarca,
   observacionNativa,
   rectDeCara,
   tamEquivalente,
@@ -366,40 +369,127 @@ prueba('aprender con el uso: el tamaño del recorte se lleva a la escala de las 
 
 const DIA = 24 * 3600_000;
 
-prueba('guardia: murió montándola → 7 días apagada en este teléfono, con aviso; después vuelve sola', () => {
+const HORA = 3600_000;
+const V = GUARDIA.version;
+
+prueba('guardia: una caída de verdad montándola es UN golpe (solo esa sesión, sin apagar días); la segunda la apaga 1 h', () => {
   const t0 = 1_000_000;
-  let g = guardiaAlMontar({}, t0);
+  let g = guardiaAlMontar({ v: V }, t0, 'ota-a');
   assert.equal(g.montando, t0);
-  const r = guardiaAlArrancar(g, t0 + 60_000, true);
-  assert.ok(r.aviso && /se cerró montándola/.test(r.aviso), r.aviso);
+  assert.equal(g.bundle, 'ota-a');
+  let r = guardiaAlArrancar(g, t0 + 60_000, { murio: true, motivoAndroid: 'crash-nativo', bundle: 'ota-a' });
+  assert.ok(r.aviso && /se cerró montándola/.test(r.aviso) && /1 aviso/.test(r.aviso), r.aviso);
+  assert.equal(r.soloSesion, true, 'esta sesión va por la de fotos');
+  assert.ok(!guardiaBloqueada(r.estado, t0 + 60_001), 'un golpe NO la apaga en el teléfono');
   assert.equal(r.estado.montando, undefined, 'la marca se consume');
-  assert.ok(guardiaBloqueada(r.estado, t0 + 6 * DIA));
-  assert.ok(!guardiaBloqueada(r.estado, t0 + 8 * DIA), 'pasados los días, se prueba otra vez');
-  assert.equal(r.estado.bloqueadaHasta - (t0 + 60_000), GUARDIA.bloqueoMontarMs);
-  // Con «no se sabe» (sin la marca de reporte.ts) también cuenta: mejor apagarla de más.
-  assert.ok(guardiaBloqueada(guardiaAlArrancar(guardiaAlMontar({}, t0), t0 + 1, null).estado, t0 + 2));
+  assert.equal(r.estado.golpes.length, 1);
+  // Al día siguiente, otra caída: ahora sí, 1 hora (no 7 días).
+  g = guardiaAlMontar(r.estado, t0 + DIA, 'ota-a');
+  r = guardiaAlArrancar(g, t0 + DIA + 5_000, { murio: true, motivoAndroid: null, bundle: 'ota-a' });
+  assert.ok(guardiaBloqueada(r.estado, t0 + DIA + 5_001));
+  assert.equal(r.estado.bloqueadaHasta - (t0 + DIA + 5_000), HORA);
+  assert.match(r.aviso, /la apago 1 hora en este teléfono/);
+  assert.ok(!guardiaBloqueada(r.estado, t0 + DIA + 5_000 + HORA + 1), 'pasada la hora, se prueba otra vez');
+  assert.equal(r.soloSesion, undefined);
+  assert.equal(r.estado.golpes, undefined, 'los golpes se gastan al apagarla');
+  assert.deepEqual(r.estado.bloqueos, [t0 + DIA + 5_000]);
 });
 
-prueba('guardia: una recarga a propósito (OTA) o un cierre normal con la marca puesta NO cuentan', () => {
-  const r = guardiaAlArrancar({ montando: 5, enUso: 6 }, 100, false);
-  assert.equal(r.aviso, undefined);
-  assert.ok(!guardiaBloqueada(r.estado, 101));
-  assert.deepEqual(r.estado, {});
+prueba('guardia: el castigo sube si se repite (1 h → 6 h → 1 día → 3 días) y se olvida a la semana', () => {
+  let e = { v: V };
+  let t = 10 * DIA;
+  const duraciones = [];
+  for (let i = 0; i < 5; i++) {
+    for (let k = 0; k < 2; k++) {
+      t += 10 * HORA;
+      const r = guardiaAlArrancar(guardiaAlMontar(e, t - 1000), t, { murio: true, motivoAndroid: 'crash' });
+      e = r.estado;
+      if (k === 1) duraciones.push(e.bloqueadaHasta - t);
+    }
+  }
+  assert.deepEqual(duraciones, [HORA, 6 * HORA, DIA, 3 * DIA, 3 * DIA]);
+  assert.deepEqual(GUARDIA.bloqueosMs, [HORA, 6 * HORA, DIA, 3 * DIA]);
+  // Una semana sin apagarse: vuelve a empezar por 1 h.
+  t += 8 * DIA;
+  let r = guardiaAlArrancar(guardiaAlMontar(e, t - 1000), t, { murio: true, motivoAndroid: 'crash' });
+  r = guardiaAlArrancar(guardiaAlMontar(r.estado, t + 1000), t + 2000, { murio: true, motivoAndroid: 'crash' });
+  assert.equal(r.estado.bloqueadaHasta - (t + 2000), HORA);
 });
 
-prueba('guardia: sana a los 10 s → «en uso»; morir así es un golpe; dos golpes en 3 días → 3 días apagada', () => {
-  let g = guardiaAlSanar(guardiaAlMontar({}, 0), 10_000);
+prueba('guardia (José, 7-oct): una OTA aplicada al reabrir, deslizarla, el segundo plano o «no se sabe» NO cuentan', () => {
+  const marca = guardiaAlMontar({ v: V }, 1000, 'ota-vieja');
+  const casos = [
+    [{ murio: true, bundle: 'ota-nueva' }, 'ota', 'se reabrió con la OTA que bajó'],
+    [{ murio: true, motivoAndroid: 'la-persona' }, 'limpia', 'la persona la cerró'],
+    [{ murio: true, motivoAndroid: 'otro' }, 'limpia', 'deslizarla en recientes'],
+    [{ murio: true, motivoAndroid: 'actualizada' }, 'limpia', 'se instaló otra APK'],
+    [{ murio: true, motivoAndroid: 'memoria' }, 'limpia', 'Android la mató por memoria'],
+    [{ murio: false }, 'limpia', 'segundo plano o la recarga de la OTA (cierreIntencional)'],
+    [{ murio: null }, 'sin-datos', 'sin la marca de reporte.ts'],
+  ];
+  for (const [s, causa, por] of casos) {
+    assert.equal(causaDelCierre(marca, s), causa, por);
+    const r = guardiaAlArrancar(marca, 2000, s);
+    assert.equal(r.aviso, undefined, por);
+    assert.equal(r.soloSesion, undefined, por);
+    assert.ok(!guardiaBloqueada(r.estado, 2001), por);
+    assert.equal(r.estado.golpes, undefined, por);
+    assert.equal(r.estado.montando, undefined, `${por}: la marca se consume`);
+    if (s.murio !== null) assert.match(r.nota, /no fue caída/, por);
+  }
+  // Booleano a secas (como antes): true sin más datos es sospecha (un golpe); false no cuenta.
+  assert.equal(guardiaAlArrancar(marca, 2000, true).soloSesion, true);
+  assert.deepEqual(guardiaAlArrancar({ v: V, montando: 5, enUso: 6 }, 100, false).estado, { v: V });
+  assert.equal(causaDelCierre(marca, { murio: true, motivoAndroid: 'crash-nativo', bundle: 'ota-vieja' }), 'caida');
+  assert.equal(causaDelCierre(marca, { murio: true, motivoAndroid: 'senal' }), 'caida');
+  assert.equal(causaDelCierre(marca, { murio: true }), 'sospecha');
+});
+
+prueba('guardia: la salida de Android que cuenta es la PRIMERA después de la marca', () => {
+  const lista = [
+    { motivo: 'la-persona', ts: 900 },
+    { motivo: 'crash-nativo', ts: 1500 },
+    { motivo: 'otro', ts: 3000 },
+  ];
+  assert.equal(motivoDeSalidaTrasMarca(lista, 1000), 'crash-nativo');
+  assert.equal(motivoDeSalidaTrasMarca(lista, 2000), 'otro');
+  assert.equal(motivoDeSalidaTrasMarca(lista, 5000), null, 'ninguna después: no se sabe');
+  assert.equal(motivoDeSalidaTrasMarca(lista, undefined), null);
+  assert.equal(motivoDeSalidaTrasMarca(null, 1000), null);
+  assert.equal(duracionEnPalabras(HORA), '1 hora');
+  assert.equal(duracionEnPalabras(6 * HORA), '6 horas');
+  assert.equal(duracionEnPalabras(3 * DIA), '3 días');
+});
+
+prueba('guardia: lo que dejó la guardia anterior (el apagado de 7 días) se borra UNA vez, con aviso', () => {
+  const ahora = 50 * DIA;
+  const vieja = guardiaValida({ bloqueadaHasta: ahora + 6 * DIA, motivo: 'se cerró al arrancar la voz en vivo', golpes: [ahora - 1000] });
+  const r = guardiaAlArrancar(vieja, ahora, true);
+  assert.deepEqual(r.estado, { v: V });
+  assert.ok(!guardiaBloqueada(r.estado, ahora + 1));
+  assert.match(r.aviso, /quito el apagado que dejó la guardia anterior/);
+  // Ya migrada: la segunda vez no hay nada que decir.
+  const otra = guardiaAlArrancar(r.estado, ahora + 10, true);
+  assert.equal(otra.aviso, undefined);
+  assert.deepEqual(otra.estado, { v: V });
+  // Una vieja sin apagado tampoco avisa; su marca (de un JS anterior) no cuenta.
+  assert.deepEqual(guardiaAlArrancar({ montando: 5 }, 100, true), { estado: { v: V } });
+});
+
+prueba('guardia: sana a los 10 s → «en uso»; morir así es un golpe; dos golpes en 3 días la apagan; los viejos se olvidan', () => {
+  let g = guardiaAlSanar(guardiaAlMontar({ v: V }, 0), 10_000);
   assert.equal(g.montando, undefined);
   assert.equal(g.enUso, 10_000);
   let r = guardiaAlArrancar(g, DIA, true);
   assert.ok(!guardiaBloqueada(r.estado, DIA + 1), 'un golpe no la apaga');
   assert.equal(r.estado.golpes.length, 1);
+  assert.match(r.aviso, /con ella encendida/);
   g = guardiaAlSanar(guardiaAlMontar(r.estado, DIA + 5), DIA + 15_000);
   r = guardiaAlArrancar(g, 2 * DIA, true);
   assert.ok(guardiaBloqueada(r.estado, 2 * DIA + 1) && r.aviso, 'el segundo sí');
-  assert.equal(r.estado.bloqueadaHasta - 2 * DIA, GUARDIA.bloqueoGolpesMs);
+  assert.equal(r.estado.bloqueadaHasta - 2 * DIA, GUARDIA.bloqueosMs[0]);
   // Golpes viejos (más de 3 días) se olvidan.
-  const viejo = guardiaAlArrancar({ golpes: [0], enUso: 5 * DIA }, 5 * DIA + 1, true);
+  const viejo = guardiaAlArrancar({ v: V, golpes: [0], enUso: 5 * DIA }, 5 * DIA + 1, true);
   assert.ok(!guardiaBloqueada(viejo.estado, 5 * DIA + 2));
   assert.equal(viejo.estado.golpes.length, 1);
 });
@@ -408,6 +498,7 @@ prueba('guardia: soltarla con calma (segundo plano, salir de la mesa) borra las 
   assert.deepEqual(guardiaAlSoltar({ montando: 1, enUso: 2, golpes: [3] }), { montando: undefined, enUso: undefined, golpes: [3] });
   assert.deepEqual(guardiaValida('basura'), {});
   assert.deepEqual(guardiaValida({ montando: -5, enUso: 'x', golpes: [1, 'a', null, 2], bloqueadaHasta: 9, motivo: 7 }), { golpes: [1, 2], bloqueadaHasta: 9 });
+  assert.deepEqual(guardiaValida({ v: 2, bundle: 'abc', bloqueos: [4, 'x'] }), { v: 2, bundle: 'abc', bloqueos: [4] });
 });
 
 prueba('qué cámara: la nueva solo con todo a favor; si no, la de fotos y el motivo', () => {
@@ -447,7 +538,12 @@ prueba('costuras: la marca «montando» se escribe y se ESPERA antes de montar l
   assert.match(v, /SIN_CUADROS_MS = 8000/);
   const g = leer('src/lib/guardiaCamara.ts');
   assert.match(g, /export async function camaraMontando\(\): Promise<boolean> \{\n\s+const ok = await escribirGuardia/);
-  assert.match(g, /murioLaVezAnterior\(\)/);
+  assert.match(g, /guardiaAlArrancar\(previa, Date\.now\(\), await salidaAnterior\(previa\)\)/, 'la guardia mira POR QUÉ terminó la vez anterior');
+  assert.match(g, /bloqueada: soloSesion \|\| guardiaBloqueada/, 'un golpe: la de fotos en esta sesión');
+  const sa = leer('src/lib/salidaAnterior.ts');
+  assert.match(sa, /await murioLaVezAnteriorLeido\(\)/, 'espera a que reporte.ts haya leído la marca');
+  assert.match(sa, /motivoDeSalidaTrasMarca\(salidasNativas\(8\), e\.montando \?\? e\.enUso\)/);
+  assert.match(leer('src/lib/reporte.ts'), /avisarLeido\?\.\(\);/);
   const a = leer('src/lib/auraCamara.ts');
   assert.match(a, /requireOptionalNativeModule<ModuloCamara>\('AuraCamara'\)/, 'sin el módulo (APK vieja), null: nada se rompe');
   assert.match(a, /camaraVivaDisponible\(\) \? requireNativeView/, 'la vista nativa solo se pide si el módulo está');

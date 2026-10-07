@@ -7,20 +7,52 @@ import { INSTRUCCION_EMOCION } from '../lib/emocion';
 import { instruccionExpresiones } from '../lib/expresiones';
 import { estiloLlamada, instruccionExpresionesVoz, QUE_ERES } from '../lib/habla-natural';
 import { perfilPara, type NivelAura, type PerfilCerebro } from '../lib/perfiles';
+import { jsonDeEnv, mapaDeTextos } from '../lib/datos-privados';
 
-export const MAIL_ALIASES: Record<string, string> = {
-  'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
-  'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
-};
+/**
+ * Correos viejos o personales → el correo de la casa, y las cuentas de la junta con su nombre y rol visibles. Estaban
+ * escritos aquí (con el correo personal de José) en un repositorio público: ahora llegan por AURA_CORREOS_ALIAS y
+ * AURA_JUNTA (lib/datos-privados.ts). Sin ellas: sin alias y sin cuentas de junta por esta vía (el padrón sigue
+ * decidiendo quién es junta, server/nivel.ts), con un aviso en el registro.
+ */
+function minusculas(m: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(m)) out[k.toLowerCase()] = v.toLowerCase();
+  return out;
+}
 
-export const JUNTA: Record<string, { nombre: string; rol: string }> = {
-  'j.ordonez@ordenglobal.org': { nombre: 'José', rol: 'Junta Directiva · Orden Global' },
-  'm.ordonez@ordenglobal.org': { nombre: 'Medardo', rol: 'Junta Directiva · Orden Global' },
-};
+export function aliasDeCorreos(): Record<string, string> {
+  return jsonDeEnv('AURA_CORREOS_ALIAS', (x) => { const m = mapaDeTextos(x); return m ? minusculas(m) : null; }, {} as Record<string, string>, 'sin alias de correo: un correo viejo o personal entra como uno más');
+}
+
+export type CuentaJunta = { nombre: string; rol: string };
+
+function cuentasJunta(): Record<string, CuentaJunta> {
+  return jsonDeEnv(
+    'AURA_JUNTA',
+    (x) => {
+      if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+      const out: Record<string, CuentaJunta> = {};
+      for (const [correo, v] of Object.entries(x as Record<string, any>)) {
+        const nombre = String(v?.nombre || '').trim();
+        if (correo.trim() && nombre) out[correo.trim().toLowerCase()] = { nombre, rol: String(v?.rol || '').trim() || 'Junta Directiva · Orden Global' };
+      }
+      return out;
+    },
+    {} as Record<string, CuentaJunta>,
+    'sin cuentas de junta con nombre y rol propios (la entrada con huella de la junta queda cerrada)'
+  );
+}
+
+/** La cuenta de la junta de ESE correo (ya normalizado), o undefined. */
+export function cuentaDeJunta(correo: string): CuentaJunta | undefined {
+  const c = String(correo || '').trim().toLowerCase();
+  return c ? cuentasJunta()[c] : undefined;
+}
 
 export function normalizarCorreo(correo: unknown): string {
   const raw = String(correo || '').trim().toLowerCase();
-  return MAIL_ALIASES[raw] || raw;
+  return aliasDeCorreos()[raw] || raw;
 }
 
 const TONO_MODO: Record<string, string> = {

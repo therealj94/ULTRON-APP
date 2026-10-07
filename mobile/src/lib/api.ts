@@ -12,7 +12,8 @@
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
-import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
+import { claveParaRenovar, loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
+import { desbloqueoPendiente, esRutaDeLaPersona, faltaHuella, huellaCancelada, huellaResuelta, puedePedirHuella } from './permisoHuella';
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { cabeceraCliente } from './recepcion';
@@ -28,53 +29,88 @@ import { eventoProgresoValido, type EventoProgreso } from '../compa/narrador';
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
 
-let refreshing: { gen: number; p: Promise<boolean> } | null = null;
+/** Lo que dice el sistema al pedir la huella para seguir (la entrada rápida dice «Desbloquear AU-RA»). */
+export const MOTIVO_RENOVAR = 'Desbloquear AU-RA';
+
+/** La renovación en vuelo de una sesión (`pide`: puede sacar el diálogo de la huella). */
+let refreshing: { gen: number; p: Promise<boolean>; pide: boolean } | null = null;
 
 /**
- * Renueva el token con la clave guardada de QUIEN está dentro. Una sola renovación en vuelo por
- * generación de la sesión (lib/cuenta.ts): si la persona cambia mientras viaja, la respuesta vieja
- * NO se guarda (sería un token ajeno), y la renovación de la persona nueva es otra.
+ * Renueva el token con la clave de QUIEN está dentro (lib/storage.ts `claveParaRenovar`):
+ *  · la clave en claro que dejó la 5.6.0, sin preguntar, como antes de la OTA (hasta que pase detrás de la huella:
+ *    lib/credsSeguras.ts). Sin esto, a los 14 días el token vencía, la voz contestaba 401 y AU-RA se callaba;
+ *  · la clave detrás de la huella, SOLO si `deLaPersona` y lib/permisoHuella.ts lo permite (delante, algo que la
+ *    persona espera, sin pausa tras cancelar). Si no, no pregunta: falla callado y queda «Toca para desbloquear».
+ * Una sola renovación en vuelo por generación de la sesión (lib/cuenta.ts): los 401 que llegan juntos comparten el
+ * mismo diálogo. Una de fondo en vuelo no deja sin diálogo a la de la persona: esta espera a aquella y, si no renovó,
+ * pregunta ella. Si la persona cambia mientras viaja, la respuesta vieja NO se guarda (sería un token ajeno).
  * `gen`: la sesión por la que se pide. Una petición de A cuyo 401 llega con B dentro no renueva el
  * token de B (con la clave de B) para reintentar el cuerpo de A.
+ * `forzar`: la persona tocó «Toca para desbloquear» (pregunta aunque esté en pausa).
  */
-async function renovarSesion(gen = generacionCuenta()): Promise<boolean> {
+async function renovarSesion(gen = generacionCuenta(), deLaPersona = false, forzar = false): Promise<boolean> {
   if (!sigueVigente(gen)) return false;
-  if (refreshing && refreshing.gen === gen) return refreshing.p;
-  const p = (async () => {
-    const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
-    if (!creds?.correo || !creds?.clave) return false;
-    // Solo la clave de QUIEN está dentro. En un teléfono compartido la guardada puede ser de otra
-    // persona (entró con clave y salió; ahora está alguien que entró con Genesis): renovar con ella
-    // metía perfil, memoria y voz en la cuenta ajena mientras la pantalla seguía mostrando al primero.
-    const quien = creds.correo.trim().toLowerCase();
-    if (!sesion?.correo || quien !== sesion.correo.trim().toLowerCase()) return false;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TOPE_RENOVAR_MS);
-    try {
-      const res = await fetch(`${API_BASE}/api/ultron/entrar`, {
-        method: 'POST',
-        signal: ctrl.signal,
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ correo: creds.correo, clave: creds.clave }),
-      });
-      const data: any = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.token) return false;
-      // Antes de guardar: ¿sigue dentro la misma persona, en la misma sesión? Si salió o entró otra
-      // mientras viajaba, este token no es de nadie que esté aquí.
-      const ahora = await loadSession().catch(() => null);
-      if (!sigueVigente(gen) || String(ahora?.correo || '').trim().toLowerCase() !== quien) return false;
-      await saveMesaToken(String(data.token));
-      return true;
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timer);
-    }
-  })().finally(() => {
+  const pide = puedePedirHuella(deLaPersona, { forzar });
+  if (refreshing && refreshing.gen === gen) {
+    if (refreshing.pide || !pide) return refreshing.p;
+    // La de fondo no va a preguntar: se la espera y, si no renovó, esta pregunta.
+    const previa = refreshing.p;
+    const p = previa.then((ok) => ok || renovarAhora(gen, pide)).finally(() => {
+      if (refreshing?.p === p) refreshing = null;
+    });
+    refreshing = { gen, p, pide };
+    return p;
+  }
+  const p = renovarAhora(gen, pide).finally(() => {
     if (refreshing?.p === p) refreshing = null;
   });
-  refreshing = { gen, p };
+  refreshing = { gen, p, pide };
   return p;
+}
+
+async function renovarAhora(gen: number, pide: boolean): Promise<boolean> {
+  if (!sigueVigente(gen)) return false;
+  const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
+  if (!creds?.correo || !(creds.conHuella || creds.legado)) return false;
+  // Solo la clave de QUIEN está dentro. En un teléfono compartido la guardada puede ser de otra
+  // persona (entró con clave y salió; ahora está alguien que entró con Genesis): renovar con ella
+  // metía perfil, memoria y voz en la cuenta ajena mientras la pantalla seguía mostrando al primero.
+  const quien = creds.correo.trim().toLowerCase();
+  if (!sesion?.correo || quien !== sesion.correo.trim().toLowerCase()) return false;
+  // La de antes sale sin preguntar; la de la huella, solo si se puede preguntar ahora.
+  const { clave, via } = await claveParaRenovar(quien, MOTIVO_RENOVAR, pide);
+  if (via === 'sin_permiso') {
+    faltaHuella();
+    return false;
+  }
+  if (via === 'huella' && !clave) {
+    huellaCancelada();
+    return false;
+  }
+  if (!clave || !sigueVigente(gen)) return false;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TOPE_RENOVAR_MS);
+  try {
+    const res = await fetch(`${API_BASE}/api/ultron/entrar`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ correo: creds.correo, clave }),
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.token) return false;
+    // Antes de guardar: ¿sigue dentro la misma persona, en la misma sesión? Si salió o entró otra
+    // mientras viajaba, este token no es de nadie que esté aquí.
+    const ahora = await loadSession().catch(() => null);
+    if (!sigueVigente(gen) || String(ahora?.correo || '').trim().toLowerCase() !== quien) return false;
+    await saveMesaToken(String(data.token));
+    huellaResuelta();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function esSesionCaida(status: number, data: any) {
@@ -112,12 +148,17 @@ function hastaElLimite(p: Promise<boolean>, limite: number): Promise<boolean> {
  * mandarla —la primera vez o en un reintento— salió o entró otra (también A→B→A: es otra sesión), no
  * sale y falla con `vencida` (lib/intentoEntrada.ts). Antes un 429 o un 401 de A podía volver a salir
  * con el token de B y el cuerpo de A.
+ *
+ * Ante un 401, la renovación solo puede pedir la huella si la petición es de lo que la persona espera ahora (un turno,
+ * el oído, la voz: lib/permisoHuella.ts `esRutaDeLaPersona`); `o.deLaPersona` lo dice a mano (false: un permiso que se
+ * adelanta, un sondeo). Lo de fondo no pregunta: falla callado.
  */
-export async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000, retry401 = true): Promise<T> {
-  return pedirApi<T>(path, init, Date.now() + timeoutMs, retry401, generacionCuenta());
+export async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000, retry401 = true, o: { deLaPersona?: boolean } = {}): Promise<T> {
+  const deLaPersona = o.deLaPersona ?? esRutaDeLaPersona(path);
+  return pedirApi<T>(path, init, Date.now() + timeoutMs, retry401, generacionCuenta(), deLaPersona);
 }
 
-async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: number, reintentar: boolean, gen: number): Promise<T> {
+async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: number, reintentar: boolean, gen: number, deLaPersona = false): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.max(1, limite - Date.now()));
   try {
@@ -148,15 +189,15 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
         if (Date.now() + espera < limite) {
           await new Promise((r) => setTimeout(r, espera));
           // El reintento vuelve a mirar la sesión antes de salir (arriba): si cambió, no sale.
-          return pedirApi<T>(path, init, limite, false, gen);
+          return pedirApi<T>(path, init, limite, false, gen, deLaPersona);
         }
       }
       if (reintentar && esSesionCaida(res.status, data) && !path.includes('/entrar')) {
         // Un 401 de una sesión que ya no está no renueva a la de ahora: la respuesta era de la otra.
         if (!sigueVigente(gen)) throw vencida();
         // La renovación también cuenta contra el tope total: una que no contesta no retiene la petición.
-        const ok = await hastaElLimite(renovarSesion(gen), limite);
-        if (ok && Date.now() < limite) return pedirApi<T>(path, init, limite, false, gen);
+        const ok = await hastaElLimite(renovarSesion(gen, deLaPersona), limite);
+        if (ok && Date.now() < limite) return pedirApi<T>(path, init, limite, false, gen, deLaPersona);
         if (!sigueVigente(gen)) throw vencida();
       }
       const err = new Error((data as any).error || `HTTP ${res.status}`);
@@ -172,13 +213,17 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
 
 /**
  * ¿Sigue viva la sesión guardada de esta persona? Lo pregunta la intro antes de abrir la mesa:
- *   viva    → el servidor la reconoce (o se renovó con la clave de esta misma persona)
- *   caida   → el servidor dice que no, o que es de otra cuenta: hay que volver a entrar
- *   sin_red → no se pudo preguntar: se entra igual (la mesa tiene modo local)
+ *   viva      → el servidor la reconoce (o se renovó con la clave de esta misma persona, sin preguntar)
+ *   bloqueada → venció y la clave para renovarla está detrás de la huella: la intro NO pregunta (tiene un tope de
+ *               4 s), entra y la app enseña «Toca para desbloquear» (lib/permisoHuella.ts); el primer turno también
+ *               la pide
+ *   caida     → el servidor dice que no, o que es de otra cuenta, y no hay clave guardada que la renueve: hay que
+ *               volver a entrar
+ *   sin_red   → no se pudo preguntar: se entra igual (la mesa tiene modo local)
  * Quien entró con Genesis no tiene clave para renovar: al vencer su token vuelve a la entrada en vez
  * de quedarse «dentro» con una sesión que el servidor ya no acepta.
  */
-export async function comprobarSesion(correo: string, timeoutMs = 3_000): Promise<'viva' | 'caida' | 'sin_red'> {
+export async function comprobarSesion(correo: string, timeoutMs = 3_000): Promise<'viva' | 'bloqueada' | 'caida' | 'sin_red'> {
   const quien = correo.trim().toLowerCase();
   const pregunta = async (): Promise<'viva' | 'caida' | 'sin_red'> => {
     const token = await loadMesaToken();
@@ -200,13 +245,34 @@ export async function comprobarSesion(correo: string, timeoutMs = 3_000): Promis
   };
   const r = await pregunta();
   if (r !== 'caida') return r;
-  return (await renovarSesion()) ? pregunta() : 'caida';
+  if (await renovarSesion(generacionCuenta(), false)) return pregunta();
+  return desbloqueoPendiente() ? 'bloqueada' : 'caida';
+}
+
+/**
+ * «Toca para desbloquear»: la persona lo pidió, así que la huella se pide ahora aunque estuviera en pausa tras cancelar
+ * (solo con la app delante). true si la sesión quedó renovada.
+ */
+export function desbloquearSesion(): Promise<boolean> {
+  return renovarSesion(generacionCuenta(), true, true).catch(() => false);
 }
 
 /** Cabecera de sesión para descargas de audio (FileSystem/XHR no pasan por api()). */
 export async function sessionHeaders(): Promise<Record<string, string>> {
   const token = await loadMesaToken();
   return token ? { 'x-ultron-sesion': token } : {};
+}
+
+/**
+ * Lo mismo que hace api() ante un 401, para las descargas de audio que no pasan por ahí (lib/tts.ts, las muletillas):
+ * la voz ya no corre sin sesión en el servidor (auditoría del 7-oct, C-2), así que un token vencido dejaba muda la
+ * mesa hasta el siguiente turno. Renueva con la clave guardada de quien está dentro (una sola renovación en vuelo) y
+ * dice si hay token nuevo; quien entró con Genesis no tiene clave y sigue con false. `deLaPersona`: la voz de una
+ * respuesta que la persona está esperando (puede pedir la huella); lo que se precarga (las muletillas, la frase
+ * siguiente) no pregunta.
+ */
+export function renovarTokenVoz(deLaPersona = false): Promise<boolean> {
+  return renovarSesion(generacionCuenta(), deLaPersona).catch(() => false);
 }
 
 export type Health = {
@@ -838,11 +904,14 @@ export async function transcribirWav(wavB64: string, confirmar = false, timeoutM
  * Permiso para oír en vivo con Scribe v2 Realtime Turbo: el servidor pide a ElevenLabs un token de un
  * solo uso (la clave nunca llega al teléfono) y devuelve la dirección del WebSocket lista, con el
  * modelo, el idioma y las pistas de vocabulario de AU-RA. null si el servidor no lo da.
+ * `anticipado`: se pide para tenerlo listo (no se cobra del tope del oído hasta usarlo, y si la sesión venció NO pide la
+ * huella: es de fondo). `usado`: el id del anticipado que se acaba de usar (el servidor lo cobra ahí).
  */
-export async function pedirPermisoTurbo(): Promise<{ url: string; modelo: string } | null> {
+export async function pedirPermisoTurbo(o: { anticipado?: boolean; usado?: string } = {}): Promise<{ url: string; modelo: string; id?: string } | null> {
   try {
-    const d = await api<{ url?: string; modelo?: string }>('/api/stt/turbo/permiso', { method: 'POST', body: JSON.stringify({ language: idiomaActual() }) }, 8_000);
-    return d?.url && /^wss:\/\//.test(d.url) ? { url: d.url, modelo: String(d.modelo || '') } : null;
+    const cuerpo = { language: idiomaActual(), ...(o.anticipado ? { anticipado: true } : {}), ...(o.usado ? { usado: o.usado } : {}) };
+    const d = await api<{ url?: string; modelo?: string; id?: string }>('/api/stt/turbo/permiso', { method: 'POST', body: JSON.stringify(cuerpo) }, 8_000, true, { deLaPersona: !o.anticipado });
+    return d?.url && /^wss:\/\//.test(d.url) ? { url: d.url, modelo: String(d.modelo || ''), ...(typeof d.id === 'string' && d.id ? { id: d.id } : {}) } : null;
   } catch {
     return null;
   }

@@ -6,6 +6,7 @@
  * lib/cerebro-og.ts) para que conviva con otros cerebros sin mezclarse con ellos.
  */
 import { CONOCIMIENTO_OG } from '../../src/05-cerebro-og/conocimiento';
+import { aliasDePersonas, listaDeEnv } from '../datos-privados';
 import type { PerfilCerebro } from './tipos';
 
 export const GENESIS: PerfilCerebro = {
@@ -32,7 +33,11 @@ export const GENESIS: PerfilCerebro = {
     [/\bondk\b|\bgobernanza\b/, ['ondk', 'gobernanza', 'rwa']],
     [/\bmina|\bminer|\bdanli\b|\bcholuteca\b|\bconcesi|\bkiri\b|\binhgeomin\b/, ['mina', 'minas', 'danli', 'choluteca', 'concesion', 'kiri', 'inhgeomin', 'metal', 'boveda', '43-101']],
     [/\bprospera\b|\broatan\b|\bzede\b|\bciadi\b|\brfsa\b/, ['prospera', 'roatan', 'zede', 'ciadi', 'rfsa', 'brimen', 'cafta']],
-    [/\bjunta\b|\bfundador|\bcofundador|\bmedardo\b|\bjose\b|\bmelany\b|\bpaguada\b|\bleonardo\b|\bmayra\b|\bcarlos\b|\bjackson\b/, ['fundador', 'cofundador', 'medardo', 'jose', 'melany', 'paguada', 'mayra', 'carlos', 'jackson', 'junta']],
+    // Los nombres de la junta llegan por AURA_NOMBRES_JUNTA (fuera del repo público; lib/datos-privados.ts).
+    aliasDePersonas(listaDeEnv('AURA_NOMBRES_JUNTA', 'el cerebro de la junta no reconoce a nadie de la junta por su nombre'), {
+      patron: ['\\bjunta\\b', '\\bfundador', '\\bcofundador', '\\bjackson\\b'],
+      palabras: ['fundador', 'cofundador', 'jackson', 'junta'],
+    }),
     [/\bveta\b|\bwallet\b|\bbilletera\b/, ['veta', 'wallet']],
     [/\bgenesis id\b|\bidentidad\b/, ['genesis id', 'identidad']],
     [/\bordenex\b|\bcasa de cambio\b/, ['ordenex', 'cambio']],

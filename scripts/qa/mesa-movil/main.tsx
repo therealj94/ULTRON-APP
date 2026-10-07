@@ -2,7 +2,9 @@
 //   barra       la mesa de Claudio con la barra de tres botones y los atajos deslizables
 //   vivo        igual, con la conversación en vivo abierta (la píldora «En vivo · Terminar»)
 //   mas         la hoja «Más» abierta
-//   tutorial    el recorrido de primera vez (`&paso=N`)
+//   tutorial    el recorrido «Qué puedo hacer» (recorrido/Recorrido, el de la app; `&paso=N` es la escena), con
+//               un narrador callado y las fotos de Claudio y ANT-ONIO de anfitriones
+// Acostado (ancho > alto), la mesa lleva el riel de la derecha en vez de la barra de abajo (BarraMesa `riel`).
 //   transicion  un cuadro de la transición grande → chiquita al entrar al chat (`&h=0..1`: 1 sobre la
 //               mesa, 0 en su lugar), con la misma cuenta de la app (avatar3d/presencia.haciaMarco)
 //   llamada     LA LLAMADA DEL AVATAR (compa/LlamadaAvatar, el componente real): `&e=` sonando,
@@ -15,9 +17,11 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Image, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { BarraMesa } from '@movil/src/components/BarraMesa';
+import { EscribeleMesa } from '@movil/src/components/EscribeleMesa';
 import { HojaMas } from '@movil/src/components/HojaMas';
 import { AccionesAvatar } from '@movil/src/components/AccionesAvatar';
-import { Tutorial } from '@movil/src/tutorial/Tutorial';
+// El tutorial viejo (src/tutorial/Tutorial) ya no existe: el recorrido de la app es recorrido/Recorrido.
+import { Recorrido, type Narrador } from '@movil/src/recorrido/Recorrido';
 import { avatarPorId } from '@movil/src/avatares/catalogo';
 import { haciaMarco } from '@movil/src/avatar3d/presencia';
 import { T } from '@movil/src/tema';
@@ -27,6 +31,7 @@ import type { AvatarId } from '@movil/src/avatares/catalogo';
 import type { EstadoCiclo } from '@movil/src/compa/llamadaCiclo';
 import fotoPie from '@movil/assets/avatares/claudio-pie/base.webp';
 import fotoRetrato from '@movil/assets/avatares/claudio/base.webp';
+import fotoAntonio from '@movil/assets/avatares/antonio/base.webp';
 
 const q = new URLSearchParams(location.search);
 const cual = q.get('p') || 'barra';
@@ -36,18 +41,22 @@ const nombre = 'Claudio';
 
 function Mesa({ conversando = false, oculta = 0 }: { conversando?: boolean; oculta?: number }) {
   const [alto, setAlto] = useState(154);
+  const [borrador, setBorrador] = useState('');
+  const { width, height } = useWindowDimensions();
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: tema.fondo, opacity: 1 - oculta }]}>
       <Image source={{ uri: fotoPie }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       <View style={s.hud}>
         <View style={[s.punto, { backgroundColor: conversando ? T.activo : T.activo }]} />
-        <Text style={s.hudTexto}>{nombre} · {conversando ? 'escuchando' : 'te escucho'}</Text>
+        <Text style={s.hudTexto}>{nombre} · Escuchando</Text>
       </View>
       <View style={[s.burbuja, { bottom: alto + 8 }]}>
         <Text style={s.burbujaTexto}>¡Aquí estoy! Cuéntame.</Text>
       </View>
       <BarraMesa
         encima={<AccionesAvatar acciones={claudio.acciones} tema={tema} onAccion={() => {}} />}
+        escribir={<EscribeleMesa nombreAvatar={nombre} tema={tema} valor={borrador} onCambiar={setBorrador} onEnviar={() => setBorrador('')} />}
+        riel={width > height}
         onAlto={setAlto}
         tema={tema}
         nombreAvatar={nombre}
@@ -67,7 +76,7 @@ function Mesa({ conversando = false, oculta = 0 }: { conversando?: boolean; ocul
 /** La pantalla de los chats, como la dibuja la app (lista), para el fondo de la transición. */
 function Chats({ corrida }: { corrida: number }) {
   const { width } = useWindowDimensions();
-  const filas = ['Mamá', 'Beto', 'Ana', 'Equipo Orden Global', 'Medardo'];
+  const filas = ['Mamá', 'Beto', 'Ana', 'Equipo Orden Global', 'Ramiro'];
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1C1D20', transform: [{ translateX: corrida * width }] }]}>
       <View style={s.cabeza}>
@@ -186,6 +195,16 @@ function Compania({ t }: { t: number }) {
   );
 }
 
+/** Sin voz en el navegador: cada línea «suena» al instante y termina sola (el recorrido sigue su guion). */
+const NARRADOR_CALLADO: Narrador = {
+  hablar: async (_t, _q, _e, alSonar) => {
+    alSonar();
+    return true;
+  },
+  preparar: () => {},
+  callar: () => {},
+};
+
 function Pantalla() {
   if (cual === 'llamada') return <Llamada />;
   if (cual === 'compania') return <Compania t={Number(q.get('t') ?? 0.5)} />;
@@ -201,7 +220,17 @@ function Pantalla() {
     return (
       <>
         <Mesa />
-        <Tutorial visible nombreAvatar={nombre} tema={tema} onCerrar={() => {}} pasoInicial={Number(q.get('paso') || 0)} />
+        <Recorrido
+          visible
+          nombre="José"
+          idioma="es"
+          narrador={NARRADOR_CALLADO}
+          cuerpo={(quien) => <Image source={{ uri: quien === 'antonio' ? fotoAntonio : fotoRetrato }} style={StyleSheet.absoluteFill} resizeMode="contain" />}
+          onCerrar={() => {}}
+          onProbar={() => {}}
+          inicio={{ e: Number(q.get('paso') || 0) }}
+          retrasoMs={0}
+        />
       </>
     );
   if (cual === 'transicion') return <Transicion h={Number(q.get('h') ?? 0.5)} />;

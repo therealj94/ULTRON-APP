@@ -1,5 +1,5 @@
 /**
- * Memoria durable por miembro de junta (José / Medardo / Carlos / Mayra) + hechos compartidos.
+ * Memoria durable por miembro de junta (un cajón por persona del padrón de AU-RA) + hechos compartidos.
  * Disco local = caché. S3 = la copia que no se pierde al redesplegar Render.
  */
 
@@ -7,7 +7,7 @@ import { insertarTurno } from './hilo-orden';
 import fs from 'node:fs';
 import path from 'node:path';
 import { esHechoLargo, semillaLarga } from '../server/hechos';
-import { miembrosUltron, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
+import { enumerar, miembrosUltron, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
 import { bucketMemoria, s3GetJson, s3Listo, s3PutJson } from './s3';
 import { capasHilo, type HiloMemoria } from './conversacion';
 import type { NivelAura } from './perfiles/tipos';
@@ -66,7 +66,9 @@ function vacio(): Almacen {
 function migrar(raw: any): Almacen {
   const base = vacio();
   if (!raw || typeof raw !== 'object') return base;
-  if (raw.version === 1 && raw.perfiles?.jose && raw.perfiles?.medardo) {
+  // Un almacén ya en el formato de ahora (los cajones son los ids del padrón, que vive en el entorno: no se exige
+  // ningún id concreto; antes se miraba que estuvieran dos de la junta, escritos aquí).
+  if (raw.version === 1 && raw.perfiles && typeof raw.perfiles === 'object' && !Array.isArray(raw.perfiles)) {
     const a = raw as Almacen;
     for (const id of Object.keys(miembrosUltron())) {
       if (!a.perfiles[id]) a.perfiles[id] = { corta: [], larga: [] };
@@ -84,8 +86,10 @@ function migrar(raw: any): Almacen {
       canal: 'sistema' as const,
     }));
   }
-  if (Array.isArray(raw.corta)) {
-    base.perfiles.jose.corta = raw.corta.slice(0, MAX_CORTA).map((x: any) => ({
+  // La pila corta vieja era de quien manda primero en el padrón (el dueño de la mesa); sin padrón, se deja.
+  const dueno = Object.keys(base.perfiles).find((id) => puedeCambiarSistema(id));
+  if (Array.isArray(raw.corta) && dueno) {
+    base.perfiles[dueno].corta = raw.corta.slice(0, MAX_CORTA).map((x: any) => ({
       rol: x.rol === 'ultron' ? 'ultron' : 'user',
       texto: String(x.texto || ''),
       t: Number(x.t || 0),
@@ -300,7 +304,7 @@ export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura
     `HABLAS CON: ${nombre}. No mezcles la conversación privada del otro miembro.`,
     id
       ? `MEMORIA LARGA / PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || sinVista || '(nada aún)'}`
-      : 'No identifiqué si es José, Medardo, Carlos o Mayra. No recito memoria privada de nadie.',
+      : `No identifiqué si es ${enumerar(Object.values(miembrosUltron()).map((m) => m.nombre).filter(Boolean), 'o', 'alguien de la junta')}. No recito memoria privada de nadie.`,
     acceso,
     `HECHOS COMPARTIDOS DE LA JUNTA:\n${hechosJunta || '(nada)'}`,
     hilo === 'todo' ? `HILO CORTO CON ${nombre.toUpperCase()} (lo último; «esto» es esto, no lo sueltes):\n${capas.corto || sinVista || '(nada)'}` : '',
@@ -440,7 +444,7 @@ export function fotoMemoria(quien: MiembroId | null) {
     junta: a.junta.larga,
     cambios: a.cambios.slice(-24),
     nota: st.durable
-      ? 'Memoria en S3, una carpeta por José, Medardo, Carlos y Mayra. El otro no ve la conversación privada.'
+      ? `Memoria en S3, una carpeta por ${enumerar(Object.values(miembrosUltron()).map((m) => m.nombre).filter(Boolean), 'y', 'persona de la junta')}. El otro no ve la conversación privada.`
       : 'S3 no está listo. Esto se pierde si Render redespliega. Falta ULTRON_MEMORIA_BUCKET o AWS_*.',
   };
 }

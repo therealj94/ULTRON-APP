@@ -544,6 +544,39 @@ export function normalizarChats(cs: unknown): ChatWA[] {
     }));
 }
 
+/* ── lo último guardado en el teléfono (para verlo sin red) ───────────────────────────────── */
+
+/**
+ * La lista de WhatsApp de la última vez que contestó el servidor, para enseñarla sin red con el aviso «sin
+ * conexión» en vez de un círculo que gira sin fin (auditoría A3). Es de UNA cuenta (`quien`, el seudónimo de
+ * lib/cuenta) y solo de un WhatsApp vinculado: nada de códigos ni QR de vincular, nada de errores.
+ */
+export type GuardadoWA = { v: 1; quien: string; hora: number; estado: EstadoWA; chats: ChatWA[] };
+
+/** Cuántos chats se guardan (los de arriba: los más recientes). */
+export const MAX_GUARDADOS_WA = 80;
+
+export function paraGuardarWA(quien: string, estado: EstadoWA | null, chats: ChatWA[] | null, hora = Date.now()): GuardadoWA | null {
+  if (!quien || !estado || vistaDe(estado) !== 'listo' || !chats) return null;
+  const { disponible, permitido, vinculado, numero, nombre } = estado;
+  return {
+    v: 1,
+    quien,
+    hora,
+    estado: { disponible, permitido, vinculado, ...(numero ? { numero } : {}), ...(nombre ? { nombre } : {}) },
+    chats: normalizarChats(chats).slice(0, MAX_GUARDADOS_WA),
+  };
+}
+
+/** Lo guardado, si es de quien está dentro y tiene forma de serlo; si no, nada (otra cuenta nunca ve lo de esta). */
+export function guardadoWADe(crudo: unknown, quien: string): GuardadoWA | null {
+  const g = crudo as Partial<GuardadoWA> | null;
+  if (!quien || !g || typeof g !== 'object' || g.v !== 1 || g.quien !== quien) return null;
+  const e = g.estado as EstadoWA | undefined;
+  if (!e || typeof e !== 'object' || vistaDe(e) !== 'listo') return null;
+  return { v: 1, quien, hora: Number(g.hora) || 0, estado: e, chats: normalizarChats(g.chats).slice(0, MAX_GUARDADOS_WA) };
+}
+
 /** Los contactos del teléfono, con lo mínimo para dibujarlos (los que no tienen jid no sirven para escribir). */
 export function normalizarContactos(cs: unknown): ContactoWA[] {
   if (!Array.isArray(cs)) return [];
@@ -664,6 +697,28 @@ export function telefonoValido(t: string): string | null {
 
 /* ── los colores de WhatsApp ──────────────────────────────────────────────────────────────── */
 
+/**
+ * Los colores de la app que necesita WhatsApp (los de `Paleta`, src/nucleo/tema.ts; aquí sin importar React
+ * Native, para probarlo en node).
+ */
+export type BaseWA = {
+  oscuro: boolean;
+  fondo: string;
+  superficie: string;
+  superficie2: string;
+  borde: string;
+  texto: string;
+  texto2: string;
+  texto3: string;
+  acento: string;
+  acentoTexto: string;
+  sobreAcento: string;
+  exitoFondo: string;
+  aviso: string;
+  avisoFondo: string;
+  burbujaOtro: string;
+};
+
 export type PaletaWA = {
   cabecera: string;
   sobreCabecera: string;
@@ -694,73 +749,52 @@ export type PaletaWA = {
   tarjeta: string;
   sinFoto: string;
   enlace: string;
+  /** El verde de WhatsApp: solo para reconocerlo (punto de la pestaña, sin leer). */
+  verde: string;
 };
 
-/** Los de WhatsApp en claro y en oscuro (sigue el tema de la app). */
-export function paletaWA(oscuro: boolean): PaletaWA {
-  return oscuro
-    ? {
-        cabecera: '#1F2C34',
-        sobreCabecera: '#E9EDEF',
-        sobreCabecera2: '#8696A0',
-        fondo: '#111B21',
-        separador: '#222D34',
-        nombre: '#E9EDEF',
-        previa: '#8696A0',
-        hora: '#8696A0',
-        horaSinLeer: '#25D366',
-        globo: '#25D366',
-        sobreGlobo: '#111B21',
-        buscador: '#202C33',
-        pista: '#8696A0',
-        chat: '#0B141A',
-        mia: '#005C4B',
-        otra: '#202C33',
-        texto: '#E9EDEF',
-        metaMia: 'rgba(233,237,239,0.68)',
-        metaOtra: '#8696A0',
-        chip: '#182229',
-        chipTexto: '#8696A0',
-        caja: '#2A3942',
-        enviar: '#00A884',
-        sobreEnviar: '#111B21',
-        aviso: '#F15C6D',
-        avisoFondo: '#3B2329',
-        tarjeta: 'rgba(0,0,0,0.22)',
-        sinFoto: '#6A7175',
-        enlace: '#53BDEB',
-      }
-    : {
-        cabecera: '#008069',
-        sobreCabecera: '#FFFFFF',
-        sobreCabecera2: 'rgba(255,255,255,0.85)',
-        fondo: '#FFFFFF',
-        separador: '#E9EDEF',
-        nombre: '#111B21',
-        previa: '#667781',
-        hora: '#667781',
-        horaSinLeer: '#1FA855',
-        globo: '#25D366',
-        sobreGlobo: '#FFFFFF',
-        buscador: '#F0F2F5',
-        pista: '#667781',
-        chat: '#EFEAE2',
-        mia: '#D9FDD3',
-        otra: '#FFFFFF',
-        texto: '#111B21',
-        metaMia: '#667781',
-        metaOtra: '#667781',
-        chip: '#FFFFFF',
-        chipTexto: '#54656F',
-        caja: '#FFFFFF',
-        enviar: '#00A884',
-        sobreEnviar: '#FFFFFF',
-        aviso: '#EA0038',
-        avisoFondo: '#FDE8EB',
-        tarjeta: 'rgba(11,20,26,0.06)',
-        sinFoto: '#DFE5E7',
-        enlace: '#027EB5',
-      };
+/** El verde de WhatsApp en cada tema: ≥ 4,5:1 como texto sobre el fondo de AU-RA y con la letra que va encima. */
+export const VERDE_WA = { oscuro: '#25D366', claro: '#15803D' } as const;
+
+/**
+ * WhatsApp dentro de AU-RA (auditoría M6: «una segunda app dentro de la app», con su #111B21, su #00A884 y tres
+ * verdes junto al dorado). Ahora va con las superficies, la letra, las burbujas y el dorado de la app, igual que
+ * PULSE2CHAT; el verde queda para reconocerlo: la hora y el globo de sin leer, y un tinte salvia en lo que mandas.
+ */
+export function paletaWA(p: BaseWA): PaletaWA {
+  const verde = p.oscuro ? VERDE_WA.oscuro : VERDE_WA.claro;
+  return {
+    cabecera: p.fondo,
+    sobreCabecera: p.texto,
+    sobreCabecera2: p.texto3,
+    fondo: p.fondo,
+    separador: p.borde,
+    nombre: p.texto,
+    previa: p.texto2,
+    hora: p.texto3,
+    horaSinLeer: verde,
+    globo: verde,
+    sobreGlobo: p.oscuro ? p.fondo : '#FFFFFF',
+    buscador: p.superficie2,
+    pista: p.texto3,
+    chat: p.fondo,
+    mia: p.exitoFondo,
+    otra: p.burbujaOtro,
+    texto: p.texto,
+    metaMia: p.texto2,
+    metaOtra: p.texto3,
+    chip: p.superficie,
+    chipTexto: p.texto2,
+    caja: p.superficie2,
+    enviar: p.acento,
+    sobreEnviar: p.sobreAcento,
+    aviso: p.aviso,
+    avisoFondo: p.avisoFondo,
+    tarjeta: p.oscuro ? 'rgba(0,0,0,0.22)' : 'rgba(35,33,30,0.06)',
+    sinFoto: p.superficie2,
+    enlace: p.acentoTexto,
+    verde,
+  };
 }
 
 const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);

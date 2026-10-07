@@ -4,6 +4,8 @@
  */
 
 import { consultaWeb } from '../src/06-manos/web';
+import { padron } from './acceso';
+import { listaDeEnv } from './datos-privados';
 
 export type TurnoHilo = { rol: string; texto: string };
 export type MsgHilo = { role: 'user' | 'assistant'; content: string };
@@ -50,9 +52,17 @@ export function urlsParaLeer(url: string): string[] {
   ];
 }
 
+/** Un nombre del padrón como palabra de una expresión (sin acentos, en minúsculas, sin nada que la rompa). */
+const palabra = (t: string) => fold(t).replace(/[^a-z0-9 ]/g, '').trim();
+
 export function esSaludoCorto(message: string): boolean {
   const q = fold(message);
-  return /^(hola|buenas( tardes| dias| noches)?|buen dia|que tal|como estas|hey|ey)( jefe| jose| medardo| carlos| mayra)?[ .!?]*$/.test(q);
+  // «hola, José»: los nombres de la junta salen del padrón (en el entorno, no en el repo público).
+  const nombres = ['jefe', ...padron().filter((p) => p.acceso.ultron).map((p) => palabra(p.nombre).split(' ')[0])].filter(Boolean);
+  const ok = /^(hola|buenas( tardes| dias| noches)?|buen dia|que tal|como estas|hey|ey)( [a-z0-9]+)?[ .!?]*$/.exec(q);
+  if (!ok) return false;
+  const quien = (ok[3] || '').trim();
+  return !quien || nombres.includes(quien);
 }
 
 export function esInterno(message: string): boolean {
@@ -96,7 +106,12 @@ export function esSobreUltron(message: string): boolean {
 /** Temas que ya viven en el cerebro de Orden Global: primero se contesta con lo que consta; el 27B pide web si le falta. */
 export function esTemaOG(message: string): boolean {
   const q = fold(message);
-  return /\b(5550|origen|auka|agka|ondk|mnka|orden ?global|genesis|veta|ordenex|aucorp|au corp|prospera|medardo|melany|paguada|mayra|junta|bo?veda|gramin|besu|qbft|ordenscan|mytokenpay|pulse2chat|kiri|danli|choluteca|inhgeomin)\b/.test(q);
+  if (/\b(5550|origen|auka|agka|ondk|mnka|orden ?global|genesis|veta|ordenex|aucorp|au corp|prospera|junta|bo?veda|gramin|besu|qbft|ordenscan|mytokenpay|pulse2chat|kiri|danli|choluteca|inhgeomin)\b/.test(q)) return true;
+  // Los nombres de la junta que son «tema de Orden Global» (AURA_NOMBRES_TEMA_OG, por comas; fuera del repo público).
+  return listaDeEnv('AURA_NOMBRES_TEMA_OG', 'preguntar por alguien de la junta por su nombre ya no se contesta solo con el cerebro')
+    .map(palabra)
+    .filter(Boolean)
+    .some((n) => new RegExp(`\\b${n}\\b`).test(q));
 }
 
 export function esPreguntaExterna(message: string): boolean {

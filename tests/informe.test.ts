@@ -6,6 +6,7 @@
  * se imprime y se lleva a una reunión; una cifra inventada con membrete no es una respuesta
  * desafortunada, es un papel falso.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -130,26 +131,26 @@ test('un informe es de quien lo pidió', async (t) => {
     // Electrum y el identificador se bajaba el informe de otro. Un informe de cartera lleva nombres
     // de concesionarios y hectáreas; «difícil de adivinar» no es un permiso.
     const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'cartera.pdf', dicho: '' }, 'jose');
-    assert.equal(recoger(id, 'medardo'), 'ajeno');
+    assert.equal(recoger(id, 'ramiro'), 'ajeno');
     assert.equal(recoger(id, null), 'ajeno', 'sin identificar tampoco');
     assert.equal(recoger(id, 'jose'), 'cartera.pdf', 'el suyo sí');
   });
 
   await t.test('compartirlo con la junta lo abre, y solo puede hacerlo su autor', () => {
     const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'cartera.pdf', dicho: '' }, 'jose');
-    assert.equal(compartirInforme(id, 'medardo'), 'ajeno', 'no es suyo: no le toca compartirlo');
-    assert.equal(recoger(id, 'medardo'), 'ajeno');
+    assert.equal(compartirInforme(id, 'ramiro'), 'ajeno', 'no es suyo: no le toca compartirlo');
+    assert.equal(recoger(id, 'ramiro'), 'ajeno');
     assert.equal(compartirInforme(id, 'jose'), 'hecho');
-    assert.equal(recoger(id, 'medardo'), 'cartera.pdf', 'compartido a propósito, ya se puede');
+    assert.equal(recoger(id, 'ramiro'), 'cartera.pdf', 'compartido a propósito, ya se puede');
     assert.equal(informeCompartido(id), true);
   });
 
   // Auditoría H05: antes un informe sin autor lo recogía y lo compartía cualquiera con el id.
   await t.test('un informe sin autor no lo recoge ni lo comparte una persona; solo el envío interno', () => {
     const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'suelto.pdf', dicho: '' }, null);
-    assert.equal(tomarInforme(id, 'medardo').estado, 'ajeno');
+    assert.equal(tomarInforme(id, 'ramiro').estado, 'ajeno');
     assert.equal(tomarInforme(id, 'visita:abc').estado, 'ajeno');
-    assert.equal(compartirInforme(id, 'medardo'), 'ajeno');
+    assert.equal(compartirInforme(id, 'ramiro'), 'ajeno');
     assert.equal(tomarInforme(id, null).estado, 'ok', 'Telegram sin identificar lo manda por dentro');
   });
 

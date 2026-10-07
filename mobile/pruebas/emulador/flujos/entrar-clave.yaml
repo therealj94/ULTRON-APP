@@ -1,0 +1,42 @@
+# Entrar, parte 2 (correr.sh ya escondió el teclado): la clave de la cuenta de PRUEBA y «ir» desde el teclado.
+# La clave llega por MAESTRO_CLAVE_PRUEBA (el secreto AURA_PRUEBA_CLAVE); el campo la oculta.
+appId: link.ordenglobal.ultronfp
+name: Entrar con la cuenta de prueba (clave)
+---
+# Solo con «Otra cuenta» elegida (la fila de arriba lo dice): nunca la clave en la fila de otra persona.
+- assertVisible: "Otra cuenta"
+# El campo de la clave: por su testID (cuando la OTA lo traiga) o, si no, el segundo «Clave» de arriba abajo
+# (la etiqueta va encima del campo).
+- runFlow:
+    when:
+      visible:
+        id: "entrar-clave"
+    commands:
+      - tapOn:
+          id: "entrar-clave"
+- runFlow:
+    when:
+      notVisible:
+        id: "entrar-clave"
+    commands:
+      - tapOn:
+          text: "Clave"
+          index: 1
+- inputText: ${MAESTRO_CLAVE_PRUEBA}
+# «ir» del teclado = onSubmitEditing → entrar con clave (LoginScreen.enterWithClave).
+- pressKey: Enter
+# Si el «ir» no llegó (teclado físico, otra IME), el botón «Entrar» (exacto: nunca «Entrar solo al escritorio»).
+- extendedWaitUntil:
+    notVisible: "Entrar con clave"
+    timeout: 20000
+    optional: true
+- runFlow:
+    when:
+      visible: "Entrar con clave"
+    commands:
+      - tapOn: "Entrar"
+- extendedWaitUntil:
+    visible: "Siguiente|Saltar|Saltar todas|Ir a la mesa|Después|Mensaje|Más opciones.*|Correo o clave incorrectos\\.|.*servidor no responde.*|No pude verificar.*"
+    timeout: 90000
+- assertNotVisible: "Correo o clave incorrectos\\."
+- assertNotVisible: ".*servidor no responde.*"

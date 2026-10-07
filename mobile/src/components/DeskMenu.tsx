@@ -48,14 +48,19 @@ export function anchoPanel(ancho: number): number {
   return Math.round(Math.min(440, Math.max(ancho * 0.64, Math.min(ancho - 32, 400))));
 }
 
+/**
+ * El TONO con que habla (server/desk.ts TONO_MODO): solo cambia un adjetivo en las instrucciones, no abre funciones.
+ * Antes se llamaban «Modo» con pistas como «Minería · señales» u «Oro · alto valor», que prometían cosas que no hay
+ * (auditoría del 7-oct, M-6). «Conocerte» sí hace algo: la entrevista.
+ */
 const MODES: Array<{ id: Mode; label: Bilingue; hint: Bilingue }> = [
-  { id: 'GUARDIAN', label: { es: 'Guardián', en: 'Guardian' }, hint: { es: 'vigila', en: 'watches' } },
-  { id: 'MINING', label: { es: 'Minería', en: 'Mining' }, hint: { es: 'señales', en: 'signals' } },
-  { id: 'GOLD', label: { es: 'Oro', en: 'Gold' }, hint: { es: 'alto valor', en: 'high value' } },
-  { id: 'CREATIVE', label: { es: 'Creativo', en: 'Creative' }, hint: { es: 'ideas', en: 'ideas' } },
-  { id: 'ANALYTICAL', label: { es: 'Analítico', en: 'Analytical' }, hint: { es: 'frío', en: 'cold' } },
-  { id: 'STRATEGIC', label: { es: 'Estratégico', en: 'Strategic' }, hint: { es: 'junta', en: 'board' } },
-  { id: 'EXPLORER', label: { es: 'Explorador', en: 'Explorer' }, hint: { es: 'investiga', en: 'investigates' } },
+  { id: 'GUARDIAN', label: { es: 'Guardián', en: 'Guardian' }, hint: { es: 'firme, pocas palabras', en: 'firm, few words' } },
+  { id: 'MINING', label: { es: 'Seco', en: 'Dry' }, hint: { es: 'va al grano', en: 'to the point' } },
+  { id: 'GOLD', label: { es: 'Cálido', en: 'Warm' }, hint: { es: 'charla de metal', en: 'talks metal' } },
+  { id: 'CREATIVE', label: { es: 'Creativo', en: 'Creative' }, hint: { es: 'propone ideas', en: 'suggests ideas' } },
+  { id: 'ANALYTICAL', label: { es: 'Analítico', en: 'Analytical' }, hint: { es: 'cifras con fuente', en: 'figures with sources' } },
+  { id: 'STRATEGIC', label: { es: 'Estratégico', en: 'Strategic' }, hint: { es: 'a largo plazo', en: 'long term' } },
+  { id: 'EXPLORER', label: { es: 'Curioso', en: 'Curious' }, hint: { es: 'pregunta más', en: 'asks more' } },
   { id: 'CONOCER', label: { es: 'Conocerte', en: 'Get to know you' }, hint: { es: 'entrevista', en: 'interview' } },
 ];
 
@@ -283,7 +288,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.section}>{tr('Lo que hacemos juntos', 'What we do together')}</Text>
               <FilaHoja titulo={tr('Misiones', 'Missions')} sub={tr('Tus metas, paso a paso', 'Your goals, step by step')} onPress={() => p.onAbrirHoja?.('misiones')} />
               <FilaHoja titulo={tr('Mi círculo', 'My circle')} sub={tr('Tu gente cercana y sus recordatorios', 'Your close people and their reminders')} onPress={() => p.onAbrirHoja?.('circulo')} />
-              <FilaHoja titulo={tr('Cartera', 'Wallet')} sub={tr('Tus saldos de Veta Wallet (solo lectura)', 'Your Veta Wallet balances (read-only)')} onPress={() => {
+              <FilaHoja titulo={tr('Cartera', 'Wallet')} sub={tr('Tus saldos de Veta Wallet. Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña', 'Your Veta Wallet balances. Card: AU-RA can show its details and top it up with your password')} onPress={() => {
                   p.onClose();
                   abrirCartera();
                 }} />
@@ -312,7 +317,8 @@ export function DeskMenu(p: Props) {
             <>
               <Text style={styles.section}>{tr('Presencia', 'Presence')}</Text>
               <View style={styles.chips}>
-                {(['stay', 'explore', 'sleep'] as DeskPresence[]).map((pr) => (
+                {/* «explorar» solo cambiaba el tono a Curioso y decía «listo para investigar» (M-6): queda en Tono. */}
+                {(['stay', 'sleep'] as DeskPresence[]).map((pr) => (
                   <Chip
                     key={pr}
                     on={p.presence === pr}
@@ -321,7 +327,7 @@ export function DeskMenu(p: Props) {
                   />
                 ))}
               </View>
-              <Text style={styles.section}>{tr('Modo', 'Mode')}</Text>
+              <Text style={styles.section}>{tr('Tono (solo cambia cómo habla)', 'Tone (only changes how it talks)')}</Text>
               <View style={styles.chips}>
                 {MODES.map((m) => (
                   <Chip key={m.id} on={p.mode === m.id} label={de(m.label)} sub={de(m.hint)} onPress={() => p.onSetMode(m.id)} />

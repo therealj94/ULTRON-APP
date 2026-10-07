@@ -11,10 +11,12 @@
  *     abren SU app de WhatsApp en ese contacto (se explica una vez).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { fuente } from '../ui/tipografia';
+import { Letra as Text } from '../ui/Letra';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useTema } from '../nucleo/tema';
+import { MEDIDA, useTema } from '../nucleo/tema';
 import { idiomaActual, tr } from '../i18n';
 import * as API from './api';
 import { registrarAtras } from './atras';
@@ -83,7 +85,7 @@ async function abrirEnWhatsapp(digitos: string, nombre: string) {
 
 export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () => void }) {
   const p = useTema();
-  const w = useMemo(() => paletaWA(p.oscuro), [p.oscuro]);
+  const w = useMemo(() => paletaWA(p), [p]);
   const ins = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const idioma = idiomaActual() === 'en' ? 'en' : 'es';
@@ -221,7 +223,7 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: w.chat }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View style={[s.cabecera, { backgroundColor: w.cabecera, paddingTop: ins.top + 4 }]}>
+      <View style={[s.cabecera, { backgroundColor: w.cabecera, borderBottomColor: w.separador, paddingTop: ins.top + 4 }]}>
         <Pressable onPress={onAtras} accessibilityRole="button" accessibilityLabel={tr('Volver a los chats', 'Back to chats')} style={s.atras} hitSlop={4}>
           <IconoWA nombre="atras" tam={24} color={w.sobreCabecera} grosor={2.2} />
         </Pressable>
@@ -297,7 +299,7 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
             placeholderTextColor={w.pista}
             multiline
             maxLength={4000}
-            style={[s.entrada, { color: w.texto }]}
+            style={[s.entrada, fuente('regular'), { color: w.texto }]}
             accessibilityLabel={tr(`Escribe un mensaje para ${nombre}`, `Type a message to ${nombre}`)}
           />
         </View>
@@ -320,10 +322,10 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
 }
 
 const s = StyleSheet.create({
-  cabecera: { flexDirection: 'row', alignItems: 'center', paddingRight: 4, paddingBottom: 8, minHeight: 56 },
+  cabecera: { flexDirection: 'row', alignItems: 'center', paddingLeft: 4, paddingRight: 4, paddingBottom: 8, minHeight: 56, borderBottomWidth: StyleSheet.hairlineWidth },
   atras: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
-  nombre: { fontSize: 17, fontWeight: '600' },
-  subtitulo: { fontSize: 13, marginTop: 1 },
+  nombre: { fontSize: MEDIDA.letra.grande - 1, fontWeight: '700' },
+  subtitulo: { fontSize: MEDIDA.letra.chica, marginTop: 1 },
   boton: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   banda: { paddingVertical: 8, paddingHorizontal: 16 },
   chip: { alignSelf: 'center', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 8 },

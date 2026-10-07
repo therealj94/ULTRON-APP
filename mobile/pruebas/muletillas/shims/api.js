@@ -14,6 +14,7 @@ module.exports = {
   CANTAR_ENDPOINT: 'https://prueba/api/cantar',
   ORAR_ENDPOINT: 'https://prueba/api/orar',
   sessionHeaders: async () => ({}),
+  renovarTokenVoz: async () => false,
   pedirPermisoTurbo: async () => ({ url: 'wss://turbo/prueba' }),
   transcribirWav: async () => '',
   transcribe: async () => '',

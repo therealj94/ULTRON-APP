@@ -10,6 +10,7 @@
  *  · la evaluación reproducible sobre la prueba apartada (test_app.jsonl, sin plantillas del
  *    entrenamiento): ninguna mano equivocada, ningún falso positivo, y cobertura mínima.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -131,7 +132,7 @@ test('camino rápido: lo que tiene efecto espera el «sí»; enviar o borrar nun
 });
 
 test('evaluación reproducible (test_app.jsonl, apartada): ninguna mano equivocada ni falso positivo, y más cobertura que solo reglas', async () => {
-  const NOMBRES = ['Mamá', 'Papá', 'Beto', 'Ana', 'Esposa', 'Esposo', 'Hermano', 'Hermana', 'Don Chepe', 'Karla', 'Profe Carlos', 'Abuela', 'Medardo',
+  const NOMBRES = ['Mamá', 'Papá', 'Beto', 'Ana', 'Esposa', 'Esposo', 'Hermano', 'Hermana', 'Don Chepe', 'Karla', 'Profe Carlos', 'Abuela', 'Ramiro',
     'Jefe', 'Tía Rosa', 'José', 'Hija', 'Hijo', 'Licenciado', 'María José', 'Compadre', 'Prima', 'Primo', 'Doctor Ramírez', 'Vecina', 'Suegra',
     'Pastor', 'Lupita', 'Cuñado', 'Don Ramón', 'Seño Marta', 'Kevin', 'Doña Chayo', 'Carlos', 'Maria', 'Uncle Tony', 'Rosa', 'Pastor Mike', 'Landlord'];
   const ctx: ContextoApp = { pantalla: 'mesa', contactos: NOMBRES.map((n, i) => ({ correo: `c${i}@prueba.hn`, nombre: n })), manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada'] };

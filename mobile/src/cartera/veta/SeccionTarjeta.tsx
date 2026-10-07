@@ -8,7 +8,8 @@
  *     y «Usar la huella la próxima vez»). Con la huella ya activa: «Entrar con huella».
  *   · Con tarjeta: la tarjeta que gira, su estado (ACTIVA / CONGELADA), el saldo en ORIGEN y Recargar, y:
  *       - Congelar / descongelar (POST /cards/freeze; si el servidor falla, vuelve atrás y lo dice).
- *       - Ver número, vencimiento y CVV (POST /cards/pan, con contraseña o huella): se muestran en la
+ *       - Ver número, vencimiento y CVV (POST /cards/pan, con contraseña o huella guardada y, si se escribe, también
+ *         la huella o el bloqueo del teléfono: veta/desbloqueo.ts confirmarConTelefono): se muestran en la
  *         tarjeta 45 s y se ocultan solos; nunca se guardan.
  *       - Ver el PIN, o crearlo si todavía no tiene (POST/PUT /cards/pin).
  *       - Límites de gasto y movimientos (comercio, fecha, ORIGEN y su referencia en dólares).
@@ -478,7 +479,7 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
               <View style={{ gap: MEDIDA.espacio.s }}>
                 <Campo etiqueta={tr('¿Cuánto ORIGEN?', 'How much ORIGEN?')} value={monto} onChangeText={(t) => setMonto(t.replace(',', '.').replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="10" />
                 <Texto v="mini" color="texto3">
-                  {tr('Pagas ORIGEN de tu saldo y la tarjeta recibe el equivalente. Se autoriza con tu contraseña o huella.', 'You pay ORIGEN from your balance and the card receives the equivalent. Authorized with your password or fingerprint.')}
+                  {tr('Pagas ORIGEN de tu saldo y la tarjeta recibe el equivalente. AU-RA la recarga con tu contraseña de Veta Wallet y tu huella o el bloqueo del teléfono.', 'You pay ORIGEN from your balance and the card receives the equivalent. AU-RA tops it up with your Veta Wallet password and your fingerprint or phone lock.')}
                 </Texto>
                 <View style={{ flexDirection: 'row', gap: MEDIDA.espacio.s }}>
                   <Boton titulo={tr('Cancelar', 'Cancel')} variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => setRecargando(false)} />
@@ -494,11 +495,11 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
             <Opcion icono="candado" titulo={tr('Congelar tarjeta', 'Freeze card')} detalle={tr('Bloqueo temporal instantáneo', 'Instant temporary block')}>
               {congelando ? <ActivityIndicator color={tema.acento} /> : <Interruptor valor={congelada} onCambiar={(v) => void congelar(v)} etiqueta={tr('Congelar tarjeta', 'Freeze card')} />}
             </Opcion>
-            <Opcion icono="ojo" titulo={tr('Ver número completo', 'View full number')} detalle={tr('Número, vencimiento y CVV · con contraseña o huella', 'Number, expiry and CVV · with password or fingerprint')} onPress={() => setPedido('datos')} />
+            <Opcion icono="ojo" titulo={tr('Ver número completo', 'View full number')} detalle={tr('Número, vencimiento y CVV · con contraseña y huella o bloqueo del teléfono', 'Number, expiry and CVV · with password and fingerprint or phone lock')} onPress={() => setPedido('datos')} />
             <Opcion
               icono="llave"
               titulo={sinPin ? tr('Crear PIN', 'Create PIN') : tr('Ver PIN', 'View PIN')}
-              detalle={sinPin ? tr('Tu tarjeta aún no tiene uno', 'Your card doesn’t have one yet') : tr('Con contraseña o huella', 'With password or fingerprint')}
+              detalle={sinPin ? tr('Tu tarjeta aún no tiene uno', 'Your card doesn’t have one yet') : tr('Con contraseña y huella o bloqueo del teléfono', 'With password and fingerprint or phone lock')}
               onPress={() => (sinPin ? setEligiendoPin(true) : setPedido('pin'))}
             />
             {pin && !sinPin ? <Opcion icono="lapiz" titulo={tr('Cambiar PIN', 'Change PIN')} detalle={tr('Elige uno nuevo de 4 a 12 dígitos', 'Pick a new one, 4 to 12 digits')} onPress={() => setEligiendoPin(true)} /> : null}
@@ -553,7 +554,12 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
       <PedirClave
         visible={!!pedido}
         titulo={pedido ? titulos[pedido] : ''}
-        subtitulo={pedido === 'recargar' ? tr('Autoriza el pago con tu contraseña de Veta Wallet.', 'Authorize the payment with your Veta Wallet password.') : tr('Pedimos tu contraseña cada vez que se muestran datos sensibles. No se guardan en el teléfono.', 'We ask for your password every time sensitive data is shown. It isn’t stored on the phone.')}
+        subtitulo={
+          pedido === 'recargar'
+            ? tr('Autoriza el pago con tu contraseña de Veta Wallet y tu huella o el bloqueo del teléfono.', 'Authorize the payment with your Veta Wallet password and your fingerprint or phone lock.')
+            : tr('Cada vez que se muestran datos de tu tarjeta pedimos tu contraseña y tu huella o el bloqueo del teléfono. Los datos no se guardan en el teléfono.', 'Every time your card details are shown we ask for your password and your fingerprint or phone lock. The details aren’t stored on the phone.')
+        }
+        confirmarTelefono
         accion={pedido === 'recargar' ? tr('Recargar', 'Top up') : pedido === 'crearPin' ? tr('Guardar PIN', 'Save PIN') : tr('Mostrar', 'Show')}
         onCancelar={() => {
           gen.current++;

@@ -32,7 +32,7 @@ import {
   nivelDeRms,
 } from '../../src/lib/vozNativa.ts';
 import { CentralVoz } from '../../src/lib/sonidoVivo.ts';
-import { guardiaAlArrancar, guardiaAlMontar, guardiaBloqueada } from '../../src/lib/camaraNativa.ts';
+import { GUARDIA, guardiaAlArrancar, guardiaAlMontar, guardiaBloqueada } from '../../src/lib/camaraNativa.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const MOVIL = path.resolve(AQUI, '../..');
@@ -167,7 +167,8 @@ prueba('qué camino: el nuevo solo con todo a favor; si no, el de siempre y el m
 prueba('cuándo un fallo apaga el camino nuevo en la sesión', () => {
   for (const codigo of ['pista', 'interno', 'puente', 'formato']) assert.equal(falloDeSesion({ codigo }, 1), true, codigo);
   assert.equal(falloDeSesion({ codigo: 'http', status: 404 }, 1), true, 'servidor viejo sin la ruta');
-  assert.equal(falloDeSesion({ codigo: 'http', status: 401 }, 1), true);
+  assert.equal(falloDeSesion({ codigo: 'http', status: 401 }, 1), false, 'un 401 suelto: el respaldo renueva el token');
+  assert.equal(falloDeSesion({ codigo: 'http', status: 401 }, 2), true, 'dos seguidos: apagado');
   assert.equal(falloDeSesion({ codigo: 'http', status: 503 }, 1), false, 'un 503 suelto: solo esa frase');
   assert.equal(falloDeSesion({ codigo: 'red' }, 1), false, 'una caída de red: solo esa frase');
   assert.equal(falloDeSesion({ codigo: 'red' }, 2), true, 'dos seguidas: apagado');
@@ -185,13 +186,37 @@ prueba('el interruptor remoto y las cabeceras', () => {
 });
 
 prueba('la guardia contra cierres vale para la voz con sus palabras (la de la cámara no cambia)', () => {
-  const r = guardiaAlArrancar(guardiaAlMontar({}, 1000), 2000, true, TEXTOS_GUARDIA_VOZ);
-  assert.ok(guardiaBloqueada(r.estado, 2001));
-  assert.match(r.aviso, /^voz en vivo: la app se cerró arrancándola; la apago 7 días/);
-  assert.equal(r.estado.motivo, 'se cerró al arrancar la voz en vivo');
-  const cam = guardiaAlArrancar(guardiaAlMontar({}, 1000), 2000, true);
+  const caida = { murio: true, motivoAndroid: 'crash-nativo' };
+  let r = guardiaAlArrancar(guardiaAlMontar({ v: GUARDIA.version }, 1000), 2000, caida, TEXTOS_GUARDIA_VOZ);
+  assert.ok(!guardiaBloqueada(r.estado, 2001), 'una caída sola no la apaga en el teléfono');
+  assert.equal(r.soloSesion, true);
+  assert.match(r.aviso, /^voz en vivo: la app se cerró arrancándola \(Android: crash-nativo; 1 aviso\); en esta sesión va por la de siempre/);
+  r = guardiaAlArrancar(guardiaAlMontar(r.estado, 3000), 4000, caida, TEXTOS_GUARDIA_VOZ);
+  assert.ok(guardiaBloqueada(r.estado, 4001));
+  assert.match(r.aviso, /^voz en vivo: la app se cerró 2 veces con ella \(la última arrancándola, Android: crash-nativo\); la apago 1 hora en este teléfono/);
+  assert.equal(r.estado.motivo, 'se cerró 2 veces (la última al arrancar la voz en vivo)');
+  const cam = guardiaAlArrancar(guardiaAlMontar({ v: GUARDIA.version }, 1000), 2000, caida);
   assert.match(cam.aviso, /^cámara nueva: la app se cerró montándola/);
-  assert.equal(cam.estado.motivo, 'se cerró al montar la cámara nueva');
+});
+
+prueba('la guardia de la voz (José, 7-oct 00:30): la app se cerró a los 13 s con una OTA recién bajada, sin crash → NO la apaga', () => {
+  // Lo que había en el teléfono: la marca «arrancando» puesta por el JS de antes de la OTA.
+  const marca = guardiaAlMontar({ v: GUARDIA.version }, 1_000, 'ota-de-antes');
+  for (const s of [
+    { murio: true, bundle: 'ota-nueva' }, // la OTA se aplicó al reabrir
+    { murio: true, motivoAndroid: 'otro', bundle: 'ota-de-antes' }, // deslizada en recientes
+    { murio: true, motivoAndroid: 'la-persona' },
+    { murio: false }, // segundo plano o recarga intencional de la OTA
+    { murio: null }, // reporte.ts no alcanzó a leer: no se acusa
+  ]) {
+    const r = guardiaAlArrancar(marca, 14_000, s, TEXTOS_GUARDIA_VOZ);
+    assert.ok(!guardiaBloqueada(r.estado, 14_001) && !r.soloSesion && !r.aviso, JSON.stringify(s));
+  }
+  // Y el apagado de 7 días que ya quedó (guardia anterior, sin versión) se borra con esta OTA, avisando.
+  const quedado = { bloqueadaHasta: Date.UTC(2026, 9, 14, 0, 30), motivo: 'se cerró al arrancar la voz en vivo' };
+  const r = guardiaAlArrancar(quedado, Date.UTC(2026, 9, 7, 12), true, TEXTOS_GUARDIA_VOZ);
+  assert.ok(!guardiaBloqueada(r.estado, Date.UTC(2026, 9, 7, 12, 1)));
+  assert.match(r.aviso, /^voz en vivo: quito el apagado que dejó la guardia anterior/);
 });
 
 /* ── SonidoVivo y la central con un puente simulado ──────────────────────────────────────── */
@@ -419,7 +444,9 @@ prueba('la mesa: tts.ts usa el camino nuevo con sus guardas y stopSpeaking calla
   assert.match(tts, /if \(esVivo\(source\)\) return prepararVivo\(source\.vivo\);/);
   assert.match(tts, /const fs = \[\.\.\.this\.fs\]\.reverse\(\);/, 'cancelar: lo encadenado detrás antes que lo que suena');
   const g = leer('src/lib/guardiaVoz.ts');
-  assert.match(g, /guardiaAlArrancar\(guardiaValida\(g \? JSON\.parse\(g\) : null\), Date\.now\(\), murioLaVezAnterior\(\), TEXTOS_GUARDIA_VOZ\)/);
+  assert.match(g, /const inicio = guardiaAlArrancar\(previa, Date\.now\(\), await salidaAnterior\(previa\), TEXTOS_GUARDIA_VOZ\);/);
+  assert.match(g, /bloqueada: soloSesion \|\| guardiaBloqueada\(guardia, Date\.now\(\)\)/, 'un golpe: la de siempre en esta sesión');
+  assert.match(g, /guardiaAlMontar\(guardia, Date\.now\(\), bundleActual\(\)\)/, 'la marca dice qué JS la puso (una OTA no se culpa)');
   assert.match(g, /api<unknown>\('\/api\/movil\/config'/);
   assert.match(leer('src/app/AppAura.tsx'), /void prepararVoz\(\);/);
   assert.match(leer('src/ajustes/Ajustes.tsx'), /<FilaVozEnVivo \/>/);

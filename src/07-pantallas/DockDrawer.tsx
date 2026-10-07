@@ -21,7 +21,7 @@ const CHIPS = [
   { label: 'Lempira', cmd: 'lempira a dólar' },
   { label: 'Qué ves', cmd: 'qué ves en la cámara' },
   { label: 'Sistema', cmd: 'cómo está el sistema' },
-  { label: 'Chiste', cmd: 'contame un chiste' },
+  { label: 'Chiste', cmd: 'cuéntame un chiste' },
 ];
 
 /**

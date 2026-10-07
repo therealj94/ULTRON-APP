@@ -5,6 +5,7 @@
  *  · Con un Dovecot local (CORREO_DOVECOT_PUERTO, ver docs/CORREO.md): revisar, buscar, leer, contestar y
  *    que quede en Enviados, contra un IMAP de verdad.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -348,7 +349,7 @@ test('la prueba de la cuenta dice QUÉ pasó: la clave, el servidor que no conte
   await new Promise<void>((r) => smtp.listen(0, '127.0.0.1', r));
   const pSmtp = (smtp.server.address() as any).port;
   try {
-    const r1 = await probarCuenta('j.ordonez@ordenglobal.org', { imap: { host: '127.0.0.1', puerto: pImap, seguro: true }, smtp: { host: '127.0.0.1', puerto: pSmtp, seguro: true }, usuario: 'correo' }, { pass: 'mala' });
+    const r1 = await probarCuenta('j.herrera@ordenglobal.org', { imap: { host: '127.0.0.1', puerto: pImap, seguro: true }, smtp: { host: '127.0.0.1', puerto: pSmtp, seguro: true }, usuario: 'correo' }, { pass: 'mala' });
     assert.equal(r1.ok, false);
     assert.match((r1 as any).error, /^No pude entrar a leer\. 127\.0\.0\.1 no aceptó la clave\..*contraseña de aplicación/);
     const r2 = await probarCuenta('a@b.hn', { imap: { host: '127.0.0.1', puerto: libre, seguro: true }, smtp: { host: '127.0.0.1', puerto: pSmtp, seguro: true }, usuario: 'correo' }, { pass: 'x' });

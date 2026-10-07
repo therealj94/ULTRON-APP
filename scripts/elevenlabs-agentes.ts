@@ -13,7 +13,8 @@
  * ULTRON_SESION_SECRETO tiene que ser el MISMO que usa el servidor en Render: de él se deriva la
  * llave que ElevenLabs manda en cada turno (secretoDerivado). La llave se guarda en los secretos de
  * ElevenLabs; no se imprime. Es idempotente: si un agente con ese nombre ya existe, lo actualiza.
- * Imprime los ids para pegarlos en AGENTES (server/voz-agente.ts).
+ * Imprime los ids para ponerlos en Render como ELEVENLABS_AGENTE_<AVATAR>_<IDIOMA> (server/voz-agente.ts AGENTES_ENV;
+ * no van en el repositorio, que es público).
  */
 import { pathToFileURL } from 'node:url';
 import { secretoDerivado } from '../server/seguridad';

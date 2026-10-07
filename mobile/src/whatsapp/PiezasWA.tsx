@@ -5,7 +5,8 @@
  * documento, y el visor de fotos a pantalla completa (pellizcar para acercar).
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Letra as Text } from '../ui/Letra';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -123,17 +124,28 @@ function BurbujaWABase({ f, w, oscuro, anchoMax, idioma, onFoto, onVideo, onRein
     </Text>
   ) : null;
   const lado = { alignItems: m.mio ? ('flex-end' as const) : ('flex-start' as const), marginTop: f.pegadaArriba ? 2 : 8, paddingLeft: m.mio ? 48 : 8, paddingRight: m.mio ? 8 : 48 };
+  // Un mensaje que no salió: por qué, y un botón «Reintentar» a la vista (auditoría A10), como en PULSE2CHAT.
   const fallo = m.fallo ? (
-    <Pressable onPress={() => onReintentar(m.texto)} accessibilityRole="button" accessibilityLabel={tr(`No se envió: ${m.fallo}. Tocar para reintentar`, `Not sent: ${m.fallo}. Tap to retry`)} style={st.fallo} hitSlop={8}>
+    <View style={st.fallo} accessibilityLiveRegion="polite">
       <IconoWA nombre="alerta" tam={14} color={w.aviso} />
       <View style={{ marginLeft: 4, flexShrink: 1, alignItems: 'flex-end' }}>
-        <Text style={{ color: w.aviso, fontSize: 12.5 }}>{tr('No se envió · Toca para reintentar', 'Not sent · Tap to retry')}</Text>
+        <Text style={{ color: w.aviso, fontSize: 12.5, fontWeight: '600' }}>{tr('No se envió', 'Not sent')}</Text>
         {/* Por qué (el puente no contesta, se desvinculó, sin conexión…): sin esto solo se veía «no se envió». */}
         <Text style={{ color: w.aviso, fontSize: 11.5, opacity: 0.85 }} numberOfLines={2}>
           {m.fallo}
         </Text>
       </View>
-    </Pressable>
+      <Pressable
+        onPress={() => onReintentar(m.texto)}
+        accessibilityRole="button"
+        accessibilityLabel={tr(`Reintentar el envío: ${m.fallo}`, `Retry sending: ${m.fallo}`)}
+        hitSlop={6}
+        style={({ pressed }) => [st.reintentar, { backgroundColor: w.avisoFondo, borderColor: w.aviso, opacity: pressed ? 0.7 : 1 }]}
+      >
+        <IconoWA nombre="reintentar" tam={14} color={w.aviso} grosor={2.2} />
+        <Text style={{ color: w.aviso, fontSize: 12.5, fontWeight: '700' }}>{tr('Reintentar', 'Retry')}</Text>
+      </Pressable>
+    </View>
   ) : null;
 
   // El sticker va suelto, sin burbuja.
@@ -464,8 +476,8 @@ function NotaVoz({ m, w, idioma }: { m: MensajeWA; w: PaletaWA; idioma: 'es' | '
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <View style={[st.circuloMic, { backgroundColor: m.mio ? '#00A884' : '#FA6533' }]}>
-          <IconoWA nombre="microfono" tam={20} color="#FFFFFF" />
+        <View style={[st.circuloMic, { backgroundColor: m.mio ? w.enviar : w.verde }]}>
+          <IconoWA nombre="microfono" tam={20} color={m.mio ? w.sobreEnviar : w.sobreGlobo} />
         </View>
         <Pressable
           onPress={() => void tocar()}
@@ -478,8 +490,8 @@ function NotaVoz({ m, w, idioma }: { m: MensajeWA; w: PaletaWA; idioma: 'es' | '
         </Pressable>
         <View style={{ flex: 1, marginRight: 4 }}>
           <View style={[st.pista, { backgroundColor: m.mio ? 'rgba(0,0,0,0.15)' : w.tarjeta }]}>
-            <View style={[st.pistaLlena, { width: `${Math.round(avance * 100)}%`, backgroundColor: m.mio ? '#00A884' : '#34B7F1' }]} />
-            <View style={[st.bolita, { left: `${Math.round(avance * 100)}%`, backgroundColor: m.mio ? '#00A884' : '#34B7F1' }]} />
+            <View style={[st.pistaLlena, { width: `${Math.round(avance * 100)}%`, backgroundColor: m.mio ? w.enviar : w.verde }]} />
+            <View style={[st.bolita, { left: `${Math.round(avance * 100)}%`, backgroundColor: m.mio ? w.enviar : w.verde }]} />
           </View>
           <Text style={[st.metaTxt, { color: m.mio ? w.metaMia : w.metaOtra, marginTop: 6 }]}>{texto}</Text>
         </View>
@@ -666,7 +678,8 @@ const st = StyleSheet.create({
   metaSobreFoto: { right: 8, bottom: 8, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 },
   metaSticker: { right: 4, bottom: 4, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
   metaTxt: { fontSize: 11, lineHeight: 15 },
-  fallo: { flexDirection: 'row', alignItems: 'center', marginTop: 3, minHeight: 24 },
+  fallo: { flexDirection: 'row', alignItems: 'center', marginTop: 4, minHeight: 24, gap: 8 },
+  reintentar: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
   foto: { borderRadius: 6, overflow: 'hidden' },
   centro: { alignItems: 'center', justifyContent: 'center' },
   circuloOscuro: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(11,20,26,0.55)', alignItems: 'center', justifyContent: 'center' },

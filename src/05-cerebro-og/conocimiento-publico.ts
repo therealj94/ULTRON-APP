@@ -8,16 +8,27 @@
  * de apps, discursos internos y planes de la organización.
  *
  * Si se agrega algo aquí, que sea algo que Orden Global ya haya dicho en público.
+ *
+ * Los nombres de la junta no viven aquí (el repositorio es público; auditoría del 7-oct, C-1): llegan por
+ * AURA_CONOCIMIENTO_PERSONAS_PUBLICO (JSON con «personas», «lanzamiento» y «reglas»; lib/datos-privados.ts). Sin
+ * ella, este cerebro no nombra a nadie.
  */
+import { jsonDeEnv } from '../../lib/datos-privados';
+
+type Personas = { personas?: string; lanzamiento?: string; reglas?: string };
+const p: Personas = jsonDeEnv<Personas>(
+  'AURA_CONOCIMIENTO_PERSONAS_PUBLICO',
+  (x) => (x && typeof x === 'object' && !Array.isArray(x) ? (x as Personas) : null),
+  {},
+  'el cerebro de la comunidad no nombra a nadie de la junta'
+);
+/** Unas líneas en su sitio (con su salto), o nada. */
+const bloque = (t?: string) => (typeof t === 'string' && t.trim() ? `${t.trim()}\n` : '');
+
 export const CONOCIMIENTO_OG_PUBLICO = `ORDEN GLOBAL — lo público. Hechos para no inventar. Si no está aquí, decí que no está confirmado.
 
 PERSONAS
-- Fundador: Medardo José Ordóñez Enamorado (Medardo).
-- Cofundador: José Ordóñez (José).
-- Cofundadora: Melany Ordóñez.
-- Cofundador: Carlos Leonardo Paguada (Leonardo Paguada). En prensa 2024: director de operaciones globales de Orden Global Corp. Explicó ORIGEN, AUKA, ONDK y OrdenEx en Tegucigalpa.
-- Prensa ago-2024 también nombra a Jackson Wilson como CEO de Orden Global Corp (lanzamiento NZ). No mezclar: Medardo funda; José, Melany y Leonardo cofundan.
-- Sitio ordenglobal.org. Operación diaria en Honduras (Tegucigalpa). Sede comunicada: British Columbia, Canadá.
+${bloque(p.personas)}- Sitio ordenglobal.org. Operación diaria en Honduras (Tegucigalpa). Sede comunicada: British Columbia, Canadá.
 
 SOCIEDADES Y LEI
 - Orden Global Corp. LEI 9845000J73CT98D9ES75.
@@ -57,8 +68,7 @@ APPS
 
 LANZAMIENTO
 - Lanzamiento en Latinoamérica ~15 ago 2024 en Tegucigalpa. Activos digitales con oro hondureño.
-- Paguada (prensa): metal + cadena contra la inflación y la inestabilidad regional.
-
+${bloque(p.lanzamiento)}
 PROSPERA
 - ZEDE en Roatán (proyección La Ceiba). Operador Honduras Próspera Inc. CEO Erick Brimen. Charter city: registro, impuestos y reglas propias.
 - Regulador de la zona: RFSA (no es la CNBS).
@@ -73,5 +83,4 @@ Mina -> bóveda -> cadena 5550 con ORIGEN -> AUKA/AGKA por onza -> ONDK gobierna
 REGLAS
 - Precios de metales y tipo de cambio: herramientas.
 - Español centroamericano.
-- Medardo fundador. José, Melany y Leonardo Paguada cofundadores.
-`;
+${bloque(p.reglas)}`;

@@ -1,12 +1,12 @@
 # Claude: comenzar aquí · Avatares 3D de AURA
 
-Medardo pidió subir esta entrega al repositorio para que Claude continúe la integración. El paquete completo está en **[`vendor/aura-avatar-suite`](vendor/aura-avatar-suite/README.md)**.
+La junta pidió subir esta entrega al repositorio para que Claude continúe la integración. El paquete completo está en **[`vendor/aura-avatar-suite`](vendor/aura-avatar-suite/README.md)**.
 
 ![Claudio y AU-RA, render de los modelos reales](vendor/aura-avatar-suite/AVATARES-AURA-VISTA.png)
 
 ## Estado de la entrega
 
-- **ANT-ONIO v2 aprobado por Medardo.** Su GLB se conserva exactamente igual a la versión aceptada. No rehacer el diseño ni pedir de nuevo aprobación de ese mismo modelo.
+- **ANT-ONIO v2 aprobado por la junta.** Su GLB se conserva exactamente igual a la versión aceptada. No rehacer el diseño ni pedir de nuevo aprobación de ese mismo modelo.
 - **Claudio:** propuesta nueva de zorro 3D con lentes ámbar, corona verde, pelaje, cola y expresiones.
 - **AU-RA:** refinamiento 3D de la identidad vigente **Grafito · Orbe**.
 - Cada GLB contiene **30 clips**. Los tres se validaron sin errores ni advertencias glTF.

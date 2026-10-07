@@ -7,8 +7,10 @@
  * si no hay modelo, falla o el teléfono no da los cuadros, se ven las fotos exactamente como antes.
  *
  * Si el avatar tiene su cuerpo en VIDEO (avatares/video: clips animados de Claudio y ANT-ONIO), ese va
- * primero: saluda al aparecer, escucha, habla, piensa, se ríe y señala con el mismo estado. El 3D queda
- * para los avatares sin video, y las fotos siempre de respaldo.
+ * primero: saluda al aparecer, escucha, habla, piensa, se ríe y señala con el mismo estado. Si el video falla
+ * en este teléfono (memoria, códec), sus FOTOS, que son del mismo render que el video: el 3D de esos dos es
+ * otro dibujo (un zorro de caricatura con otros ojos y otros lentes) y «¿es el mismo Claudio?» rompe la
+ * ilusión (auditoría visual del 7-oct, A4). El 3D queda para los avatares sin video.
  *
  * El toque es el de la mesa (onTap / onLongPress: la reacción de la cara y la voz); además, el
  * cuerpo hace su gesto de «le gusta» por la zona que tocó. En video, los toques los decide la capa de
@@ -65,8 +67,7 @@ type Props = {
 export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, fuenteMirada, respaldo, onTap, onLongPress, activo = true, senal = 0, conversando = false, ataque = null, onRafaga }: Props) {
   const [lugar, setLugar] = useState({ w: 0, h: 0 });
   const [gesto, setGesto] = useState<EstadoAvatar['gesto']>(null);
-  // Si el video no se puede usar en este teléfono, el cuerpo 3D (que mueve brazos y cuerpo) en vez de
-  // las fotos quietas. Sin modelo 3D, las fotos de siempre.
+  // Si el video no se puede usar en este teléfono, sus fotos (el mismo personaje que en el video), no el 3D.
   const [sinVideo, setSinVideo] = useState(false);
   const cuerpo = useRef<ControlCuerpo>(null);
   const efectos = useRef<ControlEfectos>(null);
@@ -87,6 +88,8 @@ export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, fuenteM
   );
 
   const conVideo = hayVideo(avatar) && !sinVideo;
+  /** Avatar de video cuyo video falló: sus fotos, nunca el 3D de otro aspecto. */
+  const soloFotos = hayVideo(avatar) && sinVideo;
   const contexto = useMemo(
     () => ({ hablando: estado.hablando, escuchando: estado.escuchando, pensando: estado.pensando, dormido: estado.silenciado, conversando }),
     [estado.hablando, estado.escuchando, estado.pensando, estado.silenciado, conversando]
@@ -116,7 +119,7 @@ export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, fuenteM
       style={StyleSheet.absoluteFill}
       accessibilityRole="imagebutton"
     >
-      {lugar.w > 0 && lugar.h > 0 ? (
+      {lugar.w > 0 && lugar.h > 0 && !soloFotos ? (
         conVideo ? (
           <CapaEfectos ref={efectos} avatar={avatar} lugar={camara} ancho={lugar.w} alto={lugar.h} contexto={contexto} activo={activo} ataque={ataque} onGolpe={pedirGolpe} cuerpo={video}>
             <CuerpoVideo ref={video} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} respaldo={respaldo} activo={activo} saludar onFallo={() => setSinVideo(true)} />

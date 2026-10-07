@@ -2,6 +2,7 @@
  * Quien no está en el padrón recibe una respuesta amable (una vez por día) y quien manda se entera.
  * Antes el bot callaba y desde una cuenta nueva parecía caído.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { avisarRechazo } from '../server/electrum/telegram';
@@ -11,7 +12,7 @@ test('rechazo: responde al desconocido una vez por día y avisa a quien manda', 
   const antes = { ...process.env };
   process.env.ELECTRUM_BOT_TOKEN = 'token-de-prueba';
   process.env.TELEGRAM_JOSE_USER_ID = '111';
-  process.env.TELEGRAM_MEDARDO_USER_ID = '222';
+  process.env.TELEGRAM_RAMIRO_USER_ID = '222';
   reiniciarPadron();
   const enviados: Array<{ chat: string; text: string }> = [];
   const original = globalThis.fetch;
@@ -23,7 +24,7 @@ test('rechazo: responde al desconocido una vez por día y avisa a quien manda', 
   }) as typeof fetch;
   t.after(() => {
     globalThis.fetch = original;
-    for (const k of ['ELECTRUM_BOT_TOKEN', 'TELEGRAM_JOSE_USER_ID', 'TELEGRAM_MEDARDO_USER_ID']) {
+    for (const k of ['ELECTRUM_BOT_TOKEN', 'TELEGRAM_JOSE_USER_ID', 'TELEGRAM_RAMIRO_USER_ID']) {
       if (antes[k] === undefined) delete process.env[k];
       else process.env[k] = antes[k];
     }
@@ -38,7 +39,7 @@ test('rechazo: responde al desconocido una vez por día y avisa a quien manda', 
   assert.match(alDesconocido.text, /555/);
   const aJose = enviados.find((e) => e.chat === '111')!;
   assert.match(aJose.text, /«Keidy» \(Telegram 555\)/);
-  assert.ok(enviados.some((e) => e.chat === '222'), 'Medardo también manda');
+  assert.ok(enviados.some((e) => e.chat === '222'), 'Ramiro también manda');
 
   // El mismo día, nada más: ni al desconocido ni a José.
   enviados.length = 0;

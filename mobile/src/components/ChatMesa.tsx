@@ -5,8 +5,15 @@
  * lo que estás dictando en gris mientras hablas. Todo con el color del avatar. Encima de la barra,
  * sus atajos; abajo la barra en píldora: escribir, el micrófono (abierto o en silencio) y enviar.
  * Arriba, con quién hablas (tocar cambia de avatar) y el menú.
+ *
+ * La cabecera (auditoría visual del 7-oct, C3): el nombre en UNA línea y el estado debajo, en su propia línea; el
+ * nombre nunca se parte («AU-/RA») y el estado no se monta sobre nada. «Cambiar» se fue al menú (Más → Avatar);
+ * tocar la cabecera sigue cambiando de avatar. Todo lo que se toca mide 48 dp o más.
+ *
+ * Un mensaje que no llegó (A10): tu burbuja queda marcada («No se envió») con «Reintentar», que lo vuelve a mandar
+ * por el mismo camino.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { T } from '../tema';
@@ -14,6 +21,7 @@ import type { Turn } from '../lib/api';
 import { tr } from '../i18n';
 import { avatarPorId, type Accion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from './AccionesAvatar';
+import { Icono } from '../pulse/ui/Icono';
 
 type Props = {
   mensajes: Turn[];
@@ -41,6 +49,11 @@ type Props = {
   conversando: boolean;
   conectando: boolean;
   onConversar: () => void;
+  /** El texto de tu último mensaje si no llegó (sin conexión o se cortó): se marca y se ofrece «Reintentar». */
+  fallido?: string | null;
+  onReintentar?: (texto: string) => void;
+  /** Para poner el cursor en «Escríbele…» desde «Más → Escribir». */
+  entradaRef?: RefObject<TextInput | null>;
 };
 
 export function ChatMesa(p: Props) {
@@ -52,6 +65,15 @@ export function ChatMesa(p: Props) {
 
   const toque = () => void Haptics.selectionAsync().catch(() => {});
   const tema = avatarPorId(p.avatar).tema;
+  // El que falló es TU último mensaje, si es el texto que no llegó (uno nuevo ya no se marca).
+  let iFallido = -1;
+  if (p.fallido) {
+    for (let i = p.mensajes.length - 1; i >= 0; i--) {
+      if (p.mensajes[i].rol !== 'usuario') continue;
+      if (p.mensajes[i].texto === p.fallido) iFallido = i;
+      break;
+    }
+  }
 
   return (
     <View style={s.raiz}>
@@ -62,13 +84,19 @@ export function ChatMesa(p: Props) {
             p.onCambiarAvatar();
           }}
           style={s.quien}
+          testID="mesa-avatar"
           accessibilityRole="button"
           accessibilityLabel={tr(`Hablando con ${p.nombreAvatar}. Tocar para cambiar de avatar`, `Talking to ${p.nombreAvatar}. Tap to switch avatar`)}
         >
           <View style={[s.punto, { backgroundColor: p.colorEstado }]} />
-          <Text style={s.quienNombre}>{p.nombreAvatar}</Text>
-          <Text style={s.quienEstado}>· {p.estado}</Text>
-          <Text style={[s.cambiar, { color: tema.acentoTexto }]}>{tr('Cambiar', 'Switch')}</Text>
+          <View style={s.quienTextos}>
+            <Text style={s.quienNombre} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+              {p.nombreAvatar}
+            </Text>
+            <Text style={s.quienEstado} numberOfLines={2} maxFontSizeMultiplier={1.4} accessibilityLiveRegion="polite">
+              {p.estado}
+            </Text>
+          </View>
         </Pressable>
         <Pressable
           onPress={() => {
@@ -80,7 +108,7 @@ export function ChatMesa(p: Props) {
           accessibilityState={{ selected: p.conversando }}
           accessibilityLabel={p.conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
         >
-          <Text style={[s.conversarTexto, { color: p.conversando ? tema.sobreAcento : tema.acentoTexto }]}>
+          <Text style={[s.conversarTexto, { color: p.conversando ? tema.sobreAcento : tema.acentoTexto }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
             {p.conversando ? (p.conectando ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('En vivo', 'Live')}
           </Text>
         </Pressable>
@@ -90,25 +118,45 @@ export function ChatMesa(p: Props) {
             p.onMenu();
           }}
           style={s.menu}
+          testID="mesa-mas"
           accessibilityRole="button"
           accessibilityLabel={tr('Más: cámara, caras, modo, qué puedo hacer y ajustes', 'More: camera, faces, mode, what I can do and settings')}
-          hitSlop={8}
         >
-          <View style={s.raya} />
-          <View style={s.raya} />
-          <View style={s.raya} />
+          <Icono nombre="puntos" tam={22} color={T.texto} grosor={1.9} lleno />
         </Pressable>
       </View>
 
-      <ScrollView ref={lista} style={s.lista} contentContainerStyle={s.listaContenido} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={lista} testID="mesa-transcripcion" style={s.lista} contentContainerStyle={s.listaContenido} keyboardShouldPersistTaps="handled">
         {p.mensajes.length === 0 && !p.parcial ? (
           <Text style={s.vacio}>{tr(`Háblale o escríbele a ${p.nombreAvatar}. Lo que digan queda aquí.`, `Talk or write to ${p.nombreAvatar}. Your conversation stays here.`)}</Text>
         ) : null}
         {p.mensajes.map((m, i) => (
-          <View key={i} style={[s.burbuja, m.rol === 'usuario' ? [s.mia, { backgroundColor: tema.acentoFondo }] : s.suya]}>
-            <Text style={[s.texto, m.rol === 'usuario' && { color: tema.acentoTexto }]} selectable>
-              {m.texto}
-            </Text>
+          <View key={i} style={i === iFallido ? s.filaFallida : undefined}>
+            <View testID={m.rol === 'usuario' ? 'mesa-msg-usuario' : 'mesa-msg-avatar'} style={[s.burbuja, m.rol === 'usuario' ? [s.mia, { backgroundColor: tema.acentoFondo }] : s.suya, i === iFallido && s.miaFallida]}>
+              <Text style={[s.texto, m.rol === 'usuario' && { color: tema.acentoTexto }]} selectable>
+                {m.texto}
+              </Text>
+            </View>
+            {i === iFallido ? (
+              <View style={s.falloFila}>
+                <Icono nombre="alerta" tam={16} color={T.aviso} grosor={2} />
+                <Text style={s.falloTexto}>{tr('No se envió', 'Not sent')}</Text>
+                {p.onReintentar ? (
+                  <Pressable
+                    onPress={() => {
+                      toque();
+                      p.onReintentar?.(m.texto);
+                    }}
+                    style={[s.reintentar, { borderColor: T.aviso }]}
+                    testID="mesa-reintentar"
+                    accessibilityRole="button"
+                    accessibilityLabel={tr('Reintentar: mandar otra vez tu mensaje', 'Retry: send your message again')}
+                  >
+                    <Text style={s.reintentarTexto}>{tr('Reintentar', 'Retry')}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         ))}
         {!!p.parcial && (
@@ -132,11 +180,13 @@ export function ChatMesa(p: Props) {
 
       <View style={s.barra}>
         <TextInput
+          ref={p.entradaRef}
           value={p.borrador}
           onChangeText={p.onBorrador}
           placeholder={tr(`Escríbele a ${p.nombreAvatar}…`, `Write to ${p.nombreAvatar}…`)}
           placeholderTextColor={T.texto3}
           style={s.entrada}
+          testID="mesa-entrada"
           multiline
           onSubmitEditing={p.onEnviar}
           blurOnSubmit
@@ -150,10 +200,11 @@ export function ChatMesa(p: Props) {
               p.onEnviar();
             }}
             style={[s.boton, { backgroundColor: tema.acento }]}
+            testID="mesa-enviar"
             accessibilityRole="button"
             accessibilityLabel={tr('Enviar', 'Send')}
           >
-            <Text style={[s.enviarTexto, { color: tema.sobreAcento }]}>↑</Text>
+            <Icono nombre="enviar" tam={22} color={tema.sobreAcento} grosor={2} />
           </Pressable>
         ) : (
           <Pressable
@@ -165,8 +216,7 @@ export function ChatMesa(p: Props) {
             accessibilityRole="button"
             accessibilityLabel={p.micSilenciado ? tr('Activar el micrófono', 'Turn on the microphone') : tr('Silenciar el micrófono', 'Mute the microphone')}
           >
-            <View style={[s.micCuerpo, { backgroundColor: p.micSilenciado ? T.texto3 : tema.sobreAcento }]} />
-            {p.micSilenciado && <View style={s.micTachado} />}
+            <Icono nombre={p.micSilenciado ? 'microfonoNo' : 'microfono'} tam={24} color={p.micSilenciado ? T.texto2 : tema.sobreAcento} grosor={2} />
           </Pressable>
         )}
       </View>
@@ -177,15 +227,14 @@ export function ChatMesa(p: Props) {
 const s = StyleSheet.create({
   raiz: { flex: 1, backgroundColor: T.fondo },
   cabeza: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6, gap: 10 },
-  quien: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: T.panel, borderRadius: 999, paddingHorizontal: 12, minHeight: 40 },
+  quien: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: T.panel, borderRadius: 24, paddingHorizontal: 14, paddingVertical: 4, minHeight: 48 },
   punto: { width: 8, height: 8, borderRadius: 4 },
-  quienNombre: { color: T.texto, fontSize: 15, fontWeight: '800' },
-  quienEstado: { color: T.texto2, fontSize: 13, flexShrink: 1 },
-  cambiar: { marginLeft: 'auto', fontSize: 13, fontWeight: '700' },
-  conversar: { height: 40, borderRadius: 20, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  quienTextos: { flex: 1, minWidth: 0 },
+  quienNombre: { color: T.texto, fontSize: 15, fontWeight: '800', lineHeight: 19 },
+  quienEstado: { color: T.texto2, fontSize: 12.5, lineHeight: 16 },
+  conversar: { minHeight: 48, borderRadius: 24, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   conversarTexto: { fontSize: 14, fontWeight: '800' },
-  menu: { width: 44, height: 40, borderRadius: 20, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center', gap: 4 },
-  raya: { width: 18, height: 2, borderRadius: 1, backgroundColor: T.texto },
+  menu: { width: 48, height: 48, borderRadius: 24, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' },
   lista: { flex: 1 },
   listaContenido: { padding: 14, gap: 8 },
   vacio: { color: T.texto3, fontSize: 14, textAlign: 'center', marginTop: 20, paddingHorizontal: 20 },
@@ -200,10 +249,13 @@ const s = StyleSheet.create({
   progresoTexto: { color: T.texto2, fontSize: 13, fontStyle: 'italic', flexShrink: 1 },
   barra: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, margin: 10, marginTop: 4, padding: 6, paddingLeft: 16, backgroundColor: T.panel, borderRadius: 28, borderWidth: 1, borderColor: T.borde },
   entrada: { flex: 1, color: T.texto, fontSize: 16, maxHeight: 110, paddingVertical: 10 },
-  boton: { width: 46, height: 46, borderRadius: 23, backgroundColor: T.fondo2, alignItems: 'center', justifyContent: 'center' },
+  boton: { width: 48, height: 48, borderRadius: 24, backgroundColor: T.fondo2, alignItems: 'center', justifyContent: 'center' },
   micOyendo: { borderWidth: 3, borderColor: T.activo },
-  micCuerpo: { width: 12, height: 20, borderRadius: 6 },
-  micTachado: { position: 'absolute', width: 26, height: 2.5, borderRadius: 2, backgroundColor: T.aviso, transform: [{ rotate: '-45deg' }] },
-  enviarTexto: { fontSize: 22, fontWeight: '800', marginTop: -2 },
+  filaFallida: { alignItems: 'flex-end', gap: 4 },
+  miaFallida: { borderWidth: 1.5, borderColor: T.aviso },
+  falloFila: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  falloTexto: { color: T.aviso, fontSize: 13, fontWeight: '700' },
+  reintentar: { minHeight: 48, paddingHorizontal: 16, borderRadius: 24, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  reintentarTexto: { color: T.texto, fontSize: 14, fontWeight: '800' },
   acciones: { paddingTop: 2 },
 });

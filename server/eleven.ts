@@ -22,6 +22,7 @@ import { clave } from '../lib/boveda';
 import type { Emocion } from '../lib/emocion';
 import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
+import { gastarCupoDiario } from '../lib/freno-gasto';
 
 /** Jorge — Neutral Latin American Spanish (biblioteca de ElevenLabs): maduro, grave, creíble. */
 export const VOZ_ELECTRUM_ELEVEN = 'Rt1JHkPO27QCUX6Nd5bV';
@@ -169,6 +170,27 @@ export function elevenListo(ahora = Date.now()): boolean {
 
 export function estadoEleven(): { configurado: boolean; pausado: boolean; ultimoFallo: string } {
   return { configurado: !!clave('elevenlabs'), pausado: Date.now() < pausaHasta, ultimoFallo };
+}
+
+/**
+ * ¿ElevenLabs contesta con esta llave? (auditoría del 7-oct, A-1: el catálogo marcaba «voz caída» por la salud de
+ * Voicebox mientras la voz de verdad, ElevenLabs, funcionaba). Un pedido barato (la lista de modelos) con tope corto. Una
+ * llave restringida a la voz (sin permiso de leer modelos) también cuenta: ElevenLabs contestó y la llave vale; una llave
+ * inválida, la red o un 5xx, no. Con el freno puesto (fallos seguidos al hablar), no: la voz está en pausa.
+ */
+export async function saludEleven(timeoutMs = 2500): Promise<{ ok: boolean; status: number; detalle: string }> {
+  const key = clave('elevenlabs');
+  if (!key) return { ok: false, status: 0, detalle: 'ELEVENLABS_API_KEY vacío' };
+  if (!elevenListo()) return { ok: false, status: 0, detalle: `en pausa por fallos seguidos${ultimoFallo ? `: ${ultimoFallo.slice(0, 80)}` : ''}` };
+  try {
+    const r = await fetch(`${API}/models`, { headers: { 'xi-api-key': key }, signal: AbortSignal.timeout(timeoutMs) });
+    const texto = await r.text().catch(() => '');
+    if (r.ok) return { ok: true, status: r.status, detalle: 'ElevenLabs responde' };
+    if ((r.status === 401 || r.status === 403) && /missing[_ ]permission/i.test(texto)) return { ok: true, status: r.status, detalle: 'ElevenLabs responde (llave solo de voz)' };
+    return { ok: false, status: r.status, detalle: r.status === 401 ? 'ElevenLabs rechaza la llave' : `ElevenLabs ${r.status}` };
+  } catch (e: any) {
+    return { ok: false, status: 0, detalle: String(e?.message || e).slice(0, 120) };
+  }
 }
 
 /** Solo para pruebas. */
@@ -516,7 +538,22 @@ export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
   return cuerpo;
 }
 
+/**
+ * El freno de gasto diario (lib/freno-gasto.ts): cada síntesis que de verdad sale a ElevenLabs cuenta sus caracteres.
+ * Pasado el tope del día, null: quien llama sigue con Voicebox, como cuando ElevenLabs no contesta.
+ */
+function cobrarEleven(opts: PedidoEleven): boolean {
+  if (!clave('elevenlabs') || !elevenListo()) return true;
+  if (opts.reloj && !opts.reloj.alcanza()) return true;
+  return gastarCupoDiario('tts', String(opts.texto || '').length);
+}
+
 export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
+  if (!cobrarEleven(opts)) return null;
+  return abrirSinCobrar(opts);
+}
+
+async function abrirSinCobrar(opts: PedidoEleven): Promise<Response | null> {
   const key = clave('elevenlabs');
   if (!key || !elevenListo()) return null;
   if (opts.reloj && !opts.reloj.alcanza()) return null;
@@ -571,6 +608,11 @@ type ConTiempos = { audio: Buffer; contentType: string; alineacion: AlineacionEl
 
 /** null: no hubo voz (sin clave, cupo, red); 'sin-tiempos': que se pida el audio solo. */
 export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
+  if (!cobrarEleven(opts)) return null;
+  return conTiemposSinCobrar(opts, ahora);
+}
+
+async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
   const key = clave('elevenlabs');
   if (!key || !elevenListo()) return null;
   if (opts.reloj && !opts.reloj.alcanza()) return null;
@@ -616,12 +658,14 @@ export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.no
  * `tiempos`, pide también los tiempos por letra; si no los dan, el audio solo, como siempre.
  */
 export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): Promise<{ audio: Buffer; contentType: string; alineacion?: AlineacionEleven | null } | null> {
+  // Una sola frase, un solo cobro: si los tiempos no vienen y se pide el audio solo, no cuenta dos veces.
+  if (!cobrarEleven(opts)) return null;
   if (opts.tiempos) {
-    const t = await hablarElevenConTiempos(opts);
+    const t = await conTiemposSinCobrar(opts);
     if (t === null) return null;
     if (t !== 'sin-tiempos') return t;
   }
-  const r = await abrirEleven(opts);
+  const r = await abrirSinCobrar(opts);
   if (!r) return null;
   try {
     const audio = Buffer.from(await r.arrayBuffer());

@@ -13,8 +13,8 @@
  *     comprobante en OrdenScan.
  *   · Si hay un envío en camino: en qué va (esperando tu firma, visto en la red, comprobante en el chat).
  *
- * AURA nunca mueve tu dinero: lee la red y el explorador (solo lectura) y abre Veta Wallet con el envío ya
- * llenado; allá se firma con tu contraseña. Solo lee mientras la pestaña está a la vista.
+ * Los saldos y movimientos solo se leen (la red y el explorador); un envío se abre en Veta Wallet ya llenado y allá
+ * se firma con tu contraseña. La tarjeta (veta/SeccionTarjeta.tsx) sí la recarga AU-RA con tu contraseña. Solo lee mientras la pestaña está a la vista.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';

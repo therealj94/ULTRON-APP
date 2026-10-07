@@ -2,6 +2,7 @@
  * El panel de infraestructura: lectores de oficina, el plan de una importación del cubo, y lo que
  * se hace con lo cargado (carpetas, estados, mover, renombrar, borrar, bitácora) con sus permisos.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -267,7 +268,7 @@ test('panel: estados, carpetas, mover, renombrar, borrar y bitácora, con permis
     { id: 'lector-bib', nombre: 'Lector', correos: ['lector@mina.hn'], acceso: { electrum: 'lee' } } as any,
     { id: 'obrero-bib', nombre: 'Obrero', correos: ['obrero@mina.hn'], acceso: { electrum: 'escribe' } } as any,
   ]);
-  const jose = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' }).token;
+  const jose = emitirSesion({ correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta' }).token;
   const lector = emitirSesion({ correo: 'lector@mina.hn', nombre: 'Lector', rol: 'x' }).token;
   const obrero = emitirSesion({ correo: 'obrero@mina.hn', nombre: 'Obrero', rol: 'x' }).token;
 

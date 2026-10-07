@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { crearCreds, type ClaveRenovar, type CredsNuevas, type SavedCreds } from './credsSeguras';
 import type { SessionUser } from '../config';
 import { normalizarAvatarId, type AvatarId } from '../avatares/catalogo';
 import { normalizarIdioma, type Idioma } from '../i18n';
@@ -17,7 +19,7 @@ export type { LongFact };
 
 const KEYS = {
   session: 'ultron_fp_session_v2',
-  creds: 'ultron_fp_creds_v2',
+  // La entrada con clave (`ultron_fp_creds_v2`) y la clave detrás de la huella: lib/credsSeguras.ts LLAVES_CREDS.
   conocerProgress: 'ultron_fp_conocer_progress_v2',
   settings: 'ultron_fp_settings_v2',
   fingerprint: 'ultron_fp_fingerprint_v2',
@@ -52,7 +54,8 @@ export async function saveVozHoy(v: VozHoy) {
  */
 const RASTROS_VIEJOS = ['ultron_fp_chat_log_v2', 'ultron_fp_person_memory_v2'];
 
-export type SavedCreds = { correo: string; clave: string; name?: string };
+export type { ClaveRenovar, CredsNuevas, SavedCreds };
+export { claveCoincide } from './credsSeguras';
 export type SttEngine = 'turbo' | 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
@@ -170,22 +173,35 @@ export async function loadSession(): Promise<SessionUser | null> {
   }
 }
 
-export async function saveCreds(creds: SavedCreds | null) {
-  if (!creds) {
-    await SecureStore.deleteItemAsync(KEYS.creds).catch(() => {});
-    return;
-  }
-  await SecureStore.setItemAsync(KEYS.creds, JSON.stringify(creds));
-}
+/**
+ * La entrada con clave, SIN la clave a la vista (lib/credsSeguras.ts, auditoría del 7-oct M-9): la clave solo existe
+ * detrás de la huella (`requireAuthentication`). La llave de lo visible es la de siempre (`ultron_fp_creds_v2`). Lo que
+ * dejó la 5.6.0 (la clave en claro) NO se borra al leerlo: sigue renovando la sesión sin preguntar y pasa detrás de la
+ * huella la primera vez que la persona entra con la huella (`desbloquearConHuella`).
+ */
+const creds = crearCreds({
+  get: (k, o) => SecureStore.getItemAsync(k, o as SecureStore.SecureStoreOptions | undefined),
+  set: (k, v, o) => SecureStore.setItemAsync(k, v, o as SecureStore.SecureStoreOptions | undefined),
+  del: (k) => SecureStore.deleteItemAsync(k),
+  soloEsteTelefono: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  autenticar: async (motivo) => {
+    const r = await LocalAuthentication.authenticateAsync({ promptMessage: motivo, cancelLabel: 'Cancelar', disableDeviceFallback: false });
+    return !!r?.success;
+  },
+});
 
-export async function loadCreds(): Promise<SavedCreds | null> {
-  try {
-    const raw = await SecureStore.getItemAsync(KEYS.creds);
-    return raw ? (JSON.parse(raw) as SavedCreds) : null;
-  } catch {
-    return null;
-  }
-}
+/** Guarda la entrada (la clave, solo detrás de la huella con `conHuella`). Devuelve si la clave quedó guardada. */
+export const saveCreds = (c: CredsNuevas | null): Promise<boolean> => creds.guardar(c);
+/** La entrada guardada, sin clave (`legado`: la clave en claro de la 5.6.0 sigue ahí, sin migrar). */
+export const loadCreds = (): Promise<SavedCreds | null> => creds.leer();
+/** La clave detrás de la huella: el sistema la pide. null si se canceló o no hay. */
+export const leerClaveConHuella = (motivo: string): Promise<string | null> => creds.claveConHuella(motivo);
+/** La clave para renovar la sesión de `correo` (la de antes sin preguntar; la de la huella solo con `puedePedir`). */
+export const claveParaRenovar = (correo: string, motivo: string, puedePedir: boolean): Promise<ClaveRenovar> => creds.claveParaRenovar(correo, motivo, puedePedir);
+/** La entrada rápida con la huella (y la migración de la clave en claro de la 5.6.0, si la hay). */
+export const desbloquearConHuella = (motivo: string, o?: { migrar?: boolean }) => creds.desbloquear(motivo, o);
+/** Sin red: ¿esta es la clave guardada de `correo`? */
+export const claveGuardadaCoincide = (correo: string, clave: string): Promise<boolean> => creds.comprobarSinRed(correo, clave);
 
 export async function setFingerprintUnlock(enabled: boolean, correo?: string) {
   if (!enabled) {

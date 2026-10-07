@@ -49,7 +49,9 @@ const tool = (name: string, description: string, properties: Props, required: st
 const str = (description: string, extra: Props = {}) => ({ type: 'string', description, ...extra });
 
 const PANTALLAS = ['mesa', 'chats', 'ajustes', 'perfil', 'computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo'];
-const CAMBIOS_APP = ['atras', 'tema_oscuro', 'tema_claro', 'tema_sistema', 'silencio', 'pantalla_completa', 'al_lado', 'paseo', 'avatar_guardian', 'avatar_aura', 'avatar_claudio'];
+// Los cuatro avatares (mobile/src/avatares/catalogo.ts): el Guardián, AU-RA, Claudio y ANT-ONIO (auditoría del 7-oct, M-1:
+// «ponme a ANT-ONIO» dicho libre llegaba al modelo y su herramienta no tenía cómo).
+const CAMBIOS_APP = ['atras', 'tema_oscuro', 'tema_claro', 'tema_sistema', 'silencio', 'pantalla_completa', 'al_lado', 'paseo', 'avatar_guardian', 'avatar_aura', 'avatar_claudio', 'avatar_antonio'];
 
 /** Las herramientas del turno, en un orden fijo (mismo turno, mismas herramientas). */
 export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
@@ -58,7 +60,7 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
   if (d.app) {
     t.push(
       tool('abrir_pantalla', 'Abrir una pantalla de su app. «abre ajustes», «mis correos», «tu computadora» (verla en vivo), «mi círculo».', { pantalla: str('Cuál.', { enum: PANTALLAS }) }, ['pantalla']),
-      tool('ajustar_app', 'Cambiar algo de la app: atrás, tema, callarte, cómo te ves, qué avatar. «vete atrás», «ponlo oscuro», «cállate», «ponte en grande», «cambia a Claudio» (el avatar solo si lo pidió claro: la app pregunta antes de cambiar; no digas que ya cambiaste).', { cambio: str('Qué cambio.', { enum: CAMBIOS_APP }) }, ['cambio']),
+      tool('ajustar_app', 'Cambiar algo de la app: atrás, tema, callarte, cómo te ves, qué avatar. «vete atrás», «ponlo oscuro», «cállate», «ponte en grande», «cambia a Claudio», «ponme a ANT-ONIO» (el avatar solo si lo pidió claro: la app pregunta antes de cambiar; no digas que ya cambiaste).', { cambio: str('Qué cambio.', { enum: CAMBIOS_APP }) }, ['cambio']),
       tool(
         'chat_aura',
         'Los chats de AU-RA (PULSE2CHAT), NO WhatsApp. redactar deja el borrador: dilo en voz alta y pregunta «¿Lo envío?». enviar SOLO cuando en el turno siguiente diga que sí. abrir abre el chat con alguien; descartar borra el borrador.',
@@ -362,7 +364,9 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
       if (c === 'pantalla_completa') return accionApp({ tipo: 'presencia', valor: 'completa' });
       if (c === 'al_lado') return accionApp({ tipo: 'presencia', valor: 'lado' });
       if (c === 'paseo') return accionApp({ tipo: 'presencia', valor: 'paseo' });
-      if (c.startsWith('avatar_')) return accionApp({ tipo: 'avatar', valor: c === 'avatar_guardian' ? 'ojos' : c.slice(7) });
+      if (c === 'avatar_guardian') return accionApp({ tipo: 'avatar', valor: 'ojos' });
+      if (c === 'avatar_aura' || c === 'avatar_claudio' || c === 'avatar_antonio') return accionApp({ tipo: 'avatar', valor: c.slice(7) });
+      if (c.startsWith('avatar_')) return null;
       return null;
     }
     case 'chat_aura': {
@@ -706,7 +710,7 @@ const RESPALDAN_AVISO = ['investigar', 'recordatorio', 'llamarme', 'computadora'
 const LLAMARLA = /\bte (lo |la )?(llamo|marco|timbro|llamare|marcare)\b|\bahi te (llamo|marco|suena)\b|\b(llamame|marcame|timbrame)\b|\bcall (you|me)\b/;
 
 /** Las herramientas que harían lo que dice un texto (por sus verbos), sin mirar si el turno las tiene. */
-function herramientasPara(texto: string): Set<string> {
+export function herramientasPara(texto: string): Set<string> {
   const p = plano(texto);
   const out = new Set<string>();
   for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
@@ -859,7 +863,7 @@ function deEseBorrador(frase: string): boolean {
  * prometen una acción, fuera de lo citado. No las de trabajo o aviso (esas las corrige la guarda del final) ni, con un
  * borrador esperando, las de ese borrador.
  */
-function frasesACorregir(texto: string, o: { borradorPendiente?: boolean } = {}): string[] {
+export function frasesACorregir(texto: string, o: { borradorPendiente?: boolean } = {}): string[] {
   const out: string[] = [];
   for (const l of String(texto || '').split('\n')) {
     if (/^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:/i.test(l)) continue;

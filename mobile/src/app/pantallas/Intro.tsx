@@ -22,7 +22,8 @@ import { retomarSiVolvio, type ResultadoGenesis } from '../../lib/genesis';
 import { cargarPerfil } from '../../lib/perfil';
 import { iniciarReporte, miga } from '../../lib/reporte';
 import { preloadSfx } from '../../lib/sfx';
-import { loadSession, loadSettings } from '../../lib/storage';
+import { loadCreds, loadSession, loadSettings } from '../../lib/storage';
+import { generacionCuenta, sigueVigente } from '../../lib/cuenta';
 import { setAvatarVoz } from '../../lib/tts';
 import { orientar } from '../../lib/orientacion';
 import { fijarIdioma, tr, useIdioma } from '../../i18n';
@@ -33,7 +34,7 @@ import { cargarHapticos } from '../../ui/hapticos';
 import { FUENTES_ICONOS } from '../../ui/Icono';
 import { cargarFuentes } from '../../ui/tipografia';
 import type { RaizParams } from '../rutas';
-import { reiniciarA } from '../rutas';
+import { reiniciarA, reiniciarAClave } from '../rutas';
 import { bienvenidaVista, entrarCon, fijarUsuario, soltarSesionCaida, type Compartido } from '../sesion';
 
 type Props = NativeStackScreenProps<RaizParams, 'Intro'>;
@@ -48,7 +49,7 @@ function textoPaso(p: Paso | undefined): string {
     case 'sesion':
       return tr('Abriendo tu sesión', 'Opening your session');
     case 'avatares':
-      return tr('Despertando al Guardián, a AU-RA y a Claudio', 'Waking up the Guardian, AU-RA and Claudio');
+      return tr('Despertando a tus avatares', 'Waking up your avatars');
     case 'voces':
       return tr('Afinando las voces', 'Tuning the voices');
     case 'servidor':
@@ -76,6 +77,24 @@ async function precargarAvatares() {
 
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** ¿Hay en este teléfono una clave guardada de `correo` (detrás de la huella, o la que dejó la 5.6.0)? */
+async function hayClaveGuardada(correo: string): Promise<boolean> {
+  const c = await loadCreds().catch(() => null);
+  return !!c && (!!c.conHuella || !!c.legado) && c.correo.trim().toLowerCase() === correo.trim().toLowerCase();
+}
+
+/**
+ * La sesión terminó y nadie la pudo renovar. Con clave guardada de esa persona, a «Otras formas de entrar» (la clave o la
+ * huella; Genesis ID queda detrás con «atrás»); sin ella, a Genesis ID.
+ */
+function irAEntrarTrasCaida(conClave: boolean) {
+  if (conClave) {
+    reiniciarAClave(tr('Tu sesión terminó. Entra con tu clave o con tu huella.', 'Your session ended. Sign in with your password or your fingerprint.'));
+    return;
+  }
+  reiniciarA('Entrar', { desdeIntro: true, aviso: tr('Tu sesión terminó. Vuelve a entrar con tu Genesis ID.', 'Your session ended. Sign in again with your Genesis ID.') });
+}
+
 export function Intro(_: Props) {
   useIdioma();
   const [hechos, setHechos] = useState<Paso[]>([]);
@@ -96,6 +115,8 @@ export function Intro(_: Props) {
     void SplashScreen.hideAsync().catch(() => {});
 
     const [ajustes, sesion] = await Promise.all([loadSettings(), loadSession(), conTope(cargarFuentes(), 2_500), cargarHapticos()]);
+    // La clave que dejó la 5.6.0 en claro ya NO se borra al abrir (revisión de #157, bloqueante 1): sigue renovando la
+    // sesión sin preguntar y pasa detrás de la huella la primera vez que se entra con ella (lib/credsSeguras.ts).
     fijarIdioma(ajustes.idioma);
     setAvatarVoz(ajustes.avatar);
     setRapido(!!sesion);
@@ -121,17 +142,34 @@ export function Intro(_: Props) {
     // «Hay servidor» = contestó cualquiera de las dos: la salud, o la sesión (viva o vencida, pero
     // contestada). Antes solo contaba la salud, que con la caché fría tardaba ~4,5 s contra un tope de
     // 2,5 s: salía «modo local» con el servidor vivo (1-oct, Samsung de José).
+    // La comprobación NO pide la huella (la clave de antes sí renueva sola): si hace falta, «bloqueada» y la app enseña
+    // «Toca para desbloquear» (components/AvisoDesbloqueo.tsx); el primer turno también la pide.
     const tServidor = Date.now();
-    const [saludResp, estadoSesion] = await Promise.all([
-      conTope(healthCheck(), 4_000),
-      sesion ? conTope(comprobarSesion(sesion.correo), 4_000) : Promise.resolve(null),
-    ]);
+    const comprobando = sesion ? comprobarSesion(sesion.correo) : null;
+    const [saludResp, estadoSesion] = await Promise.all([conTope(healthCheck(), 4_000), comprobando ? conTope(comprobando, 4_000) : Promise.resolve(null)]);
     const salud = !!saludResp || (estadoSesion !== null && estadoSesion !== 'sin_red');
     miga(`servidor: ${salud ? 'contesta' : 'sin respuesta'} en ${Date.now() - tServidor} ms (salud ${saludResp ? 'sí' : 'no'}, sesión ${estadoSesion ?? '—'})`);
     if (!salud) setAviso(tr('Sin conexión con el servidor: entras en modo local', 'No connection to the server: you’re entering local mode'));
     marcar('servidor');
     const caida = !!sesion && estadoSesion === 'caida';
     if (caida) await soltarSesionCaida();
+    // ¿Hay clave guardada de esta persona (detrás de la huella, o la de antes)? Entonces la salida es la clave o la
+    // huella, no solo Genesis ID.
+    const conClave = caida && sesion ? await conTope(hayClaveGuardada(sesion.correo), 1_500) : false;
+    // El tope de 4 s pasó sin saber si la sesión sigue viva: se entra (sin red se entra igual), pero si después resulta
+    // que venció, la persona se entera. «bloqueada» ya deja el aviso «Toca para desbloquear» puesto; «caida» (nadie
+    // puede renovarla) la lleva a entrar otra vez, con su clave si la tiene.
+    if (sesion && comprobando && estadoSesion === null) {
+      const gen = generacionCuenta();
+      void comprobando.then(async (tarde) => {
+        if (tarde !== 'caida' || !sigueVigente(gen)) return;
+        miga('sesión vencida (contestó después del tope de la intro): a la entrada');
+        const clave = await hayClaveGuardada(sesion.correo).catch(() => false);
+        if (!sigueVigente(gen)) return;
+        await soltarSesionCaida();
+        irAEntrarTrasCaida(clave);
+      });
+    }
 
     // ¿Volvía de la wallet cuando Android cerró la app?
     let vuelta: ResultadoGenesis | null = null;
@@ -139,8 +177,7 @@ export function Intro(_: Props) {
     const vista = sesion ? true : await bienvenidaVista();
 
     if (caida) {
-      const m = tr('Tu sesión terminó. Vuelve a entrar con tu Genesis ID.', 'Your session ended. Sign in again with your Genesis ID.');
-      destino.current = () => reiniciarA('Entrar', { desdeIntro: true, aviso: m });
+      destino.current = () => irAEntrarTrasCaida(!!conClave);
     } else if (sesion) destino.current = () => reiniciarA(completado ? 'Mesa' : 'PrimeraVez', { desdeIntro: true });
     else if (vuelta && vuelta.ok) {
       const g = vuelta as ResultadoGenesis & { genesis?: Compartido };

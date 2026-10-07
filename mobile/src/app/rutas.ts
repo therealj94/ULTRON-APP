@@ -15,7 +15,8 @@ export type RaizParams = {
   /** `reintentar`: pedir el pase al llegar (cambia en cada pedido, como `Chats.whatsapp`). */
   Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string; reintentar?: number } | undefined;
   CrearGenesis: { motivo?: 'sin-gid' } | undefined;
-  OtrasFormas: undefined;
+  /** `aviso`: lo que se dice al llegar (la sesión terminó y hay clave o huella guardada en este teléfono). */
+  OtrasFormas: { aviso?: string } | undefined;
   PrimeraVez: { desdeIntro?: boolean } | undefined;
   Mesa: { desdeIntro?: boolean; recienElegido?: boolean } | undefined;
   Ajustes: undefined;
@@ -48,6 +49,15 @@ export function rutaActual(): NombreRuta | undefined {
 export function reiniciarA<R extends NombreRuta>(ruta: R, params?: RaizParams[R]) {
   if (!nav.isReady()) return;
   nav.dispatch(CommonActions.reset({ index: 0, routes: [{ name: ruta, params }] }));
+}
+
+/**
+ * La entrada con clave o huella («Otras formas de entrar») con la de Genesis ID debajo: «atrás» vuelve a Entrar. Para
+ * cuando la sesión terminó y en este teléfono hay una clave guardada de esa persona (Intro).
+ */
+export function reiniciarAClave(aviso: string) {
+  if (!nav.isReady()) return;
+  nav.dispatch(CommonActions.reset({ index: 1, routes: [{ name: 'Entrar', params: { desdeIntro: true } }, { name: 'OtrasFormas', params: { aviso } }] }));
 }
 
 /**

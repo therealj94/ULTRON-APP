@@ -81,7 +81,7 @@ export function puertosWeb(d: { callar: () => void; cortarTurno?: () => void; en
       d.callar();
       const l = d.enVivo;
       if (!enCurso(l)) return { ok: true };
-      if (!l.callarSalida) return { ok: false, detalle: 'Callé mi voz, pero no puedo callar el audio de la llamada en vivo; si querés, colgá.' };
+      if (!l.callarSalida) return { ok: false, detalle: 'Callé mi voz, pero no puedo callar el audio de la llamada en vivo; si quieres, cuelga.' };
       return l.callarSalida();
     },
     ...(d.cortarTurno ? { cortarTurno: d.cortarTurno } : {}),
@@ -120,8 +120,8 @@ export function botonMicrofonoWeb(o: { vivoAbierta: boolean; silenciable: boolea
       disabled: false,
       etiqueta: o.micEnabled ? (o.escuchando ? 'Micrófono abierto: te está escuchando' : 'Micrófono abierto') : 'Micrófono apagado',
     };
-  if (!o.silenciable) return { modo: 'no_disponible', activo: true, disabled: true, etiqueta: 'En vivo no puedo silenciar el micrófono: para que deje de escucharte, colgá' };
+  if (!o.silenciable) return { modo: 'no_disponible', activo: true, disabled: true, etiqueta: 'En vivo no puedo silenciar el micrófono: para que deje de escucharte, cuelga' };
   return o.silenciado
-    ? { modo: 'llamada', activo: false, disabled: false, etiqueta: 'Micrófono de la llamada silenciado: tocá para volver a escuchar' }
+    ? { modo: 'llamada', activo: false, disabled: false, etiqueta: 'Micrófono de la llamada silenciado: toca para volver a escuchar' }
     : { modo: 'llamada', activo: true, disabled: false, etiqueta: 'Silenciar el micrófono de la llamada (no cuelga)' };
 }

@@ -85,7 +85,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleDownload(latestPhoto)}
-                  className="flex-1 py-2 px-3 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-fondo) font-semibold text-[13px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-2 px-3 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-sobre-oro) font-semibold text-[13px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   Descargar
@@ -135,7 +135,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                       onClick={() => handleDownload(p)}
                       aria-label={`Descargar foto de las ${p.timestamp}`}
                       title="Descargar"
-                      className="w-7 h-7 rounded-full bg-(--aura-oro) text-(--aura-fondo) flex items-center justify-center shadow-[0_2px_6px_rgba(0,0,0,0.4)] cursor-pointer"
+                      className="w-7 h-7 rounded-full bg-(--aura-oro) text-(--aura-sobre-oro) flex items-center justify-center shadow-[0_2px_6px_rgba(0,0,0,0.4)] cursor-pointer"
                     >
                       <Download className="w-3.5 h-3.5" />
                     </button>

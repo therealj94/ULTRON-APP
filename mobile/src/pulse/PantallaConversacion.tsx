@@ -26,13 +26,14 @@ import {
   Platform,
   Pressable,
   StyleSheet,
-  Text,
   TextInput,
   useWindowDimensions,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import { fuente } from '../ui/tipografia';
+import { Letra as Text } from '../ui/Letra';
 import Animated, { cancelAnimation, FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { emitir } from '../nucleo/contrato';
@@ -336,7 +337,7 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
         {deVoz ? (
           <Animated.View entering={FadeIn.duration(MEDIDA.duracion.normal)} style={s.deVoz}>
             <Icono nombre="chispa" tam={13} color={p.acentoTexto} lleno />
-            <Text style={s.deVozTxt}>{tr('AURA lo escribió por ti · revísalo y envíalo', 'AURA wrote this for you · review and send')}</Text>
+            <Text style={s.deVozTxt}>{tr('AU-RA lo escribió por ti · revísalo y envíalo', 'AU-RA wrote this for you · review and send')}</Text>
           </Animated.View>
         ) : null}
         <View
@@ -357,7 +358,7 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
                 placeholderTextColor={p.texto3}
                 multiline
                 maxLength={4000}
-                style={s.entrada}
+                style={[s.entrada, fuente('regular')]}
                 accessibilityLabel={tr('Escribe un mensaje', 'Write a message')}
               />
             </View>

@@ -15,7 +15,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { tr, idiomaActual } from '../../i18n';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { Boton, Campo, Hoja, Icono, Texto, vibrar } from '../../ui';
-import { activarDesbloqueo, capacidadBiometrica, desbloqueoActivo, desbloquearClave, nombreBiometria, type TipoBiometria } from './desbloqueo';
+import { activarDesbloqueo, capacidadBiometrica, confirmarConTelefono, desbloqueoActivo, desbloquearClave, nombreBiometria, type TipoBiometria } from './desbloqueo';
 import { vinculoVeta } from './sesion';
 
 type Props = {
@@ -25,9 +25,14 @@ type Props = {
   accion?: string;
   onCancelar: () => void;
   onAutorizar: (clave: string) => Promise<{ ok: boolean; msg?: string }>;
+  /**
+   * Pedir además la huella o el bloqueo del teléfono (veta/desbloqueo.ts confirmarConTelefono) cuando la contraseña se
+   * ESCRIBE. Con la huella guardada el sistema ya la pidió para soltarla. Los datos de la tarjeta y la recarga, siempre.
+   */
+  confirmarTelefono?: boolean;
 };
 
-export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onAutorizar }: Props) {
+export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onAutorizar, confirmarTelefono }: Props) {
   const tema = useTema();
   const [clave, setClave] = useState('');
   const [yendo, setYendo] = useState(false);
@@ -49,6 +54,19 @@ export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onA
       setYendo(true);
       setError('');
       try {
+        // Contraseña escrita: además, la huella o el bloqueo del teléfono (con la huella guardada ya se pidió).
+        if (confirmarTelefono && !deBio) {
+          const t = await confirmarConTelefono(titulo);
+          if (!t.ok) {
+            vibrar('aviso');
+            setError(
+              t.motivo === 'sin-bloqueo'
+                ? tr('Para esto tu teléfono necesita un bloqueo de pantalla (huella, cara o PIN). Ponlo en los ajustes del teléfono.', 'This needs a screen lock on your phone (fingerprint, face or PIN). Set one in your phone settings.')
+                : tr('Confirma con tu huella o el bloqueo del teléfono para seguir.', 'Confirm with your fingerprint or phone lock to continue.')
+            );
+            return;
+          }
+        }
         const r = await onAutorizar(c);
         if (r && r.ok === false) {
           vibrar('aviso');
@@ -69,7 +87,7 @@ export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onA
         setClave('');
       }
     },
-    [onAutorizar, quiereActivar, bio.disponible, activo]
+    [onAutorizar, quiereActivar, bio.disponible, activo, confirmarTelefono, titulo]
   );
 
   const usarBio = useCallback(async () => {

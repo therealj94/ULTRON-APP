@@ -6,12 +6,21 @@ import { enIconoInstalado, guardarTokenMesa, headersMesa } from '../10-infra/ses
 import { iniciarEntradaGenesis } from '../10-infra/genesisWeb';
 import { CambiarClave, OlvideClave, PanelSolicitudes, PonerClave, SolicitarAcceso, solicitudesPendientes, type EnlaceUrl, type Tema } from '../cuentas/Cuentas';
 
-/** Las pantallas de cuentas con los colores de la sala de AU-RA. */
+/**
+ * El anillo de foco del teclado: redondo como el botón y del color de foco del tema (≥ 3:1 contra todo fondo;
+ * auditoría B5: antes, un recuadro café cuadrado sobre un botón redondo).
+ */
+const FOCO = 'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-(--aura-foco) focus-visible:ring-offset-2 focus-visible:ring-offset-(--aura-fondo)';
+
+/**
+ * Las pantallas de cuentas con los colores de la sala de AU-RA. Sobre el dorado, SIEMPRE la tinta oscura
+ * (`--aura-sobre-oro`, ≥ 7:1): antes iba `--aura-fondo`, que en el tema claro es marfil (1,7:1, auditoría C5).
+ */
 export const TEMA_AURA: Tema = {
-  campo: 'w-full px-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-2xl text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-oro) focus:outline-none',
-  boton: 'w-full py-3 px-4 rounded-full bg-(--aura-oro) text-(--aura-fondo) hover:bg-(--aura-oro-hover) font-semibold text-[15px] cursor-pointer disabled:opacity-50',
-  secundario: 'w-full py-3 px-4 rounded-full border border-(--aura-barro-borde) text-(--aura-barro-texto) hover:bg-(--aura-barro-fondo) font-semibold text-[14px] cursor-pointer disabled:opacity-50',
-  enlace: 'w-full text-center text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer',
+  campo: 'w-full px-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-2xl text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-foco) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--aura-foco)',
+  boton: `w-full py-3 px-4 rounded-full bg-(--aura-oro) text-(--aura-sobre-oro) hover:bg-(--aura-oro-hover) font-semibold text-[15px] cursor-pointer disabled:opacity-50 ${FOCO}`,
+  secundario: `w-full py-3 px-4 rounded-full border border-(--aura-barro-borde) text-(--aura-barro-texto) hover:bg-(--aura-barro-fondo) font-semibold text-[14px] cursor-pointer disabled:opacity-50 ${FOCO}`,
+  enlace: `w-full text-center text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer rounded-full py-1.5 ${FOCO}`,
   titulo: 'font-display font-semibold text-xl text-(--aura-tinta)',
   texto: 'text-[14px] leading-snug text-(--aura-tinta-2)',
   error: 'p-2.5 rounded-xl bg-(--aura-barro-fondo) border border-(--aura-barro-borde) text-[13px] text-(--aura-error-texto)',
@@ -147,7 +156,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
   };
 
   return (
-    <Dialogo abierto={isOpen} onCerrar={obligatorio ? () => undefined : onClose} idTitulo="aura-acceso-titulo" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube w-full max-w-md bg-(--aura-fondo) rounded-[28px] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 relative overflow-hidden">
+    <Dialogo abierto={isOpen} onCerrar={obligatorio ? () => undefined : onClose} idTitulo="aura-acceso-titulo" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube w-full max-w-md md:max-w-lg lg:max-w-xl bg-(--aura-fondo) rounded-[28px] p-6 md:p-9 lg:p-11 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 md:gap-5 relative overflow-hidden">
         {!obligatorio && (
           <button type="button" onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-(--aura-panel-2) text-(--aura-tinta-2) hover:bg-(--aura-oro-suave) flex items-center justify-center cursor-pointer" aria-label="Cerrar">
             <X className="w-5 h-5" />
@@ -159,8 +168,8 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
             <span>cerebro Orden Global</span>
             <span className={`w-1.5 h-1.5 rounded-full ${remoto === 'ok' ? 'bg-(--aura-salvia) animate-pulse' : remoto === 'off' ? 'bg-(--aura-barro)' : 'bg-(--aura-oro)'}`} />
           </div>
-          <h2 id="aura-acceso-titulo" className="font-display font-semibold text-2xl text-(--aura-tinta)">{usuario.authenticated ? 'Tu sesión' : 'Entrar a AU-RA'}</h2>
-          <p className="text-[14px] leading-snug text-(--aura-tinta-2) mt-1">{usuario.authenticated ? 'Tu memoria, tu bóveda y tus manos van con tu sesión.' : 'AU-RA es privada: entrá con tu Veta Wallet.'}</p>
+          <h2 id="aura-acceso-titulo" className="aura-serif text-[32px] md:text-[40px] leading-tight text-(--aura-tinta)">{usuario.authenticated ? 'Tu sesión' : 'Entrar a AU-RA'}</h2>
+          <p className="text-[14px] md:text-[16px] leading-snug text-(--aura-tinta-2) mt-1">{usuario.authenticated ? 'Tu memoria, tu bóveda y tus manos van con tu sesión.' : 'AU-RA es privada: entra con tu Genesis ID.'}</p>
         </div>
 
         {vista === 'poner' && enlaceVivo && enlaceVivo.tipo !== 'solicitudes' ? (
@@ -230,10 +239,10 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
                 type="button"
                 onClick={() => void entrarConGenesis()}
                 disabled={yendoAGenesis || conGenesis === null}
-                className="py-3.5 px-4 rounded-full bg-(--aura-oro) text-(--aura-fondo) hover:bg-(--aura-oro-hover) shadow-[0_6px_16px_rgba(214,181,108,0.3)] font-semibold text-[16px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                className={`min-h-[52px] py-3.5 px-4 rounded-full bg-(--aura-oro) text-(--aura-sobre-oro) hover:bg-(--aura-oro-hover) shadow-[0_6px_16px_rgba(214,181,108,0.3)] font-semibold text-[16px] md:text-[17px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 ${FOCO}`}
               >
                 {yendoAGenesis || conGenesis === null ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                <span>{yendoAGenesis ? 'Abriendo tu Veta Wallet…' : 'Entrar con Veta Wallet'}</span>
+                <span>{yendoAGenesis ? 'Abriendo tu wallet…' : 'Entrar con Genesis ID'}</span>
               </button>
             )}
             {conGenesis !== false && !verJunta && (
@@ -244,8 +253,8 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
                     <span>{error}</span>
                   </div>
                 )}
-                <p className="px-1 text-[12px] leading-snug text-(--aura-tinta-2) text-center">Con tu Genesis ID: sin crear otra cuenta ni otra contraseña.</p>
-                <button type="button" onClick={() => { setVerJunta(true); setError(''); }} className="text-center text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) underline-offset-2 hover:underline cursor-pointer">
+                <p className="px-1 text-[13px] leading-snug text-(--aura-tinta-2) text-center">Se abre tu Veta Wallet: sin crear otra cuenta ni otra contraseña.</p>
+                <button type="button" onClick={() => { setVerJunta(true); setError(''); }} className={`self-center px-3 py-1.5 rounded-full text-center text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) underline-offset-2 hover:underline cursor-pointer ${FOCO}`}>
                   Soy de la junta: entrar con correo y clave
                 </button>
               </>
@@ -256,14 +265,14 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
                 Correo
                 <div className="relative mt-1">
                   <Mail className="w-4 h-4 text-(--aura-tinta-2) absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="nombre@ordenglobal.org" required className="w-full pl-10 pr-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-full text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-oro) focus:outline-none" />
+                  <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="nombre@ordenglobal.org" required className="w-full pl-10 pr-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-full text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-foco) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--aura-foco)" />
                 </div>
               </label>
               <label className="block text-[13px] font-medium text-(--aura-tinta-2)">
                 Clave
                 <div className="relative mt-1">
                   <Lock className="w-4 h-4 text-(--aura-tinta-2) absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} placeholder="••••••••" required className="w-full pl-10 pr-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-full text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-oro) focus:outline-none" />
+                  <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} placeholder="••••••••" required className="w-full pl-10 pr-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-full text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-foco) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--aura-foco)" />
                 </div>
               </label>
               {error && (
@@ -272,20 +281,20 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
                   <span>{error}</span>
                 </div>
               )}
-              <button type="submit" disabled={enviando} className={conGenesis ? `mt-1 ${TEMA_AURA.secundario} flex items-center justify-center gap-2` : "mt-1 py-3 px-4 rounded-full bg-(--aura-oro) text-(--aura-fondo) hover:bg-(--aura-oro-hover) shadow-[0_6px_16px_rgba(214,181,108,0.3)] font-semibold text-[15px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"}>
+              <button type="submit" disabled={enviando} className={conGenesis ? `mt-1 ${TEMA_AURA.secundario} flex items-center justify-center gap-2` : `mt-1 py-3 px-4 rounded-full bg-(--aura-oro) text-(--aura-sobre-oro) hover:bg-(--aura-oro-hover) shadow-[0_6px_16px_rgba(214,181,108,0.3)] font-semibold text-[15px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${FOCO}`}>
                 {enviando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
                 <span>{enviando ? 'Entrando…' : 'Entrar'}</span>
               </button>
               {enIconoInstalado() && (
                 <p className="px-1 text-[12px] leading-snug text-(--aura-tinta-2)">
-                  El ícono de AU-RA guarda su propia sesión: si entraste en el navegador, entrá aquí una vez y queda guardada.
+                  El ícono de AU-RA guarda su propia sesión: si entraste en el navegador, entra aquí una vez y queda guardada.
                 </p>
               )}
               <div className="flex items-center justify-between px-1 text-[13px]">
-                <button type="button" onClick={() => { setVista('olvide'); setError(''); }} className="text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer">
+                <button type="button" onClick={() => { setVista('olvide'); setError(''); }} className={`px-2 py-1 rounded-full text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer ${FOCO}`}>
                   ¿Olvidaste tu contraseña?
                 </button>
-                <button type="button" onClick={() => { setVista('solicitar'); setError(''); }} className="text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer">
+                <button type="button" onClick={() => { setVista('solicitar'); setError(''); }} className={`px-2 py-1 rounded-full text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer ${FOCO}`}>
                   Solicitar acceso
                 </button>
               </div>

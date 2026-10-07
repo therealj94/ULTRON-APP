@@ -6,6 +6,7 @@
  * presupuesto, los reintentos y los errores hacen lo que dicen, porque esas ramas con un modelo de
  * verdad no se disparan cuando uno quiere.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { correrAgente, type Mensaje, type Pensar } from '../lib/agente/bucle';

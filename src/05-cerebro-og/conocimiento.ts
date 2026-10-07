@@ -1,14 +1,25 @@
+/**
+ * EL CEREBRO DE LA JUNTA. Los nombres, apellidos, roles y gustos de la junta y la familia no viven aquí (el repositorio
+ * es público; auditoría del 7-oct, C-1): llegan por AURA_CONOCIMIENTO_PERSONAS (JSON con «personas», «legal» y
+ * «reglas», cada uno líneas que se ponen en su sitio; lib/datos-privados.ts). Sin ella, el cerebro no nombra a nadie.
+ * Se arma al cargar el módulo (el entorno de Render ya está puesto al arrancar).
+ */
+import { jsonDeEnv } from '../../lib/datos-privados';
+
+type Personas = { personas?: string; legal?: string; reglas?: string };
+const p: Personas = jsonDeEnv<Personas>(
+  'AURA_CONOCIMIENTO_PERSONAS',
+  (x) => (x && typeof x === 'object' && !Array.isArray(x) ? (x as Personas) : null),
+  {},
+  'el cerebro de la junta no nombra a nadie de la junta'
+);
+/** Unas líneas en su sitio (con su salto), o nada. */
+const bloque = (t?: string) => (typeof t === 'string' && t.trim() ? `${t.trim()}\n` : '');
+
 export const CONOCIMIENTO_OG = `ORDEN GLOBAL — cerebro Genesis Core. Hechos para no inventar. Si no está aquí, decí que no está confirmado.
 
 PERSONAS
-- Fundador: Medardo José Ordóñez Enamorado (Medardo). Junta. Canción: The Verve — Bitter Sweet Symphony.
-- Cofundador: José Ordóñez (José). Junta. Habla con AU-RA. Canción: Kanye — Runaway (brindis). Extra: Bruno Mars — Die With A Smile.
-- Cofundadora: Melany Ordóñez.
-- Cofundador: Carlos Leonardo Paguada (Leonardo Paguada). En prensa 2024: director de operaciones globales de Orden Global Corp. Explicó ORIGEN, AUKA, ONDK y OrdenEx en Tegucigalpa.
-- Junta: Mayra Enamorado. Acceso a AU-RA FP por Telegram. Cerebro propio. Consulta: no cambia el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).
-- Carlos Paguada en AU-RA: mismo acceso consulta que Mayra. Cerebro propio. No se mezcla con José ni Medardo.
-- Prensa ago-2024 también nombra a Jackson Wilson como CEO de Orden Global Corp (lanzamiento NZ). No mezclar: Medardo funda; José, Melany y Leonardo cofundan.
-- Sitio ordenglobal.org. Operación diaria Honduras (Tegucigalpa). Sede comunicada: British Columbia, Canadá.
+${bloque(p.personas)}- Sitio ordenglobal.org. Operación diaria Honduras (Tegucigalpa). Sede comunicada: British Columbia, Canadá.
 
 SOCIEDADES Y LEI
 - Orden Global Corp. LEI 9845000J73CT98D9ES75.
@@ -55,8 +66,7 @@ APPS Y CAPAS
 
 LEGAL
 - Lanzamiento LATAM ~15 ago 2024 en Tegucigalpa. Activos digitales con oro hondureño.
-- Paguada: metal + chain contra inflación e inestabilidad regional.
-- Remesas: licencia por país o se quedan calculadora. No afirmar riel regulado vivo.
+${bloque(p.legal)}- Remesas: licencia por país o se quedan calculadora. No afirmar riel regulado vivo.
 - Play Individual vs Apple Org+DUNS.
 - DNS a Route 53 bloqueado sin NameSilo.
 - Incidente claves pre-migración: nonce 0 saldo 0 en cuatro tokens. Causa abierta. Nunca escribir secretos.
@@ -76,5 +86,4 @@ REGLAS
 - FX y spot: tools.
 - Web en vivo: Playwright de la mesa.
 - Español centroamericano.
-- Medardo fundador. José, Melany y Leonardo Paguada cofundadores.
-`;
+${bloque(p.reglas)}`;

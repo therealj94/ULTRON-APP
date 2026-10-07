@@ -185,14 +185,19 @@ export function variablesDe(tema: NombreTema): Record<string, string> {
   return out;
 }
 
-/** Tipografía: cuerpo de 16 px; lo secundario no baja de 13 px. */
+/**
+ * Tipografía: cuerpo de 16 px; lo secundario no baja de 13 px. La MISMA letra que la app del teléfono
+ * (mobile/src/ui/tipografia.ts; auditoría M5: la web tenía una tercera, Figtree y Fredoka): Manrope para todo,
+ * los títulos en Manrope gruesa y la serif Cormorant Garamond solo para los títulos grandes de bienvenida.
+ */
 export const TIPO = {
   cuerpo: '16px',
   secundario: '14px',
   pie: '13px',
   titulo: '20px',
-  familia: "'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif",
-  display: "'Fredoka', 'Figtree', system-ui, sans-serif",
+  familia: "'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif",
+  display: "'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif",
+  serif: "'Cormorant Garamond', Georgia, 'Times New Roman', serif",
 } as const;
 
 /** Espaciado en pasos de 4 px y el tamaño cómodo de un objetivo táctil. */

@@ -97,7 +97,7 @@ export function cajas(): Caja[] {
     { id: 'voz', nombre: 'Voz y oído (Voicebox)', listo: voz, falta: voz ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE', usa: 'hablar, oír notas de voz, nota de voz urgente' },
     { id: 'telegram', nombre: 'Telegram junta', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID', usa: 'chat, fotos, aviso urgente' },
     { id: 'telegram-in', nombre: 'Telegram webhook', listo: tg && !!clave('telegram_webhook'), falta: clave('telegram_webhook') ? undefined : 'TELEGRAM_WEBHOOK_SECRET', usa: 'responder desde Telegram' },
-    { id: 'memoria', nombre: 'Memoria S3 (José / Medardo / Carlos / Mayra)', listo: mem, falta: mem ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*', usa: 'conversaciones y hechos que no se pierden al redesplegar' },
+    { id: 'memoria', nombre: 'Memoria S3 (un cajón por persona de la junta)', listo: mem, falta: mem ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*', usa: 'conversaciones y hechos que no se pierden al redesplegar' },
     { id: 'whatsapp', nombre: 'WhatsApp', listo: wa, falta: wa ? undefined : 'TWILIO_* + JEFE_WHATSAPP', usa: 'mensajes WhatsApp' },
     { id: 'correo', nombre: 'Correo', listo: mail, falta: mail ? undefined : 'RESEND_API_KEY + MAIL_FROM', usa: 'email' },
     { id: 'llamada', nombre: 'Llamada telefónica', listo: call, falta: call ? undefined : 'TWILIO_VOICE_FROM + JEFE_TELEFONO', usa: 'llamada de verdad (no Telegram)' },

@@ -1,3 +1,4 @@
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pedidoRed, esSobreUltron, esTemaOG } from '../lib/conversacion';
@@ -10,7 +11,7 @@ test('saludos y preguntas sobre AU-RA no van a internet', () => {
 });
 
 test('temas de Orden Global se contestan con el cerebro, no con búsqueda automática', () => {
-  for (const f of ['contame un dato que te sorprenda de la cadena 5550', '¿qué es ORIGEN?', '¿quién es Medardo?', '¿qué opinás de Próspera?']) {
+  for (const f of ['contame un dato que te sorprenda de la cadena 5550', '¿qué es ORIGEN?', '¿quién es Ramiro?', '¿qué opinás de Próspera?']) {
     assert.equal(esTemaOG(f), true, f);
     assert.equal(pedidoRed(f), null, f);
   }

@@ -5,6 +5,7 @@
  * sigue siendo exactamente lo que era. Si un día alguien mete datos de la junta en el conocimiento de
  * minas, o al revés, estas pruebas se caen.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PERFILES, fijarPerfil, perfilActivo } from '../lib/perfiles';
@@ -40,7 +41,7 @@ test('el cerebro de minas no sabe de Orden Global', async (t) => {
     const c = MINAS.conocimiento;
     // 5550 y AUKA solo pueden aparecer en la regla que manda a la OTRA plataforma, no como dato.
     for (const l of c.split('\n')) {
-      if (/\b(AUKA|AGKA|ONDK|ORIGEN|Ordenex|Genesis ID|Medardo|Melany|Paguada)\b/.test(l)) {
+      if (/\b(AUKA|AGKA|ONDK|ORIGEN|Ordenex|Genesis ID|Ramiro|Fabiola|Sagastume)\b/.test(l)) {
         assert.match(l, /otra plataforma|Genesis Core/, `línea con dato de OG sin marcar como ajena: ${l}`);
       }
     }

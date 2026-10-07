@@ -1,0 +1,6 @@
+# Escenario 5, al final de los 20 s: la vista de la cámara sigue abierta (no se cerró sola). Después se cierra.
+appId: link.ordenglobal.ultronfp
+name: La cámara sigue abierta
+---
+- assertVisible: "Cerrar lo que veo"
+- tapOn: "Cerrar lo que veo"

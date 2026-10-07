@@ -1,0 +1,16 @@
+# Dos mensajes seguidos en el chat de la mesa, el segundo sin esperar la respuesta del primero (escenario 4).
+# Los textos llegan en MENSAJE y MENSAJE2 (-e MENSAJE=… -e MENSAJE2=…).
+appId: link.ordenglobal.ultronfp
+name: Enviar dos mensajes seguidos
+---
+- runFlow: cerrar-avisos.yaml
+- tapOn: "Mensaje"
+- inputText: ${MENSAJE}
+- tapOn:
+    text: "Enviar"
+    retryTapIfNoChange: false
+- tapOn: "Mensaje"
+- inputText: ${MENSAJE2}
+- tapOn:
+    text: "Enviar"
+    retryTapIfNoChange: false

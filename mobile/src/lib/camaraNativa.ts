@@ -14,8 +14,9 @@
  *    espejo en la frontal). Es lo mismo que lib/vistaEnVivo.ts cajaEnPantalla, en fracciones.
  *  · `elegirCamara`: cuál cámara usar (la nueva o la de fotos) y por qué.
  *  · La GUARDIA contra cierres (`guardia*`): antes de montar la cámara nativa se anota «montando»; con el
- *    primer cuadro sano y 10 s sin caerse, se borra. Si la app arranca y la marca sigue, la última vez se
- *    murió montándola: la cámara nueva queda apagada en ese teléfono unos días y se usa la de fotos.
+ *    primer cuadro sano y 10 s sin caerse, se borra. Si la app arranca y la marca sigue, se mira POR QUÉ terminó
+ *    (`causaDelCierre`): solo una caída de verdad cuenta; con dos, la cámara nueva se apaga un rato (1 h la primera
+ *    vez, más si se repite) y se usa la de fotos.
  *
  * El motor nativo de 4.1.0 (vision-camera + worklets-core) cerraba la app al entrar a la mesa (0602318):
  * por eso hay guardia, interruptor remoto y ajuste, y la cámara de fotos sigue ahí, entera.
@@ -213,26 +214,42 @@ export function elegirCamara(o: { android: boolean; modulo: boolean; ajuste?: bo
 
 /* ── la guardia contra cierres ───────────────────────────────────────────────────────────── */
 
-const DIA = 24 * 3600_000;
+const HORA = 3600_000;
+const DIA = 24 * HORA;
 
+/**
+ * José, 7-oct 00:30: la app se cerró 13 s después de abrir, justo cuando bajó una OTA, sin ningún crash, y la guardia
+ * de antes (cualquier salida sin explicar = caída; una sola bastaba) le apagó la voz en vivo 7 días. Ahora:
+ *  · solo cuenta un cierre DE VERDAD con lo nativo en marcha (`causaDelCierre`): no una recarga de la OTA, no una
+ *    actualización aplicada al reabrir, no deslizarla en recientes ni mandarla a segundo plano;
+ *  · un golpe solo apaga lo nativo en ESA sesión; hacen falta `golpesMax` en `ventanaGolpesMs` para apagarlo más;
+ *  · el castigo es corto y sube si se repite (`bloqueosMs`): 1 h, 6 h, 1 día, 3 días como mucho.
+ */
 export const GUARDIA = {
-  /** Con el primer cuadro sano, cuánto más tiene que aguantar para borrar «montando». */
+  /** Con el primer cuadro sano (o la primera frase que suena), cuánto más tiene que aguantar para borrar la marca. */
   sanoTrasMs: 10_000,
-  /** Murió montándola: apagada en este teléfono por… */
-  bloqueoMontarMs: 7 * DIA,
-  /** Murió con ella ya andando (después del rato sano): un golpe. Con `golpesMax` en `ventanaGolpesMs`… */
+  /** Cierres de verdad con lo nativo en marcha que hacen falta para apagarlo en el teléfono (antes bastaba uno)… */
   golpesMax: 2,
   ventanaGolpesMs: 3 * DIA,
-  /** …apagada por esto. */
-  bloqueoGolpesMs: 3 * DIA,
+  /** …y por cuánto: la primera vez 1 h; si vuelve a pasar dentro de `ventanaBloqueosMs`, el siguiente escalón. */
+  bloqueosMs: [HORA, 6 * HORA, DIA, 3 * DIA] as readonly number[],
+  ventanaBloqueosMs: 7 * DIA,
+  /** La forma de lo guardado. Lo de una versión anterior (el apagado de 7 días incluido) se borra UNA vez. */
+  version: 2,
 } as const;
 
 export type EstadoGuardia = {
+  /** Versión de la guardia que escribió esto (`GUARDIA.version`). Sin ella: lo dejó la guardia de antes. */
+  v?: number;
   /** ts en que se empezó a montar; se borra con el rato sano o al soltarla con calma. */
   montando?: number;
   /** ts desde que corre sana; se borra al soltarla (desmontar, segundo plano). */
   enUso?: number;
+  /** El JS (OTA) que corría al poner la marca: si al reabrir corre otro, la salida fue para aplicar la actualización. */
+  bundle?: string;
   golpes?: number[];
+  /** Cuándo se apagó por golpes (para escalar el castigo). */
+  bloqueos?: number[];
   bloqueadaHasta?: number;
   motivo?: string;
 };
@@ -241,20 +258,21 @@ export function guardiaValida(v: unknown): EstadoGuardia {
   const o = v as any;
   if (!o || typeof o !== 'object') return {};
   const ts = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x > 0 ? x : undefined);
+  const lista = (x: unknown) => (Array.isArray(x) ? x.map(ts).filter((y: number | undefined): y is number => !!y).slice(-10) : undefined);
   const e: EstadoGuardia = {};
+  if (typeof o.v === 'number' && Number.isInteger(o.v) && o.v > 0) e.v = o.v;
   if (ts(o.montando)) e.montando = ts(o.montando);
   if (ts(o.enUso)) e.enUso = ts(o.enUso);
-  if (Array.isArray(o.golpes)) e.golpes = o.golpes.map(ts).filter((x: number | undefined): x is number => !!x).slice(-10);
+  if (typeof o.bundle === 'string' && o.bundle) e.bundle = o.bundle.slice(0, 64);
+  const golpes = lista(o.golpes);
+  if (golpes) e.golpes = golpes;
+  const bloqueos = lista(o.bloqueos);
+  if (bloqueos) e.bloqueos = bloqueos;
   if (ts(o.bloqueadaHasta)) e.bloqueadaHasta = ts(o.bloqueadaHasta);
   if (typeof o.motivo === 'string') e.motivo = o.motivo.slice(0, 120);
   return e;
 }
 
-/**
- * Al arrancar la app (una vez): lo que dejó la vez anterior. `murio`: si la app anterior terminó EN PRIMER
- * PLANO sin cerrarse (lib/reporte.ts: true = murió, false = se cerró bien o la recargó la OTA, null = no se
- * sabe). Con `murio === false` las marcas son viejas (una recarga a propósito) y no cuentan.
- */
 /**
  * Cómo se llama en los avisos lo que la guardia cuida. La misma guardia vale para la voz en streaming
  * (modules/aura-voz, lib/guardiaVoz.ts): solo cambian las palabras.
@@ -262,31 +280,137 @@ export function guardiaValida(v: unknown): EstadoGuardia {
 export type TextosGuardia = { nombre: string; montar: string; montando: string };
 export const TEXTOS_CAMARA: TextosGuardia = { nombre: 'cámara nueva', montar: 'al montar la cámara nueva', montando: 'montándola' };
 
-export function guardiaAlArrancar(e: EstadoGuardia, ahora: number, murio: boolean | null, t: TextosGuardia = TEXTOS_CAMARA): { estado: EstadoGuardia; aviso?: string } {
-  const golpes = (e.golpes || []).filter((t) => ahora - t <= GUARDIA.ventanaGolpesMs);
-  let bloqueadaHasta = e.bloqueadaHasta && e.bloqueadaHasta > ahora ? e.bloqueadaHasta : undefined;
-  let motivo = bloqueadaHasta ? e.motivo : undefined;
+/**
+ * Lo que se sabe de cómo terminó la vez anterior.
+ *  · `murio` (lib/reporte.ts): true = terminó EN PRIMER PLANO sin marca de cierre; false = se cerró bien (segundo
+ *    plano, la recarga de la OTA con `reloadAsync`, un error de JS ya reportado); null = no se sabe.
+ *  · `motivoAndroid`: lo que Android anotó de ESA salida (ApplicationExitInfo, lib/salidasPrevias.ts y
+ *    modules/aura-camara): 'crash-nativo', 'crash', 'senal', 'la-persona', 'actualizada', 'memoria', 'otro'…
+ *    null/undefined si no hay (APK sin el módulo de la cámara versión 2, Android < 11, iOS).
+ *  · `bundle`: el JS (OTA) que corre AHORA; si la marca la puso otro, la app se reabrió con una actualización.
+ */
+export type SalidaAnterior = { murio: boolean | null; motivoAndroid?: string | null; bundle?: string | null };
+
+/** Los motivos de Android que son una caída de verdad (no «la persona la cerró», «se actualizó» ni «memoria»). */
+const CAIDA_ANDROID = /^(crash-nativo|crash|senal)$/;
+
+export type CausaCierre =
+  /** Prueba de caída: Android dice crash con la marca puesta. */
+  | 'caida'
+  /** Murió en primer plano sin marca de cierre y Android no dice nada: se cuenta (un golpe), no se castiga sola. */
+  | 'sospecha'
+  /** Se cerró bien: segundo plano, recarga de la OTA, la persona la deslizó, etc. */
+  | 'limpia'
+  /** Se reabrió con otro JS: la salida fue para aplicar una actualización. */
+  | 'ota'
+  /** No se sabe nada (sin la marca de reporte.ts): no se acusa a nadie. */
+  | 'sin-datos';
+
+/**
+ * ¿La salida anterior, con la marca de la guardia puesta, fue una caída de lo nativo? Solo `caida` y `sospecha`
+ * cuentan como golpe. Puro: lo prueban pruebas/camara/nativa.prueba.mjs y pruebas/voz/nativa.prueba.mjs.
+ */
+export function causaDelCierre(e: EstadoGuardia, s: SalidaAnterior): CausaCierre {
+  if (s.murio === false) return 'limpia';
+  if (e.bundle && s.bundle && e.bundle !== s.bundle) return 'ota';
+  const m = typeof s.motivoAndroid === 'string' ? s.motivoAndroid : '';
+  if (m) return CAIDA_ANDROID.test(m) ? 'caida' : 'limpia';
+  return s.murio === true ? 'sospecha' : 'sin-datos';
+}
+
+/**
+ * De las salidas que Android recuerda (lib/auraCamara.ts salidasNativas, la más nueva primero o en cualquier orden),
+ * el motivo de la que terminó el proceso DESPUÉS de poner la marca (`desde`). null si no hay ninguna así.
+ */
+export function motivoDeSalidaTrasMarca(lista: { motivo: string; ts: number }[] | null | undefined, desde: number | undefined): string | null {
+  if (!desde || !Array.isArray(lista)) return null;
+  let mejor: { motivo: string; ts: number } | null = null;
+  for (const s of lista) if (s && typeof s.ts === 'number' && typeof s.motivo === 'string' && s.ts >= desde && (!mejor || s.ts < mejor.ts)) mejor = s;
+  return mejor ? mejor.motivo : null;
+}
+
+/** «1 hora», «6 horas», «1 día», «3 días». */
+export function duracionEnPalabras(ms: number): string {
+  if (ms < DIA) {
+    const h = Math.max(1, Math.round(ms / HORA));
+    return `${h} ${h === 1 ? 'hora' : 'horas'}`;
+  }
+  const d = Math.round(ms / DIA);
+  return `${d} ${d === 1 ? 'día' : 'días'}`;
+}
+
+export type ArranqueGuardia = {
+  estado: EstadoGuardia;
+  /** Para /api/diag (reportarEstado): se apagó, un golpe, o se borró el apagado de la guardia anterior. */
+  aviso?: string;
+  /** Solo para las migas: una marca que quedó pero no fue caída (no cuenta). */
+  nota?: string;
+  /** Un golpe sin llegar a `golpesMax`: lo nativo no se usa en ESTA sesión (vuelve a probarse al reabrir). */
+  soloSesion?: boolean;
+};
+
+/**
+ * Al arrancar la app (una vez): lo que dejó la vez anterior. `salida` puede ser solo `murio` (boolean | null) o
+ * todo lo que se sabe (`SalidaAnterior`). Lo de una guardia anterior (sin `v`) se borra una vez, con aviso si estaba
+ * apagada: así la voz en vivo de José vuelve con esta OTA en vez del 14-oct.
+ */
+export function guardiaAlArrancar(eIn: EstadoGuardia, ahora: number, salida: boolean | null | SalidaAnterior, t: TextosGuardia = TEXTOS_CAMARA): ArranqueGuardia {
+  const s: SalidaAnterior = salida !== null && typeof salida === 'object' ? salida : { murio: salida as boolean | null };
+  if (eIn.v !== GUARDIA.version) {
+    const estaba = !!eIn.bloqueadaHasta && eIn.bloqueadaHasta > ahora;
+    return {
+      estado: { v: GUARDIA.version },
+      ...(estaba ? { aviso: `${t.nombre}: quito el apagado que dejó la guardia anterior (${(eIn.motivo || 'sin motivo').slice(0, 60)}); vuelve a usarse` } : {}),
+    };
+  }
+  const golpes = (eIn.golpes || []).filter((x) => ahora - x <= GUARDIA.ventanaGolpesMs);
+  const bloqueos = (eIn.bloqueos || []).filter((x) => ahora - x <= GUARDIA.ventanaBloqueosMs);
+  let bloqueadaHasta = eIn.bloqueadaHasta && eIn.bloqueadaHasta > ahora ? eIn.bloqueadaHasta : undefined;
+  let motivo = bloqueadaHasta ? eIn.motivo : undefined;
   let aviso: string | undefined;
-  if (murio !== false && e.montando) {
-    bloqueadaHasta = Math.max(bloqueadaHasta || 0, ahora + GUARDIA.bloqueoMontarMs);
-    motivo = `se cerró ${t.montar}`;
-    aviso = `${t.nombre}: la app se cerró ${t.montando}; la apago ${Math.round(GUARDIA.bloqueoMontarMs / DIA)} días en este teléfono`;
-  } else if (murio !== false && e.enUso) {
-    golpes.push(ahora);
-    if (golpes.length >= GUARDIA.golpesMax) {
-      bloqueadaHasta = Math.max(bloqueadaHasta || 0, ahora + GUARDIA.bloqueoGolpesMs);
-      motivo = `se cerró ${golpes.length} veces con la ${t.nombre}`;
-      aviso = `${t.nombre}: la app se cerró ${golpes.length} veces con ella encendida; la apago ${Math.round(GUARDIA.bloqueoGolpesMs / DIA)} días`;
-    } else aviso = `${t.nombre}: la app se cerró con ella encendida (1 aviso)`;
+  let nota: string | undefined;
+  let soloSesion = false;
+  const marca = eIn.montando ? 'montando' : eIn.enUso ? 'en-uso' : null;
+  if (marca) {
+    const causa = causaDelCierre(eIn, s);
+    const como = marca === 'montando' ? t.montando : 'con ella encendida';
+    if (causa === 'caida' || causa === 'sospecha') {
+      golpes.push(ahora);
+      const prueba = causa === 'caida' ? `Android: ${s.motivoAndroid}` : 'sin marca de cierre';
+      if (golpes.length >= GUARDIA.golpesMax) {
+        const dur = GUARDIA.bloqueosMs[Math.min(bloqueos.length, GUARDIA.bloqueosMs.length - 1)];
+        bloqueos.push(ahora);
+        bloqueadaHasta = Math.max(bloqueadaHasta || 0, ahora + dur);
+        motivo = `se cerró ${golpes.length} veces (la última ${marca === 'montando' ? t.montar : `con la ${t.nombre}`})`;
+        aviso = `${t.nombre}: la app se cerró ${golpes.length} veces con ella (la última ${como}, ${prueba}); la apago ${duracionEnPalabras(dur)} en este teléfono`;
+        golpes.length = 0;
+      } else {
+        soloSesion = true;
+        aviso = `${t.nombre}: la app se cerró ${como} (${prueba}; 1 aviso); en esta sesión va por la de siempre`;
+      }
+    } else nota = `${t.nombre}: la marca quedó de un cierre que no fue caída (${causa}${s.motivoAndroid ? `, Android: ${s.motivoAndroid}` : ''}); no cuenta`;
   }
   return {
-    estado: { ...(golpes.length ? { golpes } : {}), ...(bloqueadaHasta ? { bloqueadaHasta, motivo } : {}) },
+    estado: {
+      v: GUARDIA.version,
+      ...(golpes.length ? { golpes } : {}),
+      ...(bloqueos.length ? { bloqueos } : {}),
+      ...(bloqueadaHasta ? { bloqueadaHasta, motivo } : {}),
+    },
     ...(aviso ? { aviso } : {}),
+    ...(nota ? { nota } : {}),
+    ...(soloSesion ? { soloSesion } : {}),
   };
 }
 
-export const guardiaAlMontar = (e: EstadoGuardia, ahora: number): EstadoGuardia => ({ ...e, montando: ahora, enUso: undefined });
-export const guardiaAlSanar = (e: EstadoGuardia, ahora: number): EstadoGuardia => ({ ...e, montando: undefined, enUso: ahora });
+/** La marca antes de lo nativo; `bundle` = el JS (OTA) que corre ahora (para no culpar a una actualización). */
+export const guardiaAlMontar = (e: EstadoGuardia, ahora: number, bundle?: string | null): EstadoGuardia => {
+  const r: EstadoGuardia = { ...e, v: GUARDIA.version, montando: ahora, enUso: undefined };
+  if (bundle) r.bundle = bundle;
+  else delete r.bundle;
+  return r;
+};
+export const guardiaAlSanar = (e: EstadoGuardia, ahora: number): EstadoGuardia => ({ ...e, v: GUARDIA.version, montando: undefined, enUso: ahora });
 export const guardiaAlSoltar = (e: EstadoGuardia): EstadoGuardia => ({ ...e, montando: undefined, enUso: undefined });
 /** La cámara nueva falló sin cerrar la app (no abrió, sin cuadros): no bloquea días, solo la sesión. */
 export const guardiaBloqueada = (e: EstadoGuardia, ahora: number): boolean => !!e.bloqueadaHasta && e.bloqueadaHasta > ahora;

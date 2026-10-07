@@ -6,6 +6,7 @@
  * salta), cargando el paquete real: el caso de prueba es Minas de Oro, Comayagua, un distrito de
  * cobre y oro conocido, y el análisis tiene que encontrar lo que se sabe de él.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { claseDeRoca, geologiaDe, geologiaEnTexto, indiciosDe, roseta, rumboTexto, type Geologia } from '../server/electrum/geologia';

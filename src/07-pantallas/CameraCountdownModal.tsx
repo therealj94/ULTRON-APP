@@ -133,7 +133,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
       ctx.fillStyle = 'rgba(35, 37, 40, 0.7)';
       ctx.fillRect(24, height - 60, 220, 36);
       ctx.fillStyle = '#E0C27F';
-      ctx.font = '600 14px Figtree, system-ui, sans-serif';
+      ctx.font = '600 14px Manrope, system-ui, sans-serif';
       ctx.fillText(`AU-RA · ${new Date().toLocaleTimeString()}`, 36, height - 37);
 
       const dataUrl = canvas.toDataURL('image/png', 0.95);
@@ -342,7 +342,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 <button
                   type="button"
                   onClick={handleDownload}
-                  className="px-5 py-2.5 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-fondo) text-[13px] font-semibold flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all cursor-pointer"
+                  className="px-5 py-2.5 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-sobre-oro) text-[13px] font-semibold flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   <span>{downloadSuccess ? 'Guardada en Descargas' : 'Descargar'}</span>
@@ -380,7 +380,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                   type="button"
                   onClick={startCountdown}
                   disabled={Boolean(countdown !== null)}
-                  className="px-6 py-2.5 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-fondo) font-semibold text-sm flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                  className="px-6 py-2.5 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-sobre-oro) font-semibold text-sm flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
                   <span>{countdown !== null ? `En ${countdown}…` : 'Tomar foto'}</span>

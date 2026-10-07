@@ -96,7 +96,7 @@ export function CrearGenesis({ navigation, route }: Props) {
   return (
     <PantallaConCabecera
       titulo={tr('Crea tu Genesis ID', 'Create your Genesis ID')}
-      subtitulo={tr('Es gratis y toma unos minutos. Con él entras a AURA y a todo Orden Global.', 'It’s free and takes a few minutes. It opens AURA and all of Orden Global.')}
+      subtitulo={tr('Es gratis y toma unos minutos. Con él entras a AU-RA y a todo Orden Global.', 'It’s free and takes a few minutes. It opens AU-RA and all of Orden Global.')}
       onAtras={() => navigation.goBack()}
     >
       <View style={{ gap: MEDIDA.espacio.m }}>
@@ -131,7 +131,7 @@ export function CrearGenesis({ navigation, route }: Props) {
           n={3}
           icono="huella"
           retraso={180}
-          titulo={tr('Vuelves solo a AURA', 'You’re brought back to AURA')}
+          titulo={tr('Vuelves solo a AU-RA', 'You’re brought back to AU-RA')}
           texto={tr(
             'Al terminar, tu wallet te pide permiso y te trae de vuelta: entras sin hacer nada más. Si no vuelve sola, toca «Ya tengo mi Genesis ID».',
             'When you finish, your wallet asks for permission and brings you back: you’re in. If it doesn’t come back by itself, tap “I already have my Genesis ID”.'
@@ -143,7 +143,7 @@ export function CrearGenesis({ navigation, route }: Props) {
             titulo={tr('Crear mi Genesis ID', 'Create my Genesis ID')}
             icono="huella"
             onPress={() => navigation.navigate('Entrar', { reintentar: Date.now() })}
-            etiqueta={tr('Crear mi Genesis ID en mi wallet y volver a AURA', 'Create my Genesis ID in my wallet and come back to AURA')}
+            etiqueta={tr('Crear mi Genesis ID en mi wallet y volver a AU-RA', 'Create my Genesis ID in my wallet and come back to AU-RA')}
           />
           <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
           <Boton titulo={tr('Registrarme en la web', 'Sign up on the web')} icono="globo" variante="secundario" onPress={() => void abrirWebRegistro()} />

@@ -31,7 +31,7 @@ export function FilaVozEnVivo() {
   const detalle = !estado.remota
     ? tr('Apagada por ahora desde el servidor: se usa la voz de siempre.', 'Turned off for now from the server: the usual voice is used.')
     : estado.bloqueada
-      ? tr('Apagada unos días en este teléfono: la app se cerró con ella. Se usa la voz de siempre.', 'Off for a few days on this phone: the app closed while using it. The usual voice is used.')
+      ? tr('Apagada un rato en este teléfono: la app se cerró con ella. Se usa la voz de siempre y vuelve a probarse sola.', 'Off for a while on this phone: the app closed while using it. The usual voice is used and it will retry on its own.')
       : estado.fallo
         ? tr('No anduvo en esta sesión: se usa la de siempre hasta reabrir la app.', 'It didn’t work this session: the usual voice is used until you reopen the app.')
         : tr('Empieza a hablar sin esperar la frase entera. Si notas algo raro, apágala y vuelve la de siempre.', 'Starts speaking without waiting for the whole sentence. If something sounds off, turn it off to go back to the usual one.');

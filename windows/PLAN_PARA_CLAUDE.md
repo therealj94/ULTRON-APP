@@ -2,14 +2,14 @@
 
 > **Estado 30-sep-2026 (Claude):** entregado AURA para Windows 1.0 sobre esta base. Ver `windows/README.md`: notch nuevo con resortes, avatares 3D de la app, cerebro/voz/oído del mismo servidor AU-RA, Laya «windows» en el nodo y ligera en el .exe. Este plan queda como historial.
 
-Actualizado: 30 de septiembre de 2026. Responsable de producto: Medardo.
+Actualizado: 30 de septiembre de 2026. Responsable de producto: la junta.
 Repositorio: `therealj94/ULTRON-APP`. Rama: `codex/aura-windows-native`. PR: https://github.com/therealj94/ULTRON-APP/pull/85
 
 Este documento reemplaza el plan anterior de la preview 0.2. Las revisiones 0.2 y 0.3 son antecedentes históricos. Usa el código actual de esta rama y el README 0.4 como punto de partida.
 
-## Encargo de Medardo
+## Encargo de la junta
 
-Mejorar e instalar una app nativa Windows: notch negro compacto, centrado arriba, con su avatar AURA; expansión y animaciones suaves; conversación por voz; escritura y acciones sobre la computadora; asistente útil para preparar trabajo y documentos. Medardo pide ejecución y un ejecutable comprobado, no otra entrega limitada a un plan.
+Mejorar e instalar una app nativa Windows: notch negro compacto, centrado arriba, con su avatar AURA; expansión y animaciones suaves; conversación por voz; escritura y acciones sobre la computadora; asistente útil para preparar trabajo y documentos. La junta pide ejecución y un ejecutable comprobado, no otra entrega limitada a un plan.
 
 Mantener Windows como producto y entrenamiento independientes de AURA web/Android/iOS. Se puede compartir el generador Qwen mediante un servicio Windows con autenticación propia. No mezclar checkpoints, datos ni etiquetas con las apps. Trabajar en esta rama o una rama derivada; no fusionar a main automáticamente.
 
@@ -80,7 +80,7 @@ Abrir AURA desde Inicio. Tocar el avatar o Ctrl+Alt+Espacio. Probar primero abri
 
 Agregar reconocimiento de voz y una voz en español en Configuración de Windows, y revisar permisos de micrófono para apps de escritorio. Comprobar micrófono, salida de audio, interrupción y modo continuo con hardware real.
 
-Si Claude solo dispone de Linux, puede revisar código y preparar despliegue, pero no afirmar que instaló la aplicación en la PC de Medardo. Compilar/probar con Windows CI y entregar el EXE; registrar qué equipo Windows recibió realmente la instalación.
+Si Claude solo dispone de Linux, puede revisar código y preparar despliegue, pero no afirmar que instaló la aplicación en la PC de la junta. Compilar/probar con Windows CI y entregar el EXE; registrar qué equipo Windows recibió realmente la instalación.
 
 ## Prioridad 1 — conectar el Qwen real e instalar el servicio Windows
 
@@ -103,7 +103,7 @@ En AURA → Ajustes, introducir la URL HTTPS del gateway Windows y el token. La 
 
 ## Prioridad 2 — mejorar experiencia y control del escritorio
 
-- Conservar identidad del avatar AURA y diseño negro/dorado. Revisar tamaño, legibilidad, foco, movimiento reducido y alto contraste. Medardo necesita buen contraste y lectura clara.
+- Conservar identidad del avatar AURA y diseño negro/dorado. Revisar tamaño, legibilidad, foco, movimiento reducido y alto contraste. Quien la usa necesita buen contraste y lectura clara.
 - Verificar animaciones de expansión, escucha, pensamiento, habla y pausa; mostrar solo actividad real.
 - Añadir selector de monitor, manejo de pantalla completa y recuperación al desconectar una pantalla. Probar 100/150/200% DPI y pantallas pequeñas.
 - Revisar en Windows 11 moderno los títulos de pestañas de Bloc de notas: un cambio automático al escribir puede disparar la comprobación de documento. Resolver sin permitir escribir en un documento distinto.

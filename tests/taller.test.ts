@@ -1,3 +1,4 @@
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { textoAPdf } from '../lib/pdf';
@@ -5,7 +6,7 @@ import { despacharTaller, ejecutarAprobadoTaller, huellaTaller, parsePedido, VER
 
 /** Lo aprobado por la cuenta (revisión 10, MEDIO-C): el vínculo exacto con su huella, como lo deja la propuesta. */
 const aprobado = (accion: string, args: Record<string, unknown>) => {
-  const cuenta = 'jose@ordenglobal.test';
+  const cuenta = 'jose.h@ordenglobal.test';
   return { tipo: 'taller' as const, accion, args, cuenta, quien: 'jose', huella: huellaTaller({ cuenta, accion, args, version: VERSION_PROPUESTA_TALLER }), version: VERSION_PROPUESTA_TALLER };
 };
 import { agregarTarea, listarTareas, marcarTarea } from '../lib/tareas';
@@ -90,14 +91,14 @@ describe('Taller AU-RA', () => {
     if (prev !== undefined) process.env.TELEGRAM_BOT_TOKEN = prev;
   });
 
-  it('Carlos y Mayra no redespliegan ni hacen mantenimiento', async () => {
+  it('Carlos y Brenda no redespliegan ni hacen mantenimiento', async () => {
     const rC = await despacharTaller('redeploy', { quien: 'carlos' });
     assert.ok(rC.tools.includes('redeploy'));
     assert.match(rC.decir || '', /consulta/);
-    const rM = await despacharTaller('mantenimiento', { quien: 'mayra' });
+    const rM = await despacharTaller('mantenimiento', { quien: 'brenda' });
     assert.ok(rM.tools.includes('mantenimiento'));
     assert.match(rM.decir || '', /consulta/);
-    const rJ = await despacharTaller('cómo está el sistema', { quien: 'mayra' });
+    const rJ = await despacharTaller('cómo está el sistema', { quien: 'brenda' });
     assert.ok(rJ.tools.includes('sistema'));
     assert.equal(/consulta/.test(rJ.decir || ''), false);
   });

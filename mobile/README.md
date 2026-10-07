@@ -35,7 +35,7 @@ desinstálala primero. Versión: `app.json` `expo.version` = `package.json` `ver
 | `POST /api/stt` | Oído en el servidor propio (Whisper en Voicebox), solo si se elige «Nube» en Ajustes; por defecto el reconocimiento es el del teléfono. |
 | `POST /api/vision/analyze` | Nodo de visión: frames bajo demanda («qué ves») y etiquetas de la mesa (cada 60 s con alguien delante; cada 12 s solo en el respaldo sin detección nativa). |
 | `POST /api/memoria` | Hechos de largo plazo (`hecho`, `usuario`). **Requiere sesión**: pasa por `api()`, que renueva el token en 401 con las credenciales guardadas. |
-| `POST /api/ultron/entrar` · `biometric-login` · `salir` | Sesión de junta (`j.ordonez@` / `m.ordonez@ordenglobal.org`). Cabecera `x-ultron-sesion`. |
+| `POST /api/ultron/entrar` · `biometric-login` · `salir` | Sesión de junta (correos de la casa; el padrón vive en Render). Cabecera `x-ultron-sesion`. |
 | `GET /voz/<id>.mp3` | Clips grabados con la voz oficial (ver banco). |
 
 Contrato de emoción (`src/lib/emocion.ts`, copia de `lib/emocion.ts` del servidor): `neutral, feliz, risa, sorpresa, curioso,

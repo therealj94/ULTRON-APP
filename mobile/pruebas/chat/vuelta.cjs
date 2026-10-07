@@ -208,7 +208,7 @@ async function porLaApp(vuelta) {
     ({ r } = await porLaApp((est) => `${WEB}?error=${error}&estado=${est}`));
     ok(`error=${error} → ${codigo}, con mensaje`, r.ok === false && r.codigo === codigo && r.mensaje.length > 10, JSON.stringify(r));
   }
-  ok('gid-pendiente dice que entra con el mismo botón (no que cree otro)', /en verificación; cuando lo aprueben, entrás con este mismo botón/.test(GENESIS.errorDeWallet('gid-pendiente').mensaje));
+  ok('gid-pendiente dice que entra con el mismo botón (no que cree otro)', /en verificación; cuando lo aprueben, entras con este mismo botón/.test(GENESIS.errorDeWallet('gid-pendiente').mensaje));
   // Un error con otro estado no es de este pedido: no corta la espera (nadie ajeno cancela la entrada).
   rn.openURL = async () => {};
   const pe = GENESIS.entrarConGenesis();

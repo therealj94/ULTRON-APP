@@ -139,7 +139,7 @@ export function HojaConocer({ visible, onCerrar }: Props) {
     <Hoja
       visible={visible}
       onCerrar={onCerrar}
-      titulo={tr('Lo que sé de ti', 'What I know about you')}
+      titulo={tr('Lo que AURA aprendió de ti', 'What AURA learned about you')}
       subtitulo={tr('Lo que AURA fue aprendiendo al hablar contigo. Lo que borres aquí, lo olvida.', 'What AURA has learned talking with you. Whatever you erase here, she forgets.')}
     >
       {cargando ? (

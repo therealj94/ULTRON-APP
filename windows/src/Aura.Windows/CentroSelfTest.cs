@@ -21,7 +21,7 @@ internal static class CentroSelfTest
     static object Estado() => new
     {
         version = "prueba",
-        sesion = sesion ? new { nombre = "José Ordóñez", correo = "jose@ordenglobal.org", rol = "Junta Directiva · Orden Global", nivel = "junta", gid = "GEN-0001-0001-1" } : null,
+        sesion = sesion ? new { nombre = "José Herrera", correo = "jose.h@ordenglobal.org", rol = "Junta Directiva · Orden Global", nivel = "junta", gid = "GEN-0001-0001-1" } : null,
         avatar = "aura", idioma = "es", primeraVez,
         conexiones = new Dictionary<string, string?> { ["spotify"] = "jose@spotify.test", ["google"] = null, ["microsoft"] = null },
         cartera = new { direccion = "0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B" },
@@ -33,7 +33,7 @@ internal static class CentroSelfTest
         return metodo switch
         {
             "estado" => Estado(),
-            "entrar.clave" or "entrar.genesis" => Hecho(() => sesion = true, new { miembro = new { nombre = "José Ordóñez", correo = "jose@ordenglobal.org" } }),
+            "entrar.clave" or "entrar.genesis" => Hecho(() => sesion = true, new { miembro = new { nombre = "José Herrera", correo = "jose.h@ordenglobal.org" } }),
             "primeraVez.terminar" => Hecho(() => primeraVez = false, true),
             "ajustes.leer" => new { avatar = "aura", idioma = "es", escucha = "palabra", manosLibres = true, interrumpir = true, responderConVoz = true, ocultarEnPantallaCompleta = true,
                                    vozDeWindows = false, oidoDeWindows = false, avisosDeApps = true, avisosPrivados = false, avisosEnVoz = false, appsSilenciadas = new[] { "Teams" },
@@ -91,7 +91,7 @@ internal static class CentroSelfTest
             // Entrar con clave (muestra) → la guía.
             await w.Ejecutar("document.querySelectorAll('.panel-entrar button')[1].click()");
             await Task.Delay(400);
-            await w.Ejecutar("(()=>{const i=document.querySelectorAll('.panel-entrar input');i[0].value='jose@ordenglobal.org';i[1].value='x';document.querySelector('.panel-entrar form').requestSubmit();})()");
+            await w.Ejecutar("(()=>{const i=document.querySelectorAll('.panel-entrar input');i[0].value='jose.h@ordenglobal.org';i[1].value='x';document.querySelector('.panel-entrar form').requestSubmit();})()");
             await Task.Delay(2500);
             await w.Fotografiar(Path.Combine(carpeta, "02-guia.png"));
             for (int i = 0; i < 2; i++) { await w.Ejecutar("[...document.querySelectorAll('.panel-entrar .btn.acento')].pop().click()"); await Task.Delay(1200); }

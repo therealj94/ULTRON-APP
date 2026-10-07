@@ -11,6 +11,7 @@
  * hacia el modelo. Comprobar la función que arma el historial no alcanzaría: lo que importa es que
  * el turno los mande con su rol y que la pregunta llegue sola a `convocar`.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -52,9 +53,9 @@ test('guardar y recuperar el hilo', async (t) => {
 
   await t.test('el hilo de uno no es el del otro', () => {
     recordarHilo(claveHilo('jose', 'mesa'), 'lo mío', 'contestado a José');
-    recordarHilo(claveHilo('medardo', 'mesa'), 'lo suyo', 'contestado a Medardo');
+    recordarHilo(claveHilo('ramiro', 'mesa'), 'lo suyo', 'contestado a Ramiro');
     assert.equal(hiloDe(claveHilo('jose', 'mesa'))[0].texto, 'lo mío');
-    assert.equal(hiloDe(claveHilo('medardo', 'mesa'))[0].texto, 'lo suyo');
+    assert.equal(hiloDe(claveHilo('ramiro', 'mesa'))[0].texto, 'lo suyo');
   });
 
   await t.test('la mesa y Telegram son dos conversaciones de la misma persona', () => {

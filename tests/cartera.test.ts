@@ -6,6 +6,7 @@
  * del envío en los bloques, la comprobación del comprobante, el vigía del pago (con una cadena falsa), el
  * perfil con la cartera, la herramienta `cartera` del harness y las manos `cartera` y `pagar`.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -411,9 +412,9 @@ test('perfil: la cartera es una dirección 0x…40 hex, se borra con vacío y so
   assert.equal(con.cartera, ANA);
   const sin = P.aplicarCambios(con, (P.validarCambios({ cartera: '' }) as any).cambios);
   assert.equal('cartera' in sin, false);
-  await P.actualizarPerfil('jose@ordenglobal.com', { cartera: ANA });
+  await P.actualizarPerfil('jose.h@ordenglobal.com', { cartera: ANA });
   P._olvidarCachePerfiles();
-  assert.equal((await P.leerPerfil('jose@ordenglobal.com'))?.cartera, ANA);
+  assert.equal((await P.leerPerfil('jose.h@ordenglobal.com'))?.cartera, ANA);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

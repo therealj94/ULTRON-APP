@@ -9,6 +9,7 @@
  *    como terminado.
  *  · El inicio propone tres tareas reales del catálogo, y el catálogo no promete absolutos.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
@@ -36,7 +37,7 @@ const FRASES = [
   'mándame un pdf por whatsapp',
   'envía por telegram un pdf: faltan whatsapp, correo, llamada',
   'avisame urgente que se cayó el nodo',
-  'urgente: llamen a Medardo',
+  'urgente: llamen a Ramiro',
   'llámame y dime hola',
   'haz una llamada',
   'mándame audio del sistema',

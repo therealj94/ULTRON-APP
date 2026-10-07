@@ -11,7 +11,9 @@
  * pantalla no pide nada por su cuenta.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { fuente } from '../ui/tipografia';
+import { Letra as Text } from '../ui/Letra';
 import Animated, { cancelAnimation, FadeIn, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { emitir } from '../nucleo/contrato';
@@ -21,6 +23,8 @@ import { tr, useIdioma } from '../i18n';
 import * as RELEVO from './relevo';
 import * as CHATS from './chats';
 import { useBorradores } from './borradores';
+import { guardarLista, leerListaGuardada } from './listaGuardada';
+import { esDeLoGuardado } from './listaSinRed';
 import { usePulseSiHay } from './PulseProvider';
 import { Avatar } from './ui/Avatar';
 import { BotonChat } from './ui/BotonChat';
@@ -170,6 +174,9 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
   const s = useMemo(() => estilos(p), [p]);
   const ins = useSafeAreaInsets();
   const lista = CHATS.useLista();
+  // Acostado, el botón flotante tapaba «Aceptar» y las horas (auditoría A8): «Agregar a alguien» va en la cabecera.
+  const { width: anchoV, height: altoV } = useWindowDimensions();
+  const acostado = anchoV > altoV;
   const escriben = CHATS.useEscribiendo();
   const borradores = useBorradores();
   const [q, setQ] = useState('');
@@ -178,6 +185,26 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
   const [hoja, setHoja] = useState(false);
   const [respondiendo, setRespondiendo] = useState<Record<string, boolean>>({});
   const [lazos, setLazos] = useState<Record<string, string>>({});
+  /** Lo que se ve es lo último guardado en el teléfono (sin red): las filas sin vista previa y el aviso arriba. */
+  const [deGuardado, setDeGuardado] = useState(false);
+
+  // Sin red al abrir: lo de la última vez (pulse/listaGuardada.ts) en vez de «Agrega a alguien» (A3). Lo de
+  // verdad, cuando llega, lo reemplaza (CHATS.sembrarLista no pisa una lista traída del relevo).
+  useEffect(() => {
+    let vivo = true;
+    void leerListaGuardada(yo).then((g) => {
+      if (vivo && g && CHATS.sembrarLista(g.conversaciones)) setDeGuardado(true);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [yo]);
+  // Cada lista que trae el relevo se guarda (sin texto) y deja de ser «lo guardado».
+  useEffect(() => {
+    if (lista.error || !lista.conversaciones || lista.conversaciones.some((c) => esDeLoGuardado(c.ultimo))) return;
+    setDeGuardado(false);
+    guardarLista(yo, lista.conversaciones);
+  }, [lista, yo]);
   // Solo para redibujar las horas relativas («Ayer») al pasar la medianoche con la lista abierta.
   const [, setTic] = useState(0);
   useEffect(() => {
@@ -272,6 +299,7 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
   };
 
   const cargando = lista.conversaciones === null;
+  const sinRed = lista.error === 'sin-red';
   const vacio = !cargando && !items.length && !qn;
 
   const render = ({ item }: { item: Item }) => {
@@ -338,7 +366,7 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
                 </Text>
               ) : (
                 <Text style={[s.detalle, { flex: 1 }, sinLeer && { color: p.texto }]} numberOfLines={1}>
-                  {resumen(c.ultimo, yo) || tr('Empiecen a hablar', 'Start talking')}
+                  {(!esDeLoGuardado(c.ultimo) && resumen(c.ultimo, yo)) || detalleSinTexto(c.sinLeer, c.ultimo)}
                 </Text>
               )}
               {sinLeer ? (
@@ -399,19 +427,17 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
             }}
           >
             <Text style={s.titulo}>{tr('Chats', 'Chats')}</Text>
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                marginTop: 2,
-              }}
-            >
-              <Icono nombre="candado" tam={12} color={p.exito} grosor={2.2} />
-              <Text style={[s.detalle, { marginLeft: 4, marginTop: 0, color: p.texto3 }]} numberOfLines={1}>
-                {tr('Cifrado de punta a punta', 'End-to-end encrypted')}
-              </Text>
-            </View>
+            {/* Arriba de las pestañas no va el aviso del cifrado: WhatsApp y Correos no lo tienen (A2). Ese aviso va
+                dentro de PULSE2CHAT, debajo del buscador. */}
+            <Text style={[s.detalle, { marginTop: 2, color: p.texto3 }]} numberOfLines={1}>
+              {tr('Tus conversaciones en un solo lugar', 'All your conversations in one place')}
+            </Text>
           </View>
+          {acostado ? (
+            <Tocable onPress={() => setHoja(true)} etiqueta={tr('Agregar a alguien', 'Add someone')} hitSlop={8} style={s.botonCab}>
+              <Icono nombre="personaMas" color={p.texto} tam={22} grosor={2} />
+            </Tocable>
+          ) : null}
           <BotonAuraAlLado color={p.texto2} colorActivo={p.acentoTexto} />
         </View>
         {cambio ? <View style={{ marginTop: MEDIDA.espacio.m }}>{cambio}</View> : null}
@@ -425,7 +451,7 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="search"
-            style={s.buscadorTxt}
+            style={[s.buscadorTxt, fuente('regular')]}
             accessibilityLabel={tr('Buscar', 'Search')}
           />
           {buscando ? <ActivityIndicator size="small" color={p.acento} /> : null}
@@ -437,13 +463,28 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
         </View>
       </View>
       <AuraAlLado pantalla="chats" chat={null}>
-      {lista.error === 'sin-red' ? (
-        <View style={s.banda}>
-          <Text style={s.bandaTxt}>{tr('Sin conexión con el chat. Reintentando…', 'No connection to the chat. Retrying…')}</Text>
+      {sinRed ? (
+        <View style={s.banda} accessibilityRole="alert" accessibilityLiveRegion="polite">
+          <Icono nombre="alerta" tam={15} color={p.aviso} grosor={2} />
+          <Text style={[s.bandaTxt, { flex: 1 }]}>
+            {deGuardado || (lista.conversaciones?.length ?? 0) > 0
+              ? tr('Sin conexión. Te muestro lo último guardado; reintento solo.', 'Offline. Showing what was last saved; retrying on my own.')
+              : tr('Sin conexión con el chat. Reintentando…', 'No connection to the chat. Retrying…')}
+          </Text>
         </View>
-      ) : null}
+      ) : (
+        // El candado solo donde es verdad: PULSE2CHAT (no WhatsApp ni los correos).
+        <View style={s.cifrado}>
+          <Icono nombre="candado" tam={12} color={p.exito} grosor={2.2} />
+          <Text style={[s.detalle, { marginLeft: 6, marginTop: 0, color: p.texto3, fontSize: MEDIDA.letra.chica }]} numberOfLines={1}>
+            {tr('PULSE2CHAT va cifrado de punta a punta', 'PULSE2CHAT is end-to-end encrypted')}
+          </Text>
+        </View>
+      )}
       {cargando ? (
         <Esqueleto p={p} />
+      ) : vacio && sinRed ? (
+        <SinRed p={p} />
       ) : vacio ? (
         <Vacio p={p} onAgregar={() => setHoja(true)} />
       ) : (
@@ -473,7 +514,7 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
         />
       )}
       </AuraAlLado>
-      {vacio ? null : (
+      {vacio || acostado ? null : (
         <Tocable
           onPress={() => setHoja(true)}
           vibrar
@@ -487,6 +528,14 @@ function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo:
       {hoja ? <HojaAgregar yo={yo} onCerrar={() => setHoja(false)} onAbrir={onAbrir} /> : null}
     </View>
   );
+}
+
+/** La segunda línea de una fila sin vista previa: lo nuevo, o (sin red) que la vista previa llega al volver. */
+function detalleSinTexto(sinLeer: number, ultimo: RELEVO.Mensaje | null): string {
+  if (sinLeer > 1) return tr(`${sinLeer} mensajes nuevos`, `${sinLeer} new messages`);
+  if (sinLeer === 1) return tr('Mensaje nuevo', 'New message');
+  if (esDeLoGuardado(ultimo)) return tr('Sin conexión: la vista previa llega al volver', 'Offline: preview when back online');
+  return tr('Empiecen a hablar', 'Start talking');
 }
 
 function textoLazo(l: string): string {
@@ -548,6 +597,32 @@ function Esqueleto({ p }: { p: Paleta }) {
           </View>
         </View>
       ))}
+    </Animated.View>
+  );
+}
+
+/** Sin red y sin nada guardado: se dice tal cual, con «Reintentar» (nunca «Agrega a alguien»: puede tener muchos). */
+function SinRed({ p }: { p: Paleta }) {
+  const [probando, setProbando] = useState(false);
+  return (
+    <Animated.View entering={FadeIn.duration(MEDIDA.duracion.lenta)} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: MEDIDA.espacio.xxl, paddingBottom: 80 }}>
+      <View style={{ width: 96, height: 96, borderRadius: 48, backgroundColor: p.avisoFondo, alignItems: 'center', justifyContent: 'center' }}>
+        <Icono nombre="alerta" tam={44} color={p.aviso} grosor={1.6} />
+      </View>
+      <Text style={{ color: p.texto, fontSize: MEDIDA.letra.grande + 3, fontWeight: '700', marginTop: MEDIDA.espacio.xl, textAlign: 'center' }}>{tr('Sin conexión', 'No connection')}</Text>
+      <Text style={{ color: p.texto2, fontSize: MEDIDA.letra.cuerpo, lineHeight: 22, marginTop: MEDIDA.espacio.s, textAlign: 'center' }}>
+        {tr('No pude traer tus conversaciones. Aparecen aquí en cuanto vuelva el internet; reintento solo.', 'I couldn’t bring your chats. They show up here as soon as the internet is back; I retry on my own.')}
+      </Text>
+      <BotonChat
+        titulo={tr('Reintentar ahora', 'Retry now')}
+        variante="contorno"
+        cargando={probando}
+        onPress={() => {
+          setProbando(true);
+          void CHATS.refrescarLista().finally(() => setProbando(false));
+        }}
+        caja={{ marginTop: MEDIDA.espacio.xl }}
+      />
     </Animated.View>
   );
 }
@@ -714,7 +789,7 @@ function HojaAgregar({ yo, onCerrar, onAbrir }: { yo: string; onCerrar: () => vo
             autoFocus
             returnKeyType="send"
             onSubmitEditing={() => void enviar()}
-            style={s.campo}
+            style={[s.campo, fuente('regular')]}
           />
           {mensaje ? (
             <Text
@@ -808,9 +883,19 @@ function estilos(p: Paleta) {
       paddingVertical: 0,
     },
     banda: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: MEDIDA.espacio.s,
       backgroundColor: p.avisoFondo,
       paddingVertical: MEDIDA.espacio.s,
       paddingHorizontal: MEDIDA.espacio.l,
+    },
+    cifrado: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: MEDIDA.espacio.l,
+      paddingTop: MEDIDA.espacio.xs,
+      paddingBottom: MEDIDA.espacio.xs,
     },
     bandaTxt: {
       color: p.aviso,

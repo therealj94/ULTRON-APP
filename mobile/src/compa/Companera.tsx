@@ -58,6 +58,7 @@ import { destinoPaseo, msPaseo, pegarABorde, reubicar, yCarril, type Marco, type
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from './canales';
 import { estadoAvatar, estadoDesdeAnimo, gestoDeEvento, mismoEstado, toqueAvatar, type EstadoAvatar } from '../avatar3d/contrato';
 import { zona2D } from '../avatar3d/mapeo';
+import { ecoVisible, vozSonando } from '../avatar3d/sonando';
 import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
 import { haciaMarco, transicionMesa, type ModoVisible } from '../avatar3d/presencia';
 import { AvatarVivo } from '../avatar3d/AvatarVivo';
@@ -364,8 +365,13 @@ export function Companera() {
         despachar({ tipo: 'dijo', texto: m.texto, emocion: m.emocion, mostrar: pantalla.current !== 'mesa' });
       }),
       interrupcionVoz.escuchar(() => despachar({ tipo: 'interrupcion' })),
+      // La voz de la mesa: su boca se mueve solo con la voz que SUENA, no desde que la mesa decide hablar.
+      vozSonando.escuchar((s) => {
+        const e = ecoMesa.ultimo();
+        despachar({ tipo: 'mesa', ...ecoVisible(e, s), emocion: e.emocion });
+      }),
       ecoMesa.escuchar((e) => {
-        despachar({ tipo: 'mesa', hablando: e.hablando, pensando: e.pensando, emocion: e.emocion });
+        despachar({ tipo: 'mesa', ...ecoVisible(e, vozSonando.ahora()), emocion: e.emocion });
         // Con la mesa tapada, lo que dice su voz lo dice ella: su globito lo lee (en la mesa ya está la burbuja grande).
         if (e.texto && e.texto !== textoMesa.current) {
           textoMesa.current = e.texto;

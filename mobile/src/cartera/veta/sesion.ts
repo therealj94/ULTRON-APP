@@ -6,8 +6,12 @@
  * entrar con la cuenta de Veta Wallet, igual que en su app. Este cliente hace lo mismo que
  * veta-wallet-app/src/api.js, sin inventar nada:
  *
- *   · POST /auth/login {email, password} → JWT (vence a los ~40 min) + refreshToken (30 días).
+ *   · POST /auth/login {email, password} → JWT (vence a los ~40 min) + refreshToken (30 días: lo decide el backend
+ *     de Veta, no esta app).
  *   · POST /auth/refresh {refreshToken} → JWT nuevo, sin volver a pedir la contraseña.
+ *   · AQUÍ la sesión dura como mucho `SESION_MAX_MS` (7 días) desde que se entró con la contraseña: pasado eso se
+ *     borran JWT y refreshToken del teléfono y se pide entrar otra vez (con la huella guardada, un toque). Auditoría
+ *     del 7-oct (C-3): un refreshToken de 30 días en un asistente de voz es demasiado.
  *   · El JWT y el refreshToken viven en el llavero del sistema (expo-secure-store), con llaves PROPIAS de
  *     AURA y de cada dueño en AURA (ver abajo). La contraseña NO se guarda aquí: para no teclearla, se
  *     guarda aparte detrás de la huella o Face ID (veta/desbloqueo.ts), como en Veta Wallet.
@@ -34,6 +38,19 @@ export const VETA_API = 'https://vetawallet-1a2e38ac52b1.herokuapp.com';
 const LLAVE_TOKEN = 'aura.veta.token';
 const LLAVE_REFRESCO = 'aura.veta.refresco';
 const LLAVE_CORREO = 'aura.veta.correo';
+/** Cuándo se entró con la contraseña (ms): la sesión guardada no pasa de `SESION_MAX_MS` desde ahí. */
+const LLAVE_DESDE = 'aura.veta.desde';
+/** Lo más que dura en el teléfono una sesión de Veta (el refreshToken del backend dura 30 días). */
+export const SESION_MAX_MS = 7 * 24 * 3600_000;
+
+/**
+ * ¿La sesión guardada ya pasó su tope? Puro. Sin fecha (sesiones de antes de esta versión): no se corta de golpe; se
+ * le pone hoy como inicio (`fijarDesde`) y vale desde ahí.
+ */
+export function sesionCaducada(desde: number | null, ahora = Date.now(), max = SESION_MAX_MS): { caducada: boolean; fijarDesde?: number } {
+  if (!desde || !Number.isFinite(desde) || desde <= 0) return { caducada: false, fijarDesde: ahora };
+  return { caducada: ahora - desde > max };
+}
 /** Las de antes del dueño (y la huella de entonces, veta/desbloqueo.ts): no se sabe de quién eran. */
 const LLAVES_SIN_DUENO = [LLAVE_TOKEN, LLAVE_REFRESCO, LLAVE_CORREO, 'aura.veta.clave-biometrica', 'aura.veta.clave-biometrica-on'];
 /** La llave de un dueño (su seudónimo: el correo no queda en el llavero). */
@@ -42,6 +59,8 @@ export const llaveDe = (base: string, dueno: string) => `${base}.${dueno}`;
 let token: string | null = null;
 let refresco: string | null = null;
 let correo: string | null = null;
+/** Desde cuándo vale la sesión en memoria (LLAVE_DESDE): `renovar` no usa un refreshToken pasado el tope. */
+let desdeSesion: number | null = null;
 /** De quién y de qué generación es lo que hay en memoria (null = nada cargado para la de ahora). */
 let cargadoPara: { dueno: string; gen: number } | null = null;
 /** La cuenta de Veta en memoria: entrar, salir o que el servidor la cierre la cambian. */
@@ -103,6 +122,7 @@ alCambiarCuenta(() => {
   cuentaVeta++;
   cortarEnVuelo();
   token = refresco = correo = null;
+  desdeSesion = null;
   cargadoPara = null;
   avisar();
 });
@@ -175,14 +195,26 @@ export async function cargarSesion(): Promise<void> {
   if (cargadoPara && cargadoPara.gen === gen) return;
   if (!dueno) {
     token = refresco = correo = null;
+    desdeSesion = null;
     cargadoPara = { dueno: '', gen };
     avisar();
     return;
   }
   await descartarSinDueno();
-  const [tk, rt, mail] = await Promise.all([leer(llaveDe(LLAVE_TOKEN, dueno)), leer(llaveDe(LLAVE_REFRESCO, dueno)), leer(llaveDe(LLAVE_CORREO, dueno))]);
+  const [tk0, rt0, mail, desde] = await Promise.all([leer(llaveDe(LLAVE_TOKEN, dueno)), leer(llaveDe(LLAVE_REFRESCO, dueno)), leer(llaveDe(LLAVE_CORREO, dueno)), leer(llaveDe(LLAVE_DESDE, dueno))]);
   // Mientras se leía salió o entró otra persona, o ya se puso otra cosa (entró o salió de Veta): lo leído no va.
   if (!sigueVigente(gen) || (cargadoPara && cargadoPara.gen === gen)) return;
+  let tk = tk0;
+  let rt = rt0;
+  if (tk || rt) {
+    const c = sesionCaducada(Number(desde) || null);
+    if (c.caducada) {
+      // Pasó el tope: fuera JWT y refreshToken (el correo se queda para volver a entrar).
+      tk = rt = null;
+      void Promise.all([escribir(llaveDe(LLAVE_TOKEN, dueno), null), escribir(llaveDe(LLAVE_REFRESCO, dueno), null), escribir(llaveDe(LLAVE_DESDE, dueno), null)]);
+    } else if (c.fijarDesde) void escribir(llaveDe(LLAVE_DESDE, dueno), String(c.fijarDesde));
+    desdeSesion = tk || rt ? Number(desde) || c.fijarDesde || Date.now() : null;
+  } else desdeSesion = null;
   token = tk;
   refresco = rt;
   correo = mail;
@@ -216,12 +248,15 @@ async function fijar(v: VinculoVeta, tk: string | null, rt: string | null | unde
   token = tk;
   if (rt !== undefined) refresco = rt;
   if (mail !== undefined) correo = mail;
+  if (o.nueva) desdeSesion = tk ? Date.now() : null;
   cargadoPara = { dueno: v.dueno, gen: v.gen };
   const queda: VinculoVeta = { ...v, cuenta: cuentaVeta };
   await Promise.all([
     escribir(llaveDe(LLAVE_TOKEN, v.dueno), tk),
     rt !== undefined ? escribir(llaveDe(LLAVE_REFRESCO, v.dueno), rt) : null,
     mail !== undefined ? escribir(llaveDe(LLAVE_CORREO, v.dueno), mail) : null,
+    // Una cuenta nueva (entrar con la contraseña, o cerrarla): el tope de `SESION_MAX_MS` cuenta desde aquí.
+    o.nueva ? escribir(llaveDe(LLAVE_DESDE, v.dueno), tk ? String(Date.now()) : null) : null,
   ]);
   avisar();
   return queda;
@@ -273,6 +308,11 @@ async function renovar(v: VinculoVeta): Promise<Estado> {
   if (!vinculoVigente(v)) return 'vencida';
   if (tokenVivo()) return 'viva';
   if (!refresco) return 'sin';
+  // La app pudo quedar abierta más que el tope: pasado, no se renueva; se pide entrar otra vez.
+  if (desdeSesion && sesionCaducada(desdeSesion).caducada) {
+    await fijar(v, null, null, undefined, { nueva: true });
+    return 'sin';
+  }
   if (refrescando && refrescando.gen === v.gen && refrescando.cuenta === v.cuenta) return refrescando.p;
   const rt = refresco;
   const p: Promise<Estado> = (async (): Promise<Estado> => {
@@ -352,9 +392,10 @@ export async function salir(): Promise<void> {
   cuentaVeta++;
   cortarEnVuelo();
   token = refresco = correo = null;
+  desdeSesion = null;
   cargadoPara = { dueno, gen: generacionCuenta() };
   avisar();
-  if (dueno) await Promise.all([LLAVE_TOKEN, LLAVE_REFRESCO, LLAVE_CORREO].map((k) => escribir(llaveDe(k, dueno), null)));
+  if (dueno) await Promise.all([LLAVE_TOKEN, LLAVE_REFRESCO, LLAVE_CORREO, LLAVE_DESDE].map((k) => escribir(llaveDe(k, dueno), null)));
 }
 
 /* ── la tarjeta (las mismas rutas que la app de Veta Wallet) ─────────────────────────────── */

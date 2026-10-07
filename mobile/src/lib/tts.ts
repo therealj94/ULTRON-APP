@@ -30,7 +30,7 @@
  */
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsPcmUrl, ttsUrl } from './api';
+import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, renovarTokenVoz, sessionHeaders, ttsPcmUrl, ttsUrl } from './api';
 import { moduloVoz } from './auraVoz';
 import { CentralVoz, SonidoVivo, type FalloVoz, type Reproducible } from './sonidoVivo';
 import { cabecerasVoz, falloDeSesion } from './vozNativa';
@@ -503,7 +503,12 @@ async function fuenteDe(text: string, perf: Perf, emocion: Emocion, privado = fa
   return fetchSource(text, perf, emocion, privado, vecinos, voz, corte);
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId, corte?: CorteIO): Promise<AVPlaybackSource | null> {
+/**
+ * La frase entera en disco. `deLaPersona`: la voz de algo que la persona está esperando (una respuesta, una canción que
+ * pidió); si el token venció, la renovación puede pedir la huella (lib/permisoHuella.ts). Lo que se precarga
+ * (prefetchPhrases, prepararHabla) pasa false: no pregunta, falla callado y espera.
+ */
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId, corte?: CorteIO, deLaPersona = true): Promise<AVPlaybackSource | null> {
   // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
   if (callaPorConversacion || corte?.abortado) return null;
   // `voz`: habla otro que el avatar de la mesa (los anfitriones del recorrido, recorrido/).
@@ -512,14 +517,15 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
   if (privado) {
     // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
     // guarda el audio en su caché) y sin la caché de aquí.
-    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true, ...vecinosLimpios(vecinos) }, 40_000, corte);
+    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true, ...vecinosLimpios(vecinos) }, 40_000, corte, false, deLaPersona);
     return uri && !corte?.abortado ? { uri } : null;
   }
   const v = perf === 'sing' ? {} : vecinosLimpios(vecinos);
   const key = claveAudio(avatar, idioma, perf, emocion, text, v);
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
-  const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
+  let headers: Record<string, string> = { Accept: 'audio/*', ...(await sessionHeaders()) };
+  let renovado = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (corte?.abortado) return null;
     const path = tmpPath('ultron', 'wav');
@@ -529,6 +535,15 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
         // Abortada: ni se reintenta ni se guarda lo que haya quedado a medias.
         await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
         return null;
+      }
+      // La voz pide sesión (lo no guardado): con el token vencido se renueva una vez y se vuelve a pedir.
+      if (r.status === 401 && !renovado) {
+        renovado = true;
+        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+        if (!(await renovarTokenVoz(deLaPersona))) return null;
+        headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
+        attempt -= 1;
+        continue;
       }
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
@@ -542,7 +557,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
-        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, ...v }, 40_000, corte);
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, ...v }, 40_000, corte, false, deLaPersona);
         if (uri) guardarEnCache(key, uri);
         return uri && !corte?.abortado ? { uri } : null;
       }
@@ -559,9 +574,17 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
  * POST JSON → audio → disco. FileSystem.downloadAsync solo hace GET, así que /api/cantar y el POST de
  * /api/tts van por XHR (blob → base64 → archivo).
  */
-async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number, corte?: CorteIO): Promise<string | null> {
+async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number, corte?: CorteIO, renovado = false, deLaPersona = true): Promise<string | null> {
   const headers = await sessionHeaders();
   if (corte?.abortado) return null;
+  const r = await postAudio(url, body, timeoutMs, headers, corte);
+  // Token vencido (la voz, el canto o la oración que no estaban guardados piden sesión): se renueva una vez y se repite.
+  if (r === 401 && !renovado && !corte?.abortado && (await renovarTokenVoz(deLaPersona))) return downloadPost(url, body, timeoutMs, corte, true, deLaPersona);
+  return typeof r === 'string' ? r : null;
+}
+
+/** El POST de audio: la ruta del archivo, 401 si el servidor pidió sesión, o null. */
+function postAudio(url: string, body: Record<string, unknown>, timeoutMs: number, headers: Record<string, string>, corte?: CorteIO): Promise<string | 401 | null> {
   return new Promise((resolve) => {
     try {
       const xhr = new XMLHttpRequest();
@@ -583,6 +606,7 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
       xhr.onerror = () => resolve(null);
       xhr.ontimeout = () => resolve(null);
       xhr.onload = () => {
+        if (xhr.status === 401) return resolve(401);
         if (xhr.status !== 200 || !xhr.response) return resolve(null);
         const blob: Blob = xhr.response;
         const ct = String(xhr.getResponseHeader('content-type') || blob.type || '');
@@ -672,6 +696,11 @@ type PlayMeta = {
   kind?: EnvelopeKind;
   /** El reproductor confirmó que suena (primer aviso con isPlaying, sin haber terminado): una vez. */
   alSonar?: () => void;
+  /**
+   * La locución a la que pertenece este audio (un `speak`, un locutor, una canción): su primer «suena» la pasa a
+   * hablando en avatar3d/sonando.ts (la cara habla desde ahí, no desde que se pidió play).
+   */
+  locucion?: object;
 };
 
 /**
@@ -747,12 +776,13 @@ function playPrepared(sound: Reproducible, my: number, maxMs = 25_000, meta: Pla
     sound.setOnPlaybackStatusUpdate((st) => {
       if (done) return;
       if (!st.isLoaded) {
-        vozSonando.sonar(sound, false);
+        vozSonando.sonar(sound, false, meta.locucion);
         if ((st as any).error) end();
         return;
       }
       // El cuerpo habla mientras el reproductor dice que suena: no al pedir el audio, ni pausado o cargando.
-      vozSonando.sonar(sound, !!st.isPlaying && !st.didJustFinish);
+      // De otra generación (ya la callaron) no cuenta: un aviso tardío no reabre la boca.
+      vozSonando.sonar(sound, !!st.isPlaying && !st.didJustFinish && my === gen, meta.locucion);
       // El comienzo REAL de la voz: el primer aviso del reproductor diciendo que suena (no el play pedido).
       if (!confirmada && st.isPlaying && !st.didJustFinish && my === gen) {
         confirmada = true;
@@ -848,6 +878,16 @@ async function playSource(source: AVPlaybackSource | null, my: number, cb: Speak
   return true;
 }
 
+/**
+ * Una locución de un solo audio (canción, oración, un mp3): prepara desde que se pide hasta que suena, habla
+ * mientras suena y termina al final (avatar3d/sonando.ts). Devuelve la locución y cómo cerrarla.
+ */
+function locucionSuelta(): { locucion: object; cerrar: () => void } {
+  const locucion = {};
+  vozSonando.preparar(locucion, true);
+  return { locucion, cerrar: () => vozSonando.terminar(locucion) };
+}
+
 /** Una frase corta de la mesa («un momento», «de nada»), dicha en vivo por el avatar. */
 export async function speakFrase(id: FraseId, opts?: SpeakCallbacks & { emocion?: Emocion }): Promise<boolean> {
   return speak(frase(id), opts);
@@ -868,12 +908,14 @@ export async function speakUrl(pathOrUrl: string, opts?: SpeakCallbacks) {
   const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
   await stopSpeaking();
   const my = gen;
+  const loc = locucionSuelta();
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
   try {
-    return await playSource({ uri: url }, my, opts, 120_000);
+    return await playSource({ uri: url }, my, opts, 120_000, { locucion: loc.locucion });
   } finally {
+    loc.cerrar();
     endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
@@ -890,6 +932,7 @@ const songCache = new Map<string, string>();
 export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
   const my = gen;
+  const loc = locucionSuelta();
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
@@ -900,7 +943,7 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
     // de AU-RA: con otro avatar el servidor no lo sirve (la mesa lo explica antes de pedirlo).
     const key = `${avatar}|${idioma}|` + ('id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`);
     let uri = songCache.get(key) || null;
-    const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null };
+    const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null, locucion: loc.locucion };
     if (!uri) {
       opts?.onPreparing?.();
       uri = await downloadPost(CANTAR_ENDPOINT, { ...(req as Record<string, unknown>), avatar, idioma }, 55_000);
@@ -909,6 +952,7 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
     if (my !== gen) return false;
     return await playSource(uri ? { uri } : null, my, opts, 180_000, meta);
   } finally {
+    loc.cerrar();
     endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
@@ -923,6 +967,7 @@ const prayerCache = new Map<string, string>();
 export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
   const my = gen;
+  const loc = locucionSuelta();
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
@@ -930,7 +975,7 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
     const tema = (opts?.tema || '').trim();
     const avatar = avatarActual();
     const idioma = idiomaActual();
-    const meta: PlayMeta = { kind: 'pray' };
+    const meta: PlayMeta = { kind: 'pray', locucion: loc.locucion };
     const key = `${avatar}|${idioma}|tema:${tema}`;
     let uri = prayerCache.get(key) || null;
     if (!uri) {
@@ -941,6 +986,7 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
     if (my !== gen) return false;
     return await playSource(uri ? { uri } : null, my, opts, 300_000, meta);
   } finally {
+    loc.cerrar();
     endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
@@ -952,7 +998,7 @@ export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neu
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;
-      await fetchSource(p, 'speak', emocion, false, undefined, voz).catch(() => null);
+      await fetchSource(p, 'speak', emocion, false, undefined, voz, undefined, false).catch(() => null);
     }
   };
   await Promise.all([worker(), worker()]);
@@ -967,7 +1013,7 @@ export async function prepararHabla(text: string, o?: { emocion?: Emocion; voz?:
   const clean = cleanForSpeech(text);
   if (!clean || callaPorConversacion) return;
   const frases = splitSentences(clean);
-  await Promise.all(frases.map((f, i) => fetchSource(f, 'speak', o?.emocion || 'neutral', false, { previo: frases[i - 1], siguiente: frases[i + 1] }, o?.voz).catch(() => null)));
+  await Promise.all(frases.map((f, i) => fetchSource(f, 'speak', o?.emocion || 'neutral', false, { previo: frases[i - 1], siguiente: frases[i + 1] }, o?.voz, undefined, false).catch(() => null)));
 }
 
 export async function speak(
@@ -1045,7 +1091,7 @@ export async function speak(
       const primera = !spoke;
       if (!spoke) {
         spoke = true;
-        vozSonando.preparar(locucion, false);
+        // Todavía no suena (se manda a sonar): sigue «preparando» hasta que el reproductor lo confirme (locucion).
         opts?.onAudioStart?.();
       }
       // Por el nativo: la siguiente suena pegada a esta (sin hueco), si nada la invalidó.
@@ -1055,11 +1101,13 @@ export async function speak(
         text: sentences[i],
         kind: perf === 'sing' ? 'sing' : emocion === 'oracion' ? 'pray' : 'speak',
         alSonar: primera ? opts?.onSuena : undefined,
+        locucion,
       });
     }
     return spoke;
   } finally {
-    vozSonando.preparar(locucion, false);
+    // Terminó, la cortaron o no sonó nada: ni prepara ni habla (la cara deja de hablar en el acto).
+    vozSonando.terminar(locucion);
     if (nextPrepared) void nextPrepared.then((s) => s?.unloadAsync().catch(() => {}));
     endSpeak();
     if (my === gen) opts?.onEnd?.();
@@ -1127,6 +1175,8 @@ export class StreamSpeaker {
   private spoke = false;
   /** El sonido que puso ESTE locutor y suena ahora (cancelar lo calla; no toca el de nadie más). */
   private sonido: Reproducible | null = null;
+  /** Esta locución en avatar3d/sonando.ts: prepara desde la primera frase, habla desde que suena, termina al resolver. */
+  private readonly locucion = {};
   /** La frase siguiente, preparándose mientras suena la actual (o mientras termina el relleno). */
   private nextPrepared: { frase: FraseCola; p: Promise<Reproducible | null> } | null = null;
   private sources = new Map<string, Promise<Fuente | null>>();
@@ -1188,6 +1238,7 @@ export class StreamSpeaker {
     if (this.terminadoCon) return;
     this.terminadoCon = f;
     locutoresVivos.delete(this.vivo);
+    vozSonando.terminar(this.locucion);
     this.resolverFin(f);
   }
 
@@ -1329,6 +1380,8 @@ export class StreamSpeaker {
   }
 
   private enqueue(sentence: string) {
+    // Hay algo que decir y todavía no suena: la cara piensa (no habla) hasta la primera sílaba.
+    if (!this.spoke && this.vigente()) vozSonando.preparar(this.locucion, true);
     this.queue.push({ texto: sentence, previo: this.ultima, v: this.version });
     void this.source(sentence, this.ultima);
     this.ultima = sentence;
@@ -1388,6 +1441,7 @@ export class StreamSpeaker {
           text: frase.texto,
           kind: this.opts.emocion === 'oracion' ? 'pray' : 'speak',
           alSonar: primera ? () => this.vigente() && this.opts.onSuena?.() : undefined,
+          locucion: this.locucion,
         });
         if (this.sonido === sound) this.sonido = null;
       }

@@ -1,9 +1,10 @@
 /**
  * «OTRAS FORMAS DE ENTRAR»: el correo y la clave de AU-RA, la huella y el modo local de la mesa.
  *
- * La puerta principal es Genesis ID (src/app/pantallas/Entrar.tsx). Esto queda para la junta —las
- * cuentas de José y Medardo, que entran con su clave o con la huella— y para abrir la mesa sin
- * servidor. Toda la lógica de antes sigue igual (clave guardada que no se muestra, huella solo con la
+ * La puerta principal es Genesis ID (src/app/pantallas/Entrar.tsx). Esto queda para la junta —que entra
+ * con su clave o con la huella— y para abrir la mesa sin servidor. La lista NO enseña las cuentas de la
+ * junta (auditoría A6: sus nombres y correos se veían antes de entrar, a cualquiera con la APK): solo la que
+ * ya se usó en ESTE teléfono (la guardada en SecureStore) y «Otra cuenta». Toda la lógica de antes sigue igual (clave guardada que no se muestra, huella solo con la
  * clave guardada, modo local si el servidor no contesta, crear cuenta y recuperar la clave); cambia
  * cómo se ve: la cabecera grande que colapsa, las cuentas en una lista del sistema y los campos, los
  * botones y los colores del sistema de diseño (claro u oscuro, según el tema).
@@ -19,11 +20,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { de, tr, useIdioma } from '../i18n';
-import { DESK_USERS, findDeskUserByEmail, normalizeDeskEmail, type DeskUser, type SessionUser } from '../config';
+import { findDeskUserByEmail, normalizeDeskEmail, type DeskUser, type SessionUser } from '../config';
 import { loginBiometric, loginClave, olvideClave, pedirCuenta } from '../lib/api';
 import { cancelarIntento, confirmarIntento, empezarIntento, esVencida, intentoVigente, type Intento } from '../lib/intentoEntrada';
 import { miga } from '../lib/reporte';
-import { getFingerprintUnlock, loadCreds, saveCreds, setFingerprintUnlock } from '../lib/storage';
+import { claveGuardadaCoincide, desbloquearConHuella, getFingerprintUnlock, loadCreds, saveCreds, setFingerprintUnlock } from '../lib/storage';
 import { AVATARES } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
 import { MEDIDA, useTema } from '../nucleo/tema';
@@ -34,6 +35,8 @@ type Props = {
   onAuthenticated: (user: SessionUser, intento: Intento) => void;
   /** Volver a la entrada con Genesis ID (desde la primera fase). */
   onAtras?: () => void;
+  /** Lo que se dice al llegar (la intro: la sesión terminó y hay clave o huella guardada). */
+  avisoInicial?: string;
 };
 
 type Fase = 'pick' | 'clave' | 'quick' | 'crear' | 'olvide';
@@ -45,7 +48,12 @@ const OTRO_TEMPLATE: DeskUser = {
   role: 'Junta Directiva · Orden Global',
 };
 
-/** La inicial en su círculo dorado (las cuentas de la junta en la lista). */
+/** «A, B, C y D»: los avatares tal como están en el catálogo (antes la frase olvidaba a ANT-ONIO). */
+function enLista(nombres: string[], y: string): string {
+  return nombres.length < 2 ? nombres.join('') : `${nombres.slice(0, -1).join(', ')} ${y} ${nombres[nombres.length - 1]}`;
+}
+
+/** La inicial en su círculo dorado (la cuenta de este teléfono en la lista). */
 function Inicial({ letra }: { letra: string }) {
   const tema = useTema();
   return (
@@ -57,11 +65,14 @@ function Inicial({ letra }: { letra: string }) {
   );
 }
 
-export function LoginScreen({ onAuthenticated, onAtras }: Props) {
+export function LoginScreen({ onAuthenticated, onAtras, avisoInicial }: Props) {
   // El idioma se elige en la entrada: toda la pantalla se redibuja al cambiarlo.
   useIdioma();
   const tema = useTema();
-  const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0]);
+  // Sin cuenta elegida hasta saber cuál se usó aquí: nunca la fila de otra persona por omisión.
+  const [selected, setSelected] = useState<DeskUser>(OTRO_TEMPLATE);
+  /** La cuenta que ya entró en este teléfono (de lo guardado), la única que se ofrece en la lista. */
+  const [usada, setUsada] = useState<DeskUser | null>(null);
   const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<Fase>('pick');
   // Crear cuenta y olvidé la clave: sus propios campos y su respuesta del servidor.
@@ -71,13 +82,13 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   const [correoOlvido, setCorreoOlvido] = useState('');
   const [listo, setListo] = useState('');
   const [clave, setClave] = useState('');
-  /** Hay una clave guardada en este teléfono (no se muestra; la usan la huella y la renovación). */
+  /** Hay una clave guardada en este teléfono detrás de la huella (no se muestra; la sueltan la huella y la renovación). */
   const [claveGuardada, setClaveGuardada] = useState(false);
   const [remember, setRemember] = useState(true);
   const [useFingerprint, setUseFingerprint] = useState(true);
   const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(avisoInicial || '');
   const [savedName, setSavedName] = useState<string | null>(null);
   /** La entrada en curso de esta pantalla (la última que tocó «Entrar»). */
   const intentoRef = useRef<Intento | null>(null);
@@ -158,25 +169,35 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
         const huellaActiva = !!fp?.enabled && (!fp.correo || normalizeDeskEmail(fp.correo) === correo);
         // El interruptor muestra lo que quedó guardado: si se apagó, sigue apagado.
         setUseFingerprint(huellaActiva);
+        // Hay clave guardada: detrás de la huella, o la de la 5.6.0 en claro (`legado`), que pasa detrás de la huella la
+        // primera vez que se entra con ella (lib/credsSeguras.ts). Con la huella activa y SIN ninguna de las dos, se
+        // escribe una vez y queda guardada de verdad.
+        const hayClave = !!creds.conHuella || !!creds.legado;
+        const pideUnaVez = huellaActiva && !hayClave && hw && enrolled;
+        if (pideUnaVez) setError(tr('Escribe tu clave una vez: la huella vuelve a funcionar y tu clave queda guardada de forma segura.', 'Type your password once: the fingerprint works again and your password is stored securely.'));
         const match = findDeskUserByEmail(correo);
         if (match) {
           setSelected(match);
+          setUsada(match);
           // La clave guardada NO se escribe en el campo: con ella a la vista, cualquiera con el teléfono
           // tocaba «Usar clave» y entraba. Se sigue usando por detrás (huella, renovar la sesión).
-          setClaveGuardada(!!creds.clave);
+          setClaveGuardada(hayClave);
           setSavedName(match.name);
           setRemember(true);
-          if (creds.correo !== match.correo && creds.clave) {
+          if (creds.correo !== match.correo) {
             await saveCreds({ ...creds, correo: match.correo, name: match.name });
           }
           if (!vivo) return;
-          setPhase(huellaActiva && hw && enrolled ? 'quick' : 'clave');
+          setPhase(huellaActiva && hayClave && hw && enrolled ? 'quick' : 'clave');
         } else {
           setSelected(OTRO_TEMPLATE);
+          setUsada({ ...OTRO_TEMPLATE, name: creds.name || correo.split('@')[0], correo });
           setCustomCorreo(correo);
-          setClaveGuardada(!!creds.clave);
+          setClaveGuardada(hayClave);
           setSavedName(creds.name || correo);
-          setPhase('clave');
+          setRemember(true);
+          // La cuenta recordada en este teléfono abre con la huella igual que las de la lista de antes.
+          setPhase(huellaActiva && hayClave && hw && enrolled ? 'quick' : 'clave');
         }
       } catch {
         // Lo guardado no se pudo leer o actualizar: se entra con la clave escrita (el aviso sale en esa fase;
@@ -195,25 +216,29 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
    * Guarda lo de esta entrada y avisa que entró, como UN paso del intento: si ya no es el último (otra
    * entrada empezó, o «atrás»), no guarda nada más, suelta lo que alcanzó a guardar y no entra.
    */
-  const finish = async (user: SessionUser, persist: { clave: string } | undefined, intento: Intento) => {
+  const finish = async (user: SessionUser, persist: { clave: string; deHuella?: boolean } | undefined, intento: Intento) => {
     const correo = normalizeDeskEmail(user.correo);
     const session = { ...user, correo };
     const guardado = await confirmarIntento(intento, async (e) => {
       try {
         await e.sesion(session);
         if (!e.sigue()) return false;
-        if (remember && persist?.clave) {
-          await saveCreds({ correo, clave: persist.clave, name: session.name });
+        // La clave solo se guarda detrás de la huella (lib/storage.ts: el sistema la pide para guardarla y para
+        // soltarla). Si vino de ahí (`deHuella`), ya está: no se vuelve a guardar (sería otra huella más).
+        const conHuella = remember && !!persist?.clave && useFingerprint && fingerprintAvailable;
+        let quedo = conHuella && !!persist?.deHuella;
+        if (remember && persist?.clave && !persist.deHuella) {
+          quedo = await saveCreds({ correo, clave: persist.clave, name: session.name, conHuella });
         } else if (!remember) {
           await saveCreds(null);
         }
         if (!e.sigue()) return false;
-        // Huella: se enciende solo con la clave guardada (la usa para entrar); apagar el interruptor, o no
-        // guardar la contraseña, la apaga de verdad (antes se quedaba activa y seguía pidiendo la huella).
+        // Huella: se enciende solo con la clave guardada detrás de ella; apagar el interruptor, no guardar la
+        // contraseña, o que el sistema no la haya guardado (canceló, sin bloqueo de pantalla), la apaga de verdad.
         if (!remember || (fingerprintAvailable && !useFingerprint)) {
           await setFingerprintUnlock(false);
         } else if (persist?.clave && useFingerprint && fingerprintAvailable) {
-          await setFingerprintUnlock(true, correo);
+          await setFingerprintUnlock(quedo, correo);
         }
       } catch (err) {
         // Ya se verificó quién es: si el teléfono no deja guardar, entra igual (la próxima vez pedirá la clave).
@@ -230,22 +255,27 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
     setLoading(true);
     setError('');
     try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: tr('Desbloquear AU-RA FP', 'Unlock AU-RA FP'),
-        cancelLabel: tr('Usar clave', 'Use password'),
-        disableDeviceFallback: false,
-        biometricsSecurityLevel: 'weak',
-      });
-      if (!result.success) {
+      // La huella ES la llave: el sistema no suelta la clave guardada sin ella (antes era una pantalla delante
+      // de una clave guardada en claro; auditoría del 7-oct, M-9). Si la clave es la que dejó la 5.6.0 en claro, esta
+      // huella es la que la pasa detrás de la huella (lib/credsSeguras.ts `desbloquear`): sin dejar a nadie fuera.
+      const creds = await loadCreds();
+      if (!creds?.conHuella && !creds?.legado) {
+        setError(tr('Escribe tu clave una vez para volver a usar la huella.', 'Type your password once to use the fingerprint again.'));
+        setPhase('clave');
+        return;
+      }
+      const abierta = await desbloquearConHuella(tr('Desbloquear AU-RA', 'Unlock AU-RA'));
+      const guardada = abierta?.clave;
+      if (!guardada) {
         setError(tr('Huella cancelada. Usa tu clave.', 'Fingerprint cancelled. Use your password.'));
         setPhase('clave');
         return;
       }
-      const creds = await loadCreds();
+      if (creds.legado) miga(abierta.migrada ? 'entrada: la clave de antes pasó detrás de la huella' : 'entrada: la clave de antes sigue sin huella (no se pudo guardar con huella)');
       const user =
-        findDeskUserByEmail(creds?.correo || '') ||
+        findDeskUserByEmail(creds.correo || '') ||
         (activeUser.correo ? activeUser : selected);
-      await enterBiometric(user, creds?.clave);
+      await enterBiometric(user, guardada, true);
     } catch (e: any) {
       setError(e?.message || tr('No se pudo usar la huella', 'Couldn’t use the fingerprint'));
       setPhase('clave');
@@ -258,16 +288,16 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   /**
    * «Entrar solo al escritorio»: pide sesión al servidor si responde; si no hay red (o el servidor cae)
    * entra igual en modo local — gestos, banco de voz y memoria de la mesa funcionan sin cerebro, y la app
-   * renueva la sesión sola con las credenciales guardadas en cuanto el servidor vuelve.
+   * renueva la sesión con la clave guardada detrás de la huella (la pide) en cuanto el servidor vuelve.
    */
-  const enterBiometric = async (user: DeskUser, maybeClave?: string) => {
+  const enterBiometric = async (user: DeskUser, maybeClave?: string, deHuella = false) => {
     if (!user.correo) {
       setError(tr('Escribe el correo del miembro', 'Type the member’s email'));
       return;
     }
     setLoading(true);
     setError('');
-    const persist = maybeClave || clave ? { clave: maybeClave || clave } : undefined;
+    const persist = maybeClave ? { clave: maybeClave, deHuella } : clave ? { clave } : undefined;
     const intento = nuevoIntento();
     try {
       const data = await loginBiometric({ name: user.name, role: user.role, correo: normalizeDeskEmail(user.correo) }, 8_000, intento);
@@ -307,6 +337,19 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
    */
   const entrarEscritorio = async () => {
     setError('');
+    // Con la clave detrás de la huella (o la de la 5.6.0), la huella que la suelta ES la confirmación (una sola vez).
+    const creds = await loadCreds().catch(() => null);
+    if (!clave && (creds?.conHuella || creds?.legado) && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(activeUser.correo)) {
+      // La de la 5.6.0 pasa detrás de la huella solo si la persona tiene la huella activa; si nunca la activó, se
+      // confirma que es el dueño del teléfono y su clave se queda como estaba (lib/credsSeguras.ts).
+      const abierta = await desbloquearConHuella(tr('Confirma que eres tú', 'Confirm it’s you'), { migrar: useFingerprint && fingerprintAvailable });
+      if (!abierta?.clave) {
+        setError(tr('Necesito confirmar que eres tú para abrir la mesa.', 'I need to confirm it’s you to open the desk.'));
+        return;
+      }
+      await enterBiometric(activeUser, abierta.clave, true);
+      return;
+    }
     try {
       const nivel = await LocalAuthentication.getEnrolledLevelAsync();
       if (nivel !== LocalAuthentication.SecurityLevel.NONE) {
@@ -320,9 +363,7 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
       setError(tr('No pude confirmar que eres tú. Escribe tu clave.', 'Couldn’t confirm it’s you. Type your password.'));
       return;
     }
-    const creds = await loadCreds();
-    const guardada = creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(activeUser.correo) ? creds.clave : undefined;
-    await enterBiometric(activeUser, clave || guardada || undefined);
+    await enterBiometric(activeUser, clave || undefined);
   };
 
   const enterWithClave = async () => {
@@ -356,8 +397,10 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
       if (!status || status >= 500) {
         // Servidor sin respuesta: solo dejo pasar si la clave coincide con la última validada en este teléfono.
         const creds = await loadCreds();
+        // La huella de la clave (PBKDF2), o la de la 5.6.0 tal cual mientras no pase detrás de la huella.
+        const coincide = !!creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo) && (await claveGuardadaCoincide(creds.correo, clave));
         if (!deAhora(intento)) return;
-        if (creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo) && creds.clave === clave) {
+        if (creds && coincide) {
           await finish({ name: creds.name || user.name, role: user.role, correo: user.correo }, { clave }, intento);
           return;
         }
@@ -372,9 +415,10 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
 
   const pickUser = (u: DeskUser) => {
     abandonarIntento();
-    setSelected(u);
+    // «Otra cuenta» llega vacía; la usada en este teléfono con un correo fuera de la lista, ya escrita.
+    setSelected(u.id === 'otro' ? OTRO_TEMPLATE : u);
+    if (u.id === 'otro') setCustomCorreo(u.correo);
     setError('');
-    if (u.id === 'otro') setCustomCorreo('');
     setPhase('clave');
   };
 
@@ -476,11 +520,9 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   } else if (phase === 'pick') {
     contenido = (
       <View style={est.bloque}>
-        <Grupo titulo={tr('Cuentas de la junta', 'Board accounts')}>
-          {DESK_USERS.map((u) => (
-            <Fila key={u.id} titulo={u.name} detalle={u.correo} derecha={<Inicial letra={u.name[0]} />} onPress={() => pickUser(u)} />
-          ))}
-          <Fila titulo={tr('Otra cuenta', 'Another account')} detalle={tr('Entrar con otro correo', 'Sign in with another email')} icono="correo" onPress={() => pickUser(OTRO_TEMPLATE)} />
+        <Grupo titulo={usada ? tr('En este teléfono', 'On this phone') : undefined}>
+          {usada ? <Fila titulo={usada.name} detalle={usada.correo} derecha={<Inicial letra={usada.name[0] || '?'} />} onPress={() => pickUser(usada)} /> : null}
+          <Fila titulo={tr('Otra cuenta', 'Another account')} detalle={tr('Entrar con tu correo y tu clave', 'Sign in with your email and password')} icono="correo" onPress={() => pickUser(OTRO_TEMPLATE)} />
         </Grupo>
         <Grupo>
           <Fila titulo={tr('Pedir acceso', 'Request access')} detalle={tr('AU-RA es privada: lo aprueba Orden Global', 'AU-RA is private: Orden Global approves it')} icono="mas" onPress={() => irA('crear')} />
@@ -495,7 +537,7 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           ))}
         </View>
         <Texto v="chica" color="texto3" centro>
-          {tr('Guardián, AU-RA y Claudio te esperan adentro.', 'Guardian, AU-RA and Claudio are waiting inside.')}
+          {tr(`${enLista(AVATARES.map((a) => de(a.nombre)), 'y')} te esperan adentro.`, `${enLista(AVATARES.map((a) => de(a.nombre)), 'and')} are waiting inside.`)}
         </Texto>
       </View>
     );
@@ -543,10 +585,11 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           />
         </Grupo>
         {selected.id === 'otro' && (
-          <Campo etiqueta={tr('Correo', 'Email')} value={customCorreo} onChangeText={setCustomCorreo} placeholder="correo@ordenglobal.org" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+          <Campo testID="entrar-correo" etiqueta={tr('Correo', 'Email')} value={customCorreo} onChangeText={setCustomCorreo} placeholder="correo@ordenglobal.org" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
         )}
         <Campo
           etiqueta={tr('Clave', 'Password')}
+          testID="entrar-clave"
           clave
           value={clave}
           onChangeText={setClave}
@@ -556,9 +599,9 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           returnKeyType="go"
         />
         <Grupo>
-          <Fila titulo={tr('Guardar la clave en este teléfono', 'Save the password on this phone')} icono="candado" derecha={<Interruptor valor={remember} onCambiar={setRemember} etiqueta={tr('Guardar la clave', 'Save the password')} />} />
+          <Fila titulo={tr('Recordarme en este teléfono', 'Remember me on this phone')} icono="candado" derecha={<Interruptor valor={remember} onCambiar={setRemember} etiqueta={tr('Recordarme', 'Remember me')} />} />
           {fingerprintAvailable && (
-            <Fila titulo={tr('Entrar con huella la próxima vez', 'Use fingerprint next time')} icono="huella" derecha={<Interruptor valor={useFingerprint} onCambiar={setUseFingerprint} etiqueta={tr('Entrar con huella', 'Sign in with fingerprint')} />} />
+            <Fila titulo={tr('Entrar con huella la próxima vez', 'Use fingerprint next time')} detalle={tr('Tu clave queda en el llavero del teléfono y solo sale con tu huella.', 'Your password stays in the phone’s keychain and only comes out with your fingerprint.')} icono="huella" derecha={<Interruptor valor={useFingerprint} onCambiar={setUseFingerprint} etiqueta={tr('Entrar con huella', 'Sign in with fingerprint')} />} />
           )}
         </Grupo>
         {errorVisible}

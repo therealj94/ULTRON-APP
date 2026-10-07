@@ -29,7 +29,7 @@ type Hoja = { titulo: () => string; texto: () => string; Ilustracion: typeof Ilu
 
 const HOJAS: Hoja[] = [
   {
-    titulo: () => tr('AURA habla contigo', 'AURA talks with you'),
+    titulo: () => tr('AU-RA habla contigo', 'AU-RA talks with you'),
     texto: () =>
       tr(
         'Háblale como a una amiga: te escucha, te contesta con su voz y te acompaña mientras chateas.',
@@ -47,7 +47,7 @@ const HOJAS: Hoja[] = [
     Ilustracion: IlustracionChat,
   },
   {
-    titulo: () => tr('Tu AURA te conoce y te ayuda', 'Your AURA knows you and helps'),
+    titulo: () => tr('Tu AU-RA te conoce y te ayuda', 'Your AU-RA knows you and helps'),
     texto: () =>
       tr(
         'Se acuerda de tus cumpleaños, tus gustos y tu gente. Te escribe mensajes, organiza tu día y más.',

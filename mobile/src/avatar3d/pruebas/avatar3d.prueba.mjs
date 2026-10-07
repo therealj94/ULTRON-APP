@@ -298,35 +298,94 @@ prueba('mesa: ¿suena la voz? (lib/tts → avatar3d/sonando): de que el audio su
   const vistos = [];
   const quitar = v.escuchar(() => vistos.push(v.ahora()));
   const inicial = v.ahora();
-  assert.deepEqual(inicial, { sonando: false, preparando: false });
+  assert.deepEqual(inicial, { sonando: false, preparando: false, hablando: false });
   assert.equal(v.ahora(), inicial, 'la misma foto mientras no cambia (useSyncExternalStore)');
   const loc = {};
   v.preparar(loc, true);
-  assert.deepEqual(v.ahora(), { sonando: false, preparando: true }, 'pidió el audio: todavía no suena');
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: true, hablando: false }, 'pidió el audio: todavía no suena');
   const a = {};
   const b = {};
   v.sonar(a, true);
   v.preparar(loc, false);
-  assert.deepEqual(v.ahora(), { sonando: true, preparando: false });
+  assert.deepEqual(v.ahora(), { sonando: true, preparando: false, hablando: true });
   v.sonar(a, true);
   v.sonar(b, true);
   v.sonar(a, false);
   assert.equal(v.ahora().sonando, true, 'otro audio sigue sonando');
   v.sonar(b, false);
   assert.equal(v.ahora().sonando, false, 'terminó (o se pausó, o falló)');
+  assert.equal(v.ahora().hablando, false, 'sin locución que siga, callar es dejar de hablar');
   v.sonar(a, false);
   v.preparar(loc, true);
   v.sonar(b, true);
   v.callar();
-  assert.deepEqual(v.ahora(), { sonando: false, preparando: false }, 'stopSpeaking: todo calla de golpe');
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: false, hablando: false }, 'stopSpeaking: todo calla de golpe');
   assert.deepEqual(
-    vistos.map((x) => `${x.sonando ? 'S' : '-'}${x.preparando ? 'P' : '-'}`),
-    ['-P', 'SP', 'S-', '--', '-P', 'SP', '--'],
+    vistos.map((x) => `${x.sonando ? 'S' : '-'}${x.preparando ? 'P' : '-'}${x.hablando ? 'H' : '-'}`),
+    ['-P-', 'SPH', 'S-H', '---', '-P-', 'SPH', '---'],
     'avisa solo cuando cambia'
   );
   quitar();
   v.sonar(a, true);
   assert.equal(vistos.length, 7, 'desanotado no recibe');
+});
+
+prueba('mesa: la CARA habla desde que el reproductor confirma que suena, no al decidir hablar (José, 7-oct)', async () => {
+  const { VozSonando, PAUSA_HABLA_MS, caraConVoz, ecoVisible } = await import('../sonando.ts');
+  let ahora = 1000;
+  const v = new VozSonando(() => ahora);
+  const loc = {};
+  const frase1 = {};
+  const frase2 = {};
+  v.preparar(loc, true);
+  assert.equal(v.ahora().hablando, false, 'pidió el audio (bajando): la cara NO habla todavía');
+  v.sonar(frase1, false, loc);
+  assert.equal(v.ahora().hablando, false, 'cargando (isPlaying false): todavía no');
+  v.sonar(frase1, true, loc);
+  assert.deepEqual(v.ahora(), { sonando: true, preparando: false, hablando: true }, 'el reproductor dice «suena»: habla');
+  // Hueco corto entre frases de la misma locución: sigue hablando (boca cerrada), sin parpadear a «piensa».
+  ahora += 2000;
+  v.sonar(frase1, false, loc);
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: false, hablando: true }, 'hueco corto: sigue hablando');
+  ahora += 150;
+  v.sonar(frase2, true, loc);
+  assert.equal(v.ahora().hablando, true);
+  // Hueco largo (la frase siguiente todavía no llegó del cerebro): vuelve a preparar.
+  ahora += 1000;
+  v.sonar(frase2, false, loc);
+  assert.equal(v.ahora().hablando, true, 'recién callada: dentro del hueco');
+  ahora += PAUSA_HABLA_MS + 1;
+  v.preparar(loc, true); // republica con el reloj de ahora (como haría el temporizador del hueco)
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: true, hablando: false }, 'hueco largo: deja de hablar y prepara');
+  // Termina la locución: false en el acto, aunque acabe de sonar.
+  v.sonar(frase2, true, loc);
+  assert.equal(v.ahora().hablando, true);
+  v.sonar(frase2, false, loc);
+  v.terminar(loc);
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: false, hablando: false }, 'terminó la locución: deja de hablar YA (sin esperar el hueco)');
+  // Interrumpida (stopSpeaking) mientras suena: false en el acto.
+  const loc2 = {};
+  v.preparar(loc2, true);
+  v.sonar(frase1, true, loc2);
+  assert.equal(v.ahora().hablando, true);
+  v.callar();
+  assert.equal(v.ahora().hablando, false, 'interrumpida: deja de hablar YA');
+
+  // La cara que se ve: hablar solo con voz; las expresiones no cambian.
+  assert.equal(caraConVoz('SPEAKING', false), 'THINKING', 'cara de hablar sin voz: piensa (preparando)');
+  assert.equal(caraConVoz('SING', false), 'THINKING', 'cantar antes de que suene la canción: piensa');
+  assert.equal(caraConVoz('PRAY', false), 'THINKING', 'orar antes de que suene la oración: piensa');
+  assert.equal(caraConVoz('SPEAKING', true), 'SPEAKING');
+  assert.equal(caraConVoz('SING', true), 'SING');
+  for (const c of ['HAPPY', 'CONCERNED', 'LAUGH', 'IDLE', 'LISTENING', 'THINKING', 'SLEEPING']) assert.equal(caraConVoz(c, false), c, `${c} sin voz no cambia`);
+
+  // La compañera refleja la mesa: boca solo con voz; mientras la voz se prepara, piensa.
+  const callada = { sonando: false, preparando: true, hablando: false };
+  const suena = { sonando: true, preparando: false, hablando: true };
+  assert.deepEqual(ecoVisible({ hablando: true, pensando: false }, callada), { hablando: false, pensando: true }, 'la mesa decidió hablar, la voz no suena: piensa');
+  assert.deepEqual(ecoVisible({ hablando: true, pensando: false }, suena), { hablando: true, pensando: false });
+  assert.deepEqual(ecoVisible({ hablando: false, pensando: true }, suena), { hablando: false, pensando: true }, 'una voz ajena a la mesa no la hace hablar');
+  assert.deepEqual(ecoVisible({ hablando: false, pensando: false }, callada), { hablando: false, pensando: false });
 });
 
 prueba('mapeo: zonas por nombre de nodo, por posición (3D sin colisionadores) y en la figurita 2D', () => {

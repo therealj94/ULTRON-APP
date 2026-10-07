@@ -17,7 +17,10 @@ import { ORBE_HTML } from '../orbe/orbeHtml';
 
 type Props = {
   face: FaceState;
-  /** Está sonando su voz (el orbe se queda en «habla» aunque la cara cambie de emoción). */
+  /**
+   * Está sonando su voz DE VERDAD (avatar3d/sonando.ts `hablando`, no la decisión de hablar): el orbe se queda en
+   * «habla» aunque la cara cambie de emoción, y solo así forma las palabras.
+   */
   hablando: boolean;
   /** La frase que suena ahora; `n` distinto = frase nueva aunque el texto se repita. */
   frase: { texto: string; n: number } | null;
@@ -37,6 +40,8 @@ const ESPERA_LISTO_MS = 10_000;
 /** El orbe no necesita más de ~15 niveles por segundo, y cada envío cruza el puente. */
 const BOCA_CADA_MS = 66;
 const FONDO = '#05070C';
+/** El fondo del orbe: acostado, detrás del riel de la mesa, para que no quede una franja de otro color. */
+export const FONDO_ORBE = FONDO;
 
 /**
  * El orbe con sus opciones ya puestas DENTRO de la página: sin barra ni panel de prueba, sin voz propia
@@ -84,9 +89,11 @@ export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSo
     if (hablaba.current && !hablando) enviar({ tipo: 'callar' });
     hablaba.current = hablando;
   }, [enviar, hablando]);
+  // Las palabras se forman cuando la voz SUENA (José, 7-oct: hablaba antes de que saliera la voz): la frase que
+  // llega antes (la mesa la muestra al decidir hablar) espera a que `hablando` se encienda.
   useEffect(() => {
-    if (frase?.texto) enviar({ tipo: 'decir', texto: frase.texto });
-  }, [enviar, frase?.n, frase?.texto]);
+    if (hablando && frase?.texto) enviar({ tipo: 'decir', texto: frase.texto });
+  }, [enviar, hablando, frase?.n, frase?.texto]);
   useEffect(() => enviar({ tipo: 'sonido', activo: sonidos }), [enviar, sonidos]);
   useEffect(() => {
     if (margen) enviar({ tipo: 'margen', arriba: Math.round(margen.arriba), abajo: Math.round(margen.abajo) });

@@ -83,7 +83,7 @@ for i in $(seq 1 120); do
 done
 curl -s http://127.0.0.1:8100/salud; echo
 
-# 5. La puerta HTTPS (opcional: DOMINIO=54-85-85-77.sslip.io). Caddy en el host, con la red del host
+# 5. La puerta HTTPS (opcional: DOMINIO=<ip-con-guiones>.sslip.io). Caddy en el host, con la red del host
 #    para llegar a 127.0.0.1.
 if [ -n "${DOMINIO:-}" ]; then
   install -m 644 "$AQUI/Caddyfile" "$RAIZ/Caddyfile"

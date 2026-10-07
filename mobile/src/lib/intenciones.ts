@@ -81,14 +81,16 @@ const palabras = (q: string) => (q ? q.split(' ').length : 0);
 
 // ---------------------------------------------------------------- modos
 
+// Un «modo» solo cambia el TONO (server/desk.ts TONO_MODO): la confirmación dice eso y nada más (auditoría del
+// 7-oct, M-6: «Extrayendo señales» o «Prioridad de alto valor» prometían funciones que no hay).
 const MODOS: Array<[RegExp, Mode, string]> = [
-  [/\bmodo (guardian|vigilancia)\b/, 'GUARDIAN', 'Modo Guardian. Vigilo el escritorio.'],
-  [/\bmodo (mining|mineria)\b/, 'MINING', 'Modo Mining. Extrayendo señales.'],
-  [/\bmodo (gold|oro)\b/, 'GOLD', 'Modo Gold. Prioridad de alto valor.'],
-  [/\bmodo (creative|creativo)\b/, 'CREATIVE', 'Modo Creative. Ideas en marcha.'],
-  [/\bmodo (analytical|analitico|analisis)\b/, 'ANALYTICAL', 'Modo Analytical. Análisis frío.'],
-  [/\bmodo (strategic|estrategico|estrategia)\b/, 'STRATEGIC', 'Modo Strategic. Decisiones de junta.'],
-  [/\bmodo (explorer|explore|explorar|explorador)\b/, 'EXPLORER', 'Modo Explorer. Listo para investigar.'],
+  [/\bmodo (guardian|vigilancia)\b/, 'GUARDIAN', 'Tono firme: pocas palabras.'],
+  [/\bmodo (mining|mineria)\b/, 'MINING', 'Tono seco: voy al grano.'],
+  [/\bmodo (gold|oro)\b/, 'GOLD', 'Tono cálido.'],
+  [/\bmodo (creative|creativo)\b/, 'CREATIVE', 'Tono creativo: te propongo ideas.'],
+  [/\bmodo (analytical|analitico|analisis)\b/, 'ANALYTICAL', 'Tono analítico: cifras con su fuente.'],
+  [/\bmodo (strategic|estrategico|estrategia)\b/, 'STRATEGIC', 'Tono estratégico: pienso a largo plazo.'],
+  [/\bmodo (explorer|explore|explorar|explorador)\b/, 'EXPLORER', 'Tono curioso: te pregunto un poco más.'],
 ];
 
 // ---------------------------------------------------------------- canciones
@@ -103,7 +105,7 @@ const REPERTORIO: Array<[RegExp, string]> = [
   [/\bcuna\b|arrull|\bnana\b|para dormir|buenas noches/, 'cuna'],
   [/bohemian|rhapsody|queen|\b(1|uno)\b/, 'bohemian'],
   [/ligera|soda|cerati|\b(2|dos)\b/, 'ligera'],
-  [/bitter|sweet|symphony|sinfonia|verve|medardo|\b(3|tres)\b/, 'bittersweet'],
+  [/bitter|sweet|symphony|sinfonia|verve|\b(3|tres)\b/, 'bittersweet'],
   [/runaway|kanye|toast|\b(4|cuatro)\b/, 'runaway'],
   [/bruno|die with|smile|si el mundo|\b(5|cinco)\b/, 'bruno'],
 ];
@@ -152,7 +154,7 @@ export const GENEROS: Genero[] = [
     id: 'corrido',
     etiqueta: 'corrido',
     titulo: 'Corrido de Orden Global',
-    letra: 'Voy a contarles la historia del escritorio leal. José y Medardo al mando, AU-RA en el umbral. No se vende la junta, no se rinde el metal. Corrido de Orden Global, pa que quede en el jornal.',
+    letra: 'Voy a contarles la historia del escritorio leal. La junta al mando, AU-RA en el umbral. No se vende la junta, no se rinde el metal. Corrido de Orden Global, pa que quede en el jornal.',
   },
   {
     id: 'jazz',

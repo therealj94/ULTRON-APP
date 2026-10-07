@@ -1,0 +1,10 @@
+# Escribir un mensaje en el chat de la mesa y enviarlo. El texto llega en MENSAJE (-e MENSAJE=…).
+appId: link.ordenglobal.ultronfp
+name: Enviar por el chat de la mesa
+---
+- runFlow: cerrar-avisos.yaml
+- tapOn: "Mensaje"
+- inputText: ${MENSAJE}
+- tapOn:
+    text: "Enviar"
+    retryTapIfNoChange: false

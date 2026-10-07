@@ -55,6 +55,9 @@ const piezas = {
   VISOR: 'app/visor',
   // Qué build corre el teléfono, en la cabecera x-aura-cliente de api() (evidencia de operación, 5-oct).
   RECEPCION: 'lib/recepcion',
+  // La clave de la 5.6.0 que pasa detrás de la huella sin dejar a nadie fuera, y cuándo se pide la huella (revisión #157).
+  CREDS: 'lib/credsSeguras',
+  HUELLA: 'lib/permisoHuella',
 };
 const lineas = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))

@@ -90,6 +90,38 @@ export const CLARO: Paleta = {
   velo: 'rgba(35,33,30,0.35)',
 };
 
+/**
+ * LA MESA: el escenario de los avatares, siempre de noche. Es la MISMA paleta Grafito (auditoría M5: había dos
+ * paletas sueltas, `tema.ts` y esta), con los nombres que usa la mesa y su fondo un paso más claro (el
+ * `fondo2` de la noche). Antes vivía aparte en src/tema.ts; ahora tema.ts la reexporta desde aquí.
+ */
+export const MESA = {
+  fondo: OSCURO.fondo2,
+  fondo2: OSCURO.superficie,
+  panel: OSCURO.superficie2,
+  panel2: '#3A3C41',
+  borde: OSCURO.borde,
+  principal: OSCURO.acento,
+  /** Texto dorado sobre fondo oscuro (más claro que el botón, para que se lea). */
+  principalTexto: OSCURO.acentoTexto,
+  principalFondo: OSCURO.acentoFondo,
+  /** Lo que va escrito encima de un botón dorado. */
+  sobrePrincipal: OSCURO.fondo2,
+  activo: OSCURO.exito,
+  activoTexto: '#A9C3A4',
+  activoFondo: OSCURO.exitoFondo,
+  aviso: OSCURO.aviso,
+  avisoTexto: '#E39A7A',
+  avisoFondo: OSCURO.avisoFondo,
+  texto: OSCURO.texto,
+  texto2: OSCURO.texto2,
+  // ≥ 4,5:1 sobre fondo, fondo2, panel y panel2 (A17; antes #8A847C: 3,27:1 sobre panel).
+  texto3: '#B0A99F',
+} as const;
+
+/** Sombra para tarjetas y botones flotantes (Android usa elevation). */
+export const SOMBRA = { shadowColor: '#000000', shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6 } as const;
+
 /** Medidas comunes: radios, espacios, tamaños de letra y movimiento. */
 export const MEDIDA = {
   radio: { s: 10, m: 16, l: 24, xl: 32, redondo: 999 },

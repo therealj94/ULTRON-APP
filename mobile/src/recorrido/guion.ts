@@ -87,12 +87,12 @@ export const ESCENAS: readonly Escena[] = [
   {
     id: 'mesa',
     titulo: { es: 'La mesa', en: 'The desk' },
-    fuente: 'components/BarraMesa.tsx (Chat · Hablar · Más) · components/HojaMas.tsx (la hoja «Más»)',
+    fuente: 'components/BarraMesa.tsx (Mensajes · Hablar · Más) · components/HojaMas.tsx (la hoja «Más»)',
     pasos: ['barra', 'hablar', 'chat', 'mas', 'hoja'],
     lineas: [
       { quien: A, paso: 'barra', gesto: 'senalar', texto: { es: 'Empecemos por la mesa, la pantalla principal. Abajo hay solo tres botones.', en: 'Let’s start with the desk, the main screen. There are just three buttons at the bottom.' } },
       { quien: C, paso: 'hablar', emocion: 'curioso', texto: { es: 'El grande del centro es Hablar: AU-RA te oye siempre, sin palabra clave. Un toque la silencia; otro, y vuelve.', en: 'The big one in the middle is Talk: AU-RA always hears you, no wake word. One tap mutes her; another brings her back.' } },
-      { quien: A, paso: 'chat', gesto: 'senalar', texto: { es: 'El de la izquierda es Chat: tus conversaciones de PULSE2CHAT, tu WhatsApp y tus correos.', en: 'The one on the left is Chat: your PULSE2CHAT conversations, your WhatsApp and your email.' } },
+      { quien: A, paso: 'chat', gesto: 'senalar', texto: { es: 'El de la izquierda es Mensajes: tus conversaciones de PULSE2CHAT, tu WhatsApp y tus correos. Para escribirle a tu avatar, «Escríbele…», justo encima.', en: 'The one on the left is Messages: your PULSE2CHAT conversations, your WhatsApp and your email. To write to your avatar, «Write to…», right above.' } },
       {
         quien: C,
         paso: 'mas',
@@ -183,7 +183,7 @@ export const ESCENAS: readonly Escena[] = [
     fuente: 'pulse/* (PULSE2CHAT) · lib/manos-app.ts (leer, buscar) · lib/acciones-app.ts (redactar, enviar solo tras el «sí»)',
     pasos: ['lee', 'borrador', 'enviado'],
     lineas: [
-      { quien: A, paso: 'lee', texto: { es: 'Tus mensajes de PULSE2CHAT están en el botón Chat. Y ella te ayuda: pregúntale, ¿qué me dijo Beto?', en: 'Your PULSE2CHAT messages are under the Chat button. And she helps: ask her, what did Beto say?' } },
+      { quien: A, paso: 'lee', texto: { es: 'Tus mensajes de PULSE2CHAT están en el botón Mensajes. Y ella te ayuda: pregúntale, ¿qué me dijo Beto?', en: 'Your PULSE2CHAT messages are under the Messages button. And she helps: ask her, what did Beto say?' } },
       { quien: C, emocion: 'curioso', texto: { es: 'Te lo lee: ¿llegas a la reunión de las tres?', en: 'She reads it to you: are you coming to the three o’clock meeting?' } },
       {
         quien: A,
@@ -228,10 +228,10 @@ export const ESCENAS: readonly Escena[] = [
   {
     id: 'cartera',
     titulo: { es: 'Tu Veta Wallet', en: 'Your Veta Wallet' },
-    fuente: 'cartera/HojaCartera.tsx (saldos, solo lectura) · cartera/HojaPagar.tsx (Enviar dinero desde un chat) · cartera/TarjetaPago.tsx (comprobante en la cadena) · lib/cartera.ts',
+    fuente: 'cartera/HojaCartera.tsx (saldos) · cartera/HojaPagar.tsx (Enviar dinero desde un chat) · cartera/TarjetaPago.tsx (comprobante en la cadena) · lib/cartera.ts',
     pasos: ['saldos', 'pagar', 'firma', 'comprobante'],
     lineas: [
-      { quien: A, paso: 'saldos', gesto: 'senalar', texto: { es: 'Si tienes Veta Wallet, AU-RA ve tus saldos: tus tokens y tu ORIGEN. Solo los mira; nunca mueve tu dinero.', en: 'If you have Veta Wallet, AU-RA sees your balances: your tokens and your ORIGEN. She only looks; she never moves your money.' } },
+      { quien: A, paso: 'saldos', gesto: 'senalar', texto: { es: 'Si tienes Veta Wallet, AU-RA ve tus saldos: tus tokens y tu ORIGEN. Los pagos los firmas tú en Veta Wallet; tu tarjeta, AU-RA puede mostrarla y recargarla con tu contraseña.', en: 'If you have Veta Wallet, AU-RA sees your balances: your tokens and your ORIGEN. You sign payments in Veta Wallet; AU-RA can show your card and top it up with your password.' } },
       { quien: C, paso: 'saldos', texto: { es: 'Está en Ajustes, «Veta Wallet». O pregúntale: ¿cuánto tengo en mi wallet?', en: 'It’s in Settings, “Veta Wallet”. Or ask her: how much do I have in my wallet?' } },
       { quien: A, paso: 'pagar', gesto: 'senalar', texto: { es: 'Y pagas por PULSE2CHAT: en el chat de la persona tocas la moneda de arriba, «Enviar dinero». O le dices «mándale 5 ORIGEN a Ana».', en: 'And you pay through PULSE2CHAT: in that person’s chat tap the coin at the top, “Send money”. Or say “send Ana 5 ORIGEN”.' } },
       { quien: C, paso: 'firma', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'AU-RA lo deja listo, pero tú lo firmas en Veta Wallet, con tu misma contraseña de siempre.', en: 'AU-RA gets it ready, but you sign it in Veta Wallet, with your usual password.' } },

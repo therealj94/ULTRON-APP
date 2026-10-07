@@ -40,15 +40,21 @@ const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '../../..');
 
 /** Los colores del tema, leídos del código (los módulos del tema cargan React Native, que Node no tiene). */
-function paleta(archivo, nombre) {
+function paleta(archivo, nombre, base = {}) {
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');
   const bloque = new RegExp(`export const ${nombre}\\b[^=]*=\\s*\\{([\\s\\S]*?)\\n\\}`).exec(src);
   if (!bloque) throw new Error(`no encuentro ${nombre} en ${archivo}`);
-  return Object.fromEntries([...bloque[1].matchAll(/^\s*(\w+):\s*'(#[0-9A-Fa-f]{6})'/gm)].map((m) => [m[1], m[2]]));
+  // Un color literal, o uno tomado de otra paleta (la mesa sale de OSCURO: `fondo: OSCURO.fondo2`).
+  const literales = [...bloque[1].matchAll(/^\s*(\w+):\s*'(#[0-9A-Fa-f]{6})'/gm)].map((m) => [m[1], m[2]]);
+  const prestados = [...bloque[1].matchAll(/^\s*(\w+):\s*OSCURO\.(\w+)\b/gm)].map((m) => [m[1], base[m[2]]]);
+  return Object.fromEntries([...literales, ...prestados]);
 }
 const CLARO = paleta('nucleo/tema.ts', 'CLARO');
 const OSCURO = paleta('nucleo/tema.ts', 'OSCURO');
-const T = paleta('tema.ts', 'T');
+// Una sola paleta (auditoría M5): la de la mesa vive en nucleo/tema.ts (`MESA`) y src/tema.ts la reexporta como T.
+const T = paleta('nucleo/tema.ts', 'MESA', OSCURO);
+assert.match(fs.readFileSync(path.join(RAIZ, 'mobile/src/tema.ts'), 'utf8'), /export \{ MESA as T, SOMBRA \} from '\.\/nucleo\/tema'/);
+for (const k of ['fondo', 'fondo2', 'panel', 'panel2', 'texto', 'texto2', 'texto3', 'principal', 'sobrePrincipal']) assert.match(T[k] || '', /^#[0-9A-F]{6}$/i, `la mesa tiene ${k}`);
 
 let fallos = 0;
 let n = 0;
@@ -394,18 +400,19 @@ prueba('app: «abre tu computadora / WhatsApp / mis correos» desde cualquier pa
 
 prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo, Detener/Pausar/Tomar el control, su sí, resultado para compartir e historial (José, 2-oct)', () => {
   const hoja = fuente('ajustes/Computadora.tsx');
-  // De arriba abajo: la captura en vivo va antes que el plan, y el plan antes que los mandos y el final.
+  // De arriba abajo (auditoría del 7-oct, José: «no me ha convencido»): su sí ARRIBA de todo (antes quedaba debajo de la
+  // captura y fuera de la vista), luego la pantalla, los mandos, el resultado con su evidencia y, al final, el plan.
   const en = (re) => {
     const i = hoja.search(re);
     assert.ok(i >= 0, `falta ${re}`);
     return i;
   };
-  const pantalla = en(/La pantalla en vivo, arriba de todo/);
-  const pregunta = en(/tr\('Necesito tu sí para seguir'/);
-  const plan = en(/tr\('El plan', 'The plan'\)/);
+  const pregunta = en(/tr\('ANTES DE SEGUIR NECESITO TU SÍ'/);
+  const pantalla = en(/5 · La pantalla/);
   const mandos = en(/tr\('Pausar', 'Pause'\)/);
   const final = en(/<TarjetaFinal mision=\{misionDeAhora\}/);
-  assert.ok(pantalla < pregunta && pregunta < plan && plan < mandos && mandos < final, 'captura → su sí → plan → mandos → resultado');
+  const plan = en(/tr\('El plan', 'The plan'\)/);
+  assert.ok(pregunta < pantalla && pantalla < mandos && mandos < final && final < plan, 'su sí → pantalla → mandos → resultado → plan');
   // Detener: fijo abajo (el pie de la hoja, fuera del desplazamiento) y nunca bloqueado por otro botón en camino
   // (auditoría, 3-oct: quedaba debajo de todo y la guarda de «ocupado» lo ignoraba).
   assert.match(hoja, /pie=\{\s*tarea && sigue \?\s*\(\s*<Boton titulo=\{tr\('Detener la tarea', 'Stop the task'\)\}/);
@@ -423,7 +430,7 @@ prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo
   assert.match(hoja, /Linking\.openURL\(u\)/, 'los enlaces se abren');
   assert.match(hoja, /\/api\/computadora\/misiones\/\$\{encodeURIComponent\(m\.id\)\}\/seguir/, '«Seguir» una misión a medias');
   assert.match(hoja, /tr\('Misiones recientes', 'Recent missions'\)/, 'el historial');
-  assert.match(hoja, /sinRespuesta >= FALLOS_PARA_AVISAR/, 'si no llega nada, lo dice (nunca colgada en silencio)');
+  assert.match(hoja, /sinRespuesta >= FALLOS_SIN_NOTICIAS/, 'si no llega nada, lo dice (nunca colgada en silencio)');
   const vivo = fuente('app/ComputadoraEnVivo.tsx');
   assert.match(vivo, /planInicial=\{companero\.plan\}/);
   assert.match(vivo, /companero\.alEstado\(s\.actual\.id, trabajando\(s\.actual\.estado\), s\.actual\.estado\)/, 'el sondeo de fondo también ve si quedó quieta');

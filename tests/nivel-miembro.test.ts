@@ -12,6 +12,7 @@
  *     rutas del taller;
  *   · la junta, sin cambios.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -44,7 +45,7 @@ const { quienPorTokenMcp } = await import('../server/mcp-oauth');
 const { CONOCIMIENTO_OG } = await import('../src/05-cerebro-og/conocimiento');
 const { CONOCIMIENTO_OG_PUBLICO } = await import('../src/05-cerebro-og/conocimiento-publico');
 
-const JOSE = 'j.ordonez@ordenglobal.org';
+const JOSE = 'j.herrera@ordenglobal.org';
 const MIEMBRO = 'ana.lopez@gmail.com';
 
 /** Lo interno que NUNCA puede llegarle a un miembro (literal, tal cual está en el cerebro de la junta). */
@@ -54,7 +55,7 @@ const INTERNO = [
   'NameSilo',
   'nonce 0',
   'Emisión interna',
-  'Mayra',
+  'Brenda',
   'express-js-on-vercel',
   'rpc.ordenglobal-rpc.com',
   'validadores',
@@ -77,11 +78,11 @@ const req = (headers: Record<string, string> = {}) => ({ headers, body: {}, path
 test('nivel por correo: padrón o JUNTA es junta; cualquier otro correo es miembro', () => {
   reiniciarPadron();
   assert.equal(nivelDeCorreo(JOSE), 'junta');
-  assert.equal(nivelDeCorreo('m.ordonez@ordenglobal.org'), 'junta');
-  assert.equal(nivelDeCorreo('mjoseenamorado1994@gmail.com'), 'junta', 'el alias de José pasa por normalizarCorreo');
-  assert.equal(nivelDeCorreo('J.Ordonez@OrdenGlobal.org '), 'junta', 'mayúsculas y espacios no cambian nada');
+  assert.equal(nivelDeCorreo('r.herrera@ordenglobal.org'), 'junta');
+  assert.equal(nivelDeCorreo('jose.personal.prueba@gmail.com'), 'junta', 'el alias de José pasa por normalizarCorreo');
+  assert.equal(nivelDeCorreo('J.Herrera@OrdenGlobal.org '), 'junta', 'mayúsculas y espacios no cambian nada');
   assert.equal(nivelDeCorreo(MIEMBRO), 'miembro');
-  assert.equal(nivelDeCorreo('j.ordonez@gmail.com'), 'miembro', 'el mismo buzón en otro dominio no es José');
+  assert.equal(nivelDeCorreo('j.herrera@gmail.com'), 'miembro', 'el mismo buzón en otro dominio no es José');
   assert.equal(nivelDeCorreo(''), 'miembro');
   assert.equal(nivelDeCorreo('José'), 'miembro', 'un nombre no es un correo');
   // José agrega a alguien al padrón desde el entorno: ya es junta, sin despliegue.
@@ -112,7 +113,7 @@ test('la sesión identifica por CORREO: un miembro llamado «José» no hereda l
   const miembroJose = { correo: MIEMBRO, nombre: 'José' };
   assert.equal(quienVerificado({}, miembroJose), null, 'antes: el nombre de la sesión lo hacía José, con mando');
   assert.equal(resolverQuien({ usuario: 'José' }, miembroJose), null);
-  assert.equal(quienVerificado({}, { correo: 'otra@gmail.com', nombre: 'Mayra Enamorado' }), null);
+  assert.equal(quienVerificado({}, { correo: 'otra@gmail.com', nombre: 'Brenda Villeda' }), null);
   assert.equal(quienVerificado({}, { correo: JOSE, nombre: 'Cualquiera' }), 'jose', 'la junta sigue entrando por su correo');
   assert.equal(resolverQuien({}, { correo: JOSE, nombre: 'José' }), 'jose');
 });
@@ -175,7 +176,7 @@ test('el prompt de un miembro no lleva nada interno de la junta (y el de la junt
 
   // La prueba es sensible: el de la junta (el de siempre) sí trae lo interno.
   const junta = personalidadDelTurno({ ...piezas, nivel: 'junta', quien: 'jose', quienMem: 'jose', mando: true });
-  for (const frase of ['8443', 'watchdog', 'NameSilo', 'nonce 0', 'Emisión interna', 'Mayra', 'express-js-on-vercel', 'HECHOS COMPARTIDOS DE LA JUNTA', 'TALLER: listos']) {
+  for (const frase of ['8443', 'watchdog', 'NameSilo', 'nonce 0', 'Emisión interna', 'Brenda', 'express-js-on-vercel', 'HECHOS COMPARTIDOS DE LA JUNTA', 'TALLER: listos']) {
     assert.ok(junta.includes(frase), `el de la junta conserva «${frase}»`);
   }
 });
@@ -190,7 +191,7 @@ test('el cerebro público no tiene ninguna de las frases internas; el perfil de 
   assert.match(GENESIS_MIEMBRO.identidad({ nombre: 'Ana', canal: 'mesa' }), /miembro de la comunidad/);
   // Los alias del miembro no apuntan a lo interno.
   const palabras = GENESIS_MIEMBRO.alias.flatMap(([, p]) => p);
-  for (const p of ['mayra', 'validadores', 'rpc', 'junta']) assert.equal(palabras.includes(p), false, `alias «${p}»`);
+  for (const p of ['brenda', 'validadores', 'rpc', 'junta']) assert.equal(palabras.includes(p), false, `alias «${p}»`);
 });
 
 test('telegram y taller: no existen para un miembro, en ningún perfil', () => {

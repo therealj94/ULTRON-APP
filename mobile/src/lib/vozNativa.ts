@@ -111,7 +111,9 @@ export function eventoVozValido(e: unknown): EventoVoz | null {
  */
 export function falloDeSesion(f: { codigo: CodigoFallo; status?: number }, seguidos: number): boolean {
   if (f.codigo === 'pista' || f.codigo === 'interno' || f.codigo === 'puente' || f.codigo === 'formato') return true;
-  if (f.codigo === 'http' && (f.status === 404 || f.status === 405 || f.status === 401 || f.status === 403)) return true;
+  // Un 401 suelto es un token vencido (la voz pide sesión desde el 7-oct): el respaldo lo renueva y la siguiente frase
+  // vuelve por aquí. Dos seguidos, abajo, sí apagan el camino nuevo.
+  if (f.codigo === 'http' && (f.status === 404 || f.status === 405 || f.status === 403)) return true;
   return seguidos >= VOZ_VIVO.fallosSeguidosMax;
 }
 

@@ -2,6 +2,7 @@
  * El servidor MCP habla con el cliente OFICIAL del protocolo (no con uno hecho a medida que podría
  * equivocarse igual que el servidor), expone solo lectura, y cada llamada queda en la traza.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

@@ -57,7 +57,7 @@ async function llamar(ruta: string, cuerpo?: unknown, headers: Record<string, st
     const json = await r.json().catch(() => ({}));
     return { ok: r.ok && json?.ok !== false, status: r.status, json };
   } catch {
-    return { ok: false, status: 0, json: { error: 'No alcancé el servidor. Revisá la conexión y volvé a intentarlo.' } };
+    return { ok: false, status: 0, json: { error: 'No alcancé el servidor. Hay que revisar la conexión e intentarlo otra vez.' } };
   }
 }
 
@@ -85,7 +85,7 @@ export function OlvideClave({ tema, correoInicial = '', onVolver }: { tema: Tema
     const r = await llamar('/api/ultron/clave/olvide', { correo: correo.trim() });
     setYendo(false);
     if (r.ok) setListo(r.json.message);
-    else setFallo(r.json?.error || 'No pude mandar el enlace. Probá en un momento.');
+    else setFallo(r.json?.error || 'No pude mandar el enlace. Se puede intentar otra vez en un momento.');
   }
   return (
     <div className="space-y-3">
@@ -96,7 +96,7 @@ export function OlvideClave({ tema, correoInicial = '', onVolver }: { tema: Tema
         </Aviso>
       ) : (
         <form onSubmit={enviar} className="space-y-3">
-          <p className={tema.texto}>Escribí tu correo y te mandamos un enlace para poner una contraseña nueva.</p>
+          <p className={tema.texto}>Con tu correo te mandamos un enlace para poner una contraseña nueva.</p>
           <input className={tema.campo} type="email" autoComplete="username" aria-label="Correo" placeholder="tu correo" value={correo} onChange={(e) => setCorreo(e.target.value)} disabled={yendo} required />
           <button type="submit" className={tema.boton} style={tema.botonStyle} disabled={yendo || !correo.trim()}>
             {yendo ? 'Enviando…' : 'Enviarme el enlace'}
@@ -131,7 +131,7 @@ export function SolicitarAcceso({ tema, producto, onVolver }: { tema: Tema; prod
     const r = await llamar('/api/ultron/cuentas/solicitar', { nombre: nombre.trim(), correo: correo.trim(), motivo: motivo.trim() });
     setYendo(false);
     if (r.ok) setListo(r.json.message);
-    else setFallo(r.status === 429 ? 'Demasiadas solicitudes desde esta conexión. Probá más tarde.' : r.json?.error || 'No pude mandar la solicitud.');
+    else setFallo(r.status === 429 ? 'Demasiadas solicitudes desde esta conexión. Se puede intentar más tarde.' : r.json?.error || 'No pude mandar la solicitud.');
   }
   return (
     <div className="space-y-3">
@@ -145,7 +145,7 @@ export function SolicitarAcceso({ tema, producto, onVolver }: { tema: Tema; prod
           <p className={tema.texto}>{producto} es privado. Tu solicitud la revisa la administración de Orden Global; si la aprueba, te llega un correo para crear tu contraseña.</p>
           <input className={tema.campo} autoComplete="name" aria-label="Nombre completo" placeholder="nombre completo" value={nombre} onChange={(e) => setNombre(e.target.value)} disabled={yendo} required />
           <input className={tema.campo} type="email" autoComplete="email" aria-label="Correo" placeholder="tu correo" value={correo} onChange={(e) => setCorreo(e.target.value)} disabled={yendo} required />
-          <textarea className={`${tema.campo} min-h-[84px] resize-y`} aria-label="Para qué necesitás el acceso" placeholder="para qué necesitás el acceso (institución, cargo, proyecto)" value={motivo} onChange={(e) => setMotivo(e.target.value)} disabled={yendo} maxLength={600} required />
+          <textarea className={`${tema.campo} min-h-[84px] resize-y`} aria-label="Para qué es el acceso" placeholder="para qué es el acceso (institución, cargo, proyecto)" value={motivo} onChange={(e) => setMotivo(e.target.value)} disabled={yendo} maxLength={600} required />
           <button type="submit" className={tema.boton} style={tema.botonStyle} disabled={yendo || !nombre.trim() || !correo.trim() || motivo.trim().length < 5}>
             {yendo ? 'Enviando…' : 'Enviar solicitud'}
           </button>
@@ -203,7 +203,7 @@ export function PonerClave({
     if (r.status === 410) setVencido(r.json?.error || 'El enlace ya se usó o venció.');
     else setFallo(r.json?.error || 'No pude guardar la contraseña.');
   }
-  const titulo = tipo === 'activar' ? 'Creá tu contraseña' : 'Contraseña nueva';
+  const titulo = tipo === 'activar' ? 'Crear la contraseña' : 'Contraseña nueva';
   return (
     <div className="space-y-3">
       <h2 className={tema.titulo}>{titulo}</h2>
@@ -269,7 +269,7 @@ export function CambiarClave({ tema, headers, onListo }: { tema: Tema; headers: 
       setOtra('');
       return onListo(String(r.json.token));
     }
-    setFallo(r.status === 401 && r.json?.code === 'sesion_requerida' ? 'Tu sesión venció: volvé a entrar.' : r.json?.error || 'No pude cambiar la contraseña.');
+    setFallo(r.status === 401 && r.json?.code === 'sesion_requerida' ? 'Tu sesión venció: hay que entrar otra vez.' : r.json?.error || 'No pude cambiar la contraseña.');
   }
   return (
     <form onSubmit={enviar} className="space-y-3">
@@ -433,7 +433,7 @@ export function pareceCodigo(texto: string): boolean {
 export async function entrarConCodigo(codigo: string): Promise<{ ok: true; token: string; vence: string } | { ok: false; error: string }> {
   const r = await llamar('/api/ultron/entrar-codigo', { codigo });
   if (r.ok && r.json.token) return { ok: true, token: String(r.json.token), vence: String(r.json.vence) };
-  return { ok: false, error: r.status === 429 ? 'Demasiados intentos. Probá de nuevo en unos minutos.' : r.json?.error || 'Ese código no abre.' };
+  return { ok: false, error: r.status === 429 ? 'Demasiados intentos. En unos minutos se puede volver a probar.' : r.json?.error || 'Ese código no abre.' };
 }
 
 type Codigo = { id: number; pista: string; para: string; nivel: string; vence: string; primerUso: string | null; usos: number; estado: 'vivo' | 'vencido' | 'revocado' };
@@ -472,7 +472,7 @@ export function PanelCodigos({ tema, headers }: { tema: Tema; headers: () => Rec
 
   async function crear(e: FormEvent) {
     e.preventDefault();
-    if (!para.trim()) return setFallo('Poné el nombre de la persona: Dr Electrum la saluda con él al entrar.');
+    if (!para.trim()) return setFallo('Falta el nombre de la persona: Dr Electrum la saluda con él al entrar.');
     setYendo(true);
     setFallo('');
     setCopiado(false);

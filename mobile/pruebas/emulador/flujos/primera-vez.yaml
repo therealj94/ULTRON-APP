@@ -1,0 +1,46 @@
+# La primera vez de la cuenta (src/primeravez): solo hasta la mesa, saltando todo lo que se puede saltar.
+# NUNCA se conecta nada (el paso «conectar» se salta), el avatar queda el de siempre (AU-RA) y el apodo, el que trae.
+# Si el perfil de la cuenta ya está completado, la app va directo a la mesa y esto no hace nada.
+appId: link.ordenglobal.ultronfp
+name: Primera vez hasta la mesa
+---
+- repeat:
+    times: 40
+    while:
+      notVisible: "Mensaje|Más opciones.*|Después|Hablando con .*"
+    commands:
+      - runFlow:
+          when:
+            visible: "Saltar todas"
+          commands:
+            - tapOn: "Saltar todas"
+      - runFlow:
+          when:
+            visible: "Saltar"
+          commands:
+            - tapOn: "Saltar"
+      # El apodo vacío deja «Siguiente» apagado: se escribe uno.
+      - runFlow:
+          when:
+            visible:
+              text: "Siguiente"
+              enabled: false
+          commands:
+            - runFlow:
+                when:
+                  visible: "Tu apodo"
+                commands:
+                  - tapOn:
+                      text: "Tu apodo"
+                      index: 1
+                  - inputText: "Prueba"
+      - runFlow:
+          when:
+            visible: "Siguiente|Continuar|Ir a la mesa"
+          commands:
+            - tapOn:
+                text: "Siguiente|Continuar|Ir a la mesa"
+                retryTapIfNoChange: false
+- extendedWaitUntil:
+    visible: "Mensaje|Más opciones.*|Después|Hablando con .*"
+    timeout: 60000

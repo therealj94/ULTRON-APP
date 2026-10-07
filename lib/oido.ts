@@ -8,6 +8,7 @@
 import { clave } from './boveda';
 import { presupuesto, MINIMO_UTIL_MS, type Presupuesto } from './presupuesto';
 import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
+import { gastarCupoDiario, reservarPermisoAnticipado, segundosDeAudio, SEGUNDOS_POR_PERMISO_TURBO, soltarPermisoAnticipado } from './freno-gasto';
 
 /** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
 export type Oido = { texto: string; via: string; detalle: string; idioma?: IdiomaTurno };
@@ -347,27 +348,43 @@ async function transcribirTurbo(audio: Buffer, mime: string, language: string, r
  * directo a ElevenLabs con un token de UN SOLO USO que pide el servidor (documentación: POST
  * /v1/single-use-token/realtime_scribe; la clave nunca sale del servidor). La dirección va armada aquí
  * con el modelo, el formato del micrófono crudo, el idioma, el cierre manual y las pistas de AU-RA.
+ *
+ * El freno de gasto diario (lib/freno-gasto.ts): cada permiso cuenta SEGUNDOS_POR_PERMISO_TURBO del oído. El que el
+ * teléfono pide por adelantado (`anticipado`, mobile/src/lib/turboMotor.ts) no se cobra al darlo: queda pendiente de
+ * `quien` con su `id`, y se cobra cuando el teléfono dice que lo usó (lib/freno-gasto.ts cobrarPermisoUsado). Antes
+ * cada adelantado contaba 60 s aunque venciera sin usarse, y unos 600 al día dejaban sordo a AU-RA.
  */
 export async function permisoTurbo(
   language: string,
   reloj: Presupuesto = presupuesto(6000),
-  terminos: readonly string[] = TERMINOS_AURA
-): Promise<{ url: string; modelo: string } | null> {
+  terminos: readonly string[] = TERMINOS_AURA,
+  o: { anticipado?: boolean; quien?: string } = {}
+): Promise<{ url: string; modelo: string; id?: string } | null> {
   const key = clave('elevenlabs');
   if (!key) return null;
+  // Pasado el tope, sin permiso. El adelantado solo se reserva (se cobra al usarlo).
+  let id: string | undefined;
+  if (o.anticipado && o.quien) {
+    id = reservarPermisoAnticipado(o.quien) ?? undefined;
+    if (!id) return null;
+  } else if (!gastarCupoDiario('stt', SEGUNDOS_POR_PERMISO_TURBO)) return null;
+  const sinToken = () => {
+    if (id) soltarPermisoAnticipado(id);
+    return null;
+  };
   const r = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', { method: 'POST', headers: { 'xi-api-key': key }, signal: reloj.senal(5000) }).catch(() => null);
   if (!r?.ok) {
     console.warn('[stt turbo] sin token de un solo uso', r?.status, r ? (await r.text().catch(() => '')).slice(0, 160) : '');
-    return null;
+    return sinToken();
   }
   const j: any = await r.json().catch(() => null);
-  if (typeof j?.token !== 'string' || !j.token) return null;
+  if (typeof j?.token !== 'string' || !j.token) return sinToken();
   const modelo = process.env.ELEVENLABS_STT_TURBO || MODELO_TURBO;
   const q = new URLSearchParams({ model_id: modelo, audio_format: 'pcm_16000', commit_strategy: 'manual', token: j.token });
   const idioma = (language || 'es').slice(0, 2).toLowerCase();
   if (idioma === 'es' || idioma === 'en') q.set('language_code', idioma);
   for (const t of terminos) q.append('keyterms', t);
-  return { url: `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, modelo };
+  return { url: `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, modelo, ...(id ? { id } : {}) };
 }
 
 /** Confirmar una frase de dinero que el teléfono ya oyó con Turbo: directo con Scribe v2, sin Turbo. */
@@ -454,6 +471,10 @@ export async function transcribirAudio(opts: {
   }
   if (buf.length > MAX_BYTES) {
     return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
+  }
+  // El freno de gasto diario (lib/freno-gasto.ts), por los segundos de este audio. Pasado el tope, no se oye.
+  if (!gastarCupoDiario('stt', segundosDeAudio(buf, mime))) {
+    return { texto: '', via: 'tope', detalle: 'Por hoy ya no puedo oír más audios. Escríbeme.' };
   }
   const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
   const proveedores = opts.proveedores || (opts.plataforma === 'electrum' ? PROVEEDORES_OIDO_ELECTRUM : PROVEEDORES_OIDO);

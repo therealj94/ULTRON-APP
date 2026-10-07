@@ -17,9 +17,11 @@
  *     sirve para saludarte, jamás para darte permisos. Sin esta distinción cualquiera manda un
  *     `{"nombre":"José"}` y hereda el sistema.
  *
- * El padrón vive en código —para que arranque bien sin configurar nada— y se amplía desde el
- * entorno, para que José pueda dar y quitar accesos sin esperar un despliegue.
+ * El padrón vive en el entorno (ULTRON_PADRON_BASE y ULTRON_PADRON, fuera del repo público), para que José
+ * pueda dar y quitar accesos sin esperar un despliegue.
  */
+
+import { jsonDeEnv } from './datos-privados';
 
 export type Plataforma = 'ultron' | 'electrum';
 
@@ -64,44 +66,20 @@ export type Identificacion = { persona: Persona; prueba: Prueba };
 const ORDEN: Record<Nivel, number> = { lee: 1, escribe: 2, mando: 3 };
 
 /**
- * El padrón de arranque. José y Medardo mandan en las dos; Carlos y Mayra consultan AU-RA y no
- * existen en Electrum. Electrum es una demostración: su puerta empieza cerrada para todo el mundo
- * menos para quien la está construyendo.
+ * El padrón de arranque: quién manda y quién consulta sin que nadie tenga que aprobarlo. Era una lista escrita aquí,
+ * con correos y apellidos de la familia, en un repositorio público (auditoría del 7-oct, C-1). Ahora llega por
+ * ULTRON_PADRON_BASE (JSON, la misma forma que `Persona`; ver lib/datos-privados.ts) y ULTRON_PADRON se funde encima
+ * como siempre. Sin la variable el padrón de arranque queda VACÍO —se niega por omisión: nadie es junta por defecto— y
+ * se avisa una vez en el registro.
  */
-const BASE: Persona[] = [
-  {
-    id: 'jose',
-    nombre: 'José',
-    correos: ['j.ordonez@ordenglobal.org', 'jose@ordenglobal.org'],
-    telegram: [],
-    apodos: ['j'],
-    acceso: { ultron: 'mando', electrum: 'mando' },
-  },
-  {
-    id: 'medardo',
-    nombre: 'Medardo',
-    correos: ['m.ordonez@ordenglobal.org', 'medardo@ordenglobal.org'],
-    telegram: [],
-    apodos: [],
-    acceso: { ultron: 'mando', electrum: 'mando' },
-  },
-  {
-    id: 'carlos',
-    nombre: 'Carlos',
-    correos: [],
-    telegram: [],
-    apodos: ['paguada', 'leonardo paguada'],
-    acceso: { ultron: 'lee' },
-  },
-  {
-    id: 'mayra',
-    nombre: 'Mayra',
-    correos: [],
-    telegram: [],
-    apodos: ['enamorado'],
-    acceso: { ultron: 'lee' },
-  },
-];
+function base(): Persona[] {
+  return jsonDeEnv(
+    'ULTRON_PADRON_BASE',
+    (x) => (Array.isArray(x) ? x.map(normalizar).filter((p): p is Persona => !!p) : null),
+    [] as Persona[],
+    'el padrón de arranque queda vacío (nadie es junta salvo lo que diga ULTRON_PADRON y las cuentas aprobadas)'
+  );
+}
 
 /* ------------------------------------------------------------------ utilidades */
 
@@ -246,8 +224,8 @@ export function fijarCuentasAprobadas(gente: Array<Partial<Persona> & { id: stri
 
 /** La llave cambia cuando cambia el entorno, así que el padrón se rehace solo. Las pruebas dependen de esto. */
 function llaveEntorno(): string {
-  const partes = [String(process.env.ULTRON_PADRON || ''), `aprobadas:${aprobadas.version}`];
-  for (const p of BASE) partes.push(`${p.id}:${telegramHeredado(p.id).join(',')}`);
+  const partes = [String(process.env.ULTRON_PADRON_BASE || ''), String(process.env.ULTRON_PADRON || ''), `aprobadas:${aprobadas.version}`];
+  for (const p of base()) partes.push(`${p.id}:${telegramHeredado(p.id).join(',')}`);
   return partes.join('|');
 }
 
@@ -267,7 +245,7 @@ export function padron(): Persona[] {
   const llave = llaveEntorno();
   if (cache && cache.llave === llave) return cache.gente;
   const porId = new Map<string, Persona>();
-  for (const p of BASE) {
+  for (const p of base()) {
     porId.set(p.id, { ...p, telegram: [...new Set([...p.telegram, ...telegramHeredado(p.id)])] });
   }
   for (const p of delEntorno()) {
@@ -302,7 +280,7 @@ function porCorreo(correo: string): Persona | null {
   for (const p of padron()) if (p.correos.includes(c)) return p;
   // Los correos de Orden Global son nombre.apellido@: si el buzón coincide en la parte local con
   // uno conocido, es la misma persona con otro dominio de la casa. SOLO entre dominios de la casa:
-  // con cuentas que se solicitan desde la web, «j.ordonez@gmail.com» no puede pasar por José.
+  // con cuentas que se solicitan desde la web, «nombre.apellido@gmail.com» no puede pasar por alguien de la casa.
   const [local, dominio] = c.split('@');
   if (!local || !esDominioDeLaCasa(dominio)) return null;
   for (const p of padron()) if (p.correos.some((x) => x.split('@')[0] === local && esDominioDeLaCasa(x.split('@')[1]))) return p;

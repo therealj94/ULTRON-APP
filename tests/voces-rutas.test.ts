@@ -16,6 +16,7 @@
  *    listar y borrar siguen andando;
  *  · la regla para el cerebro cuando la voz dice que quien habla no es la dueña.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -101,7 +102,7 @@ await new Promise((r) => srv.once('listening', r));
 const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
 after(() => srv.close());
 
-const junta = emitirSesion({ correo: 'Jose@Ordenglobal.org', nombre: 'José', rol: 'Junta' }, { comunidad: true });
+const junta = emitirSesion({ correo: 'Jose.H@Ordenglobal.org', nombre: 'José', rol: 'Junta' }, { comunidad: true });
 const otro = emitirSesion({ correo: 'comunidad@gmail.com', nombre: 'Lucía', rol: 'Miembro · Genesis ID' }, { comunidad: true });
 const h = (token?: string) => ({ 'content-type': 'application/json', ...(token ? { 'x-ultron-sesion': token } : {}) });
 const aprender = (token: string, body: unknown) => fetch(`${base}/api/voces/aprender`, { method: 'POST', headers: h(token), body: JSON.stringify(body) });
@@ -179,11 +180,11 @@ test('aprender: la propia (nombre de la SESIÓN) y Ana con su «sí» y parentes
   const l = await listar(junta.token);
   assert.deepEqual(l.map((p) => [p.nombre, p.relacion, p.parentesco || null]).sort(), [['Ana', 'conocido', 'esposa'], ['José', 'yo', null]]);
   assert.ok(l.every((p) => !('vectores' in p)), 'las huellas no salen del servidor');
-  const crudo = fs.readFileSync(archivo('jose@ordenglobal.org'), 'utf8');
+  const crudo = fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8');
   assert.match(crudo, /Sí, puedes recordar mi voz/);
   assert.doesNotMatch(crudo, /RIFF|UklGR|base64|audio/i, 'ni rastro del audio');
   assert.equal(JSON.parse(crudo).modelo, MODELO_VOZ.id);
-  assert.doesNotMatch(archivo('jose@ordenglobal.org'), /jose|ordenglobal/i);
+  assert.doesNotMatch(archivo('jose.h@ordenglobal.org'), /jose|ordenglobal/i);
 });
 
 test('reconocer: Ana con su parentesco, José, «nadie» para una voz nueva; el silencio no se compara', async () => {
@@ -249,7 +250,7 @@ test('la dueña es una sola y suma huellas (hasta MAX_MUESTRAS); un conocido con
   const conocidas = l.filter((p) => p.relacion === 'conocido');
   assert.equal(conocidas.length, 1, '«ána» es la misma Ana');
   assert.equal(conocidas[0].parentesco, 'esposa', 'el parentesco se conserva si no se dice otro');
-  const enDisco = JSON.parse(fs.readFileSync(archivo('jose@ordenglobal.org'), 'utf8'));
+  const enDisco = JSON.parse(fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8'));
   assert.ok(enDisco.personas.every((p: any) => p.vectores.length <= MAX_MUESTRAS));
 });
 
@@ -259,7 +260,7 @@ test('cada quien ve solo las suyas y no borra las de otro', async () => {
   assert.equal((await fetch(`${base}/api/voces/${idAna}`, { method: 'DELETE', headers: h(otro.token) })).status, 404);
   assert.ok((await listar(junta.token)).some((p) => p.id === idAna));
   // El correo del cuerpo no cuenta: se guarda en la cuenta de la sesión.
-  await aprender(otro.token, { relacion: 'yo', correo: 'jose@ordenglobal.org', audios: frases(DESCONOCIDO), consentimiento: { como: 'dueño' } });
+  await aprender(otro.token, { relacion: 'yo', correo: 'jose.h@ordenglobal.org', audios: frases(DESCONOCIDO), consentimiento: { como: 'dueño' } });
   assert.deepEqual((await listar(otro.token)).map((p) => p.nombre), ['Lucía']);
   assert.ok(!(await listar(junta.token)).some((p) => p.nombre === 'Lucía'));
 });
@@ -293,7 +294,7 @@ test('olvidar de verdad: una por id y después todas; tras un redespliegue tampo
   assert.deepEqual(await r.json(), { ok: true, borradas: 1, honesto: true });
   _olvidarCacheVoces();
   assert.deepEqual(await listar(junta.token), []);
-  assert.deepEqual(JSON.parse(fs.readFileSync(archivo('jose@ordenglobal.org'), 'utf8')).personas, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8')).personas, []);
 });
 
 test('si S3 no guarda, borrar no se confirma (503) y al reintentar se borra de verdad', async () => {

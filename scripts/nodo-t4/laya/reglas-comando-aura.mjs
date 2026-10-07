@@ -24,7 +24,7 @@ const AQUI = dirname(fileURLToPath(import.meta.url))
 const LIB = resolve(process.env.LIB || resolve(AQUI, '../../../lib'))
 const { ordenPorReglas } = await import(pathToFileURL(resolve(LIB, 'acciones-app.ts')).href)
 
-const NOMBRES = ['Mamá', 'Beto Pérez', 'Ana López', 'Esposa', 'Hermano', 'Don Chepe', 'Karla', 'Profe Carlos', 'Papá', 'Abuela', 'Medardo', 'Jefe',
+const NOMBRES = ['Mamá', 'Beto Pérez', 'Ana López', 'Esposa', 'Hermano', 'Don Chepe', 'Karla', 'Profe Carlos', 'Papá', 'Abuela', 'Ramiro', 'Jefe',
   'Tía Rosa', 'José', 'Hija', 'Licenciado', 'María José', 'Compadre', 'Prima', 'Doctor Ramírez', 'Vecina', 'Suegra', 'Pastor', 'Lupita', 'Cuñado', 'Don Ramón']
 const contactos = NOMBRES.map((n, i) => ({ correo: `c${i}@prueba.hn`, nombre: n }))
 // Un recordatorio por texto de los datos, cada uno a su hora (para «cancela el de las 5»).

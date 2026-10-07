@@ -31,6 +31,10 @@
  *     pantalla la escucha mientras está montada y entra sola, como si hubiera vuelto a tiempo.
  *   · `reintentar` (lo manda «Crea tu Genesis ID»): vuelve aquí y pide el pase enseguida.
  *   · Correo y clave quedan como «Otras formas de entrar», chiquito: para la junta y el modo local.
+ *
+ * Una marca y un botón principal (auditoría A5, 7-oct): «AU-RA» arriba (antes «PULSE 2CHAT × AURA») y UN solo
+ * botón dorado, «Entrar con Genesis ID» (abre la wallet). El correo y la contraseña de Veta Wallet siguen aquí,
+ * debajo y con botón secundario; «No tengo Genesis ID» y «Otras formas de entrar», en texto.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, useWindowDimensions, type TextInput } from 'react-native';
@@ -130,7 +134,7 @@ function textoError(codigo: string | undefined, mensaje: string): { titulo: stri
       };
     case 'SIN_CONEXION':
       return {
-        titulo: tr('Sin conexión con AURA', 'No connection to AURA'),
+        titulo: tr('Sin conexión con AU-RA', 'No connection to AU-RA'),
         texto: tr('Revisa tu internet y toca «Intentar de nuevo».', 'Check your internet and tap “Try again”.'),
       };
     default:
@@ -335,7 +339,7 @@ export function Entrar({ navigation, route }: Props) {
         )}
       </View>
       <Texto v="etiqueta" color="acentoTexto" centro={!horizontal} style={{ marginTop: MEDIDA.espacio.l }}>
-        PULSE 2CHAT × AURA
+        AU-RA
       </Texto>
       {/* Acostado, el idioma va debajo de la marca para no pisar el título. */}
       {horizontal && (
@@ -356,8 +360,8 @@ export function Entrar({ navigation, route }: Props) {
           {estado.tipo === 'exito'
             ? tr('Tu Genesis ID confirmó que eres tú.', 'Your Genesis ID confirmed it’s you.')
             : tr(
-                'Con tu cuenta de Veta Wallet, la misma de vetawallet.com. Si tienes Genesis ID, AURA lo reconoce.',
-                'With your Veta Wallet account, the same as on vetawallet.com. If you have a Genesis ID, AURA recognizes it.'
+                'Con tu Genesis ID: tu wallet confirma que eres tú y vuelves aquí. También puedes entrar con tu cuenta de Veta Wallet.',
+                'With your Genesis ID: your wallet confirms it’s you and brings you back. You can also sign in with your Veta Wallet account.'
               )}
         </Texto>
       </View>
@@ -408,11 +412,47 @@ export function Entrar({ navigation, route }: Props) {
         />
       )}
 
+      <View style={{ gap: MEDIDA.espacio.m }}>
+        <Boton
+          titulo={estado.tipo === 'error' || estado.tipo === 'sinWallet' ? tr('Intentar de nuevo', 'Try again') : tr('Entrar con Genesis ID', 'Sign in with Genesis ID')}
+          icono="huella"
+          onPress={() => void entrarGenesis()}
+          cargando={esperando}
+          textoCargando={tr('Esperando tu wallet…', 'Waiting for your wallet…')}
+          deshabilitado={estado.tipo === 'exito' || enviando}
+          etiqueta={tr('Entrar con Genesis ID: se abre tu wallet Orden Global', 'Sign in with Genesis ID: your Orden Global wallet opens')}
+        />
+        {estado.tipo === 'sinWallet' ? (
+          <>
+            <Boton titulo={tr('Instalar Orden Global', 'Install Orden Global')} icono="wallet" variante="secundario" onPress={() => void abrirTiendaOrdenGlobal()} />
+            <Boton titulo={tr('Usar Veta Wallet en la web', 'Use Veta Wallet on the web')} icono="globo" variante="secundario" onPress={() => void entrarGenesis({ web: true })} />
+            <Boton titulo={tr('Entrar con mi correo', 'Sign in with my email')} variante="fantasma" onPress={() => navigation.navigate('OtrasFormas')} />
+          </>
+        ) : estado.tipo === 'noVinculada' ? (
+          <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
+        ) : (
+          // Con el Genesis ID en verificación no se ofrece crear otro: ya tiene uno, solo falta que lo aprueben.
+          estado.tipo !== 'gidPendiente' && (
+            <Boton titulo={tr('No tengo Genesis ID', 'I don’t have a Genesis ID')} variante="fantasma" onPress={() => navigation.navigate('CrearGenesis')} deshabilitado={ocupado} />
+          )
+        )}
+      </View>
+
+      {estado.tipo !== 'exito' && (
+        <View style={s.separador} accessible={false}>
+          <View style={[s.linea, { backgroundColor: tema.borde }]} />
+          <Texto v="chica" color="texto3">
+            {tr('o con tu correo', 'or with your email')}
+          </Texto>
+          <View style={[s.linea, { backgroundColor: tema.borde }]} />
+        </View>
+      )}
+
       {/* Entrar con la cuenta de Veta Wallet: correo y contraseña, como en vetawallet.com. */}
       {estado.tipo !== 'exito' && (
         <View style={{ gap: MEDIDA.espacio.m }}>
-          <Texto v="subtitulo" accessibilityRole="header">
-            {tr('Entrar con tu cuenta de Veta Wallet', 'Sign in with your Veta Wallet account')}
+          <Texto v="cuerpoFuerte" accessibilityRole="header">
+            {tr('Tu cuenta de Veta Wallet', 'Your Veta Wallet account')}
           </Texto>
           <Campo
             etiqueta={tr('Correo', 'Email')}
@@ -452,7 +492,7 @@ export function Entrar({ navigation, route }: Props) {
             editable={!ocupado}
             error={errorClave?.campo === 'clave' ? errorClave.mensaje : undefined}
             accessibilityLabel={tr('Contraseña de tu cuenta de Veta Wallet', 'Password of your Veta Wallet account')}
-            accessibilityHint={tr('Va directo a Veta Wallet. AURA no la guarda.', 'It goes straight to Veta Wallet. AURA doesn’t keep it.')}
+            accessibilityHint={tr('Va directo a Veta Wallet. AU-RA no la guarda.', 'It goes straight to Veta Wallet. AU-RA doesn’t keep it.')}
           />
           {!!errorClave && !errorClave.campo && <Aviso icono="alerta" tono="aviso" titulo={tr('No se pudo entrar', 'Couldn’t sign in')} texto={errorClave.mensaje} />}
           {!!avisoCorreo && (
@@ -469,6 +509,7 @@ export function Entrar({ navigation, route }: Props) {
           <Boton
             titulo={tr('Entrar', 'Sign in')}
             icono="candado"
+            variante="secundario"
             onPress={() => void entrarClave()}
             cargando={enviando}
             textoCargando={tr('Entrando con Veta Wallet…', 'Signing in with Veta Wallet…')}
@@ -491,55 +532,18 @@ export function Entrar({ navigation, route }: Props) {
               tam="chico"
               onPress={() => void entrarGenesis({ web: true })}
               deshabilitado={ocupado}
-              etiqueta={tr('Crear tu cuenta en la web de Veta Wallet; al terminar vuelves a AURA', 'Create your account on the Veta Wallet website; when you’re done you come back to AURA')}
+              etiqueta={tr('Crear tu cuenta en la web de Veta Wallet; al terminar vuelves a AU-RA', 'Create your account on the Veta Wallet website; when you’re done you come back to AU-RA')}
             />
           </View>
         </View>
       )}
 
-      {estado.tipo !== 'exito' && (
-        <View style={s.separador} accessible={false}>
-          <View style={[s.linea, { backgroundColor: tema.borde }]} />
-          <Texto v="chica" color="texto3">
-            {tr('o con tu wallet', 'or with your wallet')}
-          </Texto>
-          <View style={[s.linea, { backgroundColor: tema.borde }]} />
-        </View>
-      )}
-
-      <View style={{ gap: MEDIDA.espacio.m }}>
-        <Boton
-          titulo={estado.tipo === 'error' || estado.tipo === 'sinWallet' ? tr('Intentar de nuevo', 'Try again') : tr('Abrir mi wallet', 'Open my wallet')}
-          icono="huella"
-          variante="secundario"
-          onPress={() => void entrarGenesis()}
-          cargando={esperando}
-          textoCargando={tr('Esperando tu wallet…', 'Waiting for your wallet…')}
-          deshabilitado={estado.tipo === 'exito' || enviando}
-          etiqueta={tr('Entrar con Genesis ID desde tu wallet Orden Global', 'Sign in with Genesis ID from your Orden Global wallet')}
-        />
-        {estado.tipo === 'sinWallet' ? (
-          <>
-            <Boton titulo={tr('Instalar Orden Global', 'Install Orden Global')} icono="wallet" variante="secundario" onPress={() => void abrirTiendaOrdenGlobal()} />
-            <Boton titulo={tr('Usar Veta Wallet en la web', 'Use Veta Wallet on the web')} icono="globo" variante="secundario" onPress={() => void entrarGenesis({ web: true })} />
-            <Boton titulo={tr('Entrar con mi correo', 'Sign in with my email')} variante="fantasma" onPress={() => navigation.navigate('OtrasFormas')} />
-          </>
-        ) : estado.tipo === 'noVinculada' ? (
-          <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
-        ) : (
-          // Con el Genesis ID en verificación no se ofrece crear otro: ya tiene uno, solo falta que lo aprueben.
-          estado.tipo !== 'gidPendiente' && (
-            <Boton titulo={tr('No tengo Genesis ID', 'I don’t have a Genesis ID')} variante="fantasma" onPress={() => navigation.navigate('CrearGenesis')} deshabilitado={ocupado} />
-          )
-        )}
-      </View>
-
       <View style={s.confianza}>
         <Icono nombre="candado" tam={15} color={tema.texto3} />
         <Texto v="chica" color="texto3" style={{ flex: 1 }}>
           {tr(
-            'Tu contraseña va directo de este teléfono a Veta Wallet: el servidor de AURA nunca la ve y no se guarda.',
-            'Your password goes straight from this phone to Veta Wallet: the AURA server never sees it and it isn’t stored.'
+            'Tu contraseña va directo de este teléfono a Veta Wallet: el servidor de AU-RA nunca la ve y no se guarda.',
+            'Your password goes straight from this phone to Veta Wallet: the AU-RA server never sees it and it isn’t stored.'
           )}
         </Texto>
       </View>

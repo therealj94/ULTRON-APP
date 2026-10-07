@@ -79,8 +79,8 @@ class SalaSegura extends React.Component<PropsSalaSegura, { roto: boolean }> {
 /** Lo que se dice cuando el turno no llegó: humano, sin el error técnico (ese va a la consola). */
 const fraseSinCerebro = () =>
   typeof navigator !== 'undefined' && navigator.onLine === false
-    ? 'Me quedé sin internet. Revisá la conexión y probá de nuevo.'
-    : 'No alcancé el cerebro. Probá de nuevo en un momento.';
+    ? 'Me quedé sin internet. Revisa la conexión y prueba de nuevo.'
+    : 'No alcancé el cerebro. Prueba de nuevo en un momento.';
 
 /** Uno al azar: los clips de un mismo momento («hola», «aquí estoy»…) se turnan. */
 const alAzar = <T,>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)];
@@ -667,7 +667,7 @@ export default function App() {
         accion: { ...accion, titulo: p.titulo || accion.titulo, destinatario: p.destinatario || accion.destinatario, contenido: p.contenido },
         resultado: undefined,
       });
-      decir('El servidor lo entendió un poco distinto. Revisá la tarjeta y confirmá otra vez.', { emocion: 'neutral' });
+      decir('El servidor lo entendió un poco distinto. Revisa la tarjeta y confirma otra vez.', { emocion: 'neutral' });
     },
     [conv.actualizar, aprobarEnServidor, decir]
   );
@@ -797,8 +797,8 @@ export default function App() {
           setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
           fijarCuenta(null);
           setSesionVista('no');
-          decir('Eso necesita tu sesión de junta. Entrá y lo hacemos.', { emocion: 'neutral' });
-          cerrarTurno({ texto: 'Eso necesita tu sesión de junta. Entrá y lo hacemos.', estado: 'lista' });
+          decir('Eso necesita tu sesión de junta. Entra y lo hacemos.', { emocion: 'neutral' });
+          cerrarTurno({ texto: 'Eso necesita tu sesión de junta. Entra y lo hacemos.', estado: 'lista' });
           resultadoAccion('', 'sesión requerida');
           return;
         }
@@ -925,15 +925,15 @@ export default function App() {
             const vigente = deEstaCuenta();
             void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) => {
               if (!vigente()) return;
-              if (r.remoto === 'ok') decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
+              if (r.remoto === 'ok') decir('Anotado. Si es de la junta, dime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
               else if (r.remoto === 'sin-sesion') decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' });
-              else decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' });
+              else decir('No pude guardarlo en el servidor. Prueba de nuevo en un momento.', { emocion: 'neutral' });
             });
           }
           return;
         case 'genesis': {
           const hecho = pendienteGenesis.current || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
-          if (!hecho) return void decir('Decime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
+          if (!hecho) return void decir('Dime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
           hacerTarea('anotar');
           pendienteGenesis.current = '';
           const vigente = deEstaCuenta();
@@ -941,14 +941,16 @@ export default function App() {
             if (!vigente()) return;
             if (r.remoto === 'ok') decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' });
             else if (r.remoto === 'sin-sesion') decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' });
-            else decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' });
+            else decir('No pude guardarlo en Genesis Core. Prueba de nuevo en un momento.', { emocion: 'neutral' });
           });
           return;
         }
         case 'cantar': {
           callarTodo();
           setEmocion('canto');
-          setFace('SING');
+          // Canta cuando SUENA (d.inicio: el `playing` del audio); mientras baja la canción, piensa (José, 7-oct: la
+          // boca se movía antes de que saliera la voz).
+          setFace('THINKING');
           const d = cantar({ pedido: it.pedido });
           hablando.current = d;
           d.inicio.then(() => hablando.current === d && setFace('SING'));
@@ -963,7 +965,8 @@ export default function App() {
         case 'orar': {
           callarTodo();
           setEmocion('oracion');
-          setFace('PRAY');
+          // Ora cuando SUENA (d.inicio); mientras se prepara, piensa.
+          setFace('THINKING');
           const d = hablar('oracion', { emocion: 'oracion' });
           hablando.current = d;
           d.inicio.then(() => hablando.current === d && setFace('PRAY'));
@@ -1022,7 +1025,7 @@ export default function App() {
       conv.proponer(accion, cmd);
       // La tarjeta vive en la superficie de trabajo: se pasa ahí para que se vea qué se autoriza.
       setModoMesa('trabajar');
-      decir('Antes de hacerlo, revisá la tarjeta: a quién va, qué dice, y confirmá.', { emocion: 'neutral' });
+      decir('Antes de hacerlo, revisa la tarjeta: a quién va, qué dice, y confirma.', { emocion: 'neutral' });
       return true;
     },
     [conv.proponer, decir]
@@ -1194,7 +1197,7 @@ export default function App() {
       setFace('LISTENING');
     },
     onSinPermiso: () => {
-      showBubble('Permití el micrófono en el navegador para hablarme.');
+      showBubble('Permite el micrófono en el navegador para hablarme.');
       setMicEnabled(false);
     },
     onNoSoportado: () => {
@@ -1470,7 +1473,7 @@ export default function App() {
                 </p>
                 {conv.entradas.length > 0 && (
                   <div className="flex flex-col gap-2">
-                    <p className="aura-sobretitulo px-2">Probá pedirle</p>
+                    <p className="aura-sobretitulo px-2">Prueba a pedirle</p>
                     {EJEMPLOS_INICIO.map((e) => (
                       <button key={e.pedido} type="button" className="aura-chip w-full" onClick={() => pedir(e.pedido)}>
                         {e.texto}
@@ -1577,7 +1580,7 @@ export default function App() {
                 </button>
               </div>
               <span className="text-[14px] font-medium text-(--aura-tinta-2) bg-(--aura-fondo)/85 px-3 py-0.5 rounded-full" aria-hidden="true">
-                {enVivo === 'conectando' ? 'Conectando en vivo…' : enVivo === 'hablando' ? 'En vivo · podés interrumpirla' : enVivo === 'escuchando' ? 'En vivo · te escucho' : !micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
+                {enVivo === 'conectando' ? 'Conectando en vivo…' : enVivo === 'hablando' ? 'En vivo · puedes interrumpirla' : enVivo === 'escuchando' ? 'En vivo · te escucho' : !micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
               </span>
             </div>
           )}
@@ -1635,7 +1638,7 @@ export default function App() {
           }}
           onOmitir={() => {
             setSinCorreo(null);
-            decir('Listo, lo dejamos. Cuando quieras, conectá tu correo en Ajustes → Tu AURA → Tus correos, o pegame el texto.', { emocion: 'neutral' });
+            decir('Listo, lo dejamos. Cuando quieras, conecta tu correo en Ajustes → Tu AURA → Tus correos, o pégame el texto.', { emocion: 'neutral' });
           }}
         />
 
@@ -1690,8 +1693,8 @@ export default function App() {
             void olvidarTodo({ usuario: usuario.name }).then((r) => {
               if (!vigente()) return;
               if (r.remoto === 'ok') decir('Listo. Empezamos de cero.', { emocion: 'neutral' });
-              else if (r.remoto === 'sin-sesion') decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' });
-              else decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' });
+              else if (r.remoto === 'sin-sesion') decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tienes que entrar.', { emocion: 'neutral' });
+              else decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Prueba de nuevo en un momento.', { emocion: 'neutral' });
             });
           }}
         />
@@ -1784,7 +1787,7 @@ export default function App() {
             setFace('THINKING');
             // La foto tomada, achicada a JPEG de 640 px (no un cuadro en vivo de la cámara).
             void achicarFoto(dataUrl).then((imagen) => {
-              if (!imagen) return void decir('No pude leer la foto. Probá tomarla de nuevo.', { emocion: 'preocupado' });
+              if (!imagen) return void decir('No pude leer la foto. Prueba a tomarla de nuevo.', { emocion: 'preocupado' });
               void pensar('qué ves en esta foto', { imagen });
             });
           }}

@@ -17,7 +17,8 @@
  *     se desvinculó (desde el teléfono), se limpia la lista y se ofrece vincular.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, Clipboard, FlatList, Image, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Clipboard, FlatList, Image, Pressable, Share, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { Letra as Text } from '../ui/Letra';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { idiomaActual, tr, useIdioma } from '../i18n';
@@ -26,6 +27,8 @@ import * as API from './api';
 import { ConversacionWA } from './ConversacionWA';
 import { IconoWA, type NombreIconoWA } from './IconoWA';
 import { NuevoChatWA } from './NuevoChatWA';
+import { guardarWA, leerGuardadoWA } from './guardado';
+import { fuente } from '../ui/tipografia';
 import { AvatarWA } from './PiezasWA';
 import {
   chatDeContacto,
@@ -85,9 +88,12 @@ const ICONO_PREVIA: Record<IconoPrevia, NombreIconoWA> = {
 export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null, onNoLeidos, onEstado }: Props) {
   useIdioma();
   const p = useTema();
-  const w = useMemo(() => paletaWA(p.oscuro), [p.oscuro]);
+  const w = useMemo(() => paletaWA(p), [p]);
   const s = useMemo(() => estilos(p), [p]);
   const ins = useSafeAreaInsets();
+  // Acostado, el botón flotante taparía la hora y el globo de sin leer: «Nuevo chat» va en la cabecera.
+  const { width: anchoV, height: altoV } = useWindowDimensions();
+  const acostado = anchoV > altoV;
   const idioma = idiomaActual() === 'en' ? 'en' : 'es';
   const [estado, setEstado] = useState<EstadoWA | null>(estadoInicial);
   const [chats, setChats] = useState<ChatWA[] | null>(null);
@@ -96,8 +102,25 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
   const [q, setQ] = useState('');
   const [abierto, setAbierto] = useState<ChatWA | null>(null);
   const [nuevo, setNuevo] = useState(false);
+  /** Lo que se ve es lo último guardado en el teléfono (sin red): se dice arriba, sin esconder la lista. */
+  const [deGuardado, setDeGuardado] = useState(false);
   const huella = useRef('');
   const vista = vistaDe(estado);
+
+  // Sin red al abrir: lo de la última vez (whatsapp/guardado.ts) en vez de un círculo que gira sin fin (A3).
+  // Solo si todavía no llegó nada del servidor: lo de verdad siempre gana.
+  useEffect(() => {
+    let vivo = true;
+    void leerGuardadoWA().then((g) => {
+      if (!vivo || !g || huella.current) return;
+      setEstado((e) => e ?? g.estado);
+      setChats((cs) => cs ?? g.chats);
+      setDeGuardado(true);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, []);
 
   const leer = useCallback(async () => {
     try {
@@ -122,7 +145,9 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
         if (h !== huella.current) {
           huella.current = h;
           setChats(cs);
+          guardarWA(e, cs);
         } else setChats((v) => v ?? cs);
+        setDeGuardado(false);
         onNoLeidos?.(cs.filter((c) => c.noLeidos > 0).length);
       }
       setError('');
@@ -206,11 +231,22 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
   // El puente no contesta pero ya había chats: se siguen viendo (con el aviso arriba) en vez de una pantalla vacía.
   const conLista = vista === 'listo' || (vista === 'caido' && !!chats?.length);
   const numero = telefonoBonito(estado?.numero) || estado?.numero || '';
-  const detalle = vista === 'caido' ? tr('sin conexión con tu WhatsApp', 'not connected to your WhatsApp') : vista === 'listo' ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ') : tr('Agrega tu WhatsApp personal', 'Add your personal WhatsApp');
+  // «Agrega tu WhatsApp» solo cuando de verdad falta vincularlo: sin red no se sabe, y no se le dice que no lo tiene (A3).
+  const detalle =
+    vista === 'caido'
+      ? tr('sin conexión con tu WhatsApp', 'not connected to your WhatsApp')
+      : vista === 'listo'
+        ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ')
+        : vista === 'vincular'
+          ? tr('Agrega tu WhatsApp personal', 'Add your personal WhatsApp')
+          : error
+            ? tr('sin conexión', 'offline')
+            : '';
+  const aviso = error && deGuardado ? `${error} ${tr('Te muestro lo último guardado.', 'Showing what was last saved.')}` : error;
 
   return (
     <View style={{ flex: 1, backgroundColor: conLista ? w.fondo : p.fondo }}>
-      <View style={[s.cabecera, { backgroundColor: w.cabecera, paddingTop: ins.top + MEDIDA.espacio.s, paddingLeft: ins.left + MEDIDA.espacio.m, paddingRight: ins.right + MEDIDA.espacio.m }]}>
+      <View style={[s.cabecera, { backgroundColor: w.cabecera, paddingTop: ins.top + MEDIDA.espacio.s, paddingLeft: ins.left + MEDIDA.espacio.s, paddingRight: ins.right + MEDIDA.espacio.s }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {onAtras ? (
             <Pressable onPress={onAtras} accessibilityRole="button" accessibilityLabel={tr('Volver', 'Back')} hitSlop={8} style={s.botonCab}>
@@ -221,14 +257,20 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
             <Text style={[s.titulo, { color: w.sobreCabecera }]} accessibilityRole="header">
               WhatsApp
             </Text>
-            {detalle ? (
-              <Text style={{ color: w.sobreCabecera2, fontSize: 13, marginTop: 1 }} numberOfLines={1}>
-                {detalle}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: w.verde }} />
+              <Text style={{ color: w.sobreCabecera2, fontSize: MEDIDA.letra.cuerpo - 1 }} numberOfLines={1}>
+                {detalle || tr('Tu WhatsApp personal', 'Your personal WhatsApp')}
               </Text>
-            ) : null}
+            </View>
           </View>
+          {conLista && chats !== null && acostado ? (
+            <Pressable onPress={() => setNuevo(true)} accessibilityRole="button" accessibilityLabel={tr('Nuevo chat', 'New chat')} hitSlop={8} style={s.botonCab}>
+              <IconoWA nombre="nuevoChat" color={w.sobreCabecera} tam={24} />
+            </Pressable>
+          ) : null}
           {vista === 'listo' ? (
-            <Pressable onPress={desvincular} accessibilityRole="button" accessibilityLabel={tr('Desvincular WhatsApp de AURA', 'Unlink WhatsApp from AURA')} hitSlop={8} style={s.botonCab}>
+            <Pressable onPress={desvincular} accessibilityRole="button" accessibilityLabel={tr('Desvincular WhatsApp de AU-RA', 'Unlink WhatsApp from AU-RA')} hitSlop={8} style={s.botonCab}>
               <IconoWA nombre="puntos" color={w.sobreCabecera} tam={22} lleno />
             </Pressable>
           ) : null}
@@ -245,7 +287,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
             placeholder={tr('Buscar un chat o un número', 'Search a chat or a number')}
             placeholderTextColor={w.pista}
             autoCorrect={false}
-            style={[s.buscadorTxt, { color: w.nombre }]}
+            style={[s.buscadorTxt, fuente('regular'), { color: w.nombre }]}
             accessibilityLabel={tr('Buscar chats', 'Search chats')}
             returnKeyType="search"
           />
@@ -258,13 +300,20 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       ) : null}
 
       {!!error && vista !== 'vincular' && !(vista === 'caido' && !conLista) ? (
-        <View style={[s.banda, { backgroundColor: w.avisoFondo }]}>
-          <Text style={{ color: w.aviso, fontSize: 13 }}>{error}</Text>
+        <View style={[s.banda, { backgroundColor: w.avisoFondo }]} accessibilityRole="alert" accessibilityLiveRegion="polite">
+          <Text style={{ color: w.aviso, fontSize: MEDIDA.letra.chica + 1, fontWeight: '600' }}>{aviso}</Text>
         </View>
       ) : null}
 
-      {vista === 'revisando' ? (
-        <ActivityIndicator color={w.globo} style={{ marginTop: 48 }} />
+      {vista === 'revisando' && error ? (
+        // Sin red y sin nada guardado: se dice, con un botón para probar ya (antes, un círculo que giraba sin fin).
+        <Aviso p={p} titulo={tr('Sin conexión', 'No connection')} texto={tr('Cuando vuelva el internet aparecen tus chats de WhatsApp. Reintento solo cada pocos segundos.', 'Your WhatsApp chats will show up when the internet is back. I retry on my own every few seconds.')}>
+          <Pressable onPress={() => void leer()} accessibilityRole="button" style={[s.botonGrande, { paddingHorizontal: 32, marginTop: 8 }]}>
+            <Text style={s.botonGrandeTxt}>{tr('Reintentar ahora', 'Retry now')}</Text>
+          </Pressable>
+        </Aviso>
+      ) : vista === 'revisando' ? (
+        <ActivityIndicator color={p.acento} style={{ marginTop: 48 }} />
       ) : vista === 'caido' && !conLista ? (
         <Aviso p={p} titulo={tr('Tu WhatsApp no contesta', 'Your WhatsApp isn’t answering')} texto={tr('Es la conexión del servidor con WhatsApp. Si ya lo tenías vinculado, sigue vinculado: no hace falta vincular otra vez. Reintento solo cada pocos segundos.', 'It’s the server’s connection to WhatsApp. If you had it linked, it’s still linked: no need to link again. I retry on my own every few seconds.')}>
           <Pressable onPress={() => void leer()} accessibilityRole="button" style={[s.botonGrande, { paddingHorizontal: 32, marginTop: 8 }]}>
@@ -276,7 +325,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       ) : vista === 'vincular' ? (
         <Vincular p={p} estado={estado} onCambio={leer} />
       ) : chats === null ? (
-        <ActivityIndicator color={w.globo} style={{ marginTop: 48 }} />
+        <ActivityIndicator color={p.acento} style={{ marginTop: 48 }} />
       ) : !chats.length ? (
         <Aviso p={p} titulo={tr('Trayendo tus chats…', 'Bringing your chats…')} texto={tr('Al vincular, WhatsApp manda tus conversaciones recientes. Tarda unos minutos la primera vez.', 'When you link, WhatsApp sends your recent conversations. It takes a few minutes the first time.')} />
       ) : (
@@ -292,14 +341,14 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
         />
       )}
 
-      {conLista && chats !== null && !abierto && !nuevo ? (
+      {conLista && chats !== null && !abierto && !nuevo && !acostado ? (
         <Pressable
           onPress={() => setNuevo(true)}
           accessibilityRole="button"
           accessibilityLabel={tr('Nuevo chat', 'New chat')}
-          style={({ pressed }) => [s.nuevo, { bottom: ins.bottom + 20, right: ins.right + 16, backgroundColor: '#00A884', opacity: pressed ? 0.85 : 1 }]}
+          style={({ pressed }) => [s.nuevo, { bottom: ins.bottom + MEDIDA.espacio.xl, right: ins.right + MEDIDA.espacio.xl, backgroundColor: p.acento, opacity: pressed ? 0.85 : 1 }]}
         >
-          <IconoWA nombre="nuevoChat" tam={26} color={p.oscuro ? '#111B21' : '#FFFFFF'} />
+          <IconoWA nombre="nuevoChat" tam={26} color={p.sobreAcento} />
         </Pressable>
       ) : null}
 
@@ -361,12 +410,13 @@ const st = StyleSheet.create({
   fila: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, minHeight: 72 },
   cuerpo: { flex: 1, marginLeft: 14, paddingRight: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, alignSelf: 'stretch', justifyContent: 'center' },
   arriba: { flexDirection: 'row', alignItems: 'center' },
-  nombre: { flex: 1, fontSize: 17, fontWeight: '600', marginRight: 8 },
-  hora: { fontSize: 12 },
+  // Las mismas medidas de letra que la lista de PULSE2CHAT (MEDIDA.letra): una sola app, no dos.
+  nombre: { flex: 1, fontSize: MEDIDA.letra.grande - 1, fontWeight: '600', marginRight: 8 },
+  hora: { fontSize: MEDIDA.letra.chica },
   abajo: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
-  previa: { fontSize: 14.5 },
+  previa: { fontSize: MEDIDA.letra.cuerpo - 1 },
   globo: { minWidth: 21, height: 21, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  globoTxt: { fontSize: 12, fontWeight: '700' },
+  globoTxt: { fontSize: MEDIDA.letra.chica, fontWeight: '800' },
 });
 
 /* ── vincular ─────────────────────────────────────────────────────────────────────────────── */
@@ -437,8 +487,8 @@ export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA 
         </Text>
         <Text style={s.detalle}>
           {tr(
-            'AU-RA entra como un «dispositivo vinculado», igual que WhatsApp Web: ves tus chats y contestas desde aquí, y AURA te los puede leer y ayudarte a contestar (nada sale sin tu «sí»). Tu teléfono sigue funcionando igual.',
-            'AU-RA joins as a “linked device”, like WhatsApp Web: you see your chats and reply from here, and AURA can read them to you and help you reply (nothing is sent without your “yes”). Your phone keeps working the same.'
+            'AU-RA entra como un «dispositivo vinculado», igual que WhatsApp Web: ves tus chats y contestas desde aquí, y AU-RA te los puede leer y ayudarte a contestar (nada sale sin tu «sí»). Tu teléfono sigue funcionando igual.',
+            'AU-RA joins as a “linked device”, like WhatsApp Web: you see your chats and reply from here, and AU-RA can read them to you and help you reply (nothing is sent without your “yes”). Your phone keeps working the same.'
           )}
         </Text>
         <View style={s.tarjeta} accessible accessibilityLabel={textoConsentimientoWA(idioma)}>
@@ -489,7 +539,7 @@ export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA 
       )}
       {!cupoLleno && ((modo === 'codigo' && !codigoVivo) || (modo === 'qr' && !qrVivo)) ? (
         <Pressable onPress={() => void pedir()} disabled={ocupado} style={[s.botonGrande, ocupado && { opacity: 0.6 }]} accessibilityRole="button">
-          {ocupado ? <ActivityIndicator color="#FFFFFF" /> : <Text style={s.botonGrandeTxt}>{modo === 'codigo' ? tr('Pedir el código', 'Get the code') : tr('Mostrar el QR', 'Show the QR')}</Text>}
+          {ocupado ? <ActivityIndicator color={p.sobreAcento} /> : <Text style={s.botonGrandeTxt}>{modo === 'codigo' ? tr('Pedir el código', 'Get the code') : tr('Mostrar el QR', 'Show the QR')}</Text>}
         </Pressable>
       ) : null}
       {!cupoLleno ? (
@@ -502,7 +552,7 @@ export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA 
           hitSlop={8}
           style={{ alignSelf: 'center', paddingVertical: 6 }}
         >
-          <Text style={{ color: '#00A884', fontWeight: '700', fontSize: 14 }}>{modo === 'codigo' ? tr('Mejor con QR (desde otro teléfono o la PC)', 'Use a QR instead (from another phone or a PC)') : tr('Volver al código (en este teléfono)', 'Back to the code (on this phone)')}</Text>
+          <Text style={{ color: p.acentoTexto, fontWeight: '700', fontSize: 14 }}>{modo === 'codigo' ? tr('Mejor con QR (desde otro teléfono o la PC)', 'Use a QR instead (from another phone or a PC)') : tr('Volver al código (en este teléfono)', 'Back to the code (on this phone)')}</Text>
         </Pressable>
       ) : null}
       <Text style={[s.detalle, { fontSize: 12, color: p.texto3 }]}>
@@ -527,7 +577,7 @@ function Pasos({ p, pasos }: { p: Paleta; pasos: string[] }) {
 function Aviso({ p, titulo, texto, children }: { p: Paleta; titulo: string; texto: string; children?: ReactNode }) {
   return (
     <View style={{ padding: MEDIDA.espacio.xxl, alignItems: 'center', gap: 8 }}>
-      <Icono nombre="burbujas" tam={44} color="#00A884" grosor={1.6} />
+      <Icono nombre="burbujas" tam={44} color={p.acentoTexto} grosor={1.6} />
       <Text style={{ color: p.texto, fontSize: 18, fontWeight: '700', textAlign: 'center' }}>{titulo}</Text>
       <Text style={{ color: p.texto2, fontSize: 15, lineHeight: 21, textAlign: 'center' }}>{texto}</Text>
       {children}
@@ -537,12 +587,13 @@ function Aviso({ p, titulo, texto, children }: { p: Paleta; titulo: string; text
 
 function estilos(p: Paleta) {
   return StyleSheet.create({
-    cabecera: { paddingHorizontal: MEDIDA.espacio.m, paddingBottom: MEDIDA.espacio.m },
+    // La misma cabecera que PULSE2CHAT (pulse/PantallaChats.tsx): título grande, subtítulo y las pestañas debajo.
+    cabecera: { paddingHorizontal: MEDIDA.espacio.s, paddingBottom: MEDIDA.espacio.m },
     botonCab: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    titulo: { fontSize: 22, fontWeight: '700' },
+    titulo: { fontSize: MEDIDA.letra.enorme - 4, fontWeight: '800', letterSpacing: -0.5 },
     detalle: { color: p.texto2, fontSize: MEDIDA.letra.chica + 1, marginTop: 2 },
-    buscador: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 10, marginBottom: 4, paddingHorizontal: 14, height: 44, borderRadius: 22 },
-    buscadorTxt: { flex: 1, fontSize: 16, paddingVertical: 0 },
+    buscador: { flexDirection: 'row', alignItems: 'center', gap: MEDIDA.espacio.s, marginHorizontal: MEDIDA.espacio.l, marginTop: 0, marginBottom: MEDIDA.espacio.s, paddingHorizontal: MEDIDA.espacio.m, height: 42, borderRadius: MEDIDA.radio.m },
+    buscadorTxt: { flex: 1, fontSize: MEDIDA.letra.cuerpo, paddingVertical: 0 },
     banda: { paddingVertical: 8, paddingHorizontal: MEDIDA.espacio.l },
     vTitulo: { color: p.texto, fontSize: 22, fontWeight: '800' },
     segmento: { flexDirection: 'row', backgroundColor: p.superficie, borderRadius: 999, padding: 4 },
@@ -550,9 +601,10 @@ function estilos(p: Paleta) {
     segTxt: { color: p.texto, fontWeight: '700', fontSize: 14 },
     tarjeta: { backgroundColor: p.superficie, borderRadius: 18, padding: MEDIDA.espacio.l, gap: 8 },
     codigo: { color: p.texto, fontSize: 34, fontWeight: '900', letterSpacing: 4, textAlign: 'center', marginVertical: 6 },
-    campo: { height: 52, borderRadius: 16, borderWidth: 1, borderColor: p.borde, backgroundColor: p.superficie, color: p.texto, fontSize: 18, paddingHorizontal: 14 },
-    botonGrande: { height: 52, borderRadius: 26, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
-    botonGrandeTxt: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
-    nuevo: { position: 'absolute', right: 16, width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+    campo: { height: 52, borderRadius: MEDIDA.radio.m, borderWidth: 1, borderColor: p.borde, backgroundColor: p.superficie, color: p.texto, fontSize: 18, paddingHorizontal: 14 },
+    botonGrande: { height: 52, borderRadius: 26, backgroundColor: p.acento, alignItems: 'center', justifyContent: 'center' },
+    botonGrandeTxt: { color: p.sobreAcento, fontWeight: '700', fontSize: 16 },
+    // El mismo botón flotante que PULSE2CHAT: redondo, dorado.
+    nuevo: { position: 'absolute', width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
   });
 }

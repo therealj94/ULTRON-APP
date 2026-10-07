@@ -75,7 +75,7 @@ export function porQueNoAbre(p: Puerta): string {
  * descubrirlo después de encuadrar el papel y subir cuatro megas con una raya de señal es peor.
  */
 export const SIN_NIVEL_PARA_CARGAR =
-  'Con tu acceso de consulta podés preguntarme todo, pero no cargarle fotos al expediente. Si necesitás cargar, pedile a José nivel de trabajo.';
+  'Con tu acceso de consulta puedes preguntarme todo, pero no cargarle fotos al expediente. Si necesitas cargar, pídele a José nivel de trabajo.';
 
 /** Qué se estaba haciendo cuando falló: cambia el arranque de la frase y cómo se lee un 401. */
 export type Intento = 'contestar' | 'foto' | 'camara' | 'informe' | 'ubicacion' | 'entrar';
@@ -145,7 +145,7 @@ export function fraseDeError(e: unknown, intento: Intento = 'contestar'): string
       // En la puerta de entrada un 401 es «correo o clave mal», no «tu sesión caducó». Y la frase es
       // de acá, no del servidor: ese rechazo lo reenvía tal cual desde el cerebro remoto.
       if (intento === 'entrar') {
-        return 'El servidor no aceptó ese correo con esa clave. Revisalos y probá de nuevo; si están bien, pedile a José que te dé de alta.';
+        return 'El servidor no aceptó ese correo con esa clave. Revísalos y prueba de nuevo; si están bien, pídele a José que te dé de alta.';
       }
       // Un 403 dentro es de NIVEL (una llave de consulta que quiere cargar una foto): el servidor
       // manda el porqué en castellano, y es mejor que cualquier frase genérica de acá.

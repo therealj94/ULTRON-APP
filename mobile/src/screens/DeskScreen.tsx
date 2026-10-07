@@ -12,13 +12,14 @@ import { pedidoDeVoces } from '../voces/voces';
 import { pedidoDeCaras } from '../caras/caras';
 // ── fin ──
 import { guardarPerfil } from '../lib/perfil';
-import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions, type TextInput } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
-import { OrbeAura } from '../components/OrbeAura';
+import { FONDO_ORBE, OrbeAura } from '../components/OrbeAura';
 import type { PedidoCara } from '../cara/CaraSkia';
 import { CaraSegura } from '../cara/CaraSegura';
 import { textoTarea, tareaDeHerramientas, type Tarea } from '../lib/tareas';
@@ -87,7 +88,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { ClaudioRetrato, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { ClaudioDePie, FOTOS_ANTONIO_PIE } from '../avatares/ClaudioDePie';
 import { CuerpoMesa } from '../avatar3d/CuerpoMesa';
-import { vozSonando } from '../avatar3d/sonando';
+import { caraConVoz, vozSonando } from '../avatar3d/sonando';
 import { leeConHerramientas, ponerLee } from '../avatares/video/pistas';
 import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { hayVideo } from '../avatares/video/clips';
@@ -104,7 +105,8 @@ import { respuestaAclaracion, type ControlVoz } from '../lib/controlesVoz';
 import { usePulse } from '../pulse/PulseProvider';
 import { useSinLeerTotal } from '../pulse/chats';
 import { ChatMesa } from '../components/ChatMesa';
-import { ALTO_BARRA, BarraMesa } from '../components/BarraMesa';
+import { ALTO_BARRA, BarraMesa, anchoRiel, filaRiel } from '../components/BarraMesa';
+import { EscribeleMesa } from '../components/EscribeleMesa';
 import { HojaMas, type OpcionMas } from '../components/HojaMas';
 import { RecorridoApp } from '../recorrido/RecorridoApp';
 import type { PruebaId } from '../recorrido/guion';
@@ -372,6 +374,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
   const [online, setOnline] = useState(true);
+  /*
+   * Sin conexión, la mesa vuelve a probar sola cada 20 s (lo que dice «Sin conexión — reintento»); al volver, tu
+   * mensaje que no llegó deja de marcarse. Solo el estado de la conexión: el turno, la voz y el oído no cambian.
+   */
+  useEffect(() => {
+    if (online) {
+      setFallido(null);
+      return;
+    }
+    const t = setInterval(() => void healthCheck().then((h) => h.ok && setOnline(true)).catch(() => undefined), 20_000);
+    return () => clearInterval(t);
+  }, [online]);
   const [partial, setPartial] = useState('');
   /**
    * Lo último que dijo la persona (la frase ya entendida), unos segundos a la vista arriba a la derecha:
@@ -414,6 +428,13 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [avatar, setAvatar] = useState<AvatarId | null>(null);
   /** Lo que se dijo en la mesa, para el chat del modo cuadro (vertical). */
   const [mensajes, setMensajes] = useState<Turn[]>([]);
+  /**
+   * Tu último mensaje que no llegó (sin conexión o «se me fue el hilo»): el chat de la mesa lo marca con
+   * «Reintentar» (auditoría visual del 7-oct, A10). Solo es lo que se VE: el turno sigue igual.
+   */
+  const [fallido, setFallido] = useState<string | null>(null);
+  /** «Escríbele…» de la mesa (o el campo del chat del modo trabajo): «Más → Escribir» pone el cursor ahí. */
+  const entradaEscribir = useRef<TextInput | null>(null);
   /*
    * Conversación fluida (ElevenLabs Agents), del VozProvider: el micrófono y la voz van por WebRTC
    * mientras dura. Durante ella el micrófono que manda es el de WebRTC, no el de la mesa: el botón
@@ -440,6 +461,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /**
    * ¿Suena la voz de la mesa? (lib/tts → avatar3d/sonando.ts). El cuerpo en video o 3D habla con ESTO, no
    * con la cara: la cara SPEAKING llega antes que el audio (José, 5-oct: «habla cuando no está diciendo nada»).
+   * Y desde el 7-oct también la cara (orbe, anillos, la clásica, las fotos): ver `hablaVoz` y `caraVista` abajo.
    */
   const audioMesa = useSyncExternalStore(vozSonando.escuchar, vozSonando.ahora);
   /** La mesa es la pantalla que se ve (la pila nativa la deja montada debajo de los chats y Ajustes). */
@@ -541,6 +563,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const companeraVisible = modoPresencia === 'paseo' || modoPresencia === 'lado' || modoPresencia === 'completa';
   const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const horizontal = anchoPantalla >= altoPantalla;
+  // El recorte de la cámara y las barras (la mesa va inmersiva: acostado, el recorte queda a un lado u otro).
+  const ins = useSafeAreaInsets();
 
   const speakingRef = useRef(false);
   const handling = useRef(false);
@@ -1381,6 +1405,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               // Por qué, en los logs del servidor y ya (no al próximo aviso): el error del stream, sin texto de la persona.
               reportarEstado(migaFalloTurno({ dijo: 'hilo', idTurno, ms: Date.now() - t0Turno, stream: errorStream }));
               setToolHint('');
+              setFallido(cmd);
               await say(tr('Se me fue el hilo pensando eso. ¿Me lo repites?', 'I lost my train of thought on that. Could you repeat it?'), 'CONFUSED', { emocion: 'preocupado' });
               return;
             }
@@ -1434,6 +1459,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             return;
           }
           setOnline(false);
+          setFallido(cmd);
           // Sin red de verdad (el teléfono no llega a nada): la frase corta de siempre (lib/frases.ts), que sale de la caché de audio.
           await say(clase === 'sin-red' ? frase('sinconexion') : tr('No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'I can’t reach the remote brain right now. I’m still here with the basics.'), 'CONFUSED', { emocion: 'preocupado' });
           return;
@@ -3009,30 +3035,44 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const dotColorNativo =
     status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? avatarPorId(avatar || 'aura').tema.acento : status === 'offline' ? T.texto3 : T.activo;
   /*
+   * ¿HABLA DE VERDAD? (José, 7-oct, SM-S942B: «empieza a mover la boca antes de que salga la voz»). La mesa pone la
+   * cara de hablar (y `status` «speaking») cuando DECIDE hablar: en `say` antes de pedir el audio, con la emoción del
+   * turno mientras el cerebro escribe, y en onAudioStart, que es ANTES de play (por el nativo en streaming, antes
+   * incluso de que llegue el primer byte). Lo que se VE habla solo desde que el reproductor confirma que suena hasta
+   * que la locución termina o la cortan (avatar3d/sonando.ts `hablando`), o mientras habla el agente de la
+   * conversación en vivo. Antes de eso la cara piensa (caraConVoz) y la línea dice «preparando».
+   */
+  const hablaVoz = audioMesa.hablando || (conversando && estadoConv === 'hablando');
+  const caraVista = caraConVoz(face, hablaVoz);
+  /*
    * EL PUNTO ÚNICO donde la mesa dice qué está haciendo (el HUD y la cabecera del chat de la mesa).
    * El banco de frases variadas de estado («escuchando», «pensando», «revisando»…) lo arma otra rama
    * (fraseDeEstado(estado, avatar, idioma), en la capa de lógica): cuando llegue, entra AQUÍ y en
    * avatar3d/DockAura.textoEstado, sin copiar el banco.
    */
+  // En español llano y corto (auditoría visual del 7-oct, M1): nada de «sin cerebro», «reconectando mic» ni «preparando».
   const statusLabelNativo =
     toolHint ? toolHint :
     status === 'listening'
       ? listening
-        ? tr('te escucho', 'listening')
-        : tr('conectando mic', 'connecting mic')
+        ? tr('Escuchando', 'Listening')
+        : tr('Abriendo el micrófono…', 'Turning on the mic…')
       : status === 'muted'
-        ? tr('silenciado', 'muted')
+        ? tr('Micrófono apagado', 'Mic off')
         : status === 'thinking'
-          ? tr('pensando', 'thinking')
+          ? tr('Pensando…', 'Thinking…')
           : status === 'speaking'
-            ? face === 'SING' ? tr('cantando', 'singing') : tr('hablando', 'speaking')
+            // Antes de que suene la voz, la cara piensa (caraConVoz): la línea dice lo mismo.
+            ? !hablaVoz ? tr('Pensando…', 'Thinking…') : face === 'SING' ? tr('Cantando', 'Singing') : tr('Hablando', 'Speaking')
             : status === 'orando'
-              ? tr('orando', 'praying')
+              ? tr('Orando', 'Praying')
             : status === 'reconnect'
-              ? tr('reconectando mic', 'reconnecting mic')
+              ? tr('Abriendo el micrófono…', 'Turning on the mic…')
               : status === 'offline'
-                ? tr('sin mic', 'no mic')
-                : tr('iniciando', 'starting');
+                ? tr('Micrófono sin permiso', 'No mic permission')
+                : tr('Un momento…', 'One moment…');
+  /** La conexión, aparte: la mesa sigue oyendo y contesta lo básico mientras vuelve a probar sola. */
+  const textoSinConexion = tr('Sin conexión — reintento', 'Offline — retrying');
 
   /*
    * LA LLAMADA DEL AVATAR: mientras suena o se habla, la línea dice en qué punto está (te llama, en
@@ -3061,7 +3101,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // Trabajando, el avatar va más compacto: lo que importa es la conversación.
   const cuadroW = horizontal ? Math.round(anchoPantalla * (trabajando ? 0.34 : 0.42)) : anchoPantalla;
   const cuadroH = horizontal ? altoPantalla : Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * (trabajando ? 0.3 : 0.44)));
-  const cajaCara = enCuadro ? { w: cuadroW, h: cuadroH } : undefined;
+  /*
+   * ACOSTADO, a pantalla completa (auditoría del 7-oct, C1): los botones van en un riel a la derecha y el avatar se
+   * queda con todo el alto en lo que queda a su izquierda (centrado ahí, no detrás del riel).
+   */
+  const riel = horizontal && !enCuadro;
+  const anchoR = riel ? anchoRiel(ins.right) : 0;
+  const cajaCara = enCuadro ? { w: cuadroW, h: cuadroH } : riel ? { w: anchoPantalla - anchoR, h: altoPantalla } : undefined;
+  /** Acostado, lo que dice el avatar va abajo junto a «Escríbele…» (no sobre la boca ni la barbilla). */
+  const fila = filaRiel(anchoPantalla, ins);
+  const burbujaRiel = { left: fila.izquierda + fila.anchoEscribir + 12, right: fila.derecha + 8, bottom: conversando ? altoAbajo + 8 : fila.abajo };
   /** La cámara mirando de verdad (la misma condición con que se monta CamaraVision). */
   const camaraActiva = visionOn && !!camPerm?.granted && mesaActiva && !enLlamada;
   /** «Lo que veo»: con la cámara encendida, un botón para ver lo que mira y lo que reconoce. */
@@ -3088,7 +3137,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       ? { left: 0, top: 0, width: cuadroW, height: altoPantalla }
       : { left: 0, top: 0, width: anchoPantalla, height: cuadroH }
     : horizontal
-    ? { left: Math.round(anchoPantalla * 0.42), top: 52, width: Math.round(anchoPantalla * 0.56), height: Math.max(140, altoPantalla - 52 - (altoAbajo + 12)) }
+    ? { left: Math.round(anchoPantalla * 0.42), top: 52, width: Math.round(anchoPantalla * 0.58) - anchoR - 8, height: Math.max(140, altoPantalla - 52 - (altoAbajo + 12)) }
     : { left: 12, top: 92, width: anchoPantalla - 24, height: Math.max(160, altoPantalla - 92 - (altoAbajo + 84)) };
 
   // Qué cara se ve. El Guardián: sus ojos celestes de siempre (la cara clásica). AU-RA: el orbe (o los
@@ -3103,8 +3152,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       <OrbeAura
         // Arriba, el estado (y lo que dice la persona); abajo, la barra con su sugerencia: ahí no escribe.
         margen={{ arriba: 56, abajo: altoAbajo + 12 }}
-        face={face}
-        hablando={status === 'speaking'}
+        face={caraVista}
+        hablando={hablaVoz}
         frase={fraseOrbe}
         sonidos={settings.sfx}
         speechLevelSource={suscribirNivelVoz}
@@ -3114,7 +3163,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     ) : vista === 'anillos' ? (
       <CaraSegura
-        face={face}
+        face={caraVista}
         acento={mode === 'GOLD' ? '#FFD166' : undefined}
         gazeX={gaze.x}
         gazeY={gaze.y}
@@ -3131,7 +3180,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     ) : vista === 'clasica' ? (
       <UltronFace
-        face={face}
+        face={caraVista}
         mode={mode}
         caja={cajaCara}
         gazeX={gaze.x}
@@ -3158,7 +3207,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const fotosCara =
     reparto.pose === 'pie' ? (
       <ClaudioDePie
-        face={face}
+        face={caraVista}
         gazeX={gaze.x}
         speechLevelSource={suscribirNivelVoz}
         fotos={avatarId === 'antonio' ? FOTOS_ANTONIO_PIE : undefined}
@@ -3168,7 +3217,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     ) : (
       <ClaudioRetrato
-        face={face}
+        face={caraVista}
         gazeX={gaze.x}
         gazeY={gaze.y}
         speechLevelSource={suscribirNivelVoz}
@@ -3183,7 +3232,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       <CuerpoMesa
         avatar={avatarId}
         camara={reparto.pose === 'pie' ? 'cuerpo' : 'retrato'}
-        face={face}
+        face={caraVista}
         emocion={emocion}
         // Habla solo con audio de verdad: el de la mesa o el del agente en la conversación fluida. Sin audio,
         // piensa mientras el turno sigue (o la voz se prepara); si no, la cara decide (escucha, reposo…).
@@ -3230,6 +3279,13 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       });
   }, [voz.ciclo, entradaX, anchoPantalla]);
   const caraEntrando = <Animated.View style={{ flex: 1, transform: [{ translateX: entradaX }] }}>{caraNode}</Animated.View>;
+  /** Escribirle al avatar, a un toque y por el mismo camino que un turno hablado (C4). */
+  const escribirMesa = <EscribeleMesa nombreAvatar={de(avatarPorId(avatarId).nombre)} tema={tema} valor={draft} onCambiar={setDraft} onEnviar={sendDraft} entradaRef={entradaEscribir} />;
+  /** «Reintentar» en tu mensaje que no llegó: otra vez por el mismo camino (mandarTurno). */
+  const reintentar = (texto: string) => {
+    setFallido(null);
+    mandarTurnoRef.current(texto);
+  };
   // La compañera pasea por encima de lo que no se debe tapar: los atajos y la barra de escribir del
   // chat de la mesa (cuadro) o los botones con los atajos (de pie); acostado, solo los botones.
   const sueloMesa = enCuadro || !horizontal ? 150 : 88;
@@ -3262,7 +3318,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       case 'envivo':
         return toggleConversar();
       case 'escribir':
-        return setMenuOpen(true);
+        // El cursor en «Escríbele…» (o en el chat del modo trabajo). Ya no abre el menú viejo (DeskMenu).
+        return void setTimeout(() => entradaEscribir.current?.focus(), 350);
       case 'camara':
         return menuCamara();
       case 'caras':
@@ -3343,7 +3400,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     <View
       ref={enCuadro ? undefined : cuerpoRef}
       onLayout={enCuadro ? undefined : medirCuerpo}
-      style={[styles.root, !enOrbe && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}
+      style={[styles.root, !enOrbe && { backgroundColor: esClaudio ? tema.fondo : '#000' }, riel && enOrbe && { backgroundColor: FONDO_ORBE }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}
     >
       {/* La cámara solo con la mesa a la vista, sin llamada y encendida a pedido (apagada por omisión). */}
       <CamaraMesa
@@ -3394,7 +3451,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               acciones={acciones}
               onAccion={onAccion}
               nombreAvatar={de(avatarPorId(avatarId).nombre)}
-              estado={statusLabel}
+              estado={online ? statusLabel : `${statusLabel} · ${textoSinConexion}`}
               progreso={progresoMesa}
               colorEstado={dotColor}
               parcial={partial}
@@ -3409,9 +3466,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               conversando={conversando}
               conectando={conversando && estadoConv === 'conectando'}
               onConversar={toggleConversar}
+              fallido={fallido}
+              onReintentar={reintentar}
+              entradaRef={entradaEscribir}
             />
           </View>
         </>
+      ) : riel ? (
+        <View style={{ flex: 1, marginRight: anchoR }}>{caraEntrando}</View>
       ) : (
         caraEntrando
       )}
@@ -3419,19 +3481,32 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       {!enCuadro && (
         <>
         {/* «Trabajando · 2» / «Necesito una decisión · 1»: arriba a la derecha, frente al estado; nunca abajo con el teclado. */}
-        <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => (ventana.abrirDesdeIndicador() ? undefined : setPanelTrabajos(true))} style={styles.trabajos} />
+        <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => (ventana.abrirDesdeIndicador() ? undefined : setPanelTrabajos(true))} style={[styles.trabajos, riel && { right: anchoR + 8 }]} />
         {/* «¿Te sirvió?» del primer resultado: abajo, por encima de la barra y del subtítulo (hasta tres líneas), sin tapar lo que dice la persona arriba. */}
-        {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }]}>{preguntaPrimer}</View>}
+        {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }, riel && { left: Math.max(16, ins.left + 8), right: anchoR + 16 }]}>{preguntaPrimer}</View>}
 
         {/* El estado y, al lado, «Lo que veo» (en la misma fila: no se encima con lo que dice la persona, debajo). */}
-        <View pointerEvents="box-none" style={styles.hudFila}>
+        <View pointerEvents="box-none" style={[styles.hudFila, riel && { left: Math.max(16, ins.left + 8), right: anchoR + 150 }]}>
           <View pointerEvents="none" style={styles.hud}>
-            <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
-            <Text style={styles.hudText}>
-              {de(avatarPorId(avatarId).nombre)} · {statusLabel}
-              {verPersona ? (visionMotor === 'mlkit' && ladoCamara === 'frontal' ? tr(' · te veo', ' · I see you') : tr(' · alguien', ' · someone')) : ''}
-              {!online ? tr(' · sin cerebro', ' · offline') : ''}
-            </Text>
+            <View style={[styles.hudDot, { backgroundColor: online ? dotColor : T.aviso }]} />
+            <View style={styles.hudTextos}>
+              {/* El nombre entero (nunca se parte: «AU-/RA») y el estado al lado; si no cabe (letra grande), el estado
+                  baja ENTERO al renglón de abajo, sin cortarse. Sin conexión, debajo. */}
+              <View style={styles.hudLinea}>
+                <Text style={styles.hudNombre} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+                  {de(avatarPorId(avatarId).nombre)}
+                </Text>
+                <Text style={styles.hudText} numberOfLines={2} maxFontSizeMultiplier={1.4}>
+                  · {statusLabel}
+                  {verPersona ? (visionMotor === 'mlkit' && ladoCamara === 'frontal' ? tr(' · te veo', ' · I see you') : tr(' · alguien', ' · someone')) : ''}
+                </Text>
+              </View>
+              {!online ? (
+                <Text style={styles.hudSinConexion} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+                  {textoSinConexion}
+                </Text>
+              ) : null}
+            </View>
           </View>
           {botonVista}
         </View>
@@ -3439,7 +3514,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         {/* Lo que dice la persona: arriba a la derecha, como su lado de un chat (mientras habla, en cursiva;
             ya entendido, unos segundos). Lo del avatar va abajo: nunca se encima uno con otro. */}
         {!!(partial || dicho?.texto) && (
-          <View pointerEvents="none" style={[styles.dichoWrap, propuesta && mesaVisible ? { top: 132 } : null]}>
+          <View pointerEvents="none" style={[styles.dichoWrap, propuesta && mesaVisible ? { top: 132 } : null, riel && { right: anchoR + 8 }]}>
             <View style={[styles.dichoCard, { borderColor: tema.acentoFondo }]}>
               <Text style={[styles.dichoQuien, { color: tema.acentoTexto }]}>{tr('Tú', 'You')}</Text>
               <Text numberOfLines={3} style={[styles.dichoText, !!partial && styles.dichoParcial]}>
@@ -3454,7 +3529,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         {!!bubble && !enOrbe && (
           <Animated.View
             pointerEvents="none"
-            style={[styles.bubbleFloat, { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
+            style={[styles.bubbleFloat, { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, riel && burbujaRiel, { opacity: bubbleOp }]}
           >
             <View style={styles.bubbleCard}>
               <Text numberOfLines={3} style={styles.bubbleText}>
@@ -3478,13 +3553,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           onTerminar={toggleConversar}
           // Una sugerencia de su oficio a la vez, solo con calma (José, 3-oct: nada de montón de botones).
           // «Llámame» y lo demás siguen en Más.
-          encima={<SugerenciaMesa acciones={acciones} tema={tema} calma={calmaMesa} onAccion={onAccion} />}
+          encima={<SugerenciaMesa acciones={acciones} tema={tema} calma={calmaMesa && !draft} onAccion={onAccion} />}
+          escribir={escribirMesa}
+          riel={riel}
           onAlto={setAltoAbajo}
         />
 
-        <View style={styles.edgeZone} {...edgePan.panHandlers}>
-          <View pointerEvents="none" style={[styles.edgeHint, { backgroundColor: tema.acentoFondo }]} />
-        </View>
+        {/* El borde derecho (en vertical): acostado ahí va el riel con «Más». No llega a lo de abajo. */}
+        {!riel ? (
+          <View style={[styles.edgeZone, { bottom: altoAbajo + 16 }]} {...edgePan.panHandlers}>
+            <View pointerEvents="none" style={[styles.edgeHint, { backgroundColor: tema.acentoFondo }]} />
+          </View>
+        ) : null}
         </>
       )}
 
@@ -3521,7 +3601,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           // «Editar»: el texto propuesto queda en el campo de escribir; lo manda la persona (nada sale solo).
           setPanelTrabajos(false);
           setDraft(sugerencia);
-          if (!enCuadro) setMenuOpen(true);
+          setTimeout(() => entradaEscribir.current?.focus(), 350);
         }}
         // Editar el texto en la ventana de decisión (José, 5-oct): se cierra el panel y la ventana lo abre listo.
         onEditarAqui={(t) => {
@@ -3548,6 +3628,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           }}
           accessibilityRole="button"
           accessibilityLabel={pcAviso.texto}
+          hitSlop={6}
           style={[styles.avisoPc, { borderColor: tema.acento }]}
         >
           <Text style={styles.avisoPcTexto} numberOfLines={1}>
@@ -3668,9 +3749,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
 }
 
-/** Buenos días / tardes / noches según la hora de Honduras (UTC−6, sin horario de verano). */
+/** Buenos días / tardes / noches según la hora del teléfono (su zona horaria; antes, UTC−6 fijo). */
 function saludoPorHora(ahora = new Date()): string {
-  const h = (ahora.getUTCHours() + 24 - 6) % 24;
+  const h = ahora.getHours();
   return h < 12 ? tr('Buenos días', 'Good morning') : h < 19 ? tr('Buenas tardes', 'Good afternoon') : tr('Buenas noches', 'Good evening');
 }
 
@@ -3685,6 +3766,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingVertical: 8,
+    minHeight: 40,
     borderRadius: 999,
     borderWidth: 1.5,
     backgroundColor: 'rgba(18,19,22,0.92)',
@@ -3702,6 +3784,8 @@ const styles = StyleSheet.create({
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hudFila: { position: 'absolute', top: 12, left: 16, right: 140, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   hud: {
+    flexShrink: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -3723,13 +3807,19 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.28)',
     paddingHorizontal: 12,
     paddingVertical: 7,
+    // Con el hitSlop de 8 por lado, el dedo tiene más de 48 dp.
+    minHeight: 36,
     zIndex: 38,
     elevation: 12,
   },
   verCamaraCuadro: { position: 'absolute', top: 10, left: 10 },
   verCamaraPunto: { width: 8, height: 8, borderRadius: 4 },
   verCamaraTexto: { color: '#F2EEE8', fontSize: 13, fontWeight: '800' },
-  hudText: { color: T.texto2, fontSize: 13, fontWeight: '600' },
+  hudTextos: { flexShrink: 1, minWidth: 0 },
+  hudLinea: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 5 },
+  hudText: { color: T.texto2, fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  hudNombre: { color: T.texto, fontSize: 13, fontWeight: '800', flexShrink: 0 },
+  hudSinConexion: { color: T.aviso, fontSize: 12, fontWeight: '700' },
   bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
   bubbleVertical: { left: 16, right: 16 },
   bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
@@ -3741,6 +3831,6 @@ const styles = StyleSheet.create({
   dichoText: { color: T.texto, fontSize: 14.5, lineHeight: 19, textAlign: 'right' },
   dichoParcial: { color: T.texto2, fontStyle: 'italic' },
   // El borde derecho abre el menú; no llega a la barra (ahí está «Más»).
-  edgeZone: { position: 'absolute', right: 0, top: 0, bottom: ALTO_BARRA + 64, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
+  edgeZone: { position: 'absolute', right: 0, top: 0, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
   edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(214,181,108,0.35)' },
 });

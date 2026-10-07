@@ -1,6 +1,6 @@
 # Claude · Integrar los avatares de AURA
 
-Medardo pidió preparar esta entrega para que tú la integres y la subas después. **ANT-ONIO revisión 2 está aprobado**: «Perfecto ahi si dejarlo listo claude lo suba». No pedirle de nuevo aprobación del mismo diseño. Conservar su GLB. Claudio y AU-RA son dos propuestas nuevas de esta entrega; mostrar el render real al revisar el montaje.
+La junta pidió preparar esta entrega para que tú la integres y la subas después. **ANT-ONIO revisión 2 está aprobado**: «Perfecto ahi si dejarlo listo claude lo suba». No pedirle de nuevo aprobación del mismo diseño. Conservar su GLB. Claudio y AU-RA son dos propuestas nuevas de esta entrega; mostrar el render real al revisar el montaje.
 
 ## Repositorio revisado
 
@@ -57,7 +57,7 @@ Los GLB también funcionan con `GLTFLoader` y `AnimationMixer`. Sus clips contie
 
 La voz definitiva no está seleccionada ni se hizo una llamada facturable. El puente de boca funciona con audio real. Mantener la voz individual vigente de cada avatar.
 
-La documentación oficial consultada el 30-09-2026 indica que **Eleven v4 usa Text to Dialogue WebSocket**. Preparar esa conexión en servidor cuando Medardo elija su voz; no enviar `eleven_v4` a un ejemplo antiguo de TTS HTTP con timestamps. Claves, selección de voz, autenticación, cancelación y límites quedan en servidor. El paquete ANT-ONIO actualizado bloquea ese uso erróneo del ejemplo HTTP.
+La documentación oficial consultada el 30-09-2026 indica que **Eleven v4 usa Text to Dialogue WebSocket**. Preparar esa conexión en servidor cuando la junta elija su voz; no enviar `eleven_v4` a un ejemplo antiguo de TTS HTTP con timestamps. Claves, selección de voz, autenticación, cancelación y límites quedan en servidor. El paquete ANT-ONIO actualizado bloquea ese uso erróneo del ejemplo HTTP.
 
 Referencia: https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/realtime-tdd
 

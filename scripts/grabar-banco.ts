@@ -58,17 +58,15 @@ export const GUIONES: Record<string, string> = {
     'Puedo hablarte, escucharte, cantar, mirar con la cámara, leer la web, darte oro y dólar, guardar lo que me dictes y cambiar de modo. Lo que no sepa hoy lo voy a aprender. Si quieres el discurso largo, decime quién eres de verdad.',
   chiste1: 'José, ¿por qué el oro no usa WhatsApp? Porque ya está en visto... en la bóveda. Perdón, ese era barato.',
   chiste2: 'Un lempira entra a un bar y el dólar le dice: te cambio. El lempira responde: hoy no, hoy cotizo.',
-  chiste3: 'Medardo pregunta cuánto vale un gramo. Yo le digo: depende. Si lo pesa José, vale un imperio. Si lo pesa el banco, vale una comisión.',
+  chiste3: 'Me preguntan cuánto vale un gramo. Yo digo: depende. Si lo pesa José, vale un imperio. Si lo pesa el banco, vale una comisión.',
   chiste4: '¿Cuál es el plan de pensión de un token? Que no se duerma el nodo. Bueno, ese me lo debo.',
   chiste5: 'Le pedí a Kanye un consejo de negocios. Me dijo: «Runaway». Yo entendí: «corre hacia la bóveda».',
   // Su guion vive en server/voz.ts para no duplicarlo; hablar() le quita las etiquetas.
   oracion: ORACION_DEL_DIA,
-  // Bienvenida y saludo por nombre (los de la junta en lib/acceso.ts)
+  // Bienvenida y saludo por nombre (los nombres de la junta viven en Render, no en el repo; el resto, la bienvenida)
   bienvenido: 'Bienvenido a AU-RA. ¿En qué te ayudo?',
   vertejose: 'Qué bueno verte, José.',
-  vertemedardo: 'Qué bueno verte, Medardo.',
   vertecarlos: 'Qué bueno verte, Carlos.',
-  vertemayra: 'Qué bueno verte, Mayra.',
   holadenuevo: 'Hola de nuevo.',
   mealegra: 'Me alegra verte.',
   // Respuestas de todos los días: si la respuesta del cerebro es exactamente una de estas, suena el clip

@@ -44,6 +44,7 @@ import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { interruptor } from '../lib/interruptores';
+import { avisarFaltaEnv } from '../lib/datos-privados';
 import { autoridadSinSesion, devolverCupo, firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { apiEleven, etiquetaV4, normalizarAvatar, normalizarIdioma, TONO_V4, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
@@ -141,13 +142,15 @@ export const PUENTE_VOZ_MS = Math.min(ESPERA_FRASE_MS + 500, RELLENO_AGENTE_MS -
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
- * scripts/elevenlabs-agentes.ts; se cambian sin tocar código con ELEVENLABS_AGENTE_<AVATAR>_<IDIOMA>.
+ * scripts/elevenlabs-agentes.ts. Sus ids ya no viven aquí (el repositorio es público; auditoría del 7-oct, C-1): cada
+ * uno en ELEVENLABS_AGENTE_<AVATAR>_<IDIOMA> en Render. Sin la variable, ese avatar no abre la conversación fluida
+ * (503 «no está lista», el teléfono sigue con la mesa) y queda un aviso en el registro.
  */
-export const AGENTES: Record<AvatarVoz, Record<Idioma, string>> = {
-  ojos: { es: 'agent_3401m3qbvq59eqcv17ecpxxdp7en', en: 'agent_1801m3qbvrrye0zbpgxawy3cqfqt' },
-  aura: { es: 'agent_6801m3qbvv83fzgvg42eev85m8m5', en: 'agent_3301m3qbvws7ez6rajshn8akxjbs' },
-  claudio: { es: 'agent_3501m3qbvyc5e9b946hm5byv3c7g', en: 'agent_4901m3qbw01me4kt40nqkgy60ykm' },
-  antonio: { es: 'agent_6901m3r708f4e15vgc39yj4g8vw7', en: 'agent_3501m3r70c76e6nrvch0ewjcqkys' },
+export const AGENTES_ENV: Record<AvatarVoz, Record<Idioma, string>> = {
+  ojos: { es: 'ELEVENLABS_AGENTE_OJOS_ES', en: 'ELEVENLABS_AGENTE_OJOS_EN' },
+  aura: { es: 'ELEVENLABS_AGENTE_AURA_ES', en: 'ELEVENLABS_AGENTE_AURA_EN' },
+  claudio: { es: 'ELEVENLABS_AGENTE_CLAUDIO_ES', en: 'ELEVENLABS_AGENTE_CLAUDIO_EN' },
+  antonio: { es: 'ELEVENLABS_AGENTE_ANTONIO_ES', en: 'ELEVENLABS_AGENTE_ANTONIO_EN' },
 };
 
 /** El avatar que pide la última acción `avatar` de un turno (lo que sale al teléfono), o null. */
@@ -161,8 +164,10 @@ export function avatarDeAcciones(acciones: unknown): AvatarVoz | null {
 }
 
 export function agenteDe(avatar: AvatarVoz, idioma: Idioma): string {
-  const env = String(process.env[`ELEVENLABS_AGENTE_${avatar.toUpperCase()}_${idioma.toUpperCase()}`] || '').trim();
-  return env || AGENTES[avatar][idioma];
+  const nombre = AGENTES_ENV[avatar]?.[idioma] || `ELEVENLABS_AGENTE_${avatar.toUpperCase()}_${idioma.toUpperCase()}`;
+  const id = String(process.env[nombre] || '').trim();
+  if (!id) avisarFaltaEnv(nombre, 'ese avatar no abre la conversación fluida de ElevenLabs');
+  return id;
 }
 
 /**
