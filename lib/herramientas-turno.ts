@@ -24,6 +24,7 @@
 import type { Tool } from '@aws-sdk/client-bedrock-runtime';
 import { analizarRespuesta } from './afirmacion';
 import { anteriorOfreceAccion } from './cerebro-rapido';
+import { esSoloNumero } from './marcar';
 
 /** Lo que se sabe del turno para elegir. */
 export type ContextoHerramientas = {
@@ -68,7 +69,8 @@ const GRUPOS: Record<string, readonly string[]> = {
   // A-6: su lista de contactos importantes (los avisos de mensajes).
   vip: ['contactos_vip', 'whatsapp', 'correo'],
   pendientes: ['ordenar_mensajes', 'tarea', 'mision'],
-  llamada: ['llamar_contacto', 'llamarme', 'circulo'],
+  // llamar_numero (A-4): un número o alguien de su WhatsApp, con el marcador del teléfono.
+  llamada: ['llamar_contacto', 'llamar_numero', 'llamarme', 'circulo'],
   recordatorio: ['recordatorio', 'llamarme'],
   // Su calendario (server/calendario.ts): leer lo que tiene y proponer eventos.
   calendario: ['agenda', 'agendar'],
@@ -152,6 +154,9 @@ function gruposDe(texto: string, contactos: readonly string[] = []): Set<string>
   const p = plano(texto);
   const out = new Set<string>();
   for (const [g, re] of PIDE) if (re.test(p)) out.add(g);
+  // Un número de teléfono dicho solo («el 9876 5432», «+504 9876-5432»): es para marcarlo (o contestar «¿me dices el
+  // número?»).
+  if (esSoloNumero(texto)) out.add('llamada');
   // Nombrar a un contacto del teléfono para comunicarse con él («¿y Beto?», «necesito hablar con Ana»): escribirle o
   // llamarle. Solo nombrarlo en una charla larga («Ana me contó lo de la mina») no es pedir un mensaje (José, 7-oct).
   const nombres = contactos

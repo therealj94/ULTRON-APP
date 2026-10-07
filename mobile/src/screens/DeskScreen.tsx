@@ -3356,6 +3356,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return abrirCartera();
       case 'agenda':
         return setHojaCerebro('agenda');
+      case 'recordatorios':
+        return setHojaCerebro('recordatorios');
       case 'ajustes':
         // La pantalla de Ajustes entera (voz, oído, memoria, su cara, tema, perfil, permisos y sesión).
         return emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });

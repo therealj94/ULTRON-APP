@@ -58,6 +58,7 @@ import {
   type RecordatorioApp,
 } from './manos-app';
 import { controlExplicito, dichoDeControl, interpretarControl, respuestaAclaracion, type ControlVoz, type EstadoControles, type QueTarea } from './controles-voz';
+import { numeroLegible, numeroValido, resolverParaMarcar, type PropuestaMarcar, type ResolucionMarcar } from './marcar';
 
 export type { AccionMano, Mano, Propuesta, RecordatorioApp } from './manos-app';
 export type { ControlVoz, EstadoControles } from './controles-voz';
@@ -71,7 +72,8 @@ export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
  * `misiones`, `conocer` (lo que AU-RA sabe de la persona y lo que quedó a medias) y `circulo` (su familia y
  * socios) son hojas de toda la app (mobile/src/app/HojasCerebro.tsx).
  */
-export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil' | 'computadora' | 'whatsapp' | 'correos' | 'misiones' | 'conocer' | 'circulo';
+/** `recordatorios`: la hoja de sus recordatorios (A-3), solo en un teléfono con la mano `recordatorios_servidor`. */
+export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil' | 'computadora' | 'whatsapp' | 'correos' | 'misiones' | 'conocer' | 'circulo' | 'recordatorios';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
 export type AvatarApp = 'ojos' | 'aura' | 'claudio' | 'antonio';
 /** Cómo está AURA en el teléfono: chiquita caminando, al lado de los chats o a pantalla completa. */
@@ -157,7 +159,8 @@ export type AccionComputadora = {
   estado?: 'pausada' | 'control';
 };
 
-export type Contacto = { correo: string; nombre: string };
+/** `telefono` (opcional, A-4): si el teléfono lo sabe, el número E.164 del contacto (para marcarle). */
+export type Contacto = { correo: string; nombre: string; telefono?: string };
 export type ContextoApp = {
   pantalla: Pantalla;
   chatAbierto?: Contacto | null;
@@ -169,7 +172,7 @@ export type ContextoApp = {
   recordatorios?: RecordatorioApp[];
 };
 
-const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil', 'computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo'];
+const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil', 'computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo', 'recordatorios'];
 const TEMAS: TemaApp[] = ['oscuro', 'claro', 'sistema'];
 const AVATARES: AvatarApp[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const PRESENCIAS: PresenciaApp[] = ['paseo', 'lado', 'completa'];
@@ -361,7 +364,7 @@ export function empujarOrdenPc(correo: string, aparato: string | null | undefine
  * Las acciones del teléfono que dejan algo afuera o lo agendan (mandar el borrador, marcar, que AURA llame, poner
  * o quitar un recordatorio). Las demás solo mueven la pantalla, leen o llenan algo que la persona confirma allá.
  */
-const CON_EFECTO: ReadonlySet<string> = new Set(['enviar', 'llamar', 'llamame', 'recordatorio', 'cancelar_recordatorio']);
+const CON_EFECTO: ReadonlySet<string> = new Set(['enviar', 'llamar', 'llamame', 'recordatorio', 'cancelar_recordatorio', 'marcar']);
 export function accionConEfecto(a: Pick<AccionApp, 'tipo'>): boolean {
   return CON_EFECTO.has(a.tipo);
 }
@@ -412,7 +415,7 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   if (accion.tipo === 'redactar') anotarPendiente(amb, { para: accion.para, texto: accion.texto });
   else if (accion.tipo === 'enviar' || accion.tipo === 'descartar') soltarPendiente(amb);
   // Llamar o recordar ya confirmado: la propuesta se cumplió.
-  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio' || accion.tipo === 'cancelar_recordatorio') soltarPropuesta(amb);
+  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio' || accion.tipo === 'cancelar_recordatorio' || accion.tipo === 'marcar') soltarPropuesta(amb);
   // «Respóndele» después de leer: a quien se le leyó.
   if (accion.tipo === 'leer' && accion.de) ultimosLeidos.set(clave(correo), { de: accion.de, t: Date.now() });
   return { evento, entregada };
@@ -484,7 +487,10 @@ function contacto(x: unknown): Contacto | null {
   const c = x as Record<string, unknown>;
   const correo = linea(c.correo, 254).toLowerCase();
   const nombre = linea(c.nombre, 80);
-  return CORREO.test(correo) && nombre ? { correo, nombre } : null;
+  if (!CORREO.test(correo) || !nombre) return null;
+  // El número, solo si viene en forma E.164 (lib/marcar.ts numeroValido); lo demás se ignora.
+  const telefono = numeroValido(c.telefono);
+  return telefono ? { correo, nombre, telefono } : { correo, nombre };
 }
 
 /** El contexto que manda el teléfono, validado y recortado. */
@@ -640,6 +646,7 @@ export function anotarPendiente(correo: string, p: { para: string; texto: string
 
 /** Cómo se dice una propuesta que quedó reemplazada. */
 function describirPropuesta(p: Propuesta): string {
+  if (p.tipo === 'marcar') return `la llamada a ${p.nombre || numeroLegible(p.numero)} (${numeroLegible(p.numero)})`;
   if (p.tipo === 'llamar') return `la llamada a ${p.nombre || p.con}`;
   if (p.tipo === 'cancelar_recordatorio') return `quitar el recordatorio «${p.texto}»`;
   return `el recordatorio «${p.texto}»`;
@@ -764,7 +771,11 @@ export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ah
   const b = pendienteAnterior(correo, ahora);
   if (b) return { que: 'mensaje', para: conNombre(b.para), huella: JSON.stringify(['mensaje', b.para, b.texto, b.t]) };
   const p = propuestaAnterior(correo, ahora);
-  if (p) return { ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con, video: !!p.video } : { que: p.tipo, para: p.texto }), huella: JSON.stringify(['propuesta', p, propuestas.get(clave(correo))?.t ?? null]) };
+  if (p)
+    return {
+      ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con, video: !!p.video } : p.tipo === 'marcar' ? { que: 'llamar', para: `${p.nombre} ${p.numero}`.trim() } : { que: p.tipo, para: p.texto }),
+      huella: JSON.stringify(['propuesta', p, propuestas.get(clave(correo))?.t ?? null]),
+    };
   const abierto = contexto?.chatAbierto;
   if (abierto?.correo && String(contexto?.borrador || '').trim()) return { que: 'borrador', para: `${abierto.nombre} <${abierto.correo}>`, huella: JSON.stringify(['borrador', abierto.correo, contexto?.borrador]) };
   return null;
@@ -780,7 +791,7 @@ const avisosApp = new Map<string, string[]>();
 /** ¿Esta acción cumple lo que esperaba la app? (el mensaje de AU-RA o lo escrito en el chat, la propuesta que esperaba). */
 function cumpleEspera(a: AccionApp, propuesta: Pick<Propuesta, 'tipo'> | null | undefined): boolean {
   if (a.tipo === 'enviar') return true;
-  return !!propuesta && a.tipo === propuesta.tipo && (a.tipo === 'llamar' || a.tipo === 'recordatorio' || a.tipo === 'cancelar_recordatorio');
+  return !!propuesta && a.tipo === propuesta.tipo && (a.tipo === 'llamar' || a.tipo === 'recordatorio' || a.tipo === 'cancelar_recordatorio' || a.tipo === 'marcar');
 }
 
 /**
@@ -1523,7 +1534,15 @@ export function decisionesApp(o: { contexto?: ContextoApp | null; pendiente?: { 
   const out: DecisionApp[] = [];
   if (o.pendiente) out.push({ de: 'pendiente', tipo: 'mensaje', destino: `${nombre(o.pendiente.para)} ${o.pendiente.para}`.trim() });
   const p = o.propuesta;
-  if (p) out.push(p.tipo === 'llamar' ? { de: 'propuesta', tipo: 'llamar', destino: `${p.nombre || nombre(p.con)} ${p.con}`.trim(), video: !!p.video } : { de: 'propuesta', tipo: p.tipo, texto: p.texto, cuando: p.cuando });
+  // Marcar un número se decide como una llamada («sí, márcale»): su destino es el nombre y el número que oyó.
+  if (p)
+    out.push(
+      p.tipo === 'llamar'
+        ? { de: 'propuesta', tipo: 'llamar', destino: `${p.nombre || nombre(p.con)} ${p.con}`.trim(), video: !!p.video }
+        : p.tipo === 'marcar'
+          ? { de: 'propuesta', tipo: 'llamar', destino: `${p.nombre} ${p.numero}`.trim() }
+          : { de: 'propuesta', tipo: p.tipo, texto: p.texto, cuando: p.cuando }
+    );
   const abierto = o.contexto?.chatAbierto;
   if (abierto?.correo && String(o.contexto?.borrador || '').trim() && abierto.correo !== o.pendiente?.para) {
     out.push({ de: 'chat', tipo: 'chat', destino: `${abierto.nombre || nombre(abierto.correo)} ${abierto.correo}`.trim(), discreta: true });
@@ -1583,9 +1602,11 @@ function atajoDeDecision(texto: string, o: OpcionesReglas, idioma: 'es' | 'en', 
     const accion: AccionApp =
       pr.tipo === 'llamar'
         ? { tipo: 'llamar', con: pr.con, video: pr.video }
-        : pr.tipo === 'cancelar_recordatorio'
-          ? { tipo: 'cancelar_recordatorio', id: pr.id }
-          : { tipo: 'recordatorio', texto: pr.texto, cuando: pr.cuando, ...(pr.llamada ? { llamada: true } : {}) };
+        : pr.tipo === 'marcar'
+          ? accionDeMarcar(pr)
+          : pr.tipo === 'cancelar_recordatorio'
+            ? { tipo: 'cancelar_recordatorio', id: pr.id }
+            : { tipo: 'recordatorio', texto: pr.texto, cuando: pr.cuando, ...(pr.llamada ? { llamada: true } : {}), ...(pr.repetir && pr.repetir.tipo !== 'nunca' ? { repetir: pr.repetir } : {}) };
     return { accion, decir: dichoDePropuesta(pr, idioma, ahora), via: 'reglas' };
   }
   // Cuarta ronda: el borrador de AU-RA sale con cualquier sí («dale» vale igual que en el correo); lo escrito a mano en el
@@ -1603,6 +1624,11 @@ function atajoDeDecision(texto: string, o: OpcionesReglas, idioma: 'es' | 'en', 
   const escrito = String(o.contexto?.borrador || '');
   if (!abierto || !escrito.trim()) return null;
   return { accion: { tipo: 'enviar', para: abierto, texto: escrito }, decir: dichos.enviar, via: 'reglas' };
+}
+
+/** Lo que sale al teléfono al cumplir una propuesta de marcar: el número y el nombre que la persona OYÓ y aprobó. */
+export function accionDeMarcar(p: PropuestaMarcar): AccionApp {
+  return { tipo: 'marcar', a: p.nombre || p.numero, via: p.via, numero: p.numero, ...(p.nombre ? { nombre: p.nombre } : {}) };
 }
 
 /** Lo que se dice cuando el teléfono no sabe comprobar el texto aprobado (sin la mano `enviar_exacto`). */
@@ -2062,6 +2088,13 @@ export function prepararAcciones(
     avatarPropuesto?: { valor: AvatarApp; antes: AvatarApp | null } | null;
     /** El modelo pidió cambiar de avatar en ESTE turno: no se hace, se pregunta (espera el «sí»). */
     alProponerAvatar?: (v: AvatarApp) => void;
+    /**
+     * A quién se refiere cada «marcar» de este turno, por lo dicho (`a`): server/marcar.ts lo resolvió antes con sus
+     * contactos con número (WhatsApp, su círculo, la app). Sin entrada, solo un número dicho tal cual se entiende.
+     */
+    marcables?: ReadonlyMap<string, ResolucionMarcar>;
+    /** Un «marcar» que no se resolvió a UNO (no está, o hay varios parecidos): quien llama lo pregunta. */
+    alDudaMarcar?: (dicho: string, r: ResolucionMarcar) => void;
     /** El cambio de avatar que sale (cumple la pregunta del turno anterior con un «sí» claro). */
     alCambioAvatar?: (c: { antes: AvatarApp | null; ahora: AvatarApp }) => void;
   }
@@ -2112,8 +2145,8 @@ export function prepararAcciones(
         const p = o.propuesta;
         if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && elegida('propuesta', 'recordatorio')) {
           cumplida = true;
-          out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando });
-        } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando });
+          out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.repetir ? { repetir: p.repetir } : {}) });
+        } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.repetir ? { repetir: a.repetir } : {}) });
       }
       continue;
     }
@@ -2138,20 +2171,39 @@ export function prepararAcciones(
       } else proponer({ tipo: 'llamar', con: r.contacto.correo, nombre: r.contacto.nombre, video: a.video });
       continue;
     }
+    if (a.tipo === 'marcar') {
+      // A-4: abrir el marcador (o WhatsApp) con un número. NUNCA en el turno en que se pide: se pregunta «¿Le marco a … al
+      // +504…?» con el número que encontró el servidor. Lo que sale con el «sí» es ESA propuesta (número, nombre y vía),
+      // nunca un número que el modelo haya escrito.
+      const dicho = a.a;
+      const r = o.marcables?.get(dicho) ?? resolverParaMarcar(dicho, []);
+      if (r.tipo !== 'uno') {
+        o.alDudaMarcar?.(dicho, r);
+        continue;
+      }
+      const p = o.propuesta;
+      if (!cumplida && p?.tipo === 'marcar' && p.numero === r.numero && p.via === a.via && !conRedactar && elegida('propuesta', 'llamar')) {
+        cumplida = true;
+        out.push(accionDeMarcar(p));
+      } else proponer({ tipo: 'marcar', numero: r.numero, nombre: r.nombre === numeroLegible(r.numero) ? '' : r.nombre, via: a.via, dicho });
+      continue;
+    }
+    // La hoja de sus recordatorios solo existe en un teléfono que los sincroniza con el servidor (A-3).
+    if (a.tipo === 'abrir' && a.pantalla === 'recordatorios' && !puedeMano(o.contexto, 'recordatorios_servidor')) continue;
     // Con la app que sabe que el avatar llama, un recordatorio (o un timer) se pone directo: lo dice con la
     // hora («Listo, te llamo a las 2:00 p. m.») y se cancela con la voz si hacía falta.
     if (a.tipo === 'recordatorio' && puedeMano(o.contexto, 'llamame')) {
       if (a.cuando < ahora + 15_000 || cumplida) continue;
       cumplida = true;
-      out.push({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada || puedeMano(o.contexto, 'recordatorio_llamada') ? { llamada: true } : {}) });
+      out.push({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada || puedeMano(o.contexto, 'recordatorio_llamada') ? { llamada: true } : {}), ...(a.repetir ? { repetir: a.repetir } : {}) });
       continue;
     }
     if (a.tipo === 'recordatorio') {
       const p = o.propuesta;
       if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && elegida('propuesta', 'recordatorio')) {
         cumplida = true;
-        out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.llamada ? { llamada: true } : {}) });
-      } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada ? { llamada: true } : {}) });
+        out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.llamada ? { llamada: true } : {}), ...(p.repetir ? { repetir: p.repetir } : {}) });
+      } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada ? { llamada: true } : {}), ...(a.repetir ? { repetir: a.repetir } : {}) });
       continue;
     }
     if (a.tipo === 'leer') {

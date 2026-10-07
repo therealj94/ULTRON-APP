@@ -19,6 +19,10 @@
  *   propuesta    {texto, pedido}        → aviso con «Sí» / «Luego». «Sí» abre la app y hace el pedido;
  *                                        «Luego» se contesta al servidor sin abrir nada.
  *   recordatorio {texto}                → aviso; al tocarlo, AURA lo dice.
+ *                {rid, cuando}         → (A-3) la vez de un recordatorio del servidor: si este teléfono ya tenía puesta
+ *                                        su alarma (notifee), ya sonó aquí y el aviso NO se enseña (`yaSonoAqui`); igual
+ *                                        sirve para reconciliar las alarmas (compa/recordatoriosSync.ts). Lo mismo una
+ *                                        `llamada` con `rid`.
  *   computadora  {texto}                → «Terminé en mi computadora: …»; al tocarlo, la vista en vivo.
  *   mensaje-externo {canal, titulo, texto, sugerencia, chat, nombre, urgente?}
  *                                        → un WhatsApp o un correo IMPORTANTE que le llegó (server, lib/alertas-
@@ -63,6 +67,9 @@ export type DatosPush = {
   sugerencia: string;
   /** mensaje-externo: '1' si es urgente. */
   urgente: string;
+  /** A-3: el recordatorio del servidor de esta vez, y cuál vez (ms). Vacío / 0 en los demás avisos. */
+  rid: string;
+  cuando: number;
 };
 
 export const CANAL_AVISOS = 'aura-avisos';
@@ -111,6 +118,8 @@ export function leerDatos(d: unknown): DatosPush | null {
     nombre: linea(x.nombre, 80),
     sugerencia: linea(x.sugerencia, 300),
     urgente: x.urgente === '1' || x.urgente === true ? '1' : '',
+    rid: /^aura-rec-s[a-z0-9]{8,20}$/.test(String(x.rid || '')) ? String(x.rid) : '',
+    cuando: Number.isFinite(Number(x.cuando)) ? Number(x.cuando) : 0,
   };
 }
 
@@ -138,7 +147,8 @@ function privado(k: ConstantesNotifee): Record<string, unknown> {
 }
 
 export type Plan =
-  | { que: 'ignorar'; porque: 'ajeno' | 'sin_dueno' | 'repetido' }
+  /** `ya_sono`: la alarma de esa vez de un recordatorio del servidor ya estaba puesta en este teléfono (A-3). */
+  | { que: 'ignorar'; porque: 'ajeno' | 'sin_dueno' | 'repetido' | 'ya_sono' }
   /** `canales`: los que hay que crear antes; `despues`: un aviso programado (la llamada perdida). */
   | { que: 'mostrar'; canales: Record<string, unknown>[]; aviso: Record<string, unknown>; despues?: { aviso: Record<string, unknown>; cuando: number } };
 
@@ -193,10 +203,12 @@ export function avisoLlamadaPerdida(p: DatosPush, k: ConstantesNotifee, dueno: s
  * Qué hacer con un aviso que llegó. `dueno`: el seudónimo registrado en este teléfono ('' si nadie).
  * `visto`: si ese aviso ya se enseñó. Puro: quien llama crea los canales y lo enseña.
  */
-export function planear(p: DatosPush, o: { dueno: string; ahora: number; k: ConstantesPush; visto?: boolean }): Plan {
+export function planear(p: DatosPush, o: { dueno: string; ahora: number; k: ConstantesPush; visto?: boolean; yaSonoAqui?: boolean }): Plan {
   if (!o.dueno) return { que: 'ignorar', porque: 'sin_dueno' };
   if (p.para !== o.dueno) return { que: 'ignorar', porque: 'ajeno' };
   if (o.visto) return { que: 'ignorar', porque: 'repetido' };
+  // Un recordatorio del servidor cuya alarma de esa vez ya estaba aquí: sonó con notifee, no suena dos veces.
+  if (p.rid && o.yaSonoAqui && (p.tipo === 'recordatorio' || p.tipo === 'llamada')) return { que: 'ignorar', porque: 'ya_sono' };
   const { k, ahora, dueno } = o;
   switch (p.tipo) {
     case 'llamada': {

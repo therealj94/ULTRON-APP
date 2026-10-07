@@ -92,7 +92,17 @@ export function esAccionApp(a: any): a is AccionApp {
     case 'perfil':
       return CAMPOS_PERFIL.includes(a.campo) && txt(a.valor, 300);
     case 'recordatorio':
-      return txt(a.texto, 140) && typeof a.cuando === 'number' && Number.isFinite(a.cuando) && (a.llamada === undefined || typeof a.llamada === 'boolean');
+      return (
+        txt(a.texto, 140) &&
+        typeof a.cuando === 'number' &&
+        Number.isFinite(a.cuando) &&
+        (a.llamada === undefined || typeof a.llamada === 'boolean') &&
+        // A-3: el id del servidor (compa/recordatoriosServidor.ts RE_ID_SERVIDOR).
+        (a.rid === undefined || (typeof a.rid === 'string' && /^aura-rec-s[a-z0-9]{8,20}$/.test(a.rid)))
+      );
+    // A-4: abrir el marcador con un número E.164 (compa/marcar.ts). Sin número, nada que marcar.
+    case 'marcar':
+      return typeof a.numero === 'string' && /^\+[1-9]\d{7,14}$/.test(a.numero) && (a.via === 'telefono' || a.via === 'whatsapp') && (a.nombre === undefined || txt(a.nombre, 120));
     case 'cancelar_recordatorio':
       return typeof a.id === 'string' && /^aura-rec-[a-z0-9-]{1,80}$/.test(a.id);
     case 'llamame':

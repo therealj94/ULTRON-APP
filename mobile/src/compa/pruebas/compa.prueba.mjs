@@ -1214,8 +1214,13 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const enviados = [];
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
-  // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea).
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'], 'enviar_exacto: comprueba el texto aprobado antes de mandar (permisos exactos)');
+  // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea). `marcar` (A-4): abrir el marcador
+  // tras el «sí»; `recordatorios_servidor` (A-3): sus recordatorios en el servidor, reconciliados con sus alarmas.
+  assert.deepEqual(
+    [...c.manos],
+    ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor'],
+    'enviar_exacto: comprueba el texto aprobado antes de mandar (permisos exactos)'
+  );
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 

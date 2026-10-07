@@ -31,7 +31,11 @@ import { analizarRespuesta } from './afirmacion';
 /* ------------------------------------------------------------------ los recibos */
 
 /** De qué es un efecto real. */
-export type CanalEfecto = 'whatsapp' | 'correo' | 'chat' | 'recordatorio' | 'llamada' | 'guardado' | 'calendario';
+/**
+ * `marcador` (A-4): se le ABRIÓ el marcador del teléfono (o WhatsApp) con un número para que ella llame. No respalda que
+ * se habló con nadie, ni que la llamada se hizo: solo eso.
+ */
+export type CanalEfecto = 'whatsapp' | 'correo' | 'chat' | 'recordatorio' | 'llamada' | 'guardado' | 'calendario' | 'marcador';
 
 /**
  * Un efecto que consta: `confirmado` (el proveedor lo aceptó, el teléfono recibió la acción, quedó guardado) o
@@ -62,6 +66,8 @@ export function recibosDeAcciones(acciones: ReadonlyArray<{ tipo?: string; para?
     if (t === 'enviar') out.push({ canal: 'chat', estado: 'confirmado', ...(a?.para ? { destino: a.para } : {}) });
     else if (t === 'recordatorio' || t === 'cancelar_recordatorio') out.push({ canal: 'recordatorio', estado: 'confirmado' });
     else if (t === 'llamar' || t === 'llamame') out.push({ canal: 'llamada', estado: 'confirmado', ...(a?.con ? { destino: a.con } : {}) });
+    // Abrir el marcador NO es una llamada hecha: la hace ella, y nadie sabe si contestó.
+    else if (t === 'marcar') out.push({ canal: 'marcador', estado: 'confirmado' });
     else if (t === 'perfil') out.push({ canal: 'guardado', estado: 'confirmado' });
   }
   return out;
@@ -180,7 +186,8 @@ const RECORDATORIO = [
   /\breminder( is| has been|'s)? (set|scheduled|saved|created)\b/,
   /\bi(?:'ve| have)? (set|scheduled|added|created) (a |an |the |your )?(reminder|alarm|timer|appointment|event|meeting)\b/,
 ];
-const LLAMADA = [/\b(ya )?(le |te |la |lo )(llame|marque)\b/, /\bi (called|dialed|rang)\b/];
+// «ya hablé con él» (A-4): con el marcador abierto la llamada la hace ella; AU-RA no habló con nadie.
+const LLAMADA = [/\b(ya )?(le |te |la |lo )(llame|marque)\b/, /\bi (called|dialed|rang)\b/, /\bya (hable|platique|converse) con\b/, /\bi(?:'ve| have)? (already |just )?(talked|spoke|spoken) (to|with)\b/];
 const GUARDADO = [
   /\b(ya |listo,? )?(te |se )?(lo |la )?(guarde|anote|apunte|registre)\b/,
   rx(String.raw`${INI}${ART}(?:${COSA_GUARDA} )?(?:ya )?(?:guardad|anotad|apuntad|registrad)[oa]s?\b`),
@@ -346,7 +353,7 @@ function mismaClase(a: Afirmacion, r: ReciboEfecto): boolean {
         ? r.canal === 'llamada'
         : a.clase === 'guardado'
           ? r.canal === 'guardado' || r.canal === 'recordatorio'
-          : true;
+          : r.canal !== 'marcador';
 }
 
 /** Lo último de AU-RA ofrecía una acción («¿Lo envío?», «¿Te lo agendo?», «¿Le escribo esto?»): un «sí» la aprueba. */
@@ -455,7 +462,12 @@ function verdad(a: Afirmacion, ctx: ContextoHonestidad): string {
     if (a.calendario) return en ? "It's not on your calendar yet." : 'Todavía no quedó en tu calendario.';
     return en ? "That reminder isn't set yet: tell me the time and I'll set it." : 'Todavía no quedó puesto ese recordatorio: dime la hora y lo pongo.';
   }
-  if (a.clase === 'llamada') return en ? "I haven't made that call yet." : 'Todavía no hice esa llamada.';
+  if (a.clase === 'llamada') {
+    // Con el marcador abierto en este turno: eso es lo único que pasó.
+    if (ctx.recibos.some((r) => r.canal === 'marcador' && r.estado === 'confirmado'))
+      return en ? "I only opened the dialer: you make the call, and I don't know if they answered." : 'Solo te abrí el marcador: la llamada la haces tú, y no sé si contestó.';
+    return en ? "I haven't made that call yet." : 'Todavía no hice esa llamada.';
+  }
   if (a.clase === 'guardado') return en ? "I haven't saved it yet." : 'Todavía no lo guardé.';
   return en ? "I haven't done that yet." : 'Todavía no lo hice.';
 }

@@ -31,6 +31,7 @@ import { tr } from '../i18n';
 import { emitir } from '../nucleo/contrato';
 import { accionesDelTurno } from '../compa/acciones';
 import { notifeeReal } from '../compa/recordatoriosNativo';
+import { alarmaYaPuesta, reconciliarRecordatorios } from '../compa/recordatoriosSync';
 import { sumarManejadorDeFondo } from '../pulse/servicioLlamada';
 import { iniciarAvisosRelevo } from '../pulse/avisosRelevo';
 import { abrirRuta, rutaActual, RUTAS_DE_SESION } from '../app/rutas';
@@ -138,8 +139,10 @@ export async function atenderMensaje(data: unknown): Promise<void> {
     enMemoria.add(clave);
     if (enMemoria.size > 200) enMemoria.delete(enMemoria.values().next().value as string);
     const ahora = Date.now();
-    const [dueno, vistos] = await Promise.all([leerDueno(), leerJson<Vistos>(CLAVE_VISTOS, {})]);
-    const plan = planear(p, { dueno, ahora, k: n.k, visto: yaVisto(vistos, clave, ahora) });
+    const [dueno, vistos, yaSonoAqui] = await Promise.all([leerDueno(), leerJson<Vistos>(CLAVE_VISTOS, {}), p.rid ? alarmaYaPuesta(p.rid, p.cuando).catch(() => false) : Promise.resolve(false)]);
+    // A-3: el push de un recordatorio del servidor también trae la vez siguiente: se reconcilian las alarmas (de fondo).
+    if (p.rid && dueno && p.para === dueno) void reconciliarRecordatorios('push').catch(() => undefined);
+    const plan = planear(p, { dueno, ahora, k: n.k, visto: yaVisto(vistos, clave, ahora), yaSonoAqui });
     if (plan.que !== 'mostrar') {
       if (plan.porque !== 'repetido') miga(`aviso push ignorado (${p.tipo}: ${plan.porque})`);
       return;
@@ -415,7 +418,10 @@ export function usePush(correo: string | null | undefined) {
       if (antes) void salirPush();
       return;
     }
-    void (antes && antes !== c ? salirPush() : Promise.resolve()).then(() => registrarPush(c));
+    void (antes && antes !== c ? salirPush() : Promise.resolve())
+      .then(() => registrarPush(c))
+      // A-3: al arrancar con sesión, las alarmas de sus recordatorios se ponen al día con el servidor.
+      .then(() => reconciliarRecordatorios('arranque'));
     // Los avisos del chat (PULSE2CHAT) llegan por el mismo camino (pulse/avisosRelevo.ts).
     iniciarAvisosRelevo();
     const gen = generacionCuenta();
