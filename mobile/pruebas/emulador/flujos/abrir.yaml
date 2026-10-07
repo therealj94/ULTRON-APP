@@ -3,14 +3,20 @@
 appId: link.ordenglobal.ultronfp
 name: Abrir AU-RA hasta la entrada
 ---
+- runFlow: cerrar-anr.yaml
+- extendedWaitUntil:
+    visible: "Saltar|Otras formas de entrar|Entra con tu identidad|Mensaje|Más opciones.*|.*isn't responding.*"
+    timeout: 120000
+- runFlow: cerrar-anr.yaml
 - extendedWaitUntil:
     visible: "Saltar|Otras formas de entrar|Entra con tu identidad|Mensaje|Más opciones.*"
-    timeout: 120000
+    timeout: 30000
 - runFlow:
     when:
       visible: "Saltar"
     commands:
       - tapOn: "Saltar"
+- runFlow: cerrar-anr.yaml
 - extendedWaitUntil:
     visible: "Entra con tu identidad|Otras formas de entrar|Mensaje|Más opciones.*"
     timeout: 30000
