@@ -3679,9 +3679,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
 }
 
-/** Buenos días / tardes / noches según la hora de Honduras (UTC−6, sin horario de verano). */
+/** Buenos días / tardes / noches según la hora del teléfono (su zona horaria; antes, UTC−6 fijo). */
 function saludoPorHora(ahora = new Date()): string {
-  const h = (ahora.getUTCHours() + 24 - 6) % 24;
+  const h = ahora.getHours();
   return h < 12 ? tr('Buenos días', 'Good morning') : h < 19 ? tr('Buenas tardes', 'Good afternoon') : tr('Buenas noches', 'Good evening');
 }
 

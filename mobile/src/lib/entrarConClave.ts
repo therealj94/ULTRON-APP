@@ -98,7 +98,7 @@ export function errorDeWallet(error: string): { codigo: string; mensaje: string 
       return {
         codigo: 'GID_PENDIENTE',
         mensaje: tr(
-          'Tu Genesis ID está en verificación; cuando lo aprueben, entrás con este mismo botón.',
+          'Tu Genesis ID está en verificación; cuando lo aprueben, entras con este mismo botón.',
           'Your Genesis ID is being verified; once it’s approved, sign in with this same button.'
         ),
       };

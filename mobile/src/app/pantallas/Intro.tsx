@@ -22,7 +22,7 @@ import { retomarSiVolvio, type ResultadoGenesis } from '../../lib/genesis';
 import { cargarPerfil } from '../../lib/perfil';
 import { iniciarReporte, miga } from '../../lib/reporte';
 import { preloadSfx } from '../../lib/sfx';
-import { loadSession, loadSettings } from '../../lib/storage';
+import { loadCreds, loadSession, loadSettings } from '../../lib/storage';
 import { setAvatarVoz } from '../../lib/tts';
 import { orientar } from '../../lib/orientacion';
 import { fijarIdioma, tr, useIdioma } from '../../i18n';
@@ -96,6 +96,9 @@ export function Intro(_: Props) {
     void SplashScreen.hideAsync().catch(() => {});
 
     const [ajustes, sesion] = await Promise.all([loadSettings(), loadSession(), conTope(cargarFuentes(), 2_500), cargarHapticos()]);
+    // Migración (auditoría del 7-oct, M-9): si una versión anterior dejó la clave de AU-RA en claro, leer la entrada
+    // guardada la reescribe sin ella. No pide nada ni toca la sesión.
+    void loadCreds().catch(() => null);
     fijarIdioma(ajustes.idioma);
     setAvatarVoz(ajustes.avatar);
     setRapido(!!sesion);

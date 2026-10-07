@@ -1,5 +1,5 @@
 /**
- * La cartera de Veta Wallet: los saldos (solo lectura), pagar desde un chat de PULSE2CHAT con la moneda de
+ * La cartera de Veta Wallet: los saldos (se leen), pagar desde un chat de PULSE2CHAT con la moneda de
  * arriba, la firma en Veta Wallet con su contraseña de siempre y el comprobante verificado en la cadena.
  * Lo de verdad: cartera/HojaCartera.tsx, cartera/HojaPagar.tsx y cartera/TarjetaPago.tsx.
  */
@@ -40,7 +40,7 @@ export default function Cartera({ paso, ancho, alto, idioma, acento }: PropsEsce
               </Entra>
             ))}
           </Animated.View>
-          <Text style={st.nota}>{t(idioma, 'AURA nunca mueve tu dinero.', 'AURA never moves your money.')}</Text>
+          <Text style={st.nota}>{t(idioma, 'Los pagos se firman en Veta Wallet.', 'Payments are signed in Veta Wallet.')}</Text>
         </View>
       ) : null}
       {i === 1 ? (

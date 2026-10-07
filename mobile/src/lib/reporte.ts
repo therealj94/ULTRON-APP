@@ -39,6 +39,19 @@ export function murioLaVezAnterior(): boolean | null {
   return murioAntes;
 }
 
+let avisarLeido: (() => void) | null = null;
+const leidoAntes = new Promise<void>((r) => {
+  avisarLeido = r;
+});
+
+/**
+ * Lo mismo, pero ESPERANDO a que `iniciarReporte` haya leído la marca (con tope). Las guardias arrancan en paralelo
+ * con la intro: sin esperar, podían leer `null` antes de tiempo y tomar un cierre limpio por uno sin explicar.
+ */
+export function murioLaVezAnteriorLeido(topeMs = 4000): Promise<boolean | null> {
+  return Promise.race([leidoAntes, new Promise<void>((r) => setTimeout(r, topeMs))]).then(() => murioAntes);
+}
+
 function ahora() {
   return arranqueMs ? `+${((Date.now() - arranqueMs) / 1000).toFixed(1)}s` : '0s';
 }
@@ -132,6 +145,7 @@ export async function iniciarReporte() {
   } catch {
     /* */
   }
+  avisarLeido?.();
   migas = [];
   guardar();
   marcarViva(AppState.currentState !== 'background');

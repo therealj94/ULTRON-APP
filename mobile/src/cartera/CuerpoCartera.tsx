@@ -1,8 +1,9 @@
 /**
  * EL CUERPO DE LA CARTERA (lo comparten la hoja «Cartera» y la pestaña Veta Wallet de los chats).
  *
- * «CARTERA»: tus saldos de Veta Wallet, leídos de la red de Orden Global. Solo lectura: AURA nunca mueve tu
- * dinero (para enviar o recibir se abre Veta Wallet, y allá se firma con tu contraseña).
+ * «CARTERA»: tus saldos de Veta Wallet, leídos de la red de Orden Global. Los saldos solo se leen; para enviar se
+ * abre Veta Wallet y allá se firma con tu contraseña. La tarjeta Visa (veta/SeccionTarjeta.tsx) es otra cosa: AU-RA
+ * sí puede mostrar sus datos y recargarla con tu contraseña de Veta.
  *
  *   · Arriba, el valor aproximado en dólares (si hay precio) y tu dirección, cortada.
  *   · Tus monedas con saldo (cantidad, precio de cada una y valor); las que están en cero, plegadas.

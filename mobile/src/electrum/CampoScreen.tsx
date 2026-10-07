@@ -334,7 +334,7 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
         const dicho = String(r.texto || '').trim();
         if (!dicho) {
           marcarFallo(idPregunta);
-          agregar({ de: 'doctor', texto: 'No me salió nada que decirte. Preguntámelo de nuevo, con otras palabras si podés.', fallo: true });
+          agregar({ de: 'doctor', texto: 'No me salió nada que decirte. Pregúntamelo de nuevo, con otras palabras si puedes.', fallo: true });
           caraAhora('CONCERNED');
           return;
         }

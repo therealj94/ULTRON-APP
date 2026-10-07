@@ -116,6 +116,13 @@ test('DeskScreen: la app «delante» de la mesa pasa por la gracia (no por AppSt
   assert.doesNotMatch(desk, /AppState\.addEventListener\('change', \(st\) => setAppActiva\(st !== 'background'\)\)/);
 });
 
+test('CI: la voz en streaming (mobile/pruebas/voz) y las decisiones (mobile/pruebas/decisiones) corren con los otros arneses (M-10)', () => {
+  const flujo = fs.readFileSync(new URL('../.github/workflows/calidad-movil.yml', import.meta.url), 'utf8');
+  const arneses = flujo.slice(flujo.indexOf('- name: Arneses de la app'));
+  assert.match(arneses, /\n\s+npx tsx pruebas\/voz\/nativa\.prueba\.mjs\n/);
+  assert.match(arneses, /\n\s+npx tsx pruebas\/decisiones\/decisiones\.prueba\.mjs\n/);
+});
+
 test('CI: los sonidos de trabajo y el silencio del micrófono (mobile/pruebas/sonidos) corren con los otros arneses de la app', () => {
   const flujo = fs.readFileSync(new URL('../.github/workflows/calidad-movil.yml', import.meta.url), 'utf8');
   const arneses = flujo.slice(flujo.indexOf('- name: Arneses de la app'));

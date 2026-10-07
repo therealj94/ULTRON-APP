@@ -110,6 +110,26 @@ export async function desbloquearClave(v: VinculoVeta, motivo = 'Confirma que er
   }
 }
 
+export type ConfirmacionTelefono = { ok: true } | { ok: false; motivo: 'cancelado' | 'sin-bloqueo' | 'error' };
+
+/**
+ * CONFIRMAR CON EL TELÉFONO (huella, cara o el PIN/patrón del bloqueo de pantalla) cada vez que se van a mostrar los
+ * datos de la tarjeta (número, CVV, PIN) o a recargarla, además de la contraseña de Veta. Auditoría del 7-oct (C-3):
+ * con el teléfono desbloqueado y la contraseña a mano, cualquiera veía la tarjeta. Con la huella guardada
+ * (`desbloquearClave`) el sistema ya la pidió para soltar la contraseña: ahí no se pide dos veces.
+ * Un teléfono sin ningún bloqueo de pantalla no puede confirmar nada: se dice y no se muestra.
+ */
+export async function confirmarConTelefono(motivo: string): Promise<ConfirmacionTelefono> {
+  try {
+    const nivel = await LocalAuthentication.getEnrolledLevelAsync();
+    if (nivel === LocalAuthentication.SecurityLevel.NONE) return { ok: false, motivo: 'sin-bloqueo' };
+    const r = await LocalAuthentication.authenticateAsync({ promptMessage: motivo, cancelLabel: 'Cancelar', disableDeviceFallback: false });
+    return r?.success ? { ok: true } : { ok: false, motivo: 'cancelado' };
+  } catch {
+    return { ok: false, motivo: 'error' };
+  }
+}
+
 /** Apaga la huella de quien está dentro de AURA (cerrar sesión de Veta). */
 export async function desactivarDesbloqueo(): Promise<void> {
   const dueno = seudonimoActual();

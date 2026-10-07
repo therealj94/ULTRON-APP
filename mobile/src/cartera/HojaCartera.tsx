@@ -14,7 +14,7 @@ export function HojaCartera({ visible, onCerrar }: Props) {
       visible={visible}
       onCerrar={onCerrar}
       titulo={tr('Cartera', 'Wallet')}
-      subtitulo={tr('Tus saldos de Veta Wallet, leídos de la red de Orden Global. Solo lectura: AURA nunca mueve tu dinero.', 'Your Veta Wallet balances, read from the Orden Global network. Read-only: AURA never moves your money.')}
+      subtitulo={tr('Tus saldos de Veta Wallet, leídos de la red de Orden Global. Pagos: se firman en Veta Wallet. Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña.', 'Your Veta Wallet balances, read from the Orden Global network. Payments: signed in Veta Wallet. Card: AU-RA can show its details and top it up with your password.')}
     >
       <CuerpoCartera activo={visible} />
     </Hoja>

@@ -27,7 +27,7 @@ export function FilaCamaraRapida() {
   const detalle = !estado.remota
     ? tr('Apagada por ahora desde el servidor: se usa la cámara de siempre.', 'Turned off for now from the server: the usual camera is used.')
     : estado.bloqueada
-      ? tr('Apagada unos días en este teléfono: la app se cerró con ella. Se usa la cámara de siempre.', 'Off for a few days on this phone: the app closed while using it. The usual camera is used.')
+      ? tr('Apagada un rato en este teléfono: la app se cerró con ella. Se usa la cámara de siempre y vuelve a probarse sola.', 'Off for a while on this phone: the app closed while using it. The usual camera is used and it will retry on its own.')
       : estado.fallo
         ? tr('No anduvo en esta sesión: se usa la de siempre hasta reabrir la app.', 'It didn’t work this session: the usual camera is used until you reopen the app.')
         : tr('Ve y reconoce en tiempo real. Si notas algo raro, apágala y vuelve la de siempre.', 'Sees and recognizes in real time. If something looks off, turn it off to go back to the usual one.');

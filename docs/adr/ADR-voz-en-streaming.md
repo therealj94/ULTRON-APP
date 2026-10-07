@@ -62,7 +62,8 @@ sigue en el camino crítico, y cada frase siguiente arranca con un hueco (otro `
 4. **Guardas** (`lib/guardiaVoz.ts`, como la cámara nativa): el binario trae el módulo (si no, el de siempre: APK
    vieja con este JS por OTA); interruptor remoto **`AURA_VOZ_STREAM=0`** en `/api/movil/config`; ajuste local «Voz
    en vivo (nueva)» (encendido por omisión); guardia contra cierres (marca «arrancando» escrita y esperada antes de
-   la primera frase nativa; si la app muere así, 7 días apagada; dos cierres con ella andando en 3 días, 3 días); y
+   la primera frase nativa; solo cuenta una caída de verdad, no una recarga u OTA aplicada, deslizarla o el segundo
+   plano: un golpe la apaga en esa sesión, dos en 3 días 1 h, y sube a 6 h, 1 día y 3 días si se repite); y
    **fallo en sesión**: si el módulo truena (`pista`, error interno o del puente), el servidor no tiene la ruta
    (404/405) o manda otra cosa, o fallan dos frases seguidas antes de sonar, queda apagado hasta reabrir la app y se
    reporta por `/api/diag`. Hasta leer lo guardado al arrancar, el camino de siempre.
@@ -93,7 +94,7 @@ en el teléfono, ese es el siguiente paso (ver «Qué la cambiaría»), o apagar
 
 ## Riesgos y cómo se cubren
 
-- **El nativo cierra la app** → guardia contra cierres (7 días apagada en ese teléfono) + interruptor remoto.
+- **El nativo cierra la app** → guardia contra cierres (2 caídas de verdad: 1 h apagada, escalonado) + interruptor remoto.
 - **Eco / interrupción hablando:** se usa el mismo uso de audio que expo-av, pero un AudioTrack propio podría tener
   otra latencia de salida que el AEC del teléfono maneje distinto. No medido en hardware. Si «oír encima» empeora,
   `AURA_VOZ_STREAM=0` lo devuelve a lo de antes al momento. La interrupción sigue cortando: `stopSpeaking` → `parar()`
@@ -114,7 +115,7 @@ en el teléfono, ese es el siguiente paso (ver «Qué la cambiaría»), o apagar
   volver al frente (si pasó 1 min) y cada 10 min con la app delante; desde ese momento cada frase vuelve a bajarse
   entera y a sonar con expo-av. Volver a encenderla: quitar la variable.
 - **En un teléfono:** Ajustes → La mesa → «Voz en vivo (nueva)».
-- **Solo:** si truena en una sesión, se apaga hasta reabrir la app; si cerró la app, 7 días.
+- **Solo:** si truena en una sesión, se apaga hasta reabrir la app; si cerró la app dos veces, 1 h (más si se repite).
 - `/api/tts` y `/api/tts/stream` no cambiaron: la mesa web y las APK anteriores siguen igual.
 
 ## Pruebas

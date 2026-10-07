@@ -12,7 +12,7 @@
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
-import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
+import { leerClaveConHuella, loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { cabeceraCliente } from './recepcion';
@@ -31,7 +31,9 @@ export const TOPE_RENOVAR_MS = 10_000;
 let refreshing: { gen: number; p: Promise<boolean> } | null = null;
 
 /**
- * Renueva el token con la clave guardada de QUIEN está dentro. Una sola renovación en vuelo por
+ * Renueva el token con la clave de QUIEN está dentro, que solo existe detrás de su huella (lib/storage.ts
+ * `leerClaveConHuella`: el sistema la pide; sin huella guardada, o si la cancela, no se renueva y se vuelve a entrar).
+ * Antes la clave estaba en claro y se usaba sin preguntar (auditoría del 7-oct, M-9). Una sola renovación en vuelo por
  * generación de la sesión (lib/cuenta.ts): si la persona cambia mientras viaja, la respuesta vieja
  * NO se guarda (sería un token ajeno), y la renovación de la persona nueva es otra.
  * `gen`: la sesión por la que se pide. Una petición de A cuyo 401 llega con B dentro no renueva el
@@ -42,12 +44,15 @@ async function renovarSesion(gen = generacionCuenta()): Promise<boolean> {
   if (refreshing && refreshing.gen === gen) return refreshing.p;
   const p = (async () => {
     const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
-    if (!creds?.correo || !creds?.clave) return false;
+    if (!creds?.correo || !creds.conHuella) return false;
     // Solo la clave de QUIEN está dentro. En un teléfono compartido la guardada puede ser de otra
     // persona (entró con clave y salió; ahora está alguien que entró con Genesis): renovar con ella
     // metía perfil, memoria y voz en la cuenta ajena mientras la pantalla seguía mostrando al primero.
     const quien = creds.correo.trim().toLowerCase();
     if (!sesion?.correo || quien !== sesion.correo.trim().toLowerCase()) return false;
+    // La huella (o lo que pida el llavero) suelta la clave: sin ella no hay renovación.
+    const clave = await leerClaveConHuella('Confirma que eres tú para seguir en AU-RA');
+    if (!clave || !sigueVigente(gen)) return false;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TOPE_RENOVAR_MS);
     try {
@@ -55,7 +60,7 @@ async function renovarSesion(gen = generacionCuenta()): Promise<boolean> {
         method: 'POST',
         signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ correo: creds.correo, clave: creds.clave }),
+        body: JSON.stringify({ correo: creds.correo, clave }),
       });
       const data: any = await res.json().catch(() => ({}));
       if (!res.ok || !data?.token) return false;

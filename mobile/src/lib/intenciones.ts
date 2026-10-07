@@ -81,14 +81,16 @@ const palabras = (q: string) => (q ? q.split(' ').length : 0);
 
 // ---------------------------------------------------------------- modos
 
+// Un «modo» solo cambia el TONO (server/desk.ts TONO_MODO): la confirmación dice eso y nada más (auditoría del
+// 7-oct, M-6: «Extrayendo señales» o «Prioridad de alto valor» prometían funciones que no hay).
 const MODOS: Array<[RegExp, Mode, string]> = [
-  [/\bmodo (guardian|vigilancia)\b/, 'GUARDIAN', 'Modo Guardian. Vigilo el escritorio.'],
-  [/\bmodo (mining|mineria)\b/, 'MINING', 'Modo Mining. Extrayendo señales.'],
-  [/\bmodo (gold|oro)\b/, 'GOLD', 'Modo Gold. Prioridad de alto valor.'],
-  [/\bmodo (creative|creativo)\b/, 'CREATIVE', 'Modo Creative. Ideas en marcha.'],
-  [/\bmodo (analytical|analitico|analisis)\b/, 'ANALYTICAL', 'Modo Analytical. Análisis frío.'],
-  [/\bmodo (strategic|estrategico|estrategia)\b/, 'STRATEGIC', 'Modo Strategic. Decisiones de junta.'],
-  [/\bmodo (explorer|explore|explorar|explorador)\b/, 'EXPLORER', 'Modo Explorer. Listo para investigar.'],
+  [/\bmodo (guardian|vigilancia)\b/, 'GUARDIAN', 'Tono firme: pocas palabras.'],
+  [/\bmodo (mining|mineria)\b/, 'MINING', 'Tono seco: voy al grano.'],
+  [/\bmodo (gold|oro)\b/, 'GOLD', 'Tono cálido.'],
+  [/\bmodo (creative|creativo)\b/, 'CREATIVE', 'Tono creativo: te propongo ideas.'],
+  [/\bmodo (analytical|analitico|analisis)\b/, 'ANALYTICAL', 'Tono analítico: cifras con su fuente.'],
+  [/\bmodo (strategic|estrategico|estrategia)\b/, 'STRATEGIC', 'Tono estratégico: pienso a largo plazo.'],
+  [/\bmodo (explorer|explore|explorar|explorador)\b/, 'EXPLORER', 'Tono curioso: te pregunto un poco más.'],
 ];
 
 // ---------------------------------------------------------------- canciones

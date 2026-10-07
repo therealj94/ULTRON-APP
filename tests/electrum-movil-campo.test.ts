@@ -75,7 +75,7 @@ test('cargar una foto: se avisa antes solo cuando el servidor SEGURO la va a rec
   assert.equal(puedeCargar(null), null);
   assert.equal(puedeCargar('fallo'), null);
   assert.match(SIN_NIVEL_PARA_CARGAR, /consulta/);
-  assert.match(SIN_NIVEL_PARA_CARGAR, /pedile a José/);
+  assert.match(SIN_NIVEL_PARA_CARGAR, /pídele a José/);
 });
 
 test('el nombre de la foto va en hora local y sin separadores a medias', () => {

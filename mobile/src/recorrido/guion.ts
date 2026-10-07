@@ -228,10 +228,10 @@ export const ESCENAS: readonly Escena[] = [
   {
     id: 'cartera',
     titulo: { es: 'Tu Veta Wallet', en: 'Your Veta Wallet' },
-    fuente: 'cartera/HojaCartera.tsx (saldos, solo lectura) · cartera/HojaPagar.tsx (Enviar dinero desde un chat) · cartera/TarjetaPago.tsx (comprobante en la cadena) · lib/cartera.ts',
+    fuente: 'cartera/HojaCartera.tsx (saldos) · cartera/HojaPagar.tsx (Enviar dinero desde un chat) · cartera/TarjetaPago.tsx (comprobante en la cadena) · lib/cartera.ts',
     pasos: ['saldos', 'pagar', 'firma', 'comprobante'],
     lineas: [
-      { quien: A, paso: 'saldos', gesto: 'senalar', texto: { es: 'Si tienes Veta Wallet, AU-RA ve tus saldos: tus tokens y tu ORIGEN. Solo los mira; nunca mueve tu dinero.', en: 'If you have Veta Wallet, AU-RA sees your balances: your tokens and your ORIGEN. She only looks; she never moves your money.' } },
+      { quien: A, paso: 'saldos', gesto: 'senalar', texto: { es: 'Si tienes Veta Wallet, AU-RA ve tus saldos: tus tokens y tu ORIGEN. Los pagos los firmas tú en Veta Wallet; tu tarjeta, AU-RA puede mostrarla y recargarla con tu contraseña.', en: 'If you have Veta Wallet, AU-RA sees your balances: your tokens and your ORIGEN. You sign payments in Veta Wallet; AU-RA can show your card and top it up with your password.' } },
       { quien: C, paso: 'saldos', texto: { es: 'Está en Ajustes, «Veta Wallet». O pregúntale: ¿cuánto tengo en mi wallet?', en: 'It’s in Settings, “Veta Wallet”. Or ask her: how much do I have in my wallet?' } },
       { quien: A, paso: 'pagar', gesto: 'senalar', texto: { es: 'Y pagas por PULSE2CHAT: en el chat de la persona tocas la moneda de arriba, «Enviar dinero». O le dices «mándale 5 ORIGEN a Ana».', en: 'And you pay through PULSE2CHAT: in that person’s chat tap the coin at the top, “Send money”. Or say “send Ana 5 ORIGEN”.' } },
       { quien: C, paso: 'firma', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'AU-RA lo deja listo, pero tú lo firmas en Veta Wallet, con tu misma contraseña de siempre.', en: 'AU-RA gets it ready, but you sign it in Veta Wallet, with your usual password.' } },

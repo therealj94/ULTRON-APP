@@ -6,7 +6,7 @@
  *   Tu perfil     apodo, avatar (con su vista viva), cumpleaños
  *   Apariencia    Oscuro · Claro · Sistema (cambia al instante)
  *   Idioma        Español · English (la interfaz, la voz y las respuestas)
- *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil), «Lo que sé de ti» (lo que aprendió y lo que quedó
+ *   AURA          «Lo que le contaste a AURA» (la ruta Perfil), «Lo que AURA aprendió de ti» (lo que aprendió y lo que quedó
  *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx),
  *                 su WhatsApp («Agregar mi WhatsApp» o, ya vinculado, «Desvincular WhatsApp»; José, 5-oct) y la
  *                 vibración
@@ -221,8 +221,8 @@ export function Ajustes({ navigation }: Props) {
 
         <Aparecer retraso={160}>
           <Grupo titulo="AURA">
-            <Fila titulo={tr('Lo que AURA sabe de ti', 'What AURA knows about you')} detalle={tr('Lo que le contaste: verlo, cambiarlo o borrarlo', 'What you told her: see, change or erase it')} icono="corazon" onPress={() => navigation.navigate('Perfil')} />
-            <Fila titulo={tr('Lo que sé de ti', 'What I know about you')} detalle={tr('Lo que aprendió al hablar contigo y lo que quedó a medias', 'What she learned talking with you and what was left halfway')} icono="chispas" onPress={() => abrir('conocer')} />
+            <Fila titulo={tr('Lo que le contaste a AURA', 'What you told AURA')} detalle={tr('Tus respuestas: verlas, cambiarlas o borrarlas', 'Your answers: see, change or erase them')} icono="corazon" onPress={() => navigation.navigate('Perfil')} />
+            <Fila titulo={tr('Lo que AURA aprendió de ti', 'What AURA learned about you')} detalle={tr('Lo que sacó al hablar contigo y lo que quedó a medias', 'What she picked up talking with you and what was left halfway')} icono="chispas" onPress={() => abrir('conocer')} />
             <Fila titulo={tr('Mi círculo', 'My circle')} detalle={tr('Tu gente cercana y qué puede hacer AURA por ellos', 'Your close people and what AURA can do for them')} icono="familia" onPress={() => abrir('circulo')} />
             <Fila titulo={tr('Misiones', 'Missions')} detalle={tr('Las metas que AURA te ayuda a cumplir', 'The goals AURA helps you reach')} icono="estrella" onPress={() => abrir('misiones')} />
             <Fila
@@ -240,7 +240,7 @@ export function Ajustes({ navigation }: Props) {
                 {wa?.vinculado ? <Fila titulo={tr('Desvincular WhatsApp', 'Unlink WhatsApp')} icono="basura" destructiva chevron={false} onPress={() => (setErrorWa(''), abrir('whatsapp-desvincular'))} /> : null}
               </>
             ) : null}
-            <Fila titulo={tr('Veta Wallet', 'Veta Wallet')} detalle={tr('Tus saldos (solo lectura); pagas desde un chat y firmas en Veta Wallet', 'Your balances (read-only); pay from a chat and sign in Veta Wallet')} icono="wallet" onPress={abrirCartera} />
+            <Fila titulo={tr('Veta Wallet', 'Veta Wallet')} detalle={tr('Pagos: se firman en Veta Wallet. Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña.', 'Payments: signed in Veta Wallet. Card: AU-RA can show its details and top it up with your password.')} icono="wallet" onPress={abrirCartera} />
             <Fila
               titulo={tr('Repetir el recorrido', 'Replay the tour')}
               detalle={tr('Claudio y ANT-ONIO te enseñan todo otra vez, y las preguntas para conocerte', 'Claudio and ANT-ONIO show you everything again, plus the get-to-know-you questions')}

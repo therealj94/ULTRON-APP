@@ -93,7 +93,9 @@ jobs:
       # (correo y contraseña directo a la wallet; sin Genesis ID, el token una vez a AU-RA; la integración
       # con genesis.ts va en pruebas/chat/clave.cjs), el oído (la secuencia de José) y los sonidos de trabajo
       # (con el silencio del micrófono de la mesa). El visor de la computadora va MONTADO (pruebas/visor: el
-      # lote de teclado por los manejadores reales del componente).
+      # lote de teclado por los manejadores reales del componente). También la voz en streaming y su guardia contra
+      # cierres (pruebas/voz; el reproductor en la JVM, pruebas/voz/jvm, necesita kotlinc y se corre aparte) y la
+      # ventana de decisiones (pruebas/decisiones).
       - name: Arneses de la app
         working-directory: mobile
         run: |
@@ -115,6 +117,8 @@ jobs:
           npx tsx src/whatsapp/pruebas/whatsapp.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
           npx tsx pruebas/camara/nativa.prueba.mjs
+          npx tsx pruebas/voz/nativa.prueba.mjs
+          npx tsx pruebas/decisiones/decisiones.prueba.mjs
           npx tsx src/lib/pruebas/entrarConClave.prueba.mjs
           sh pruebas/oido/todas.sh
           sh pruebas/muletillas/todas.sh
