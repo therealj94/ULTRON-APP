@@ -279,7 +279,7 @@ prueba('cubre todo lo que hay hoy en la app (José: «hemos agregado cosas… qu
     assert.ok(ids.includes(id), `falta la escena «${id}»`);
   const todo = ESCENAS.flatMap((e) => e.lineas.map((l) => l.texto.es)).join(' ');
   for (const [que, re] of [
-    ['los tres botones', /Chat[\s\S]*Más/],
+    ['los tres botones', /Mensajes[\s\S]*Más/],
     ['hablar sin palabra clave', /sin palabra clave/],
     ['«llámame» y el botón', /«Que te llame»/],
     ['PULSE2CHAT', /PULSE2CHAT/],

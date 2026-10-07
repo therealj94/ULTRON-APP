@@ -5,7 +5,8 @@
  * En una rejilla de mosaicos grandes (≥ 72 dp de alto, dos columnas en vertical, cuatro acostado):
  *   · Que te llame     — el avatar te llama (la pantalla «te está llamando», compa/LlamadaAvatar) y
  *                         hablan de corrido hasta que cuelgues; en la llamada, «Colgar»;
- *   · Escribir          — el teclado y el menú de siempre;
+ *   · Escribir          — pone el cursor en «Escríbele…» de la mesa (o en el chat del modo trabajo): lo
+ *                         escrito va al avatar como un turno hablado. Ya no abre el menú viejo (DeskMenu);
  *   · Cámara            — apagada / solo ahora / siempre (lib/camaraModo.ts);
  *   · Caras             — reconocer a la persona y a quien presente, con permiso (src/caras);
  *   · Voces             — saber por la voz quién habla (la dueña o su círculo), con permiso (src/voces);
@@ -17,7 +18,7 @@
  *                         (ajustes/Computadora.tsx); solo si el servidor la tiene;
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
  *   · Ajustes           — la pantalla de Ajustes (voz, oído, memoria, su cara, tema, perfil, permisos
- *                         y sesión); el menú corto de la mesa (DeskMenu) sigue en «Escribir».
+ *                         y sesión). «Más» es la única hoja de opciones de la mesa.
  * Cada mosaico dice su estado debajo del nombre (p. ej. «Solo ahora · 8 min»).
  *
  * El layout, a prueba de Android (José, Samsung con Android 16: las tarjetas salían apiladas como una
@@ -68,9 +69,12 @@ export function HojaMas(p: Props) {
   const st = useMemo(() => estilos(tema), [tema]);
   const { width, fontScale } = useWindowDimensions();
   // Con la letra grande del sistema (o un teléfono muy angosto), una columna: nada se parte ni se corta.
-  const columnas = width >= 640 ? (fontScale >= 1.3 ? 2 : 4) : fontScale >= 1.3 || width < 340 ? 1 : 2;
+  // Las columnas salen del ancho de la HOJA (ui/Hoja la limita a 560 en pantallas anchas), no del de la ventana:
+  // acostado eran cuatro en 560 dp y «Misiones» se partía en «Misione / s» (auditoría del 7-oct, A7).
+  const anchoHoja = width > 640 ? 560 : width;
+  const columnas = anchoHoja >= 520 ? (fontScale >= 1.3 ? 2 : 3) : fontScale >= 1.3 || width < 340 ? 1 : 2;
   const mosaicos: Mosaico[] = [
-    ...(p.conChat ? [{ id: 'chat' as const, icono: 'burbujas' as const, titulo: tr('Chats', 'Chats'), sub: tr('Tu gente y sus llamadas', 'Your people and calls') }] : []),
+    ...(p.conChat ? [{ id: 'chat' as const, icono: 'burbujas' as const, titulo: tr('Mensajes', 'Messages'), sub: tr('Tu gente y sus llamadas', 'Your people and calls') }] : []),
     {
       id: 'envivo',
       icono: 'llamar',
@@ -78,7 +82,7 @@ export function HojaMas(p: Props) {
       sub: p.conversando ? tr(`En llamada con ${p.nombreAvatar}`, `On a call with ${p.nombreAvatar}`) : tr('Se abre al instante y hablan de corrido', 'Opens right away and you talk hands-free'),
       activo: p.conversando,
     },
-    { id: 'escribir', icono: 'teclado', titulo: tr('Escribir', 'Type'), sub: tr('El teclado y el menú', 'Keyboard and menu') },
+    { id: 'escribir', icono: 'teclado', titulo: tr('Escribir', 'Type'), sub: tr(`Escríbele a ${p.nombreAvatar}`, `Write to ${p.nombreAvatar}`) },
     { id: 'camara', icono: p.camaraEncendida ? 'camara' : 'camaraNo', titulo: tr('Cámara', 'Camera'), sub: p.estadoCamara, activo: p.camaraEncendida },
     { id: 'caras', icono: 'caraId', titulo: tr('Caras', 'Faces'), sub: p.estadoCaras },
     ...(p.estadoVoces != null ? [{ id: 'voces' as const, icono: 'microfono' as const, titulo: tr('Voces', 'Voices'), sub: p.estadoVoces }] : []),

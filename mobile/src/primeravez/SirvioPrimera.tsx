@@ -64,6 +64,6 @@ const s = StyleSheet.create({
   faltan: { fontSize: 13, paddingTop: 2 },
   fila: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pregunta: { fontSize: 15, flexShrink: 1 },
-  boton: { minWidth: 48, minHeight: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  boton: { minWidth: 48, minHeight: 48, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   botonTexto: { fontSize: 15, fontWeight: '600' },
 });

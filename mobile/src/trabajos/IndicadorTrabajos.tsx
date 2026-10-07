@@ -56,7 +56,7 @@ export function IndicadorTrabajos({ texto, resumen, reducido, onAbrir, style }: 
 }
 
 const s = StyleSheet.create({
-  caja: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: 36, borderRadius: 999, borderWidth: 1, maxWidth: 260 },
+  caja: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: 40, borderRadius: 999, borderWidth: 1, maxWidth: 260 },
   punto: { width: 8, height: 8, borderRadius: 4 },
   texto: { fontSize: 13, fontWeight: '700', flexShrink: 1 },
 });

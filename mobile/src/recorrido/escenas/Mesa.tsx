@@ -1,5 +1,5 @@
 /**
- * La mesa y dónde tocar: el avatar al centro y abajo los tres botones (Chat · Hablar · Más), cada uno
+ * La mesa y dónde tocar: el avatar al centro y abajo los tres botones (Mensajes · Hablar · Más), cada uno
  * señalado cuando lo nombran. En «Más» la persona toca de verdad y sube la hoja con todo lo demás (lo
  * mismo que components/HojaMas.tsx).
  */
@@ -42,7 +42,7 @@ export default function Mesa({ paso, esperando, onToque, ancho, alto, idioma, ac
       </View>
       <View style={st.barra}>
         <Senala activo={i === 0 || i === 2} color={acento} mano={i === 2} style={{ flex: 1 }}>
-          <BotonBarra icono="chat" texto="Chat" color={acento} />
+          <BotonBarra icono="chat" texto={t(idioma, 'Mensajes', 'Messages')} color={acento} />
         </Senala>
         <Senala activo={i === 0 || i === 1} color={acento} mano={i === 1} style={{ flex: 1 }} radio={30}>
           <BotonBarra icono="microfono" texto={t(idioma, 'Hablar', 'Talk')} grande color={COLOR.aura} />
