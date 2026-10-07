@@ -6,9 +6,10 @@
  *  1. ¿El binario lo trae? (lib/auraVoz.ts) Una APK anterior que recibe este JS por aire no lo tiene.
  *  2. Guardia contra cierres: antes de la PRIMERA frase por el nativo en este proceso se anota «arrancando» en el
  *     disco (y se ESPERA a que quede escrito); con la primera frase que suena y 10 s más, se borra. Si la app arranca
- *     y la encuentra, se murió arrancándolo: queda apagado 7 días en este teléfono y se avisa por /api/diag. Si se
- *     murió con él ya andando, un golpe; dos en tres días, 3 días apagado. Si la marca NO se puede escribir, esa
- *     sesión va por el camino de siempre.
+ *     y la encuentra, se mira por qué terminó (lib/salidaAnterior.ts + camaraNativa.ts `causaDelCierre`): una recarga
+ *     de la OTA, una actualización aplicada al reabrir, deslizarla o mandarla a segundo plano NO cuentan. Una caída de
+ *     verdad es un golpe: esa sesión va por la de siempre; dos en tres días la apagan 1 h (más si se repite) y se avisa
+ *     por /api/diag. Si la marca NO se puede escribir, esa sesión va por el camino de siempre.
  *  3. Interruptor remoto: GET /api/movil/config (server/movil-config.ts, AURA_VOZ_STREAM=0 lo apaga). Lo último
  *     guardado vale al instante y se refresca por detrás (al arrancar, al volver al frente y cada 10 min).
  *  4. El ajuste «Voz en vivo (nueva)» (encendido por omisión donde exista).
@@ -25,7 +26,8 @@ import { FilaGuardia, GUARDIA, guardiaAlArrancar, guardiaAlMontar, guardiaAlSana
 import { TEXTOS_GUARDIA_VOZ, configVozValida, elegirVoz, type ConfigVozRemota, type MotivoVoz } from './vozNativa';
 import { alPrimeraVozEnVivo, escucharVozEnVivo, estadoVozEnVivo, permitirVozEnVivo } from './tts';
 import { loadSettings, saveSettings } from './storage';
-import { miga, murioLaVezAnterior, reportarEstado } from './reporte';
+import { miga, reportarEstado } from './reporte';
+import { bundleActual, salidaAnterior } from './salidaAnterior';
 
 const CLAVE_GUARDIA = 'aura_voz_nativa_guardia_v1';
 const CLAVE_REMOTA = 'aura_voz_nativa_remota_v1';
@@ -38,6 +40,8 @@ let arranque: Promise<void> | null = null;
 let motivo: MotivoVoz = 'sin-decidir';
 let sanoPendiente: ReturnType<typeof setTimeout> | null = null;
 let sana = false;
+/** Un golpe de la guardia (sin llegar a apagarla): esta sesión, por la de siempre. */
+let soloSesion = false;
 const oyentes = new Set<() => void>();
 
 const fila = new FilaGuardia((texto) => AsyncStorage.setItem(CLAVE_GUARDIA, texto));
@@ -71,7 +75,7 @@ function aplicar() {
     decidido: leido,
     ajuste,
     remoto: remota.activa,
-    bloqueada: guardiaBloqueada(guardia, Date.now()),
+    bloqueada: soloSesion || guardiaBloqueada(guardia, Date.now()),
     falloEnSesion: !!estadoVozEnVivo().fallo,
   });
   if (d.motivo !== motivo) miga(`voz en vivo: ${d.usar === 'vivo' ? 'encendida' : `la de siempre (${d.motivo})`}`);
@@ -93,15 +97,18 @@ export function prepararVoz(): Promise<void> {
       const [g, r, s] = await Promise.all([AsyncStorage.getItem(CLAVE_GUARDIA), AsyncStorage.getItem(CLAVE_REMOTA), loadSettings().catch(() => null)]);
       remota = configVozValida(r ? JSON.parse(r) : null);
       ajuste = s?.vozEnVivo;
-      const { estado, aviso } = guardiaAlArrancar(guardiaValida(g ? JSON.parse(g) : null), Date.now(), murioLaVezAnterior(), TEXTOS_GUARDIA_VOZ);
-      await escribirGuardia(estado);
-      if (aviso) reportarEstado(aviso);
+      const previa = guardiaValida(g ? JSON.parse(g) : null);
+      const inicio = guardiaAlArrancar(previa, Date.now(), await salidaAnterior(previa), TEXTOS_GUARDIA_VOZ);
+      soloSesion = !!inicio.soloSesion;
+      await escribirGuardia(inicio.estado);
+      if (inicio.nota) miga(inicio.nota);
+      if (inicio.aviso) reportarEstado(inicio.aviso);
     } catch {
       /* lo guardado no se pudo leer: lo de fábrica */
     }
     // La primera frase por el nativo espera a que «arrancando» quede en el disco (si no se puede, la de siempre).
     alPrimeraVozEnVivo(async () => {
-      const ok = await escribirGuardia(guardiaAlMontar(guardia, Date.now()));
+      const ok = await escribirGuardia(guardiaAlMontar(guardia, Date.now(), bundleActual()));
       miga(ok ? 'voz en vivo: arrancando' : 'voz en vivo: no pude anotar «arrancando» en el disco');
       if (!ok) reportarEstado('voz en vivo: no pude anotar la guardia en el disco; sigo con la de siempre');
       return ok;
@@ -153,7 +160,7 @@ function vigilar() {
         sana = false;
         void escribirGuardia(guardiaAlSoltar(guardia));
         // La próxima frase por el nativo vuelve a anotar «arrancando».
-        alPrimeraVozEnVivo(async () => escribirGuardia(guardiaAlMontar(guardia, Date.now())));
+        alPrimeraVozEnVivo(async () => escribirGuardia(guardiaAlMontar(guardia, Date.now(), bundleActual())));
       }
     });
     setInterval(() => AppState.currentState === 'active' && quizas('tic'), 60_000);
@@ -199,5 +206,5 @@ export async function fijarVozEnVivo(v: boolean) {
 
 /** Lo que se lee en Ajustes debajo del interruptor. */
 export function estadoVozNueva(): { disponible: boolean; bloqueada: boolean; remota: boolean; fallo: string | null } {
-  return { disponible: Platform.OS === 'android' && vozVivoDisponible(), bloqueada: guardiaBloqueada(guardia, Date.now()), remota: remota.activa, fallo: estadoVozEnVivo().fallo };
+  return { disponible: Platform.OS === 'android' && vozVivoDisponible(), bloqueada: soloSesion || guardiaBloqueada(guardia, Date.now()), remota: remota.activa, fallo: estadoVozEnVivo().fallo };
 }

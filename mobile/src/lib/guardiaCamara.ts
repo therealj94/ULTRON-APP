@@ -5,9 +5,10 @@
  *  1. ¿El binario la trae? (lib/auraCamara.ts) Una APK anterior que recibe este JS por aire no la tiene.
  *  2. Guardia contra cierres: antes de montar la vista nativa se anota «montando» en el disco (y se ESPERA a
  *     que quede escrito: si la app muere al montar, la marca tiene que estar). Con el primer cuadro sano y
- *     10 s más, se borra. Si la app arranca y la encuentra, se murió montándola: la cámara nueva queda
- *     apagada 7 días en este teléfono y se avisa por /api/diag (lib/reporte.ts). Si se murió con ella ya
- *     andando, cuenta un golpe; dos en tres días, 3 días apagada.
+ *     10 s más, se borra. Si la app arranca y la encuentra, se mira por qué terminó (lib/salidaAnterior.ts +
+ *     camaraNativa.ts `causaDelCierre`): una recarga de la OTA, una actualización, deslizarla o el segundo plano NO
+ *     cuentan. Una caída de verdad es un golpe (esa sesión, la de fotos); dos en tres días la apagan 1 h (más si se
+ *     repite) y se avisa por /api/diag (lib/reporte.ts).
  *  3. Interruptor remoto: GET /api/movil/config (server/movil-config.ts, AURA_CAMARA_RAPIDA=0 la apaga).
  *     Se usa lo último guardado al instante y se refresca por detrás: al arrancar, al volver al frente (si pasó
  *     1 min) y cada 10 min con la app delante (camaraNativa.ts REMOTA). Si el servidor la apaga con la cámara
@@ -37,7 +38,8 @@ import {
   type MotivoCamara,
 } from './camaraNativa';
 import { loadSettings, saveSettings } from './storage';
-import { miga, murioLaVezAnterior, reportarEstado } from './reporte';
+import { miga, reportarEstado } from './reporte';
+import { bundleActual, salidaAnterior } from './salidaAnterior';
 
 const CLAVE_GUARDIA = 'aura_camara_nativa_guardia_v1';
 const CLAVE_REMOTA = 'aura_camara_nativa_remota_v1';
@@ -45,6 +47,8 @@ const CLAVE_REMOTA = 'aura_camara_nativa_remota_v1';
 let guardia: EstadoGuardia = {};
 let remota: ConfigCamaraRemota = { activa: true };
 let falloEnSesion: string | null = null;
+/** Un golpe de la guardia (sin llegar a apagarla): esta sesión, la de fotos. */
+let soloSesion = false;
 let arranque: Promise<void> | null = null;
 const oyentes = new Set<() => void>();
 
@@ -79,9 +83,12 @@ function arrancar(): Promise<void> {
     try {
       const [g, r] = await Promise.all([AsyncStorage.getItem(CLAVE_GUARDIA), AsyncStorage.getItem(CLAVE_REMOTA)]);
       remota = configCamaraValida(r ? JSON.parse(r) : null);
-      const { estado, aviso } = guardiaAlArrancar(guardiaValida(g ? JSON.parse(g) : null), Date.now(), murioLaVezAnterior());
-      await escribirGuardia(estado);
-      if (aviso) reportarEstado(aviso);
+      const previa = guardiaValida(g ? JSON.parse(g) : null);
+      const inicio = guardiaAlArrancar(previa, Date.now(), await salidaAnterior(previa));
+      soloSesion = !!inicio.soloSesion;
+      await escribirGuardia(inicio.estado);
+      if (inicio.nota) miga(inicio.nota);
+      if (inicio.aviso) reportarEstado(inicio.aviso);
     } catch {
       /* */
     }
@@ -143,7 +150,7 @@ export async function decidirCamara(): Promise<DecisionCamara> {
     modulo: camaraVivaDisponible(),
     ajuste: s?.camaraRapida,
     remoto: remota.activa,
-    bloqueada: guardiaBloqueada(guardia, Date.now()),
+    bloqueada: soloSesion || guardiaBloqueada(guardia, Date.now()),
     falloEnSesion: !!falloEnSesion,
   });
   return { ...d, remota };
@@ -154,7 +161,7 @@ export async function decidirCamara(): Promise<DecisionCamara> {
  * quedó escrita: quien monta no debe montar (CamaraVivo pasa a la de fotos con `onFallo`, que lo reporta).
  */
 export async function camaraMontando(): Promise<boolean> {
-  const ok = await escribirGuardia(guardiaAlMontar(guardia, Date.now()));
+  const ok = await escribirGuardia(guardiaAlMontar(guardia, Date.now(), bundleActual()));
   miga(ok ? 'cámara nueva: montando' : 'cámara nueva: no pude anotar «montando» en el disco');
   return ok;
 }
@@ -194,7 +201,7 @@ export async function fijarCamaraRapida(v: boolean) {
 
 /** Lo que se lee en Ajustes debajo del interruptor. */
 export function estadoCamaraNueva(): { disponible: boolean; bloqueada: boolean; remota: boolean; fallo: string | null } {
-  return { disponible: Platform.OS === 'android' && camaraVivaDisponible(), bloqueada: guardiaBloqueada(guardia, Date.now()), remota: remota.activa, fallo: falloEnSesion };
+  return { disponible: Platform.OS === 'android' && camaraVivaDisponible(), bloqueada: soloSesion || guardiaBloqueada(guardia, Date.now()), remota: remota.activa, fallo: falloEnSesion };
 }
 
 export { arrancar as prepararCamara };

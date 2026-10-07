@@ -8,3 +8,5 @@ exports.loadSession = async () => m.sesion || null;
 exports.saveSession = async (s) => {
   m.sesion = s || null;
 };
+exports.loadCreds = async () => null;
+exports.leerClaveConHuella = async () => null;

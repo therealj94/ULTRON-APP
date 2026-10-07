@@ -3,6 +3,8 @@
 const assert = require('assert/strict');
 const { sesion, desbloqueo, cuenta } = require('./out/veta.cjs');
 const ss = globalThis.__ss;
+// El mismo llavero de mentira, para darle a lib/credsSeguras.ts (comparte el estado con el del paquete).
+const SS = require('./shims/expo-secure-store.js');
 const la = globalThis.__la;
 // La sesión de Veta es de quien está dentro de AURA (AUR01): sus llaves llevan su seudónimo.
 cuenta.fijarCuenta('ana@aura.test');
@@ -105,6 +107,109 @@ prueba('huella: la contraseña se guarda SOLO con requireAuthentication; cancela
   assert.equal(ss.m.has(llave('aura.veta.clave-biometrica')), false);
   la.enrolado = false;
   assert.equal((await desbloqueo.capacidadBiometrica()).disponible, false, 'sin huella registrada no se ofrece');
+});
+
+prueba('C-3: ver la tarjeta o recargar pide la huella o el bloqueo del teléfono; sin bloqueo de pantalla, no', async () => {
+  la.nivel = 3; la.confirma = true; la.pedidas = [];
+  assert.deepEqual(await desbloqueo.confirmarConTelefono('Ver el número de tu tarjeta'), { ok: true });
+  assert.equal(la.pedidas.length, 1);
+  assert.equal(la.pedidas[0].promptMessage, 'Ver el número de tu tarjeta');
+  assert.equal(la.pedidas[0].disableDeviceFallback, false, 'vale el PIN o patrón del teléfono si no hay huella');
+  la.confirma = false;
+  assert.deepEqual(await desbloqueo.confirmarConTelefono('x'), { ok: false, motivo: 'cancelado' });
+  la.nivel = 0; la.confirma = true;
+  assert.deepEqual(await desbloqueo.confirmarConTelefono('x'), { ok: false, motivo: 'sin-bloqueo' }, 'sin bloqueo de pantalla no hay con qué confirmar');
+  la.nivel = 3;
+  const t = leerSrc('cartera/veta/SeccionTarjeta.tsx');
+  assert.match(t, /<PedirClave[\s\S]{0,900}confirmarTelefono\n/, 'la ficha de la tarjeta (número, PIN, recarga) siempre la pide');
+  const p = leerSrc('cartera/veta/PedirClave.tsx');
+  const i = p.indexOf('const r = await onAutorizar(c);');
+  assert.ok(i > 0);
+  assert.match(p.slice(Math.max(0, i - 900), i), /if \(confirmarTelefono && !deBio\) \{\s*const t = await confirmarConTelefono\(titulo\);\s*if \(!t\.ok\) \{[\s\S]*?return;/, 'la contraseña escrita no basta: antes de mandarla, la huella o el bloqueo');
+});
+
+prueba('C-3: la sesión de Veta dura como mucho 7 días en el teléfono (el refreshToken de 30 días es del backend)', async () => {
+  const DIA = 24 * 3600_000;
+  assert.equal(sesion.SESION_MAX_MS, 7 * DIA);
+  assert.deepEqual(sesion.sesionCaducada(null, 1000), { caducada: false, fijarDesde: 1000 }, 'una sesión de antes no se corta de golpe');
+  assert.deepEqual(sesion.sesionCaducada(1000, 1000 + 6 * DIA), { caducada: false });
+  assert.deepEqual(sesion.sesionCaducada(1000, 1000 + 8 * DIA), { caducada: true });
+  // Entrar anota desde cuándo; pasado el tope, el refresco ya no se usa: se pide entrar otra vez.
+  respuestas = { '/auth/login': [200, { token: jwt(ahoraS() - 5), refreshToken: 'rt-tope' }] };
+  await sesion.entrar('ana@x.com', 'secreta');
+  const desde = Number(ss.m.get(llave('aura.veta.desde')));
+  assert.ok(Math.abs(desde - Date.now()) < 5000, 'entrar anota cuándo');
+  const real = Date.now;
+  try {
+    Date.now = () => real() + 8 * DIA;
+    llamadas = [];
+    respuestas['/auth/refresh'] = [200, { token: jwt(Math.floor(Date.now() / 1000) + 2400), refreshToken: 'rt-nuevo' }];
+    await assert.rejects(sesion.tarjeta.mia(), (e) => e.tipo === 'sesion');
+    assert.equal(llamadas.filter((l) => l.ruta === '/auth/refresh').length, 0, 'pasado el tope no se renueva');
+    assert.equal(sesion.conectada(), false);
+    assert.equal(ss.m.has(llave('aura.veta.refresco')), false, 'el refreshToken se borra del teléfono');
+  } finally {
+    Date.now = real;
+  }
+});
+
+prueba('M-9: la clave de AU-RA solo se guarda detrás de la huella (requireAuthentication); nunca a la vista', async () => {
+  const { creds: C } = require('./out/veta.cjs');
+  const ll = { get: (k, o) => SS.getItemAsync(k, o), set: (k, v, o) => SS.setItemAsync(k, v, o), del: (k) => SS.deleteItemAsync(k), soloEsteTelefono: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' };
+  const c = C.crearCreds(ll);
+  const { creds: K, clave: KC } = C.LLAVES_CREDS;
+  // Con huella: la clave va a su llave con requireAuthentication; lo visible no la lleva.
+  assert.equal(await c.guardar({ correo: 'jose@og.test', clave: 'secreta-1', name: 'José', conHuella: true }), true);
+  assert.equal(ss.opciones.get(KC).requireAuthentication, true);
+  assert.equal(ss.opciones.get(KC).keychainAccessible, 'WHEN_UNLOCKED_THIS_DEVICE_ONLY');
+  assert.ok(!ss.m.get(K).includes('secreta-1'), 'la clave no queda a la vista');
+  const leida = await c.leer();
+  assert.deepEqual({ ...leida, claveHuella: undefined }, { correo: 'jose@og.test', name: 'José', conHuella: true, claveHuella: undefined });
+  assert.equal(leida.clave, undefined);
+  assert.equal(await c.claveConHuella('Desbloquear'), 'secreta-1');
+  assert.equal(ss.opciones.get(KC).requireAuthentication, true);
+  ss.cancelarBio = true;
+  assert.equal(await c.claveConHuella('Desbloquear'), null, 'sin la huella, no sale');
+  ss.cancelarBio = false;
+  // Sin red: se comprueba con PBKDF2, sin la clave.
+  assert.equal(C.claveCoincide(leida, 'secreta-1'), true);
+  assert.equal(C.claveCoincide(leida, 'otra'), false);
+  assert.match(leida.claveHuella, /^p1\$[^$]+\$[0-9a-f]{64}$/);
+  // Sin huella: la clave NO se guarda.
+  assert.equal(await c.guardar({ correo: 'jose@og.test', clave: 'secreta-2', name: 'José', conHuella: false }), false);
+  assert.equal(ss.m.has(KC), false);
+  assert.ok(![...ss.m.values()].includes('secreta-2'));
+  // Si el sistema no deja guardarla (canceló la huella, sin bloqueo de pantalla), tampoco: y se dice.
+  const real = SS.setItemAsync;
+  SS.setItemAsync = async (k, v, o) => { if (o && o.requireAuthentication) throw new Error('cancelado'); return real(k, v, o); };
+  try {
+    assert.equal(await c.guardar({ correo: 'jose@og.test', clave: 'secreta-3', conHuella: true }), false);
+    assert.equal((await c.leer()).conHuella, undefined);
+  } finally {
+    SS.setItemAsync = real;
+  }
+  // Cerrar: todo fuera.
+  await c.guardar(null);
+  assert.equal(ss.m.has(K) || ss.m.has(KC), false);
+});
+
+prueba('M-9 migración: la clave en claro de una versión anterior se borra al leer; correo y nombre siguen (nadie queda fuera)', async () => {
+  const { creds: C } = require('./out/veta.cjs');
+  const c = C.crearCreds({ get: (k, o) => SS.getItemAsync(k, o), set: (k, v, o) => SS.setItemAsync(k, v, o), del: (k) => SS.deleteItemAsync(k) });
+  ss.m.set(C.LLAVES_CREDS.creds, JSON.stringify({ correo: 'jose@og.test', clave: 'en-claro', name: 'José' }));
+  const r = await c.leer();
+  assert.deepEqual(r, { correo: 'jose@og.test', name: 'José' });
+  assert.ok(!ss.m.get(C.LLAVES_CREDS.creds).includes('en-claro'), 'se reescribió sin la clave');
+  assert.equal(await c.claveConHuella('x'), null, 'no hay clave detrás de la huella: la próxima vez se escribe (y queda guardada de verdad)');
+  const api = leerSrc('lib/api.ts');
+  assert.match(api, /if \(!creds\?\.correo \|\| !creds\.conHuella\) return false;/, 'renovar solo con la clave detrás de la huella');
+  assert.match(api, /const clave = await leerClaveConHuella\(/);
+  assert.doesNotMatch(api, /creds\.clave/, 'la renovación ya no usa una clave a la vista');
+  const login = leerSrc('screens/LoginScreen.tsx');
+  assert.match(login, /const guardada = await leerClaveConHuella\(tr\('Desbloquear AU-RA FP'/, 'la huella de la entrada ES la llave');
+  assert.doesNotMatch(login, /creds\??\.clave\b/, 'la entrada no lee una clave a la vista');
+  assert.match(login, /claveCoincide\(creds, clave\)/, 'sin red, se compara la huella de la clave');
+  assert.match(leerSrc('app/pantallas/Intro.tsx'), /void loadCreds\(\)\.catch\(\(\) => null\);/, 'la migración corre al abrir la app');
 });
 
 prueba('cerrar sesión borra JWT, refresco y correo', async () => {

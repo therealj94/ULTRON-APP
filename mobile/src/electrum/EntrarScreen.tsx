@@ -198,7 +198,7 @@ export function EntrarScreen({ onDentro, motivo = '' }: { onDentro: () => void; 
               onSubmitEditing={() => void intentar()}
               style={s.campo}
             />
-            <Text style={s.aviso}>Con llave entrás de consulta: podés preguntarlo todo, pero no cargarle nada al cerebro.</Text>
+            <Text style={s.aviso}>Con llave entras de consulta: puedes preguntarlo todo, pero no cargarle nada al cerebro.</Text>
           </>
         )}
 

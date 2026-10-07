@@ -156,7 +156,7 @@ export function LoQueSabe({ navigation }: Props) {
 
   return (
     <PantallaConCabecera
-      titulo={tr('Lo que AURA sabe de ti', 'What AURA knows about you')}
+      titulo={tr('Lo que le contaste a AURA', 'What you told AURA')}
       subtitulo={tr('Lo que le contaste. Lo usa para ayudarte; tú lo cambias o lo borras cuando quieras.', 'What you told her. She uses it to help you; change or erase it anytime.')}
       onAtras={() => navigation.goBack()}
     >

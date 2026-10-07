@@ -110,13 +110,13 @@ export const MENU_APP: readonly LugarApp[] = [
     id: 'cartera',
     nombre: { es: 'Veta Wallet (cartera)', en: 'Veta Wallet (wallet)' },
     donde: { es: 'Ajustes → AURA → «Veta Wallet», o el menú de la mesa → Cartera, o decir «enséñame mi wallet»; para pagar: en un chat de PULSE2CHAT, la moneda de arriba («Enviar dinero») o «mándale 5 ORIGEN a Ana»', en: 'Settings → AURA → “Veta Wallet”, or the desk menu → Wallet, or say “show me my wallet”; to pay: in a PULSE2CHAT chat, the coin at the top (“Send money”) or “send Ana 5 ORIGEN”' },
-    que: { es: 'sus saldos de Veta Wallet (tokens y ORIGEN), solo lectura: AURA nunca mueve su dinero. Al pagar, AURA prepara el envío y la persona lo firma en Veta Wallet con su contraseña de siempre; luego sale el comprobante en el chat («Verificado en la cadena»)', en: 'their Veta Wallet balances (tokens and ORIGEN), read-only: AURA never moves their money. To pay, AURA prepares it and they sign in Veta Wallet with their usual password; then the receipt shows in the chat (“Verified on chain”)' },
+    que: { es: 'sus saldos de Veta Wallet (tokens y ORIGEN), que solo se leen; su tarjeta Visa, que AURA sí puede mostrar y recargar con su contraseña de Veta (con huella o bloqueo del teléfono). Al pagar, AURA prepara el envío y la persona lo firma en Veta Wallet con su contraseña de siempre; luego sale el comprobante en el chat («Verificado en la cadena»)', en: 'their Veta Wallet balances (tokens and ORIGEN), which are only read; their Visa card, which AURA can show and top up with their Veta password (with fingerprint or phone lock). To pay, AURA prepares it and they sign in Veta Wallet with their usual password; then the receipt shows in the chat (“Verified on chain”)' },
     pasos: [
       { es: 'si tiene PULSE2CHAT, se conecta sola con su cuenta; si no, «Conecta tu cartera en 2 pasos»', en: 'with PULSE2CHAT it connects by itself from their account; otherwise “Connect your wallet in 2 steps”' },
       { es: 'en Veta Wallet: Recibir → Copiar dirección, y pegarla en «Tu dirección de Veta Wallet» → Guardar', en: 'in Veta Wallet: Receive → Copy address, and paste it in “Your Veta Wallet address” → Save' },
       { es: 'pagar: abrir el chat de la persona, tocar la moneda, elegir moneda y cantidad, revisar y confirmar; firma en Veta Wallet y vuelve sola', en: 'pay: open that person’s chat, tap the coin, pick coin and amount, review and confirm; sign in Veta Wallet and it comes back by itself' },
     ],
-    corto: { es: 'Cartera: Ajustes → «Veta Wallet» (solo saldos); pagar en un chat → la moneda, se firma en Veta Wallet', en: 'Wallet: Settings → “Veta Wallet” (balances only); pay in a chat → the coin, signed in Veta Wallet' },
+    corto: { es: 'Cartera: Ajustes → «Veta Wallet» (saldos y tarjeta); pagar en un chat → la moneda, se firma en Veta Wallet', en: 'Wallet: Settings → “Veta Wallet” (balances and card); pay in a chat → the coin, signed in Veta Wallet' },
     fuente: ['mobile/src/cartera/HojaCartera.tsx', 'mobile/src/cartera/HojaPagar.tsx', 'lib/cartera.ts'],
   },
   {

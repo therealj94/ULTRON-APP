@@ -15,7 +15,7 @@ export default function Conocer({ paso, ancho, alto, idioma, acento }: PropsEsce
   const H = alto - 12;
   const camino =
     i === 0
-      ? [t(idioma, 'Ajustes', 'Settings'), 'AURA', t(idioma, 'Lo que sé de ti', 'What I know')]
+      ? [t(idioma, 'Ajustes', 'Settings'), 'AURA', t(idioma, 'Lo que AURA aprendió de ti', 'What AURA learned')]
       : i === 1
         ? [t(idioma, 'Ajustes', 'Settings'), 'AURA', t(idioma, 'Mi círculo', 'My circle')]
         : [t(idioma, 'Más', 'More'), t(idioma, 'Misiones', 'Missions')];
