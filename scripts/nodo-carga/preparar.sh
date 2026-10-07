@@ -17,7 +17,7 @@ LOTES="__LOTES__"
 REGION="__REGION__"
 
 apt-get update -q
-# 7zip (7zz) abre .rar y .7z, que el cargador rechaza y en los expedientes aparecen.
+# 7zip (`7z`) abre .rar y .7z, que el cargador rechaza y en los expedientes aparecen.
 apt-get install -y -q --no-install-recommends \
   ca-certificates curl unzip xz-utils jq tmux git python3 \
   gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip

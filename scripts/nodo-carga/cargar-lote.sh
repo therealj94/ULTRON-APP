@@ -103,7 +103,7 @@ for vuelta in 1 2 3; do
     else apartar "$z" "zip roto o cifrado"; fi
   done < <(find "$LISTO" -type f -iname '*.zip' -print0)
   while IFS= read -r -d '' z; do
-    if 7zz x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
+    if 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
     else apartar "$z" "rar/7z roto o cifrado"; fi
   done < <(find "$LISTO" -type f \( -iname '*.rar' -o -iname '*.7z' \) -print0)
   [ "$abiertos" -gt 0 ] || break
