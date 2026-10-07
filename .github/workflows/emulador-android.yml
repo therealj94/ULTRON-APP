@@ -14,6 +14,10 @@ name: Emulador Android (AU-RA FP)
 # El repositorio es público y sus artefactos se pueden bajar: ni el correo ni la clave de prueba salen en la
 # evidencia (sin capturas ni grabación durante la entrada; logcat y datos enmascarados).
 on:
+  # TEMPORAL: solo para que GitHub registre este flujo desde la rama (sin estar en main, workflow_dispatch da 404).
+  push:
+    branches: [claude/emulador-android]
+    paths: [".github/workflows/emulador-android.yml"]
   workflow_dispatch:
   workflow_run:
     workflows: ["OTA (EAS Update)"]
@@ -31,7 +35,7 @@ permissions:
 jobs:
   emulador:
     # Después de una OTA, solo si salió bien.
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
