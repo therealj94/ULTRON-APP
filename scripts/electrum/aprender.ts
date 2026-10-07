@@ -36,7 +36,9 @@ import { cerrarBase, hayBase, recalcularTraslapes, saludBase } from '../../serve
 /** Por encima de esto, un shapefile no se lee de una pieza: se queda sin memoria y tumba la carga. */
 const TOPE_SHP = 300 * 1024 ** 2;
 
-const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|docx|txt|md|markdown)$/i;
+// Los documentos son los mismos que lee el motor (ES_DOC en server/electrum/aprender.ts): sin el
+// .doc, .rtf, .pptx y .xlsx aquí, un lote de expedientes perdía todo lo que venía de Office viejo.
+const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|docx|doc|rtf|pptx|xlsx|xlsm|txt|md|markdown)$/i;
 
 const AYUDA = `Cargador de Electrum.
 
@@ -50,7 +52,8 @@ const AYUDA = `Cargador de Electrum.
 
 Se puede cortar y relanzar: lo ya cargado se salta por la huella de su contenido.
 
-Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, Word, texto y Markdown.`;
+Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, Word (.docx/.doc), RTF, PowerPoint,
+Excel, texto y Markdown.`;
 
 const args = process.argv.slice(2);
 const opts: { quien: string | null; concesion: number | null; tipo: string | null; seco: boolean } =
