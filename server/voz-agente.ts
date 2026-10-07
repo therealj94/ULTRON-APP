@@ -150,6 +150,16 @@ export const AGENTES: Record<AvatarVoz, Record<Idioma, string>> = {
   antonio: { es: 'agent_6901m3r708f4e15vgc39yj4g8vw7', en: 'agent_3501m3r70c76e6nrvch0ewjcqkys' },
 };
 
+/** El avatar que pide la última acción `avatar` de un turno (lo que sale al teléfono), o null. */
+export function avatarDeAcciones(acciones: unknown): AvatarVoz | null {
+  const xs = Array.isArray(acciones) ? acciones : [];
+  for (let i = xs.length - 1; i >= 0; i--) {
+    const a = (xs[i] as any)?.accion ?? xs[i];
+    if (a?.tipo === 'avatar' && ['ojos', 'aura', 'claudio', 'antonio'].includes(String(a?.valor))) return String(a.valor) as AvatarVoz;
+  }
+  return null;
+}
+
 export function agenteDe(avatar: AvatarVoz, idioma: Idioma): string {
   const env = String(process.env[`ELEVENLABS_AGENTE_${avatar.toUpperCase()}_${idioma.toUpperCase()}`] || '').trim();
   return env || AGENTES[avatar][idioma];
@@ -338,6 +348,12 @@ type Conversacion = {
   devolverTurno?: (() => void) | null;
   /** Cuándo empezó el turno en curso (para reconocer una ráfaga de frases a medias). */
   inicioEnCurso?: number;
+  /**
+   * El avatar que tiene AHORA la llamada (revisión independiente del 7-oct, MENOR): el pase firma el del principio, pero
+   * un cambio por voz («sí, pásame con Claudio») que de verdad salió lo cambia. Los turnos siguientes mandan este (así
+   * «vuelve a Aura» sabe que está con Claudio). null: el del pase.
+   */
+  avatarAhora?: AvatarVoz | null;
   /**
    * Frases a medias seguidas que el turno especulativo reemplazó antes de decir nada (la persona seguía hablando). Va
    * en la línea del turno que sí contesta: «· tras 5 frases a medias». El 6-oct a las 17:11:28–29 fueron cinco en
@@ -1626,6 +1642,15 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
         // Buscar o leer en sus chats lo hace el teléfono y vuelve como lectura (otro turno): mientras,
         // suena la tarea. La quita el turno de la lectura (o el propio teléfono, con su tope).
         const manos = (Array.isArray(datos?.acciones) ? datos.acciones : []).map((x: any) => String(x?.accion?.tipo ?? x?.tipo ?? ''));
+        // Un cambio de avatar que sale: la llamada sigue con ese (cuando el turno se confirma, como las acciones).
+        const avatarNuevo = avatarDeAcciones(datos?.acciones);
+        if (avatarNuevo) {
+          const fijar = () => {
+            conv.avatarAhora = avatarNuevo;
+          };
+          if (suerteAhora() === 'hecho') fijar();
+          else if (suerteAhora() === 'espera') retenidas.push(fijar);
+        }
         const deTelefono = manos.includes('buscar') ? tareaDe('buscar') : manos.includes('leer') ? tareaDe('leer-chat') : null;
         if (deTelefono?.sonido && !corte.signal.aborted && conv.enCurso === corte) {
           conv.ambiente = { sonido: deTelefono.sonido, de: null };
@@ -1692,7 +1717,7 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
           mode: pase.modo,
           usuario: pase.nombre,
           correo: pase.correo,
-          avatar: pase.avatar,
+          avatar: conv.avatarAhora ?? pase.avatar,
           idioma: pase.idioma,
           canal: 'mesa',
           aparato: pase.aparato,

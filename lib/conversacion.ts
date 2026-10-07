@@ -168,6 +168,11 @@ export function fusionarHilo(opts: {
   max?: number;
   /** Caracteres por mensaje (la voz usa menos: cada ficha es tiempo antes de hablar). */
   maxCaracteres?: number;
+  /**
+   * Lo que SÍ contestó en turnos cuya respuesta no quedó en la memoria (una herramienta incierta o parcial, AUR07; una
+   * respuesta cortada): `respuestasSinMemoria`. Va en su lugar del hilo, así esas frases no salen como «sin respuesta».
+   */
+  respondidas?: readonly RespuestaSinMemoria[];
 }): MsgHilo[] {
   const durable = opts.durable || [];
   const cliente = opts.cliente || [];
@@ -179,6 +184,19 @@ export function fusionarHilo(opts: {
     if (!content) continue;
     const role: 'user' | 'assistant' = t.rol === 'ultron' || t.rol === 'assistant' ? 'assistant' : 'user';
     msgs.push({ role, content });
+  }
+  // Revisión independiente (7-oct, M3): la respuesta que sí dio y no quedó en la memoria vuelve a su lugar (detrás de la
+  // frase que contestó, si no tiene ya una respuesta): esa frase no estaba «sin respuesta».
+  const respondidas = [...(opts.respondidas || [])];
+  if (respondidas.length) {
+    for (let k = 0; k < msgs.length; k++) {
+      if (msgs[k].role !== 'user' || msgs[k + 1]?.role === 'assistant') continue;
+      const j = respondidas.findIndex((r) => String(r.dijo || '').trim().slice(0, tope) === msgs[k].content);
+      if (j < 0) continue;
+      msgs.splice(k + 1, 0, { role: 'assistant', content: String(respondidas[j].respuesta || '').trim().slice(0, tope) });
+      respondidas.splice(j, 1);
+      k++;
+    }
   }
   const actual = String(opts.mensaje || '').trim().slice(0, tope);
   if (msgs.length && msgs[msgs.length - 1].role === 'user' && msgs[msgs.length - 1].content === actual) {
@@ -192,18 +210,78 @@ export function fusionarHilo(opts: {
   return msgs;
 }
 
+/* ------------------------------------------------------------------ lo que contestó sin quedar en la memoria */
+
+export type RespuestaSinMemoria = { dijo: string; respuesta: string; t: number };
+/** Cuánto vale (la sesión de la mesa) y cuántas por persona. */
+export const SIN_MEMORIA_MS = 3 * 3600_000;
+const TOPE_SIN_MEMORIA = 20;
+const sinMemoria = new Map<string, RespuestaSinMemoria[]>();
+
+/**
+ * Revisión independiente (7-oct, M3): un turno CONTESTÓ pero su respuesta no va a la memoria como conclusión (una
+ * herramienta incierta o con datos parciales, AUR07; una respuesta cortada). Se anota aquí (en el proceso, no en su
+ * memoria larga) para que el hilo sepa que esa frase sí tuvo respuesta y cuál fue.
+ */
+export function anotarRespuestaSinMemoria(clave: string, dijo: string, respuesta: string, ahora = Date.now()) {
+  const k = String(clave || '').trim().toLowerCase();
+  if (!k || !String(dijo || '').trim() || !String(respuesta || '').trim()) return;
+  const xs = (sinMemoria.get(k) || []).filter((r) => ahora - r.t <= SIN_MEMORIA_MS);
+  xs.push({ dijo: String(dijo).trim(), respuesta: String(respuesta).trim(), t: ahora });
+  sinMemoria.delete(k);
+  sinMemoria.set(k, xs.slice(-TOPE_SIN_MEMORIA));
+  if (sinMemoria.size > 5000) sinMemoria.delete(sinMemoria.keys().next().value as string);
+}
+
+/** Las respuestas sin memoria de esa persona, vigentes (de la más vieja a la más nueva). */
+export function respuestasSinMemoria(clave: string, ahora = Date.now()): RespuestaSinMemoria[] {
+  return (sinMemoria.get(String(clave || '').trim().toLowerCase()) || []).filter((r) => ahora - r.t <= SIN_MEMORIA_MS);
+}
+
+/** Solo pruebas. */
+export function _olvidarRespuestasSinMemoria() {
+  sinMemoria.clear();
+}
+
 /**
  * LAS FRASES QUE QUEDARON SIN RESPUESTA (José, 7-oct, 00:31–00:33 UTC). Sus frases «Necesito que cambies a Claudio»
- * (mal oída) y «¿Qué tenemos pendiente?» quedaron en el hilo sin respuesta de AU-RA (las de esos turnos no se guardaron:
- * una herramienta que no dio un dato seguro no deja la respuesta en su memoria, AUR07). Bedrock junta los mensajes
- * seguidos del mismo lado (lib/cerebro-rapido.ts aBedrock), así que el modelo recibía «cambies a Claudio… ¿qué tenemos
+ * (mal oída) y «¿Qué tenemos pendiente?» quedaron en el hilo sin respuesta de AU-RA. Bedrock junta los mensajes seguidos
+ * del mismo lado (lib/cerebro-rapido.ts aBedrock), así que el modelo recibía «cambies a Claudio… ¿qué tenemos
  * pendiente?… ¿Qué cambiaste, Claudio?» como UN mensaje y contestaba a la primera: «Ahí va, ya me pongo en Claudio» un
- * minuto tarde, y luego el pendiente que nadie le pedía. Ahora esas frases van marcadas como de antes: contexto, no
- * pedidos que contestar; lo que dice ahora es lo que manda.
+ * minuto tarde. Ahora esas frases van juntas y marcadas como de antes, y lo de ahora va claro al final.
+ *
+ * Revisión independiente (7-oct, G2): la nota decía «ya pasó: no lo contestes ni hagas lo que pedía», así que una
+ * pregunta cortada por otra frase se perdía (y un «sí» a un envío no podía reintentarse). Ahora va como parte del pedido
+ * nuevo: «antes dijo X; ahora dice Y», y se contesta lo que corresponda a las dos (si lo de ahora lo corrige, vale lo de
+ * ahora). Lo único que sí se descarta es una orden de CAMBIO DE AVATAR tardía (la regla del 7-oct): eso no se hace ni se
+ * pregunta por lo de antes (y el servidor tampoco lo empuja: server.ts accionesDelCerebro).
  */
 export function notaSinRespuesta(frases: string[]): string {
-  const citas = frases.map((f) => `«${String(f || '').replace(/\s+/g, ' ').trim()}»`).join(' · ');
-  return `(Antes dijo esto y no quedó respuesta tuya: ${citas}. Ya pasó: no lo contestes ni hagas lo que pedía; contesta solo su mensaje de ahora, y usa esto solo si lo de ahora lo continúa.)`;
+  const limpias = frases.map((f) => String(f || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const avatar = limpias.filter((f) => esOrdenDeAvatar(f));
+  const resto = limpias.filter((f) => !esOrdenDeAvatar(f));
+  const cita = (xs: string[]) => xs.map((f) => `«${f}»`).join(' · ');
+  const partes: string[] = [];
+  if (resto.length)
+    partes.push(
+      `Antes dijo esto y todavía no le contestaste: ${cita(resto)}. Ahora dice lo que sigue: contesta lo que corresponda a todo junto (si lo de ahora lo cambia o lo corrige, vale lo de ahora; si es otra cosa, contesta también lo de antes, breve).`
+    );
+  if (avatar.length) partes.push(`${MARCA_AVATAR_ATRAS} (${cita(avatar)}) quedó atrás: no lo hagas ni lo preguntes por eso.`);
+  return `(${partes.join(' ')})`;
+}
+
+const MARCA_AVATAR_ATRAS = 'Lo de cambiar de avatar';
+
+/** ¿El último mensaje de la persona en el hilo lleva una orden de avatar que quedó atrás? (server.ts no la retoma). */
+export function avatarQuedoAtras(hilo: readonly MsgHilo[]): boolean {
+  const u = hilo[hilo.length - 1];
+  return !!u && u.role === 'user' && u.content.startsWith('(') && u.content.includes(MARCA_AVATAR_ATRAS);
+}
+
+/** «Cambia a Claudio», «necesito que me pases con AU-RA»: una orden de cambiar de avatar (para la nota de arriba). */
+export function esOrdenDeAvatar(frase: string): boolean {
+  const q = fold(frase);
+  return /\b(cambi\w*|pasa(me|r|rme)?|pases|pon(me|er|gas)?|switch|change|swap|quiero hablar con)\b/.test(q) && /\b(claudio|aura|au-ra|au ra|antonio|ant-onio|guardian|avatar)\b/.test(q);
 }
 
 /**

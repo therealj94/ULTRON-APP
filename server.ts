@@ -41,6 +41,7 @@ import {
   sinFraseDeAvatar,
   soltarCambioAvatar,
   turnoAppVigente,
+  marcarTurnoRelleno,
   type AvatarApp,
   anotarPropuesta,
   aparatoValido,
@@ -177,7 +178,9 @@ import { cerebroRapidoActivo, fraseDeEsperaLenta, hablarConManos, modeloRapido, 
 // Que no repita lo que ya dijo (José, 7-oct): lib/repeticion.ts.
 import { respuestaPura } from './lib/afirmacion';
 import { anotarMencionesAbiertos } from './lib/abiertos';
-import { guardaRepeticion, mismaPreguntaQue, notaNoRepetir, pideRepetir, previasDe, respuestaBreveSinRepetir, trozoRepite } from './lib/repeticion';
+// Una frase de relleno («¿hola?», «¿me oyes?») no deja tardío al turno que sigue pensando (revisión del 7-oct, G2).
+import { esFraseDeRelleno } from './mobile/src/lib/fraseNueva';
+import { diceQueYaLoDijo, guardaRepeticion, mismaPreguntaQue, notaNoRepetir, pideRepetir, previasDe, vaRepitiendo } from './lib/repeticion';
 // ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
 import { esCharlaParaRuta, esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
 import { abrirEspeculativo, confirmarEspeculativoConDetalle, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
@@ -283,7 +286,7 @@ import { memoriaSinLeer,
   hiloDe,
   type CanalMem,
 } from './lib/memoria';
-import { esSaludoCorto, fusionarHilo, pedidoRed, resolverReferencia, urlsParaLeer, type MsgHilo } from './lib/conversacion';
+import { anotarRespuestaSinMemoria, avatarQuedoAtras, esOrdenDeAvatar, esSaludoCorto, fusionarHilo, pedidoRed, resolverReferencia, respuestasSinMemoria, urlsParaLeer, type MsgHilo } from './lib/conversacion';
 import { nombreDe, puedeCambiarSistema } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
@@ -2597,6 +2600,12 @@ type OpcionesTurno = {
    * en el teléfono y no se guarda como dicho: la nueva manda.
    */
   vigente?: () => boolean;
+  /**
+   * Revisión independiente (7-oct, G2): en este turno empezó (o ya corrió) una herramienta que pudo dejar algo afuera
+   * (un envío, un borrador, una misión). Desde ahí el turno ya no se descarta por tardío: termina, anota el recibo y lo
+   * dice (un envío nunca queda silencioso ni perdido). Lo pone el turno al empezar o terminar esa herramienta.
+   */
+  conEfecto?: boolean;
 };
 
 /**
@@ -2692,6 +2701,15 @@ const cupoDeMiembro = cupoPorFrase((req) => {
 function correoDeMemoriaMiembro(body: any): string {
   if (body?.nivel === 'junta' || body?.canal === 'telegram') return '';
   return body?.sesion?.correo ? String(body.sesion.correo).trim().toLowerCase() : '';
+}
+
+/**
+ * De quién es el hilo del turno (el mismo dueño que su memoria): la persona de la junta o el miembro por su correo. Para lo
+ * que contestó sin quedar en la memoria (lib/conversacion.ts respuestasSinMemoria; revisión del 7-oct, M3).
+ */
+function claveHiloTurno(body: any, quienMem: string | null): string {
+  if (body?.nivel === 'junta') return quienMem ? `junta:${quienMem}` : '';
+  return correoDeMemoriaMiembro(body);
 }
 
 /**
@@ -2856,7 +2874,15 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // se sale, y los mensajes de antes no cambian (server/prompt-turno.ts ventanaDelHilo).
   const contarDesde = (t0: number) => memoriaHilo.reduce((n, t) => n + (Number(t.t) >= t0 ? 1 : 0), 0);
   const ventana = ventanaDelHilo(claveTurno, turnosDesde, Date.now(), contarDesde, limites);
-  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventana, maxCaracteres: compacto ? 600 : 1800 });
+  const hilo: MsgHilo[] = fusionarHilo({
+    durable,
+    cliente: clienteHilo,
+    mensaje: message,
+    max: ventana,
+    maxCaracteres: compacto ? 600 : 1800,
+    // Lo que sí contestó en turnos que no quedaron en la memoria (AUR07, cortados): esas frases no van como «sin respuesta» (M3).
+    respondidas: respuestasSinMemoria(claveHiloTurno(body, quienMem)),
+  });
   // De dónde arranca la ventana de este turno (si sale de la memoria): la foto del fijo la recuerda.
   const desdeVentana = durable.length >= 2 ? Number(memoriaHilo[Math.max(0, memoriaHilo.length - ventana)]?.t) : undefined;
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
@@ -4486,10 +4512,25 @@ function empezarTurnoDeCuenta(body: any, opciones: OpcionesTurno = {}) {
   if (!correo) return;
   const amb = ambitoApp(correo, body?.aparato);
   const n = abrirTurnoApp(amb);
+  // Revisión independiente (7-oct, G2): una frase de relleno o de sondeo («¿hola?», «¿me oyes?», «ajá») no deja tardío
+  // al turno que sigue pensando: ese contesta igual.
+  if (esFraseDeRelleno(String(body?.message ?? ''))) marcarTurnoRelleno(amb, n);
   // Una frase a medias que la voz descartó no cuenta como turno: el «sí» que viene sigue valiendo.
   opciones.retener?.alDescartar(() => deshacerTurnoApp(amb, n));
-  // José (7-oct): si llega otra frase suya (otro turno en este ámbito), lo de este turno ya es tardío.
-  opciones.vigente = () => turnoAppVigente(amb, n);
+  // José (7-oct): si llega otra frase suya (otro turno en este ámbito), lo de este turno ya es tardío. Salvo que ya haya
+  // empezado algo con efectos (G2): ese termina, anota su recibo y lo dice.
+  opciones.vigente = () => !!opciones.conEfecto || turnoAppVigente(amb, n);
+}
+
+/**
+ * ¿Esta herramienta del harness puede dejar algo afuera? (revisión del 7-oct, G2). Ante la duda, sí: solo leer la web o
+ * una página, o revisar, leer o buscar en el correo o WhatsApp, no tienen efecto.
+ */
+function herramientaConEfecto(herramienta: string, arg: string): boolean {
+  const h = String(herramienta || '').toLowerCase();
+  if (h === 'web' || h === 'leer') return false;
+  if ((h === 'correo' || h === 'whatsapp') && /^\s*(revisar|revisa|leer|lee|buscar|busca|ver|listar|lista|estado|seguir|siguiente|sin leer)\b/i.test(String(arg || ''))) return false;
+  return true;
 }
 
 /** ¿El turno ya quedó viejo? (llegó otra frase de la persona después: la respuesta de este no suena ni hace nada). */
@@ -4650,11 +4691,22 @@ async function accionesDelCerebro(
     /** El avatar que manda el teléfono en el turno (José, 7-oct: el modelo no lo cambia sin preguntar). */
     avatarApp?: AvatarApp | null;
     vigente?: () => boolean;
+    /** El hilo que vio el modelo (la nota de lo que quedó atrás: una orden de avatar tardía no se retoma). */
+    hilo?: MsgHilo[];
   },
   delModelo: boolean
 ): Promise<{ texto: string; acciones: EventoAccion[]; sustituido: boolean; corregido?: boolean }> {
   if (!delModelo) return { texto: neutralizarMarca(texto), acciones: [], sustituido: false };
-  const { acciones, texto: limpio } = extraerAcciones(texto);
+  const extraidas = extraerAcciones(texto);
+  let { acciones, texto: limpio } = extraidas;
+  // LA ORDEN DE AVATAR TARDÍA (regla del 7-oct, sigue tras la revisión G2): la frase de antes ya no se descarta entera
+  // (va como contexto del pedido nuevo), pero un cambio de avatar que quedó atrás no se retoma: solo cuenta el que pide
+  // AHORA. Ni la acción ni la frase que lo da por hecho.
+  if (acciones.some((a) => a.tipo === 'avatar') && p.hilo && avatarQuedoAtras(p.hilo) && !esOrdenDeAvatar(p.crudo)) {
+    console.log('[mesa] el cambio de avatar era de una frase que quedó atrás: no se retoma');
+    acciones = acciones.filter((a) => a.tipo !== 'avatar');
+    limpio = sinFraseDeAvatar(limpio) || limpio;
+  }
   if (!p.correoApp || !p.conApp || !acciones.length) return { texto: limpio, acciones: [], sustituido: false };
   // Llegó otra frase mientras este turno pensaba (José, 7-oct): lo que pedía ya es tardío y no sale.
   if (p.vigente && !p.vigente()) {
@@ -4815,14 +4867,17 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const app = await accionesDelCerebro(out.reply, p, delModelo);
     // Que no repita lo que ya dijo (lib/repeticion.ts; José, 7-oct): solo lo que escribió el modelo (no las respuestas fijas
     // del taller o de un dato) y antes de las correcciones de honestidad (frases fijas que pueden repetirse con razón).
-    // Sin las frases repetidas, o breve si no queda nada.
-    if (delModelo && !pideRepetir(p.crudo || message) && !mismaPreguntaQue(p.crudo || message, hilo)) {
+    // Revisión independiente (7-oct, G1): nunca en un turno con borrador, acción para la app o algo esperando su «sí»; se
+    // quitan solo las frases repetidas tal cual, y si no queda nada la respuesta va tal cual (nunca «ya te lo dije»).
+    const conBorradorJson =
+      vozCompleta || accionConBorrador(out.reply) || /ACCI[OÓ]N_APP/i.test(out.reply) || app.acciones.length > 0 || (!!p.dueno && !!(borradorDe(p.dueno, p.ambito) || borradorWhatsappDe(p.dueno, p.ambito)));
+    if (delModelo && !conBorradorJson && !pideRepetir(p.crudo || message) && !mismaPreguntaQue(p.crudo || message, hilo)) {
       const marca = /^\s*\[[^\]]{1,40}\]\s*/.exec(app.texto)?.[0] || '';
       const g = guardaRepeticion(app.texto.slice(marca.length), previasDe(hilo), { mensaje: p.crudo || message });
-      if (g.repite) {
-        console.log(`[repetición] repetía lo ya dicho (${g.quitadas.length} frases): ${g.vacia ? 'breve' : 'sin lo repetido'}`);
-        app.texto = `${marca}${g.vacia ? respuestaBreveSinRepetir(p.idioma === 'en' ? 'en' : 'es') : g.texto}`;
-      }
+      if (g.repite && !g.vacia) {
+        console.log(`[repetición] repetía lo ya dicho (${g.quitadas.length} frases): sin lo repetido`);
+        app.texto = `${marca}${g.texto}`;
+      } else if (g.repite) console.log(`[repetición] repetía lo ya dicho (${g.quitadas.length} frases): sin nada nuevo, va tal cual`);
     }
     // La guarda dura de honestidad (lib/honestidad.ts): también el turno JSON y Telegram.
     const hon = honestidadDelTurno(app.texto, p, { recibos: recibosTurno, acciones: app.acciones, via: out.via });
@@ -4840,6 +4895,8 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     // Los pendientes que mencionó no vuelven en esta sesión, salvo que pregunte por ellos (lib/abiertos.ts).
     if (final.reply && !turnoSuperado(opciones) && p.dueno) anotarMencionesAbiertos(p.dueno, final.reply);
     if (final.reply && estado === 'completo' && memorizable && !turnoSuperado(opciones)) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
+    // Contestó, pero no va a su memoria como conclusión (AUR07, parcial): el hilo sabe que sí hubo respuesta (M3).
+    else if (final.reply && !turnoSuperado(opciones)) anotarRespuestaSinMemoria(claveHiloTurno(body, quienMem), message, final.reply);
     return final;
   };
   if (p.directo) {
@@ -4870,6 +4927,8 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   const h = await bucleHarness({ reply: replyQ1, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, reloj });
   memorizable = h.memorizable;
   recibosTurno = recibosDePasos(h.pasos);
+  // G2 (7-oct): con algo hecho afuera (o un borrador), el turno ya no se descarta por tardío: su recibo y su respuesta quedan.
+  if ((h.pasos as ReadonlyArray<{ herramienta: string; recibo?: { efecto?: string } }>).some((x) => (x.recibo?.efecto ? x.recibo.efecto !== 'ninguno' : herramientaConEfecto(x.herramienta, x.herramienta === 'correo' || x.herramienta === 'whatsapp' ? 'leer' : '')))) opciones.conEfecto = true;
   // Un borrador o una confirmación: si el turno fue dictado por voz, lo que se dice va entero (GRAVE-1). Una lectura,
   // con el tope de lectura (MENOR-D).
   vozCompleta ||= h.vozPasos.borrador || accionConBorrador(h.reply);
@@ -5404,8 +5463,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   // respuestas en el hilo, y si pidió que repita o volvió a preguntar lo mismo (entonces no se toca).
   const previasRep = previasDe(hilo);
   const sinGuardaRep = pideRepetir(p.crudo || message) || mismaPreguntaQue(p.crudo || message, hilo);
-  /** ¿Lo que está por sonar ya lo dijo? Se retiene hasta el final, donde decide la guarda (lo repetido nunca suena). */
-  const repiteTrozo = (t: string) => !sinGuardaRep && previasRep.length > 0 && trozoRepite(t, previasRep);
+  /**
+   * Revisión independiente (7-oct, G1): en un turno con borrador, acción para la app o algo esperando su «sí» la guarda
+   * de repetición nunca actúa (lo que se va a mandar tiene que oírse entero antes de su «mándalo»).
+   */
+  const conBorradorRep = (texto: string) => !!p.vozCompleta || accionConBorrador(texto) || /ACCI[OÓ]N_APP/i.test(texto) || algoEsperaSuSi();
+  /**
+   * ¿Lo que va de la respuesta (`prefijo`) va camino de ser repetición? Entonces lo que falta espera a la guarda del final
+   * (lo repetido nunca suena). Sin trabar: una frase repetida suelta no retiene el resto, y si lo que sigue es nuevo, se
+   * suelta (revisión del 7-oct, MENOR). `completo`: todo lo que escribió el modelo hasta ahora (con sus acciones).
+   */
+  const repitiendo = (prefijo: string, completo: string) =>
+    !sinGuardaRep && previasRep.length > 0 && !conBorradorRep(completo) && vaRepitiendo(prefijo, previasRep, { mensaje: p.crudo || message });
   // EL PROGRESO REAL (lib/progreso-trabajo.ts): de cada herramienta que de verdad empieza y termina, un `event: progreso`
   // chico para el teléfono, la web y la voz («Abro tu correo…», «Encontré 2 de Ana»). En modo invitado, sin tema ni número.
   const progreso = new EmisorProgreso((ev) => send('progreso', ev), { invitado: !!p.invitado });
@@ -5458,6 +5527,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // suena, no hace nada en el teléfono y no queda en su memoria como dicha; el turno nuevo contesta.
     if (turnoSuperado(opciones)) {
       console.log(`[mesa] respuesta tardía: llegó otra frase; el turno ${reg.id.slice(0, 8)} no se dice ni hace nada`);
+      // Lo que sí quedó hecho afuera se anota igual (G2): nunca un efecto sin su recibo. (Con una herramienta con efectos el
+      // turno ya no llega aquí: `conEfecto` lo deja terminar.)
+      if (!senal?.aborted && recibosTurno.some((r) => r.estado === 'confirmado')) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), []);
       reg.cerrar({ error: 'respuesta tardía: llegó otra frase' });
       send('done', { reply: '', voz: '', emocion: 'neutral', ms: Date.now() - t0, via, acciones: [], trazaId: reg.id, estado: 'error', parcial: true, motivo: 'llegó otra frase de la persona', tardia: true });
       return salida.fin();
@@ -5510,6 +5582,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     console.log(lineaTiemposTurno(reg.id, medida));
     if (senal?.aborted && corrioHerramienta) salida.resultado?.(datos);
     if (leido && !parcial && !senal?.aborted && memorizable && !turnoSuperado(opciones)) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
+    // Contestó, pero no va a su memoria como conclusión (AUR07, cortada): el hilo sabe que sí hubo respuesta (M3).
+    else if (leido && !senal?.aborted && !turnoSuperado(opciones)) anotarRespuestaSinMemoria(claveHiloTurno(body, quienMem), message, leido);
     salida.fin();
   };
   // Turno especulativo: lo que no es solo pensar y hablar (taller, mercado, un «sí» pendiente, una foto) espera el «sí».
@@ -5553,8 +5627,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   /** Lo que se le mandó al cerebro con manos en este turno (para la segunda vuelta de «no repitas»). */
   let pedidoManosTurno: Array<{ role: string; content: string }> | null = null;
   /**
-   * La respuesta era repetir lo de antes y sin eso no quedó nada: UNA segunda vuelta, sin herramientas, con la nota de no
-   * repetir. '' si no se pudo o si también repite (entonces se contesta breve).
+   * La respuesta era repetir tal cual lo de antes y sin eso no quedó nada: UNA segunda vuelta, sin herramientas, con la
+   * nota de no repetir. '' si no se pudo, si también repite o si dice «ya te lo dije» (entonces la respuesta va tal cual).
    */
   const regenerarSinRepetir = async (repetido: string): Promise<string> => {
     if (!pedidoManosTurno || senal?.aborted) return '';
@@ -5567,7 +5641,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       return '';
     }
     const limpio = neutralizarMarca(extraerAcciones(extraerEmocion(t).texto).texto).trim();
-    if (!limpio || /PEDIR_HERRAMIENTA/i.test(limpio) || guardaRepeticion(limpio, previasRep).repite) return '';
+    if (!limpio || /PEDIR_HERRAMIENTA/i.test(limpio) || diceQueYaLoDijo(limpio) || guardaRepeticion(limpio, previasRep).repite) return '';
     return limpio;
   };
   try {
@@ -5637,11 +5711,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       const corte = puntoDeCorte(cuerpo, enviado);
       // Revisión 7 (LANG-01): también lo que da por hecho sin decir «mandé» («ya le respondí», «le avisé»): daPorHecho.
       // La guarda de honestidad (lib/honestidad.ts): «te lo agendé», «ya quedó guardado», "message sent" tampoco.
-      // José (7-oct): lo que ya dijo en una respuesta anterior tampoco suena mientras tanto (lo decide la guarda del final).
-      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)) || daPorHecho(cuerpo.slice(enviado, corte + 1)) || trozoAfirmaHecho(cuerpo.slice(enviado, corte + 1)) || repiteTrozo(cuerpo.slice(enviado, corte + 1)))) {
+      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)) || daPorHecho(cuerpo.slice(enviado, corte + 1)) || trozoAfirmaHecho(cuerpo.slice(enviado, corte + 1)))) {
         retenido = true;
         return;
       }
+      // José (7-oct): si la respuesta va camino de repetir lo que ya dijo, lo que falta espera a la guarda del final (sin
+      // `retenido`: si lo que sigue es nuevo, se suelta en el trozo siguiente).
+      if (corte > enviado && repitiendo(cuerpo.slice(0, corte + 1), full)) return;
       if (corte > enviado) {
         if (topeDelTurno && enviado >= topeDelTurno) {
           // Llegó al tope: solo se para en un final de frase (lib/trozos.ts cierreDeFrase; José, 6-oct: «de repente
@@ -5955,6 +6031,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let corrioHerramienta = false;
     /** Lo que de verdad corrió en el turno: la guarda de promesas del final (lib/promesas.ts) lo mira. */
     let pasosTurno: PasoVigilado[] = [];
+    /** Una herramienta del turno dejó un borrador esperando su «sí» (la guarda de repetición no lo toca). */
+    let borradorTurno = false;
     if (pedido) {
       /*
        * La vuelta del harness también habla en cuanto hay una frase (antes se generaba entera en silencio
@@ -5980,10 +6058,12 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         // Con el resultado de la herramienta ya en los HECHOS, «voy a buscar…» o «¿quieres que busque…?» no se
         // dicen: la vuelta correctora del harness o la guarda del final ponen lo que de verdad hay (José, 4-oct).
         // Lo que da algo por hecho («enviado», «te lo agendé») tampoco: lo decide la guarda de honestidad con los recibos.
-        if (trozoPrometeUOfrece(t.slice(dichoH.length, corte + 1)) || trozoAfirmaHecho(t.slice(dichoH.length, corte + 1)) || repiteTrozo(t.slice(dichoH.length, corte + 1))) {
+        if (trozoPrometeUOfrece(t.slice(dichoH.length, corte + 1)) || trozoAfirmaHecho(t.slice(dichoH.length, corte + 1))) {
           retenidaH = true;
           return;
         }
+        // Va camino de repetir lo ya dicho: espera a la guarda del final, sin trabar lo que siga (revisión del 7-oct).
+        if (repitiendo(t.slice(0, corte + 1), acc)) return;
         // Leyendo un resultado en voz es donde más se alarga: el mismo tope (salvo borrador o lectura: `sinTope`).
         if (topeDelTurno && dichoH.length >= topeDelTurno) {
           // Como en el stream: se para en el final de la frase en curso, nunca en su coma (cierreDeFrase).
@@ -6025,12 +6105,19 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         contexto: p.contexto,
         espacio: p.espacio,
         alTarea: opciones.alTarea,
-        alEmpezar: (ped, ronda) => progreso.empezo(ped.herramienta, ped.arg, ronda),
+        alEmpezar: (ped, ronda) => {
+          // G2 (7-oct): algo con efectos ya empezó; desde aquí el turno termina y lo dice aunque llegue otra frase.
+          if (herramientaConEfecto(ped.herramienta, ped.arg)) opciones.conEfecto = true;
+          progreso.empezo(ped.herramienta, ped.arg, ronda);
+        },
         alTexto,
         // Un borrador que espera su «sí»: sin tope ANTES de que la vuelta hable (GRAVE-1). Una lectura (correo, chat): el
         // tope de lectura, un trozo y su «¿sigo?», no los 2 800 caracteres que puede traer (MENOR-D).
         alPaso: (paso) => subirTope(topeTrasPaso(topeDelTurno, paso)),
-        alTerminar: (paso) => progreso.termino(paso),
+        alTerminar: (paso) => {
+          if (paso.recibo?.efecto && paso.recibo.efecto !== 'ninguno') opciones.conEfecto = true;
+          progreso.termino(paso);
+        },
         computadora: p.computadora,
         dueno: p.dueno,
         ambito: p.ambito,
@@ -6051,6 +6138,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       corrioHerramienta = h.herramientas > 0;
       memorizable = h.memorizable;
       pasosTurno = h.pasos;
+      borradorTurno = !!h.vozPasos?.borrador;
       recibosTurno = recibosDePasos(h.pasos);
       const decible = extraerAcciones(reply).texto;
       // Lo que se reemplaza en la voz lleva el mismo tope (antes iba ENTERO: una lectura de 1 100 caracteres, ~70 s).
@@ -6072,21 +6160,17 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
      * QUE NO SE REPITA (lib/repeticion.ts; José, 7-oct, 00:33:14: a «Me cambió a Claudio.» dijo EXACTAMENTE el párrafo de
      * las 00:32:42). Lo que escribió el modelo, antes de las guardas de honestidad y de promesas (sus correcciones son
      * frases fijas que pueden repetirse con razón). Si la respuesta repite en gran parte una de sus últimas, se le
-     * quitan las frases repetidas (nunca sonaron: se retuvieron en el stream); si no queda nada, una segunda vuelta con
-     * la nota de no repetir, y si tampoco, una frase breve. Si pidió que repita, no se toca.
+     * quitan las frases repetidas tal cual (nunca sonaron: se retuvieron en el stream); si no queda nada, UNA segunda
+     * vuelta breve a lo nuevo, y si tampoco sirve, la respuesta va tal cual. Revisión independiente (7-oct, G1): nunca en
+     * un turno con borrador, acción para la app o algo esperando su «sí», y nunca «ya te lo dije». Si pidió que repita,
+     * no se toca.
      */
-    if (reply && !sinGuardaRep && previasRep.length) {
+    if (reply && !sinGuardaRep && previasRep.length && !borradorTurno && !conBorradorRep(reply)) {
       const decibleR = extraerAcciones(reply).texto;
       const g = guardaRepeticion(decibleR, previasRep, { mensaje: p.crudo || message });
-      if (g.repite) {
-        let nuevo = g.texto;
-        let como = 'sin lo repetido';
-        if (g.vacia) {
-          nuevo = await regenerarSinRepetir(decibleR);
-          como = nuevo ? 'segunda vuelta' : 'breve';
-          if (!nuevo) nuevo = respuestaBreveSinRepetir(idioma);
-        }
-        console.log(`[repetición] repetía lo ya dicho (${g.quitadas.length} frases): ${como}`);
+      const nuevo = !g.repite ? '' : g.vacia ? await regenerarSinRepetir(decibleR) : g.texto;
+      if (g.repite) console.log(`[repetición] repetía lo ya dicho (${g.quitadas.length} frases): ${!g.vacia ? 'sin lo repetido' : nuevo ? 'segunda vuelta' : 'sin nada nuevo, va tal cual'}`);
+      if (nuevo) {
         reg.marca('repeticion-corregida');
         const marcas = lineasDeAccion(reply);
         reply = marcas.length ? `${nuevo}\n${marcas.join('\n')}` : nuevo;

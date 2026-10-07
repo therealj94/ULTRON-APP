@@ -346,7 +346,8 @@ export function bloqueAbiertos(persona: string, compacto = false, ahora = Date.n
   const enc = pregunta
     ? 'QUEDÓ A MEDIAS (te pregunta por sus pendientes: díselos, cortos y en orden; no hagas nada de esto sin que lo pida):'
     : compacto
-      ? 'QUEDÓ A MEDIAS (solo si viene al caso, una cosa y una sola vez, p. ej. «Ayer quedamos en…, ¿lo terminamos?»; nunca uses una herramienta por esto si no te lo pide):'
+      ? // Corto: va en el mensaje de cada turno de la voz (tests/aura-app-extremo: lo del turno cabe en 2 500 letras).
+        'QUEDÓ A MEDIAS (una vez, si viene al caso: «Ayer quedamos en…, ¿lo terminamos?»; sin herramientas):'
       : 'QUEDÓ A MEDIAS (cosas sin terminar de conversaciones anteriores; si viene al caso —al saludar o cuando haya pausa— retómalas tú, UNA a la vez y una sola vez: «Ayer quedamos en…, ¿lo terminamos?». No recites la lista ni uses una herramienta por esto si no te lo pide. Si dice que ya está, dale por hecho):';
   const lineas = xs.map((a) => `- ${a.importante ? '[importante] ' : ''}${linea(a.texto, compacto ? 90 : 160)} (${haceCuanto(a.creado, ahora)}, ${QUIEN[a.tipo]}${a.cuando ? `, «${a.cuando}»` : ''})`);
   return bloqueConTope(enc, lineas, max);
@@ -363,10 +364,18 @@ export function bloqueAbiertos(persona: string, compacto = false, ahora = Date.n
 export const SESION_ABIERTOS_MS = 3 * 3600_000;
 const mencionados = new Map<string, Map<string, number>>();
 
-/** «¿Qué tenemos pendiente?», «¿qué me falta?», «¿qué quedó a medias?», "what's pending": pregunta por sus pendientes. */
+/**
+ * «¿Qué tenemos pendiente?», «¿qué me falta?», «¿qué quedó a medias?», «¿qué tareas tengo?», "what's pending": pregunta
+ * por sus pendientes. Solo lo explícito (revisión independiente del 7-oct, M1): «¿cómo va todo?», «eso es todo»,
+ * «gracias por todo», «lo que queda del día» o «¿qué falta para llegar?» no preguntan por pendientes.
+ */
 export function preguntaPorPendientes(mensaje: string): boolean {
-  const q = plegar(mensaje).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ');
-  return /\b(pendientes?|a medias|que (nos |me |te )?(falta|faltaba|queda|quedaba|quedo) (por hacer|hacer|pendiente)?|que (tenemos|tengo|hay) (que hacer|pendiente|para hoy)|en que (quedamos|ibamos)|que me (debes|prometiste)|to ?do|what s pending|whats pending|anything pending|what did we leave)\b/.test(q);
+  const q = plegar(mensaje).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return (
+    /\b(pendientes?|a medias|que (nos |me |te )?(falta|faltaba|queda|quedaba|quedo) (por hacer|hacer|pendiente)|lo que (me |nos )?(falta|queda) (por )?hacer|que (tenemos|tengo|hay) (que hacer|pendiente|para hoy)|(mis|que|las) tareas|en que (quedamos|ibamos)|que me (debes|prometiste)|to ?do list|what (s|is) pending|whats pending|anything pending|what did we leave)\b/.test(q) ||
+    // «¿Qué me falta?», «¿y qué nos queda hoy?»: la frase entera (con algo detrás, «… para llegar», ya no es eso).
+    /^(y )?que (me|nos) (falta|faltaba|queda|quedaba)( (hoy|por hoy|todavia|aun))?$/.test(q)
+  );
 }
 
 /** ¿La respuesta menciona este pendiente? (la mayoría de sus palabras con contenido, o todas si son pocas). */

@@ -45,7 +45,11 @@ describe('1) las frases sin respuesta no se juntan con la de ahora', () => {
     const hilo = fusionarHilo({ durable, mensaje: '¿Qué cambiaste, Claudio? Si yo no-' });
     assert.equal(hilo.length, 3);
     assert.equal(hilo[1].role, 'assistant');
-    assert.match(hilo[2].content, /^\(Antes dijo esto y no quedó respuesta tuya: «Necesito que cambies a Claudio\.» · «¿Qué tenemos pendiente\?»\. Ya pasó: no lo contestes/);
+    // Revisión del 7-oct (G2): la pregunta va como parte del pedido nuevo (no «no lo contestes»); la orden de avatar
+    // tardía, aparte y descartada.
+    assert.match(hilo[2].content, /^\(Antes dijo esto y todavía no le contestaste: «¿Qué tenemos pendiente\?»\. Ahora dice lo que sigue/);
+    assert.match(hilo[2].content, /Lo de cambiar de avatar \(«Necesito que cambies a Claudio\.»\) quedó atrás/);
+    assert.doesNotMatch(hilo[2].content, /no lo contestes/);
     // Lo que llega al modelo: el último mensaje de la persona termina con lo de ahora, después de la nota.
     const { messages } = aBedrock([{ role: 'system', content: 's' }, ...hilo, { role: 'user', content: '¿Qué cambiaste, Claudio? Si yo no-' }]);
     const ultimo = String((messages.at(-1)!.content![0] as { text: string }).text);

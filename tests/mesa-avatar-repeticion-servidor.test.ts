@@ -138,9 +138,11 @@ test('2a) respuesta tardía con la app nueva: A todavía piensa, la persona dice
   A.cortar();
   const B = await turno('¿Y las cuentas del molino?');
   assert.equal(B.reply, 'Las cuentas del molino están al día.');
-  // B llegó al modelo con A marcada como de antes (sin respuesta), no pegada a la suya en un solo mensaje.
+  // B llegó al modelo con A marcada como de antes (sin respuesta), no pegada a la suya en un solo mensaje. Revisión del
+  // 7-oct (G2): como parte del pedido nuevo (se contesta lo que corresponda a las dos), no «no lo contestes».
   const pedidoB = s.pedidos.filter((p) => ultimoDe(p).endsWith('¿Y las cuentas del molino?')).at(-1)!;
-  assert.match(ultimoDe(pedidoB), /^\(Antes dijo esto y no quedó respuesta tuya: «Cuéntame cómo va la planta de beneficio\.»/);
+  assert.match(ultimoDe(pedidoB), /^\(Antes dijo esto y todavía no le contestaste: «Cuéntame cómo va la planta de beneficio\.»/);
+  assert.doesNotMatch(ultimoDe(pedidoB), /no lo contestes/);
   // Lo que A pedía (el tema oscuro) no llega nunca al teléfono.
   await new Promise((r) => setTimeout(r, 2_000));
   assert.deepEqual(accionesDesde(a0).filter((a) => a?.tipo === 'tema'), [], 'la acción del turno tardío no sale');

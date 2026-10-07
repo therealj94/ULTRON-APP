@@ -38,6 +38,8 @@ export async function levantarServidor(o: {
   contestar: (ultimo: string, modelo: string, body: any) => RespuestaFalsa & { fallaBedrock?: boolean };
   puente?: (u: URL, cuerpo: string) => { status: number; json: unknown } | null;
   nodo?: (cuerpo: any) => string;
+  /** Lo que contesta el nodo a un pedido SIN stream (el turno JSON: preguntarQwen). Sin esto, `{}` como siempre. */
+  nodoJson?: (cuerpo: any) => string;
 }) {
   const RAIZ = process.cwd();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aura-servidor-falso-'));
@@ -85,7 +87,7 @@ export async function levantarServidor(o: {
     req.on('data', (d) => (c += d));
     req.on('end', () => {
       if (req.url === '/api/precalentar') return res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
-      if (!JSON.parse(c || '{}').stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: '{}' } }));
+      if (!JSON.parse(c || '{}').stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: o.nodoJson ? o.nodoJson(JSON.parse(c || '{}')) : '{}' } }));
       alNodo++;
       res.writeHead(200, { 'content-type': 'application/x-ndjson' });
       const dicho = o.nodo ? o.nodo(JSON.parse(c || '{}')) : '[EMO: neutral] Hola desde el nodo.';

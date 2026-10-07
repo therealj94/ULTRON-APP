@@ -314,7 +314,7 @@ const pedido = (herramienta: string, arg = '') => `PEDIR_HERRAMIENTA: ${herramie
 
 /** Lo que dice algo de mensajes o de WhatsApp (leer, escribir, mandar, quién dijo qué). */
 const HABLA_DE_MENSAJES =
-  /\b(whats ?app|wasap\w*|guasap\w*|wsp|mensaje\w*|chat\w*|escrib\w*|mand\w*|envi\w*|respond\w*|contest\w*|dile|decile|digale|dijo|dice|escribio|lee\w*|leer|leeme|revis\w*|novedad\w*|avis\w*|text\w*|message\w*|write|send|reply|read)\b/;
+  /\b(whats ?app|whats\w*|wats\w*|guats\w*|wasap\w*|guasap\w*|wsp|pregunt\w*|mensaje\w*|chat\w*|escrib\w*|mand\w*|envi\w*|respond\w*|contest\w*|dile|decile|digale|le digo|dijo|dice|escribio|lee\w*|leer|leeme|revis\w*|novedad\w*|avis\w*|text\w*|message\w*|write|send|reply|read)\b/;
 
 /**
  * ¿La herramienta de WhatsApp está fuera de tema en este turno? (José, 7-oct, 00:31–00:33 UTC: «te quedó pendiente

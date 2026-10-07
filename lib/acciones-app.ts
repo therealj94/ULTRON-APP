@@ -566,6 +566,8 @@ export function abrirTurnoApp(correo: string): number {
   const k = clave(correo);
   const n = (turnosApp.get(k) || 0) + 1;
   turnosApp.set(k, n);
+  // Un número que vuelve a usarse (el turno a medias que se deshizo) no hereda la marca de relleno del de antes.
+  rellenosApp.get(k)?.delete(n);
   const p = pendientes.get(k);
   if (p && p.turno !== n - 1) pendientes.delete(k);
   const pr = propuestas.get(k);
@@ -583,7 +585,27 @@ export function abrirTurnoApp(correo: string): number {
  * como dicha. Un turno a medias que se deshizo (deshacerTurnoApp) devuelve el contador: el de antes vuelve a valer.
  */
 export function turnoAppVigente(correo: string, n: number): boolean {
-  return turnoAppActual(correo) <= n;
+  const actual = turnoAppActual(correo);
+  if (actual <= n) return true;
+  // Revisión independiente (7-oct, G2): los turnos de relleno o sondeo («¿hola?», «¿me oyes?», «ajá») que llegaron
+  // después no lo dejan tardío: el turno que pensaba contesta igual.
+  const r = rellenosApp.get(clave(correo));
+  for (let m = n + 1; m <= actual; m++) if (!r?.has(m)) return false;
+  return true;
+}
+
+/** Los turnos de relleno de cada ámbito (los últimos; marcarTurnoRelleno). */
+const rellenosApp = new Map<string, Set<number>>();
+
+/** El turno `n` fue solo una frase de relleno o de sondeo: no deja tardío al turno de antes (turnoAppVigente). */
+export function marcarTurnoRelleno(correo: string, n: number) {
+  const k = clave(correo);
+  const r = rellenosApp.get(k) || new Set<number>();
+  r.add(n);
+  for (const m of r) if (m < n - 50) r.delete(m);
+  rellenosApp.delete(k);
+  rellenosApp.set(k, r);
+  if (rellenosApp.size > 5000) rellenosApp.delete(rellenosApp.keys().next().value as string);
 }
 
 /**
@@ -994,6 +1016,28 @@ export function quejaDeAvatar(q: string, o: { hayCambio: boolean; reciente?: boo
 }
 
 /**
+ * El «sí» a «¿Te paso con Claudio?» dicho con más palabras (revisión independiente del 7-oct, MENOR): «sí, pásame con
+ * Claudio», «sí, cámbiame», «sí quiero», «claro, ponme a Claudio». Un «sí» que nombra OTRO avatar no cuenta.
+ */
+function aceptaAvatar(q: string, valor: AvatarApp): boolean {
+  const m = /^(?:si|sip|claro|va|dale|ok|okay|sale|andale|orale|por favor|porfa)(?: (?:si|claro|por favor|porfa|va|dale))*(?: (.*))?$/.exec(q);
+  if (!m) return false;
+  const resto = (m[1] || '').trim();
+  if (!resto) return true;
+  const pedido = avatarPedido(resto);
+  if (pedido) return pedido === valor;
+  const NOMBRE = '(aura|au ra|claudio|antonio|ant onio|guardian|ojos)';
+  const nombrado = new RegExp(`\\b${NOMBRE}\\b`).exec(resto)?.[1];
+  const deNombre = (w: string): AvatarApp => (w === 'claudio' ? 'claudio' : w === 'guardian' || w === 'ojos' ? 'ojos' : w.startsWith('ant') ? 'antonio' : 'aura');
+  if (nombrado && deNombre(nombrado) !== valor) return false;
+  const sinNombre = resto
+    .replace(new RegExp(`(?:^| )(?:(?:a|al|con) )?(?:el |la )?${NOMBRE}\\b`), '')
+    .replace(/ (por favor|porfa|gracias|ya|ahora)$/, '')
+    .trim();
+  return /^(|cambiame|cambialo|cambiala|cambia|cambiate|pasame|pasamelo|pasa|ponmelo|ponme|pon|ponlo|hazlo|quiero|si quiero|me gustaria|adelante|de una|esta bien|hagamoslo)$/.test(sinNombre);
+}
+
+/**
  * El avatar por voz, antes que cualquier otra orden: la queja deshace el último cambio (al instante), el «sí» / «no» a
  * «¿Te paso con …?» la cumple o la suelta, y una orden de cambiar solo PREGUNTA. undefined: no es del avatar.
  */
@@ -1024,7 +1068,7 @@ function ordenDeAvatar(_q: string, texto: string, o: OpcionesReglas, idioma: 'es
   const prop = o.avatarPropuesto;
   if (prop) {
     const r = respuestaPura(texto);
-    if (r === 'si' || (pedido && pedido === prop.valor)) {
+    if (r === 'si' || (pedido && pedido === prop.valor) || aceptaAvatar(q, prop.valor)) {
       // Con otra cosa esperando su «sí» (un mensaje, una llamada), el «sí» suelto no decide.
       const otras = decisionesApp(o);
       if (otras.length && r === 'si') {
@@ -1034,7 +1078,8 @@ function ordenDeAvatar(_q: string, texto: string, o: OpcionesReglas, idioma: 'es
       }
       return { accion: { tipo: 'avatar', valor: prop.valor }, decir: d[prop.valor], via: 'reglas', soltarAvatar: true, cambioAvatar: { antes: prop.antes ?? actual, ahora: prop.valor } };
     }
-    if (r === 'no') return { accion: null, decir: idioma === 'en' ? "Okay, I'll stay." : 'Va, sigo yo.', via: 'reglas', soloDecir: true, soltarAvatar: true };
+    if (r === 'no' || /^(no|nel|nop|mejor no)( (gracias|quedate|sigue tu|asi esta bien|dejalo asi|asi))*$|^(quedate|sigue tu|asi esta bien|dejalo asi)$/.test(q))
+      return { accion: null, decir: idioma === 'en' ? "Okay, I'll stay." : 'Va, sigo yo.', via: 'reglas', soloDecir: true, soltarAvatar: true };
   }
   if (pedido) {
     if (pedido === actual) {
@@ -1099,6 +1144,7 @@ export function _reiniciarAccionesApp() {
   contextos.clear();
   pendientes.clear();
   turnosApp.clear();
+  rellenosApp.clear();
   hechasVoz.clear();
   propuestas.clear();
   aclaraciones.clear();
