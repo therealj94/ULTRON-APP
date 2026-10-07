@@ -146,11 +146,11 @@ function QuienProcesa({ cat }: { cat: Catalogo | null }) {
   const v = cat?.voz;
   const filas: Array<{ que: string; como: string }> = [
     {
-      que: 'Lo que decís por el micrófono',
-      como: 'Mientras hablás, tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) con un permiso de un solo uso que da el servidor de AU-RA; lo de dinero también pasa por el servidor para confirmarlo. Si el navegador no deja abrir el micrófono así, lo transcribe el reconocimiento de voz del navegador (en Chrome y Edge, servicios de Google o de Microsoft).',
+      que: 'Lo que dices por el micrófono',
+      como: 'Mientras hablas, tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) con un permiso de un solo uso que da el servidor de AU-RA; lo de dinero también pasa por el servidor para confirmarlo. Si el navegador no deja abrir el micrófono así, lo transcribe el reconocimiento de voz del navegador (en Chrome y Edge, servicios de Google o de Microsoft).',
     },
     {
-      que: 'Lo que escribís o decís, y la respuesta',
+      que: 'Lo que escribes o dices, y la respuesta',
       como: 'Lo procesa el servidor de AU-RA con su modelo y, según el pedido, con herramientas (precios, búsqueda web, páginas). Puede equivocarse: debajo de cada respuesta se ve qué herramienta usó.',
     },
     {
@@ -165,7 +165,7 @@ function QuienProcesa({ cat }: { cat: Catalogo | null }) {
       que: 'La cámara',
       como: 'La detección de caras y gestos corre en este navegador. Solo cuando preguntás «¿qué ves?» o analizás una foto, esa imagen va al servidor para describirla.',
     },
-    { que: 'Lo que le pedís recordar', como: 'Se guarda en este navegador y en el servidor de AU-RA, asociado a tu sesión.' },
+    { que: 'Lo que le pides recordar', como: 'Se guarda en este navegador y en el servidor de AU-RA, asociado a tu sesión.' },
     { que: 'Esta conversación en pantalla', como: 'Queda solo en esta pestaña: se borra al cerrarla o al cerrar sesión.' },
   ];
   return (
@@ -350,7 +350,7 @@ export const SettingsSheet: React.FC<Props> = (p) => {
             <div className="aura-tarjeta honda p-3">
               <p className="text-[15px] font-semibold text-(--aura-tinta)">Cómo te oye</p>
               <p className="text-[14px] text-(--aura-tinta-2) mt-0.5">
-                Con el micrófono abierto escucha todo el tiempo y podés interrumpirla hablando. En esta web tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) y el texto aparece mientras hablás; si el navegador no lo permite, usa el reconocimiento de voz del navegador (ver «Privacidad y datos»).
+                Con el micrófono abierto escucha todo el tiempo y puedes interrumpirla hablando. En esta web tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) y el texto aparece mientras hablas; si el navegador no lo permite, usa el reconocimiento de voz del navegador (ver «Privacidad y datos»).
               </p>
             </div>
             <Repertorio cat={cat} onEjemplo={ejemplo} />

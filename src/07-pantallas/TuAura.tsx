@@ -41,11 +41,11 @@ export async function pedirApi<T = any>(ruta: string, init: { method?: string; b
   try {
     const r = await fetch(ruta, { method: init.method || 'GET', body: init.body, signal: ctl.signal, headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...headersMesa() } });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new ErrorApi(String(j?.error || (r.status === 401 ? 'Entrá con tu sesión.' : 'El servidor no pudo hacerlo ahora.')).slice(0, 240), r.status);
+    if (!r.ok) throw new ErrorApi(String(j?.error || (r.status === 401 ? 'Entra con tu sesión.' : 'El servidor no pudo hacerlo ahora.')).slice(0, 240), r.status);
     return j as T;
   } catch (e: any) {
     if (e instanceof ErrorApi) throw e;
-    throw new ErrorApi(e?.name === 'AbortError' ? 'El servidor tardó demasiado. Probá otra vez.' : 'Sin conexión con el servidor.', 0);
+    throw new ErrorApi(e?.name === 'AbortError' ? 'El servidor tardó demasiado. Prueba otra vez.' : 'Sin conexión con el servidor.', 0);
   } finally {
     clearTimeout(corte);
   }
@@ -245,7 +245,7 @@ export function PanelCorreos(p: { pedidoPendiente?: string | null; onRetomar?: (
   return (
     <div className="flex flex-col gap-4">
       <p className="text-[14px] text-(--aura-tinta-2)">AU-RA los revisa y te ayuda a contestar. Nunca manda nada sin que le digas que sí. La clave se guarda cifrada en el servidor.</p>
-      <Aviso texto={sinLeer ? `${sinLeer} Si ya conectaste uno, sigue ahí: probá otra vez antes de volver a conectarlo.` : ''} />
+      <Aviso texto={sinLeer ? `${sinLeer} Si ya conectaste uno, sigue ahí: prueba otra vez antes de volver a conectarlo.` : ''} />
 
       {p.pedidoPendiente && recienConectada && (
         <div className="aura-tarjeta honda p-3 flex flex-col gap-2" role="status">
@@ -288,7 +288,7 @@ export function PanelCorreos(p: { pedidoPendiente?: string | null; onRetomar?: (
                 {e?.estado === 'fallo' && (
                   <div className="flex flex-col gap-2">
                     <p role="alert" className="text-[13px] text-(--aura-barro-texto)">
-                      {e.mensaje}. {e.siguiente === 'reconectar' ? 'Hay que reconectarla: escribí la clave nueva (o una contraseña de aplicación).' : e.siguiente === 'revisar-servidor' ? 'Revisá el servidor de esta cuenta.' : 'Puede ser algo pasajero: probá otra vez en un momento.'} Mientras tanto no sé qué hay en esta cuenta.
+                      {e.mensaje}. {e.siguiente === 'reconectar' ? 'Hay que reconectarla: escribe la clave nueva (o una contraseña de aplicación).' : e.siguiente === 'revisar-servidor' ? 'Revisa el servidor de esta cuenta.' : 'Puede ser algo pasajero: prueba otra vez en un momento.'} Mientras tanto no sé qué hay en esta cuenta.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {e.siguiente === 'reintentar' ? (
@@ -334,7 +334,7 @@ export function PanelCorreos(p: { pedidoPendiente?: string | null; onRetomar?: (
           </button>
         ) : esMs ? (
           <p className="text-[14px] text-(--aura-tinta-2)">
-            {prov.nombre}: las cuentas de Microsoft entran con un código desde la app del teléfono (Ajustes → Tus correos → «Entrar con Microsoft»). Desde aquí podés conectarla con una contraseña de aplicación de Outlook si tu cuenta lo permite.
+            {prov.nombre}: las cuentas de Microsoft entran con un código desde la app del teléfono (Ajustes → Tus correos → «Entrar con Microsoft»). Desde aquí puedes conectarla con una contraseña de aplicación de Outlook si tu cuenta lo permite.
           </p>
         ) : (
           <>
@@ -408,16 +408,16 @@ export function PanelConocer() {
       setConocer((c) => (c ? sinDato(c, d.id) : c));
       return;
     }
-    setError('No quedó confirmado que se borró de forma segura, así que lo dejo a la vista. Volvé a tocar «Olvidar» en un momento.');
+    setError('No quedó confirmado que se borró de forma segura, así que lo dejo a la vista. Vuelve a tocar «Olvidar» en un momento.');
   };
 
   const conDatos = (conocer?.categorias || []).filter((k) => k.datos.length);
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[14px] text-(--aura-tinta-2)">Lo que AU-RA fue aprendiendo al hablar con vos, guardado en el servidor. Cada dato se puede corregir, dejar sin usar u olvidar en todas sus copias.</p>
+      <p className="text-[14px] text-(--aura-tinta-2)">Lo que AU-RA fue aprendiendo al hablar contigo, guardado en el servidor. Cada dato se puede corregir, dejar sin usar u olvidar en todas sus copias.</p>
       <Aviso texto={error} />
       {conocer === null && !error && <p className="text-[14px] text-(--aura-tinta-2)">Leyendo…</p>}
-      {conocer && conDatos.length === 0 && <p className="text-[14px] text-(--aura-tinta-2)">Todavía no sé mucho de vos. Lo que me cuentes al hablar aparece aquí.</p>}
+      {conocer && conDatos.length === 0 && <p className="text-[14px] text-(--aura-tinta-2)">Todavía no sé mucho de ti. Lo que me cuentes al hablar aparece aquí.</p>}
       {conDatos.map((k) => (
         <section key={k.id} aria-label={k.nombre} className="flex flex-col gap-2">
           <h4 className="aura-sobretitulo">{k.nombre}</h4>
@@ -498,7 +498,7 @@ export function PanelAvisos() {
       setError('');
     } catch {
       // No se pudo leer: NO es «todo apagado» ni «lo de por omisión».
-      setError('No pude leer tus avisos. Probá en un momento.');
+      setError('No pude leer tus avisos. Prueba en un momento.');
     }
   }, []);
   useEffect(() => {

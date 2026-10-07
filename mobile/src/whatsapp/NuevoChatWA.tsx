@@ -4,7 +4,8 @@
  * un número que no está en sus contactos ofrece escribirle igual.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, BackHandler, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, BackHandler, FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Letra as Text } from '../ui/Letra';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tr } from '../i18n';
 import * as API from './api';
@@ -144,8 +145,8 @@ function Fila({ k, w, idioma, titulo, onPress }: { k: ContactoWA; w: PaletaWA; i
   return (
     <Pressable onPress={onPress} android_ripple={{ color: w.separador }} accessibilityRole="button" accessibilityLabel={debajo ? `${nombre}, ${debajo}` : nombre} style={({ pressed }) => [s.fila, pressed && { backgroundColor: w.buscador }]}>
       {titulo ? (
-        <View style={[s.circulo, { backgroundColor: '#00A884' }]}>
-          <IconoWA nombre="nuevoChat" tam={24} color="#FFFFFF" />
+        <View style={[s.circulo, { backgroundColor: w.enviar }]}>
+          <IconoWA nombre="nuevoChat" tam={24} color={w.sobreEnviar} />
         </View>
       ) : (
         <AvatarWA jid={k.jid} nombre={nombre} grupo={false} tam={46} w={w} />

@@ -48,7 +48,7 @@ function textoPaso(p: Paso | undefined): string {
     case 'sesion':
       return tr('Abriendo tu sesión', 'Opening your session');
     case 'avatares':
-      return tr('Despertando al Guardián, a AU-RA y a Claudio', 'Waking up the Guardian, AU-RA and Claudio');
+      return tr('Despertando a tus avatares', 'Waking up your avatars');
     case 'voces':
       return tr('Afinando las voces', 'Tuning the voices');
     case 'servidor':

@@ -284,7 +284,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     redondo(g, 40, 64, w - 80, 48, 24);
     g.stroke();
     g.fillStyle = '#3A322C';
-    g.font = "500 22px 'Figtree', system-ui, sans-serif";
+    g.font = "500 22px 'Manrope', system-ui, sans-serif";
     g.textBaseline = 'middle';
     const txt = consulta.length > 32 ? consulta.slice(0, 31) + '…' : consulta;
     g.fillText(txt, 64, 89);
@@ -527,10 +527,10 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     g.fillStyle = '#FFFDF6';
     g.fillRect(0, 0, w, h);
     g.fillStyle = '#A8701A';
-    g.font = "600 34px 'Fredoka', 'Figtree', system-ui, sans-serif";
+    g.font = "600 34px 'Manrope', system-ui, sans-serif";
     g.fillText('Oro', 28, 52);
     g.fillStyle = '#8B7E72';
-    g.font = "500 18px 'Figtree', system-ui, sans-serif";
+    g.font = "500 18px 'Manrope', system-ui, sans-serif";
     g.fillText('precio de referencia', 28, 82);
     const pts = [200, 214, 196, 222, 230, 218, 246, 240, 258];
     g.beginPath();
@@ -569,7 +569,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     redondo(g, w - 82, 26, 56, 26, 8);
     g.fill();
     g.fillStyle = '#FFFFFF';
-    g.font = "600 16px 'Figtree', system-ui, sans-serif";
+    g.font = "600 16px 'Manrope', system-ui, sans-serif";
     g.fillText('PDF', w - 70, 45);
   });
   const documento = hoja(0.3, 0.39, docTex.t, '#EFE6D8');
@@ -610,7 +610,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
         k,
         lienzo(128, 128, (g, w, h) => {
           g.clearRect(0, 0, w, h);
-          g.font = "600 92px 'Fredoka', 'Figtree', system-ui, sans-serif";
+          g.font = "600 92px 'Manrope', system-ui, sans-serif";
           g.textAlign = 'center';
           g.textBaseline = 'middle';
           g.fillStyle = color;

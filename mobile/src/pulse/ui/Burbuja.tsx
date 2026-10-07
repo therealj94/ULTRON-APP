@@ -9,7 +9,8 @@
  * mensajería buenas: un hueco invisible al final del texto le guarda el sitio.
  */
 import { memo, useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, View } from 'react-native';
+import { Letra as Text } from '../../ui/Letra';
 import { MEDIDA, useTema, type Paleta } from '../../nucleo/tema';
 import { tr } from '../../i18n';
 import * as RELEVO from '../relevo';
@@ -389,16 +390,22 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
         </View>
       </View>
       {mio && m.fallido ? (
-        <Text
-          style={{
-            color: p.aviso,
-            fontSize: MEDIDA.letra.chica,
-            marginTop: 3,
-            marginRight: 4,
-          }}
-        >
-          {tr('No se envió. Toca ! para reintentar; mantén para quitarlo.', 'Not sent. Tap ! to retry; hold to remove.')}
-        </Text>
+        // Un mensaje que no salió lo dice y trae sus botones (auditoría A10): «Reintentar» a la vista, y «Quitar».
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', gap: MEDIDA.espacio.s, marginTop: MEDIDA.espacio.xs, marginRight: 4 }} accessibilityLiveRegion="polite">
+          <Text style={{ color: p.aviso, fontSize: MEDIDA.letra.chica, fontWeight: '600' }}>{tr('No se envió', 'Not sent')}</Text>
+          <Pressable
+            onPress={() => onReintentar?.(m.id)}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={tr('Reintentar el envío', 'Retry sending')}
+            style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, paddingHorizontal: MEDIDA.espacio.m, borderRadius: MEDIDA.radio.redondo, backgroundColor: p.avisoFondo, borderWidth: 1, borderColor: p.aviso, opacity: pressed ? 0.7 : 1 })}
+          >
+            <Text style={{ color: p.aviso, fontSize: MEDIDA.letra.chica, fontWeight: '700' }}>↻ {tr('Reintentar', 'Retry')}</Text>
+          </Pressable>
+          <Pressable onPress={() => onDescartar?.(m.id)} hitSlop={6} accessibilityRole="button" accessibilityLabel={tr('Quitar el mensaje que no salió', 'Remove the unsent message')} style={{ minHeight: 32, justifyContent: 'center', paddingHorizontal: 4 }}>
+            <Text style={{ color: p.texto3, fontSize: MEDIDA.letra.chica, fontWeight: '600' }}>{tr('Quitar', 'Remove')}</Text>
+          </Pressable>
+        </View>
       ) : null}
     </View>
   );

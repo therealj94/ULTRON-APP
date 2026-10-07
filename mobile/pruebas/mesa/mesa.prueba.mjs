@@ -40,15 +40,21 @@ const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '../../..');
 
 /** Los colores del tema, leídos del código (los módulos del tema cargan React Native, que Node no tiene). */
-function paleta(archivo, nombre) {
+function paleta(archivo, nombre, base = {}) {
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');
   const bloque = new RegExp(`export const ${nombre}\\b[^=]*=\\s*\\{([\\s\\S]*?)\\n\\}`).exec(src);
   if (!bloque) throw new Error(`no encuentro ${nombre} en ${archivo}`);
-  return Object.fromEntries([...bloque[1].matchAll(/^\s*(\w+):\s*'(#[0-9A-Fa-f]{6})'/gm)].map((m) => [m[1], m[2]]));
+  // Un color literal, o uno tomado de otra paleta (la mesa sale de OSCURO: `fondo: OSCURO.fondo2`).
+  const literales = [...bloque[1].matchAll(/^\s*(\w+):\s*'(#[0-9A-Fa-f]{6})'/gm)].map((m) => [m[1], m[2]]);
+  const prestados = [...bloque[1].matchAll(/^\s*(\w+):\s*OSCURO\.(\w+)\b/gm)].map((m) => [m[1], base[m[2]]]);
+  return Object.fromEntries([...literales, ...prestados]);
 }
 const CLARO = paleta('nucleo/tema.ts', 'CLARO');
 const OSCURO = paleta('nucleo/tema.ts', 'OSCURO');
-const T = paleta('tema.ts', 'T');
+// Una sola paleta (auditoría M5): la de la mesa vive en nucleo/tema.ts (`MESA`) y src/tema.ts la reexporta como T.
+const T = paleta('nucleo/tema.ts', 'MESA', OSCURO);
+assert.match(fs.readFileSync(path.join(RAIZ, 'mobile/src/tema.ts'), 'utf8'), /export \{ MESA as T, SOMBRA \} from '\.\/nucleo\/tema'/);
+for (const k of ['fondo', 'fondo2', 'panel', 'panel2', 'texto', 'texto2', 'texto3', 'principal', 'sobrePrincipal']) assert.match(T[k] || '', /^#[0-9A-F]{6}$/i, `la mesa tiene ${k}`);
 
 let fallos = 0;
 let n = 0;
