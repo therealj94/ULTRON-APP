@@ -199,7 +199,7 @@ export const Control: React.FC = () => {
                           type="button"
                           disabled={firmando === a.id}
                           onClick={() => void firmar(a.id, 'aprobar')}
-                          className="px-3 py-2 rounded-full bg-(--aura-oro) text-(--aura-fondo) text-[13px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          className="px-3 py-2 rounded-full bg-(--aura-oro) text-(--aura-sobre-oro) text-[13px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
                         >
                           <Check className="w-4 h-4" /> Aprobar
                         </button>

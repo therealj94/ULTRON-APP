@@ -7,7 +7,7 @@
  * (la raíz de la app de AU-RA), así que Dr Electrum, que comparte el CSS base, no se entera.
  */
 .aura {
-  font-family: var(--aura-tipo-familia, 'Figtree', system-ui, sans-serif);
+  font-family: var(--aura-tipo-familia, 'Manrope', system-ui, sans-serif);
   font-size: var(--aura-tipo-cuerpo, 16px);
   line-height: 1.45;
   color: var(--aura-tinta);
@@ -15,7 +15,9 @@
   -webkit-tap-highlight-color: transparent;
 }
 .aura .font-mono { font-family: var(--aura-tipo-familia); }
-.aura .font-display { font-family: var(--aura-tipo-display); letter-spacing: 0.01em; }
+.aura .font-display { font-family: var(--aura-tipo-display); letter-spacing: -0.01em; font-weight: 700; }
+/* La serif de los títulos grandes (como `heroe` en el teléfono). */
+.aura .aura-serif { font-family: var(--aura-tipo-serif); font-weight: 600; letter-spacing: -0.01em; }
 .aura ::-webkit-scrollbar-track { background: transparent; }
 .aura ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--aura-oro) 35%, transparent); border-radius: 4px; }
 .aura :focus-visible { outline: 3px solid var(--aura-foco); outline-offset: 2px; }

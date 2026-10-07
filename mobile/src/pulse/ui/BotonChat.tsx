@@ -2,7 +2,8 @@
  * Los botones del chat con el tema vivo: lleno (dorado, uno por vista), contorno (la segunda opción,
  * p. ej. «Rechazar») y texto. Se hunden con resorte (Tocable) y aguantan un estado «cargando».
  */
-import { ActivityIndicator, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Letra as Text } from '../../ui/Letra';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { Icono, type NombreIcono } from './Icono';
 import { Tocable } from './Tocable';

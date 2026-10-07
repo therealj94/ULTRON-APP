@@ -116,6 +116,17 @@ export function refrescarLista(): Promise<void> {
 
 export const estadoLista = () => lista.get();
 
+/**
+ * Lo último guardado en el teléfono (pulse/listaGuardada.ts), para verlo sin red. Solo si el relevo todavía no
+ * trajo nada (o falló sin traer nada): lo de verdad siempre gana. Devuelve si lo puso.
+ */
+export function sembrarLista(conversaciones: RELEVO.Conversacion[]): boolean {
+  const v = lista.get();
+  if (!conversaciones.length || (v.conversaciones !== null && (v.conversaciones.length || !v.error))) return false;
+  lista.set({ ...v, conversaciones });
+  return true;
+}
+
 /** La lista viva: se trae al montar, cada 15 s con la app delante, y en el acto al volver a ella. */
 export function useLista(): EstadoLista {
   const v = useSyncExternalStore(lista.sub, lista.get, lista.get);

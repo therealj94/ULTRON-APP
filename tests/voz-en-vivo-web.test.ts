@@ -66,7 +66,7 @@ test('sin permiso del servidor no abre nada y dice por qué (el micrófono de si
   const a = armar({ ok: false, status: 429, json: { codigo: 'TOPE_VOZ', error: 'Ya usaste tus minutos de voz de hoy.', honesto: true } });
   assert.equal(await a.c.abrir({ avatar: 'aura', idioma: 'es' }), false);
   assert.deepEqual(a.estados, ['conectando', 'error:Ya usaste tus minutos de voz de hoy.']);
-  assert.equal(porQueNoAbre(401, null), 'Entrá de nuevo para hablar en vivo.');
+  assert.equal(porQueNoAbre(401, null), 'Entra de nuevo para hablar en vivo.');
   assert.match(porQueNoAbre(500, null), /micrófono de siempre/);
 });
 
@@ -85,7 +85,7 @@ test('si el navegador niega el micrófono, lo dice y suelta el pase', async () =
     onMensaje: () => {},
   });
   assert.equal(await c.abrir({ avatar: 'aura', idioma: 'es' }), false);
-  assert.match(estados.at(-1)!, /Permití el micrófono/);
+  assert.match(estados.at(-1)!, /Permite el micrófono/);
   assert.deepEqual(pedidos, ['/api/voz/agente', '/api/voz/agente/cerrar']);
 });
 

@@ -1,9 +1,10 @@
 /**
  * «OTRAS FORMAS DE ENTRAR»: el correo y la clave de AU-RA, la huella y el modo local de la mesa.
  *
- * La puerta principal es Genesis ID (src/app/pantallas/Entrar.tsx). Esto queda para la junta —las
- * cuentas que entran con su clave o con la huella— y para abrir la mesa sin
- * servidor. Toda la lógica de antes sigue igual (clave guardada que no se muestra, huella solo con la
+ * La puerta principal es Genesis ID (src/app/pantallas/Entrar.tsx). Esto queda para la junta —que entra
+ * con su clave o con la huella— y para abrir la mesa sin servidor. La lista NO enseña las cuentas de la
+ * junta (auditoría A6: sus nombres y correos se veían antes de entrar, a cualquiera con la APK): solo la que
+ * ya se usó en ESTE teléfono (la guardada en SecureStore) y «Otra cuenta». Toda la lógica de antes sigue igual (clave guardada que no se muestra, huella solo con la
  * clave guardada, modo local si el servidor no contesta, crear cuenta y recuperar la clave); cambia
  * cómo se ve: la cabecera grande que colapsa, las cuentas en una lista del sistema y los campos, los
  * botones y los colores del sistema de diseño (claro u oscuro, según el tema).
@@ -19,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { de, tr, useIdioma } from '../i18n';
-import { DESK_USERS, findDeskUserByEmail, normalizeDeskEmail, type DeskUser, type SessionUser } from '../config';
+import { findDeskUserByEmail, normalizeDeskEmail, type DeskUser, type SessionUser } from '../config';
 import { loginBiometric, loginClave, olvideClave, pedirCuenta } from '../lib/api';
 import { cancelarIntento, confirmarIntento, empezarIntento, esVencida, intentoVigente, type Intento } from '../lib/intentoEntrada';
 import { miga } from '../lib/reporte';
@@ -45,7 +46,12 @@ const OTRO_TEMPLATE: DeskUser = {
   role: 'Junta Directiva · Orden Global',
 };
 
-/** La inicial en su círculo dorado (las cuentas de la junta en la lista). */
+/** «A, B, C y D»: los avatares tal como están en el catálogo (antes la frase olvidaba a ANT-ONIO). */
+function enLista(nombres: string[], y: string): string {
+  return nombres.length < 2 ? nombres.join('') : `${nombres.slice(0, -1).join(', ')} ${y} ${nombres[nombres.length - 1]}`;
+}
+
+/** La inicial en su círculo dorado (la cuenta de este teléfono en la lista). */
 function Inicial({ letra }: { letra: string }) {
   const tema = useTema();
   return (
@@ -61,8 +67,10 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   // El idioma se elige en la entrada: toda la pantalla se redibuja al cambiarlo.
   useIdioma();
   const tema = useTema();
-  // Sin cuentas fijas en la app (config.ts): se empieza por «Otra cuenta», con el correo escrito o el recordado.
-  const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0] ?? OTRO_TEMPLATE);
+  // Sin cuenta elegida hasta saber cuál se usó aquí: nunca la fila de otra persona por omisión.
+  const [selected, setSelected] = useState<DeskUser>(OTRO_TEMPLATE);
+  /** La cuenta que ya entró en este teléfono (de lo guardado), la única que se ofrece en la lista. */
+  const [usada, setUsada] = useState<DeskUser | null>(null);
   const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<Fase>('pick');
   // Crear cuenta y olvidé la clave: sus propios campos y su respuesta del servidor.
@@ -166,6 +174,7 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
         const match = findDeskUserByEmail(correo);
         if (match) {
           setSelected(match);
+          setUsada(match);
           // La clave guardada NO se escribe en el campo: con ella a la vista, cualquiera con el teléfono
           // tocaba «Usar clave» y entraba. Se sigue usando por detrás (huella, renovar la sesión).
           setClaveGuardada(!!creds.conHuella);
@@ -178,12 +187,13 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           setPhase(huellaActiva && creds.conHuella && hw && enrolled ? 'quick' : 'clave');
         } else {
           setSelected(OTRO_TEMPLATE);
+          setUsada({ ...OTRO_TEMPLATE, name: creds.name || correo.split('@')[0], correo });
           setCustomCorreo(correo);
           setClaveGuardada(!!creds.conHuella);
           setSavedName(creds.name || correo);
           setRemember(true);
           // La cuenta recordada en este teléfono abre con la huella igual que las de la lista de antes.
-          setPhase(huellaActiva && hw && enrolled && !!creds.clave ? 'quick' : 'clave');
+          setPhase(huellaActiva && creds.conHuella && hw && enrolled ? 'quick' : 'clave');
         }
       } catch {
         // Lo guardado no se pudo leer o actualizar: se entra con la clave escrita (el aviso sale en esa fase;
@@ -394,9 +404,10 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
 
   const pickUser = (u: DeskUser) => {
     abandonarIntento();
-    setSelected(u);
+    // «Otra cuenta» llega vacía; la usada en este teléfono con un correo fuera de la lista, ya escrita.
+    setSelected(u.id === 'otro' ? OTRO_TEMPLATE : u);
+    if (u.id === 'otro') setCustomCorreo(u.correo);
     setError('');
-    if (u.id === 'otro') setCustomCorreo('');
     setPhase('clave');
   };
 
@@ -498,11 +509,9 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   } else if (phase === 'pick') {
     contenido = (
       <View style={est.bloque}>
-        <Grupo titulo={tr('Cuentas de la junta', 'Board accounts')}>
-          {DESK_USERS.map((u) => (
-            <Fila key={u.id} titulo={u.name} detalle={u.correo} derecha={<Inicial letra={u.name[0]} />} onPress={() => pickUser(u)} />
-          ))}
-          <Fila titulo={tr('Otra cuenta', 'Another account')} detalle={tr('Entrar con otro correo', 'Sign in with another email')} icono="correo" onPress={() => pickUser(OTRO_TEMPLATE)} />
+        <Grupo titulo={usada ? tr('En este teléfono', 'On this phone') : undefined}>
+          {usada ? <Fila titulo={usada.name} detalle={usada.correo} derecha={<Inicial letra={usada.name[0] || '?'} />} onPress={() => pickUser(usada)} /> : null}
+          <Fila titulo={tr('Otra cuenta', 'Another account')} detalle={tr('Entrar con tu correo y tu clave', 'Sign in with your email and password')} icono="correo" onPress={() => pickUser(OTRO_TEMPLATE)} />
         </Grupo>
         <Grupo>
           <Fila titulo={tr('Pedir acceso', 'Request access')} detalle={tr('AU-RA es privada: lo aprueba Orden Global', 'AU-RA is private: Orden Global approves it')} icono="mas" onPress={() => irA('crear')} />
@@ -517,7 +526,7 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           ))}
         </View>
         <Texto v="chica" color="texto3" centro>
-          {tr('Guardián, AU-RA y Claudio te esperan adentro.', 'Guardian, AU-RA and Claudio are waiting inside.')}
+          {tr(`${enLista(AVATARES.map((a) => de(a.nombre)), 'y')} te esperan adentro.`, `${enLista(AVATARES.map((a) => de(a.nombre)), 'and')} are waiting inside.`)}
         </Texto>
       </View>
     );

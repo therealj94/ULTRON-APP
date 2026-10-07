@@ -51,6 +51,9 @@ import {
   normalizarChats,
   numeroChat,
   paletaWA,
+  paraGuardarWA,
+  guardadoWADe,
+  MAX_GUARDADOS_WA,
   previa,
   previaTexto,
   previaWA,
@@ -262,18 +265,57 @@ prueba('el círculo sin foto: iniciales y un color fijo por chat', () => {
   assert.match(colorNombre('b', false), /^#[0-9A-F]{6}$/i);
 });
 
-prueba('los colores de WhatsApp en claro y oscuro', () => {
-  const claro = paletaWA(false);
-  const oscuro = paletaWA(true);
-  assert.equal(claro.cabecera, '#008069');
-  assert.equal(oscuro.cabecera, '#1F2C34');
-  assert.equal(claro.chat, '#EFEAE2');
-  assert.equal(oscuro.chat, '#0B141A');
-  assert.equal(claro.mia, '#D9FDD3');
-  assert.equal(oscuro.mia, '#005C4B');
-  assert.equal(claro.otra, '#FFFFFF');
-  assert.equal(oscuro.otra, '#202C33');
-  assert.equal(claro.globo, '#25D366');
+prueba('WhatsApp con la piel de AU-RA (auditoría M6): las superficies, burbujas y el dorado de la app; el verde solo para reconocerlo', () => {
+  // Los colores de la app (nucleo/tema.ts OSCURO y CLARO), leídos del código: el tema carga React Native.
+  const fuente = fs.readFileSync(path.join(AQUI, '..', '..', 'nucleo/tema.ts'), 'utf8');
+  const paleta = (n) => Object.fromEntries([...new RegExp(`export const ${n}\\b[^=]*=\\s*\\{([\\s\\S]*?)\\n\\}`).exec(fuente)[1].matchAll(/^\s*(\w+):\s*'([^']+)'/gm)].map((m) => [m[1], m[2]]));
+  const OSCURO = { ...paleta('OSCURO'), oscuro: true };
+  const CLARO = { ...paleta('CLARO'), oscuro: false };
+  for (const [p, nombre] of [[OSCURO, 'oscuro'], [CLARO, 'claro']]) {
+    const w = paletaWA(p);
+    assert.equal(w.cabecera, p.fondo, `${nombre}: la cabecera como la de PULSE2CHAT (sin barra verde)`);
+    assert.equal(w.fondo, p.fondo);
+    assert.equal(w.chat, p.fondo);
+    assert.equal(w.otra, p.burbujaOtro);
+    assert.equal(w.enviar, p.acento, `${nombre}: enviar y el botón nuevo, en el dorado de la app`);
+    assert.equal(w.sobreEnviar, p.sobreAcento);
+    assert.equal(w.buscador, p.superficie2);
+    assert.equal(w.globo, nombre === 'oscuro' ? '#25D366' : '#15803D', `${nombre}: el verde, para reconocerlo`);
+    assert.equal(w.verde, w.globo);
+    // Nada de la paleta propia de WhatsApp (#111B21, #00A884, #005C4B…): una sola app.
+    for (const v of Object.values(w)) assert.ok(!/^#(111B21|00A884|005C4B|0B141A|202C33|1F2C34|008069|D9FDD3|EFEAE2)$/i.test(v), `${nombre}: ${v} es de la otra paleta`);
+  }
+  // Ningún verde de WhatsApp suelto en las pantallas: todo pasa por la paleta.
+  const pantallas = ['whatsapp/PantallaWhatsapp.tsx', 'whatsapp/ConversacionWA.tsx', 'whatsapp/NuevoChatWA.tsx', 'whatsapp/PiezasWA.tsx', 'whatsapp/ChatsConWhatsapp.tsx'].map((r) => fs.readFileSync(path.join(AQUI, '..', '..', r), 'utf8')).join('\n');
+  assert.doesNotMatch(pantallas, /#00A884|#111B21|#062B16/i);
+  // La letra de la app (Manrope), no Roboto: el Text de estas pantallas es ui/Letra.
+  assert.match(pantallas, /import \{ Letra as Text \} from '\.\.\/ui\/Letra'/);
+  assert.doesNotMatch(pantallas, /import \{[^}]*\bText\b[^}]*\} from 'react-native'/);
+});
+
+prueba('sin red: la lista de la última vez, de UNA cuenta, sin códigos de vincular ni errores (auditoría A3)', () => {
+  const chats = [{ jid: 'a@s.whatsapp.net', nombre: 'Ana', noLeidos: 2, hora: 5, ultimo: 'hola' }, { jid: '' }];
+  assert.equal(paraGuardarWA('', { disponible: true, permitido: true, vinculado: true }, chats), null, 'sin nadie dentro, nada');
+  assert.equal(paraGuardarWA('u1', { disponible: true, permitido: true, vinculado: false }, chats), null, 'sin vincular, nada');
+  assert.equal(paraGuardarWA('u1', { disponible: true, permitido: true, vinculado: false, error: 'x' }, chats), null, 'puente caído: no se pisa lo bueno');
+  const g = paraGuardarWA('u1', { disponible: true, permitido: true, vinculado: true, numero: '+504', qr: 'QR', codigo: 'ABCDEFGH' }, chats, 99);
+  assert.deepEqual(g.estado, { disponible: true, permitido: true, vinculado: true, numero: '+504' }, 'ni QR ni código de vincular');
+  assert.equal(g.chats.length, 1, 'un chat sin jid no se guarda');
+  assert.equal(g.hora, 99);
+  const leido = guardadoWADe(JSON.parse(JSON.stringify(g)), 'u1');
+  assert.equal(leido.chats[0].nombre, 'Ana');
+  assert.equal(entradaWA(leido.estado), 'whatsapp', 'con lo guardado, la pestaña de WhatsApp sigue a la vista');
+  assert.equal(guardadoWADe(g, 'u2'), null, 'otra cuenta no lo lee');
+  assert.equal(guardadoWADe({ ...g, v: 2 }, 'u1'), null);
+  assert.equal(guardadoWADe('basura', 'u1'), null);
+  const muchos = Array.from({ length: 200 }, (_, i) => ({ jid: `${i}@s.whatsapp.net` }));
+  assert.equal(paraGuardarWA('u1', { disponible: true, permitido: true, vinculado: true }, muchos).chats.length, MAX_GUARDADOS_WA);
+  const guardado = fs.readFileSync(path.join(AQUI, '..', 'guardado.ts'), 'utf8');
+  assert.match(guardado, /alCambiarCuenta\(/, 'al salir o entrar otra persona, lo de la anterior se borra');
+  const pantalla = fs.readFileSync(path.join(AQUI, '..', 'PantallaWhatsapp.tsx'), 'utf8');
+  assert.match(pantalla, /leerGuardadoWA\(\)/);
+  assert.match(pantalla, /guardarWA\(e, cs\)/);
+  assert.match(pantalla, /Te muestro lo último guardado/);
 });
 
 prueba('cada mensaje con su forma, y el caché con nombres de archivo seguros', () => {

@@ -13,7 +13,8 @@
  *   · Sin cuentas: explica cómo conectar una (Ajustes → Tus correos) y la conecta desde aquí mismo.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Letra as Text } from '../ui/Letra';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { idiomaActual, tr, useIdioma } from '../i18n';
@@ -193,7 +194,7 @@ export function PantallaCorreos({ cambio, onAtras, activa, onNoLeidos }: Props) 
 
   return (
     <View style={{ flex: 1, backgroundColor: p.fondo }}>
-      <View style={[s.cabecera, { paddingTop: ins.top + MEDIDA.espacio.s, paddingLeft: ins.left + MEDIDA.espacio.m, paddingRight: ins.right + MEDIDA.espacio.m }]}>
+      <View style={[s.cabecera, { paddingTop: ins.top + MEDIDA.espacio.s, paddingLeft: ins.left + MEDIDA.espacio.s, paddingRight: ins.right + MEDIDA.espacio.s }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {onAtras ? (
             <Pressable onPress={onAtras} accessibilityRole="button" accessibilityLabel={tr('Volver', 'Back')} hitSlop={8} style={s.botonCab}>
@@ -204,7 +205,7 @@ export function PantallaCorreos({ cambio, onAtras, activa, onNoLeidos }: Props) 
             <Text style={[s.titulo, { color: p.texto }]} accessibilityRole="header">
               {tr('Correos', 'Email')}
             </Text>
-            <Text style={{ color: p.texto2, fontSize: 13, marginTop: 1 }} numberOfLines={1}>
+            <Text style={{ color: p.texto3, fontSize: MEDIDA.letra.cuerpo - 1, marginTop: 2 }} numberOfLines={1}>
               {subtitulo}
             </Text>
           </View>
@@ -438,7 +439,8 @@ function estilos(p: Paleta) {
   return StyleSheet.create({
     cabecera: { paddingBottom: MEDIDA.espacio.m, backgroundColor: p.fondo },
     botonCab: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    titulo: { fontSize: 22, fontWeight: '700' },
+    // La misma cabecera que PULSE2CHAT y WhatsApp (una sola app): título grande y subtítulo.
+    titulo: { fontSize: MEDIDA.letra.enorme - 4, fontWeight: '800', letterSpacing: -0.5 },
     buscador: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4, marginBottom: 4, paddingHorizontal: 14, height: 44, borderRadius: 22 },
     buscadorTxt: { flex: 1, fontSize: 16, paddingVertical: 0 },
     chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, height: 36, justifyContent: 'center', maxWidth: 260 },

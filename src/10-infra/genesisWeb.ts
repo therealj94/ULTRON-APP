@@ -82,7 +82,7 @@ export async function iniciarEntradaGenesis(f: typeof fetch = fetch): Promise<{ 
     if (!c?.disponible || typeof c.walletWeb !== 'string' || !/^https:\/\//.test(c.walletWeb)) return { ok: false, mensaje: 'La entrada con Genesis ID no está disponible ahora.' };
     const p = await nuevoPedido();
     const r = await f('/api/genesis/web/intento', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: p.estado, reto: p.reto }) });
-    if (!r.ok) return { ok: false, mensaje: 'No pude empezar la entrada con Genesis ID. Probá otra vez.' };
+    if (!r.ok) return { ok: false, mensaje: 'No pude empezar la entrada con Genesis ID. Prueba otra vez.' };
     localStorage.setItem(CAJON, JSON.stringify({ verificador: p.verificador, estado: p.estado, en: Date.now() } satisfies PedidoWeb));
     return { ok: true, ir: urlWallet(c.walletWeb, p.reto, p.estado) };
   } catch {
@@ -96,11 +96,11 @@ function mensajeWallet(codigo: string): string {
     case 'cancelado':
       return 'Cancelaste la entrada con Genesis ID.';
     case 'sin-gid':
-      return 'Tu wallet todavía no tiene un Genesis ID. Crealo y volvé a entrar.';
+      return 'Tu wallet todavía no tiene un Genesis ID. Créalo y vuelve a entrar.';
     case 'gid-pendiente':
-      return 'Tu Genesis ID está en verificación; cuando lo aprueben, entrás con este mismo botón.';
+      return 'Tu Genesis ID está en verificación; cuando lo aprueben, entras con este mismo botón.';
     default:
-      return 'Tu wallet no completó la entrada. Probá otra vez.';
+      return 'Tu wallet no completó la entrada. Prueba otra vez.';
   }
 }
 

@@ -95,7 +95,8 @@ jobs:
       # (con el silencio del micrófono de la mesa). El visor de la computadora va MONTADO (pruebas/visor: el
       # lote de teclado por los manejadores reales del componente). También la voz en streaming y su guardia contra
       # cierres (pruebas/voz; el reproductor en la JVM, pruebas/voz/jvm, necesita kotlinc y se corre aparte) y la
-      # ventana de decisiones (pruebas/decisiones).
+      # ventana de decisiones (pruebas/decisiones). Las pestañas de los chats también van MONTADAS
+      # (pruebas/chats: la pestaña marcada y la página del deslizador son siempre la misma).
       - name: Arneses de la app
         working-directory: mobile
         run: |
@@ -105,6 +106,7 @@ jobs:
           sh pruebas/chat/todas.sh
           sh pruebas/veta/todas.sh
           sh pruebas/visor/todas.sh
+          sh pruebas/chats/todas.sh
           node pruebas/llamadas/pruebas.js
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/compa/pruebas/iniciativa.prueba.mjs
@@ -115,6 +117,8 @@ jobs:
           npx tsx src/recorrido/pruebas/recorrido.prueba.mjs
           npx tsx src/primeravez/pruebas/cumple.prueba.mjs
           npx tsx src/whatsapp/pruebas/whatsapp.prueba.mjs
+          npx tsx src/pulse/pruebas/estados.prueba.mjs
+          npx tsx src/app/pantallas/pruebas/entrada.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
           npx tsx pruebas/camara/nativa.prueba.mjs
           npx tsx pruebas/voz/nativa.prueba.mjs

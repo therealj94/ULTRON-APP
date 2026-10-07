@@ -8,7 +8,8 @@
  * ventana de los chats (whatsapp/atras.ts, el mismo registro que usa WhatsApp).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Letra as Text } from '../ui/Letra';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { tr } from '../i18n';

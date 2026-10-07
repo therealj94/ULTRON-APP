@@ -4,7 +4,8 @@
  * cuando está en línea.
  */
 import { useState } from 'react';
-import { Image, Text, View } from 'react-native';
+import { Image, View } from 'react-native';
+import { Letra as Text } from '../../ui/Letra';
 import { useTema } from '../../nucleo/tema';
 import * as RELEVO from '../relevo';
 import { iniciales } from './formato';

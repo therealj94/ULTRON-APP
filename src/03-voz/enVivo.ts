@@ -108,7 +108,7 @@ type Plazos = {
 
 /** Lo que dice la mesa cuando no abre, según lo que contestó el servidor. */
 export function porQueNoAbre(status: number, json: any): string {
-  if (status === 401) return 'Entrá de nuevo para hablar en vivo.';
+  if (status === 401) return 'Entra de nuevo para hablar en vivo.';
   if (json?.codigo === 'TOPE_VOZ' && json?.error) return String(json.error);
   if (json?.honesto && json?.error) return String(json.error);
   return 'No pude abrir la conversación en vivo. Seguimos con el micrófono de siempre.';
@@ -232,7 +232,7 @@ export class ConversacionEnVivo {
   callarSalida(): ResultadoEnVivo {
     const s = this.abierta();
     if (!s || this.estado_ !== 'hablando') return { ok: true };
-    if (typeof s.setVolume !== 'function') return { ok: false, detalle: 'No puedo callar el audio de la llamada en vivo; si querés, colgá.' };
+    if (typeof s.setVolume !== 'function') return { ok: false, detalle: 'No puedo callar el audio de la llamada en vivo; si quieres, cuelga.' };
     try {
       s.setVolume({ volume: 0 });
     } catch {
@@ -368,7 +368,7 @@ export class ConversacionEnVivo {
       if (vigente())
         this.terminar(
           'error',
-          /permission|notallowed|denied/i.test(String(e?.name || e?.message || e)) ? 'Permití el micrófono en el navegador para hablar en vivo.' : 'No pude abrir la conversación en vivo. Seguimos con el micrófono de siempre.'
+          /permission|notallowed|denied/i.test(String(e?.name || e?.message || e)) ? 'Permite el micrófono en el navegador para hablar en vivo.' : 'No pude abrir la conversación en vivo. Seguimos con el micrófono de siempre.'
         );
       return false;
     }
