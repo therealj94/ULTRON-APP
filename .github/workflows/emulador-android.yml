@@ -14,10 +14,6 @@ name: Emulador Android (AU-RA FP)
 # El repositorio es público y sus artefactos se pueden bajar: ni el correo ni la clave de prueba salen en la
 # evidencia (sin capturas ni grabación durante la entrada; logcat y datos enmascarados).
 on:
-  # TEMPORAL: solo para que GitHub registre este flujo desde la rama (sin estar en main, workflow_dispatch da 404).
-  push:
-    branches: [claude/emulador-android]
-    paths: [".github/workflows/emulador-android.yml"]
   workflow_dispatch:
   workflow_run:
     workflows: ["OTA (EAS Update)"]
@@ -35,7 +31,7 @@ permissions:
 jobs:
   emulador:
     # Después de una OTA, solo si salió bien.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -113,6 +109,35 @@ jobs:
             echo "- Servidor: https://aura-fp.onrender.com"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # La APK trae el nativo solo para ARM y sin extraer (extractNativeLibs="false"). En la imagen x86_64 el ARM se
+      # traduce, pero así SoLoader no encuentra libreactnative.so y la app se cierra al abrir (primera ejecución,
+      # 7-oct). Para el emulador se instala una COPIA con las .so extraídas, firmada con una llave desechable: el JS,
+      # la huella (runtime) y por tanto la OTA son los mismos; la APK publicada no se toca.
+      - name: Preparar la copia para el emulador x86_64
+        id: copia
+        env:
+          APK: ${{ steps.apk.outputs.apk }}
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -n 1)
+          D="$RUNNER_TEMP/copia"
+          mkdir -p "$D/m"
+          unzip -p "$APK" AndroidManifest.xml > "$D/original.xml"
+          ESTADO=$(node mobile/pruebas/emulador/extraer-nativas.mjs "$D/original.xml" "$D/m/AndroidManifest.xml")
+          echo "extractNativeLibs: $ESTADO"
+          cp "$APK" "$D/sin-firma.apk"
+          (cd "$D/m" && zip -q "$D/sin-firma.apk" AndroidManifest.xml)
+          # Fuera la firma vieja (v1); los demás META-INF (services, módulos de Kotlin) se quedan.
+          zip -q -d "$D/sin-firma.apk" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' || true
+          "$BT/zipalign" -f -p 4 "$D/sin-firma.apk" "$D/alineada.apk"
+          keytool -genkeypair -keystore "$D/desechable.jks" -storepass emulador -keypass emulador -alias emulador \
+            -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Emulador AU-RA (prueba)" > /dev/null 2>&1
+          "$BT/apksigner" sign --ks "$D/desechable.jks" --ks-pass pass:emulador --ks-key-alias emulador \
+            --out "$D/AU-RA-FP-emulador.apk" "$D/alineada.apk"
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$D/AU-RA-FP-emulador.apk" | grep -i extractNativeLibs
+          echo "apk=$D/AU-RA-FP-emulador.apk" >> "$GITHUB_OUTPUT"
+          echo "- Emulador: copia de la APK con \`extractNativeLibs=true\` y firma desechable (el ARM de la APK se traduce en x86_64)." >> "$GITHUB_STEP_SUMMARY"
+
       # Antes de tocar el emulador: ¿la cuenta de prueba es segura? (no es de la junta, nivel miembro, sin WhatsApp ni
       # correos conectados). Nunca imprime el correo ni la clave.
       - name: Comprobar la cuenta de prueba
@@ -139,7 +164,7 @@ jobs:
         timeout-minutes: 19
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          APK_AURA: ${{ steps.apk.outputs.apk }}
+          APK_AURA: ${{ steps.copia.outputs.apk }}
           OTA_ESPERADA: ${{ steps.apk.outputs.ota }}
           CUENTA_SEGURA: ${{ steps.cuenta.outputs.segura }}
           CUENTA_MOTIVO: ${{ steps.cuenta.outputs.motivo }}
