@@ -627,7 +627,8 @@ prueba('voz (auditoría 6-oct): la traza mide cuando el reproductor confirma; el
   const catchStream = cuerpo.slice(cuerpo.indexOf('} catch (e) {'), cuerpo.indexOf('// 2) JSON clásico'));
   assert.match(catchStream, /if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);/);
   assert.match(cuerpo, /^\s+idTurno,$/m, 'el idTurno va en base');
-  assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await turno\(base, genTurno\);/);
+  // (Con la ficha del turno, A-2: la espera del JSON se puede cortar.)
+  assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await tk\.hasta\(turno\(base, genTurno\)\);/);
 });
 
 prueba('«¿qué ves?» no espera al servidor: vista fresca al instante o la foto en el turno; «Lo que vi» no se queda congelado', () => {
@@ -658,15 +659,16 @@ prueba('la frase nueva manda (José, 7-oct): si la respuesta a la de antes todav
   assert.deepEqual(fraseDuranteTurno({ cmd: '¿Qué tenemos pendiente?', pendiente: null, pensando: true, hablando: false }), { cortar: true, pendiente: '¿Qué tenemos pendiente?' });
   assert.deepEqual(fraseDuranteTurno({ cmd: 'y mañana', pendiente: null, pensando: true, hablando: true }), { cortar: false, pendiente: 'y mañana' });
   assert.deepEqual(fraseDuranteTurno({ cmd: 'otra', pendiente: 'una', pensando: false, hablando: false }), { cortar: false, pendiente: 'una otra' });
-  // La costura: la mesa la usa con el stream en camino (abortTurno) y la voz que suena (speakingRef); al cortar, el turno
-  // queda cancelado (askBrain no dice ni emite sus acciones: turnoCancelado) y el stream se corta (el servidor tampoco).
+  // La costura: la mesa la usa con lo que está en camino (el stream, o la espera del JSON con foto: la ficha del turno,
+  // lib/turnoMesa.ts, A-2) y la voz que suena (speakingRef); al cortar, ESE turno queda cortado (askBrain no dice ni emite
+  // sus acciones: su ficha deja de ser vigente) y el stream se corta (el servidor tampoco).
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
   const enCurso = src.slice(src.indexOf('if (handling.current) {'), src.indexOf('handling.current = true;'));
-  assert.match(enCurso, /fraseDuranteTurno\(\{ cmd, pendiente: pending\.current, pensando: !!abortTurno\.current, hablando: speakingRef\.current, efecto: efectoTurno\.current \}\)/);
-  assert.match(enCurso, /if \(d\.cortar\) \{\s+turnoCancelado\.current = true;\s+abortTurno\.current\?\.\(\);/);
+  assert.match(enCurso, /fraseDuranteTurno\(\{ cmd, pendiente: pending\.current, pensando: turnoMesa\.pensando\(\), hablando: speakingRef\.current, efecto: turnoMesa\.efecto\(\) \}\)/);
+  assert.match(enCurso, /if \(d\.cortar\) \{\s+turnoMesa\.cancelar\('frase_nueva'\);/);
   const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('));
   const trasStream = cuerpo.slice(cuerpo.indexOf('let result = await st.promise'), cuerpo.indexOf('emitirAccionesDelTurno(result);'));
-  assert.match(trasStream, /if \(turnoCancelado\.current\) \{\s+if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);\s+return;/, 'cortado: ni suena ni emite acciones');
+  assert.match(trasStream, /if \(!tk\.vigente\) \{\s+if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);\s+return;/, 'cortado: ni suena ni emite acciones');
 });
 
 prueba('revisión del 7-oct (G2): «¿hola?», «¿me oyes?» o un «ajá» mientras piensa no cortan; con un envío en curso tampoco', async () => {
@@ -688,8 +690,39 @@ prueba('revisión del 7-oct (G2): «¿hola?», «¿me oyes?» o un «ajá» mien
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
   const enCurso = src.slice(src.indexOf('if (handling.current) {'), src.indexOf('handling.current = true;'));
   assert.match(enCurso, /if \(d\.descartada\) \{[^}]*return;\s*\}\s*if \(d\.cortar\)/);
-  assert.match(src, /e\.fase === 'empece' && e\.herramienta !== 'web' && e\.herramienta !== 'leer'\) efectoTurno\.current = true/);
-  assert.match(src, /turnoCancelado\.current = false;\s+efectoTurno\.current = false;/);
+  assert.match(src, /e\.fase === 'empece' && e\.herramienta !== 'web' && e\.herramienta !== 'leer'\) tk\.marcarEfecto\(\)/);
+  // El efecto y el corte son de la ficha de CADA turno (lib/turnoMesa.ts): ningún turno «descorta» al anterior.
+  assert.match(src, /const tk = opts\?\.ficha \?\? turnoMesa\.empezar\(\);/);
+  assert.doesNotMatch(src, /turnoCancelado|abortTurno|efectoTurno/, 'sin banderas compartidas entre turnos');
+});
+
+prueba('A-2: cada turno con su ficha; el turno con foto se corta como cualquiera (también mientras mira)', async () => {
+  const { TurnoMesa, CORTADO } = await import('../../src/lib/turnoMesa.ts');
+  const mesa = new TurnoMesa();
+  const n = mesa.empezar();
+  let resolver;
+  const espera = n.hasta(new Promise((r) => (resolver = r)));
+  assert.equal(mesa.pensando(), true, 'esperando el JSON con foto cuenta como pensando');
+  mesa.cancelar('frase_nueva');
+  assert.equal(await espera, CORTADO);
+  resolver({ reply: 'tarde' });
+  const n1 = mesa.empezar();
+  assert.equal(n1.vigente, true);
+  assert.equal(n.vigente, false);
+  // La costura en la mesa: el JSON (con foto) y el reintento esperan con la ficha; «¿qué ves?» la crea al empezar a mirar y
+  // askBrain sigue con la misma.
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('), src.indexOf('const whatDoYouSee = useCallback('));
+  assert.match(cuerpo, /let out = await tk\.hasta\(turno\(base, genTurno\)\);/);
+  assert.match(cuerpo, /if \(out === CORTADO \|\| !tk\.vigente \|\| out\.vencida\) return;/);
+  assert.match(cuerpo, /tk\.ponerCorte\(st\.abort\);/);
+  assert.match(cuerpo, /turnoMesa\.terminar\(tk\);/);
+  const ver = src.slice(src.indexOf('const whatDoYouSee = useCallback('), src.indexOf('const runGag = useCallback('));
+  assert.match(ver, /const tk = turnoMesa\.empezar\(\);/);
+  assert.match(ver, /await tk\.hasta\(esperarFrame\(/);
+  assert.match(ver, /askBrain\(pedido, \{ image: `data:image\/jpeg;base64,\$\{foto\}`, foco, ficha: tk \}\)/);
+  // Todos los cortes (callar, oído, interrupción, llamada, salir de la mesa) van por la ficha del momento.
+  for (const m of ['callar', 'oido', 'barge_in', 'llamada', 'mesa_se_va']) assert.match(src, new RegExp(`turnoMesa\\.cancelar\\('${m}'\\)`), m);
 });
 
 for (const [nombre, f] of pruebas) {
