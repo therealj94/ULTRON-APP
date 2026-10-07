@@ -1,0 +1,16 @@
+# De la apertura (Intro) a la entrada, sin escribir nada. Sirve con y sin cuenta de prueba.
+# Primera vez en el teléfono: Intro → Bienvenida («Saltar») → Entrar (Genesis ID, con «Otras formas de entrar»).
+appId: link.ordenglobal.ultronfp
+name: Abrir AU-RA hasta la entrada
+---
+- extendedWaitUntil:
+    visible: "Saltar|Otras formas de entrar|Entra con tu identidad|Mensaje|Más opciones.*"
+    timeout: 120000
+- runFlow:
+    when:
+      visible: "Saltar"
+    commands:
+      - tapOn: "Saltar"
+- extendedWaitUntil:
+    visible: "Otras formas de entrar|Mensaje|Más opciones.*"
+    timeout: 30000
