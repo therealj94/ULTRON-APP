@@ -220,7 +220,18 @@ test('reglas de la voz: el menú y la ficha de lo que ofrece solo cuando se pide
 
 test('un turno hablado pesado y realista cabe en el presupuesto y conserva lo que cuida a la persona', { skip: !listo }, async () => {
   // Unos turnos antes, como en una charla de verdad (el hilo de la voz va en los mensajes).
-  contestar = () => '[EMO: neutral] Claro, José. Te cuento lo que sé de eso: va avanzando, con la junta pendiente de los permisos y de la siguiente revisión del proyecto. ¿Quieres que lo busque con más detalle?';
+  // Cada respuesta distinta, como en una charla de verdad: la misma respuesta larga a otra pregunta es repetirse, y la
+  // guarda (lib/repeticion.ts, José 7-oct) pediría una segunda vuelta al modelo.
+  let vuelta = 0;
+  const respuestas = [
+    'Todo tranquilo por acá, José. La junta sigue pendiente de los permisos y de la siguiente revisión del proyecto.',
+    'Ayer la junta revisó el presupuesto del trimestre y quedó en volver a verlo con los números del banco.',
+    'Lo del banco todavía no quedó: falta la firma del gerente y una copia del contrato de la concesión.',
+    'Del oro dijimos que convenía esperar a que el precio se estabilizara antes de vender el lote de octubre.',
+    'La gente de Choluteca mandó saludos; están listos para la capacitación cuando llegue el equipo nuevo.',
+    'Danlí va con riesgo moderado esta semana: lluvias en el acceso, el permiso ambiental y el costo del diésel.',
+  ];
+  contestar = () => `[EMO: neutral] ${respuestas[vuelta++ % respuestas.length]}`;
   for (const m of ['Buenas, ¿cómo va todo por allá?', 'Cuéntame de la junta de ayer', '¿Y lo del banco quedó?', 'Recuérdame qué dijimos del oro', 'Bueno, ¿y la gente de Choluteca?']) await turno(m);
   const { done, nuevos } = await turno('Oye, ¿y qué opinas de cómo va la mina de Danlí esta semana? Analiza a fondo los riesgos.', { escena: ESCENA_PESADA });
   assert.equal(done?.modelo, 'zai.glm-5', JSON.stringify(done));

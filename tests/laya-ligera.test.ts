@@ -63,7 +63,6 @@ test('Laya ligera: latencia por predicción (cifras en la salida)', () => {
 
 test('camino rápido: una orden clara, en español o en inglés, se hace sin cerebro y se contesta en su idioma', async () => {
   const casos: Array<[string, unknown, RegExp]> = [
-    ['switch me to claudio', { tipo: 'avatar', valor: 'claudio' }, /^Sure! Switching you to Claudio\.$/],
     ['could you go back', { tipo: 'atras' }, /^Done\.$/],
     ['stop talking for a second', { tipo: 'silencio', valor: true }, /^Okay\.$/],
     ['quiero ver mis chats', { tipo: 'abrir', pantalla: 'chats' }, /^Abro tus chats\.$/],
@@ -77,6 +76,11 @@ test('camino rápido: una orden clara, en español o en inglés, se hace sin cer
     assert.match(o!.decir, decir, t);
     assert.equal(o!.via, 'ligera', `${t}: lo decidió Laya ligera (las reglas no lo conocían)`);
   }
+  // El avatar no se cambia con una frase oída (José, 7-oct): se pregunta, en el idioma de la frase, y espera su «sí».
+  const av = await ordenRapida('switch me to claudio', { contexto, idioma: idiomaDe('switch me to claudio') });
+  assert.equal(av?.accion, null);
+  assert.equal(av?.avatarPropuesto, 'claudio');
+  assert.equal(av?.decir, 'Should I switch you to Claudio?');
   // Con la app en español, la orden en inglés igual se contesta en inglés (el idioma lo da la frase).
   assert.equal(idiomaDe('switch me to claudio'), 'en');
   assert.equal(idiomaDe('hazte chiquita otra vez'), 'es');
@@ -147,7 +151,8 @@ test('evaluación reproducible (test_app.jsonl, apartada): ninguna mano equivoca
     const o = await ordenRapida(f.q, { contexto: ctx, idioma: idiomaDe(f.q) });
     if (!o || o.via !== 'ligera') continue;
     porLigera++;
-    const hecho = o.propuesta?.tipo === 'llamar' ? (o.propuesta.video ? 'app_videollamar' : 'app_llamar') : o.accion?.tipo === 'silencio' ? (o.accion.valor ? 'app_callar' : 'app_hablar') : DE_ACCION[o.accion?.tipo || ''];
+    // El avatar sale como pregunta que espera su «sí» (José, 7-oct): cuenta como la mano del avatar.
+    const hecho = o.avatarPropuesto ? 'app_avatar' : o.propuesta?.tipo === 'llamar' ? (o.propuesta.video ? 'app_videollamar' : 'app_llamar') : o.accion?.tipo === 'silencio' ? (o.accion.valor ? 'app_callar' : 'app_hablar') : DE_ACCION[o.accion?.tipo || ''];
     if (oro === 'app_ninguna') falsos++;
     else if (hecho !== oro) equivocadas++;
     if (f.l === 'en') {

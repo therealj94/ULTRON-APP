@@ -139,7 +139,8 @@ export function bloquesPersonales(o: {
   const vista = o.vista && o.vista.dueno === dueno ? o.vista : vistaAutorizada(dueno);
   // null (lo limitado aún no está en caché): perfilDeUso falla cerrado, sin la encuesta ni el cumpleaños.
   const perfil = perfilDeUso(o.perfil, vista.limitados);
-  const cerebro = dueno ? [bloqueAbiertos(dueno, o.compacto), bloqueEpisodios(dueno, o.consulta, o.compacto)].filter(Boolean).join('\n\n') : '';
+  // Lo que quedó a medias, una vez por sesión (salvo que pregunte por sus pendientes: José, 7-oct).
+  const cerebro = dueno ? [bloqueAbiertos(dueno, o.compacto, Date.now(), { mensaje: o.consulta }), bloqueEpisodios(dueno, o.consulta, o.compacto)].filter(Boolean).join('\n\n') : '';
   return {
     bloquePerfil: lineaPerfil(perfil),
     // Lo que sabe de ella, por la misma regla: ni lo limitado ni un dato general que lo repite.

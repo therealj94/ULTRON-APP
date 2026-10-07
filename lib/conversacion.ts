@@ -184,7 +184,26 @@ export function fusionarHilo(opts: {
   if (msgs.length && msgs[msgs.length - 1].role === 'user' && msgs[msgs.length - 1].content === actual) {
     msgs.pop();
   }
+  // Las frases suyas del final que quedaron sin respuesta de AU-RA, antes de la de ahora (José, 7-oct): van juntas y
+  // marcadas como de antes, no sueltas (sin mensaje de ahora, como para precalentar, el hilo queda tal cual).
+  let i = msgs.length;
+  while (i > 0 && msgs[i - 1].role === 'user') i--;
+  if (actual && i < msgs.length) msgs.splice(i, msgs.length - i, { role: 'user', content: notaSinRespuesta(msgs.slice(i).map((m) => m.content)) });
   return msgs;
+}
+
+/**
+ * LAS FRASES QUE QUEDARON SIN RESPUESTA (José, 7-oct, 00:31–00:33 UTC). Sus frases «Necesito que cambies a Claudio»
+ * (mal oída) y «¿Qué tenemos pendiente?» quedaron en el hilo sin respuesta de AU-RA (las de esos turnos no se guardaron:
+ * una herramienta que no dio un dato seguro no deja la respuesta en su memoria, AUR07). Bedrock junta los mensajes
+ * seguidos del mismo lado (lib/cerebro-rapido.ts aBedrock), así que el modelo recibía «cambies a Claudio… ¿qué tenemos
+ * pendiente?… ¿Qué cambiaste, Claudio?» como UN mensaje y contestaba a la primera: «Ahí va, ya me pongo en Claudio» un
+ * minuto tarde, y luego el pendiente que nadie le pedía. Ahora esas frases van marcadas como de antes: contexto, no
+ * pedidos que contestar; lo que dice ahora es lo que manda.
+ */
+export function notaSinRespuesta(frases: string[]): string {
+  const citas = frases.map((f) => `«${String(f || '').replace(/\s+/g, ' ').trim()}»`).join(' · ');
+  return `(Antes dijo esto y no quedó respuesta tuya: ${citas}. Ya pasó: no lo contestes ni hagas lo que pedía; contesta solo su mensaje de ahora, y usa esto solo si lo de ahora lo continúa.)`;
 }
 
 /**

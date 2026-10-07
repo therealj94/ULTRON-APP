@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
 import { predecirApp, UMBRAL_LIGERA } from './laya-ligera';
 import { motivoParaNoLlamar } from './cognitivo/intencion-llamada';
-import { confirmaEnvioDeMensaje, decidirPendiente, soloNombraLaAccion, type DecisionPendiente, type Decidido } from './afirmacion';
+import { confirmaEnvioDeMensaje, decidirPendiente, respuestaPura, soloNombraLaAccion, type DecisionPendiente, type Decidido } from './afirmacion';
 import {
   dichoDeMano,
   dichoDeProgramada,
@@ -572,7 +572,18 @@ export function abrirTurnoApp(correo: string): number {
   if (pr && pr.turno !== n - 1) propuestas.delete(k);
   const ac = aclaraciones.get(k);
   if (ac && ac.turno !== n - 1) aclaraciones.delete(k);
+  const av = avataresPropuestos.get(k);
+  if (av && av.turno !== n - 1) avataresPropuestos.delete(k);
   return n;
+}
+
+/**
+ * ¿El turno `n` sigue siendo el de la última frase de la persona en ese ámbito? (José, 7-oct). Si después se abrió otro
+ * (llegó una frase nueva), la respuesta del turno `n` es tardía: no suena, no hace nada en el teléfono y no se guarda
+ * como dicha. Un turno a medias que se deshizo (deshacerTurnoApp) devuelve el contador: el de antes vuelve a valer.
+ */
+export function turnoAppVigente(correo: string, n: number): boolean {
+  return turnoAppActual(correo) <= n;
 }
 
 /**
@@ -828,6 +839,213 @@ export function soltarAclaracion(correo: string) {
   aclaraciones.delete(clave(correo));
 }
 
+/* ------------------------------------------------------------------ el cambio de avatar por voz (José, 7-oct) */
+
+/**
+ * José (7-oct, 00:31 UTC, mesa de AU-RA): el oído entendió «Necesito que cambies a Claudio» (él no lo dijo) y la app
+ * cambió de avatar sin preguntar. Desde aquí:
+ *  · una frase oída NUNCA cambia el avatar sola: se pregunta «¿Te paso con Claudio?» y la propuesta espera el «sí» claro
+ *    del turno SIGUIENTE (las mismas reglas que llamar o recordar: otro turno la suelta, tres minutos de tope). Tocar el
+ *    avatar en la pantalla (Más → Avatar) sigue cambiándolo al momento;
+ *  · el cambio que sí sale se guarda (de cuál a cuál): si la persona se queja («me cambió», «yo no pedí», «vuelve a
+ *    Aura», «regresa») en los minutos siguientes, se vuelve al de antes al instante y se dice en una frase.
+ */
+type AvatarEsperando = { valor: AvatarApp; antes: AvatarApp | null; t: number; turno: number };
+const avataresPropuestos = new Map<string, AvatarEsperando>();
+type CambioAvatar = { antes: AvatarApp | null; ahora: AvatarApp; t: number };
+const cambiosAvatar = new Map<string, CambioAvatar>();
+/** Cuánto vale una queja («me cambió», «regresa») para deshacer el último cambio de avatar. */
+export const VENTANA_QUEJA_AVATAR_MS = 15 * 60_000;
+/** Una queja que no dice de qué («yo no te pedí eso») solo cuenta así de cerca del cambio. */
+export const VENTANA_QUEJA_GENERICA_MS = 3 * 60_000;
+
+/** El avatar que manda el teléfono (`avatar` del turno) si es uno de los de la app; si no, null. */
+export function avatarValido(x: unknown): AvatarApp | null {
+  const v = String(x ?? '').trim().toLowerCase();
+  return AVATARES.includes(v as AvatarApp) ? (v as AvatarApp) : null;
+}
+
+export function anotarAvatarPropuesto(correo: string, valor: AvatarApp, antes: AvatarApp | null, ahora = Date.now()) {
+  avataresPropuestos.set(clave(correo), { valor, antes, t: ahora, turno: turnoAppActual(correo) });
+}
+
+/** La pregunta «¿Te paso con …?» que la persona YA OYÓ (de un turno anterior, vigente), o null. */
+export function avatarPropuestoAnterior(correo: string, ahora = Date.now()): { valor: AvatarApp; antes: AvatarApp | null } | null {
+  const k = clave(correo);
+  const v = avataresPropuestos.get(k);
+  if (!v) return null;
+  if (ahora - v.t > PENDIENTE_TTL_MS || v.turno < turnoAppActual(correo) - 1) {
+    avataresPropuestos.delete(k);
+    return null;
+  }
+  return v.turno < turnoAppActual(correo) ? { valor: v.valor, antes: v.antes } : null;
+}
+
+export function soltarAvatarPropuesto(correo: string) {
+  avataresPropuestos.delete(clave(correo));
+}
+
+export function anotarCambioAvatar(correo: string, antes: AvatarApp | null, ahora: AvatarApp, t = Date.now()) {
+  if (antes === ahora) return;
+  cambiosAvatar.set(clave(correo), { antes, ahora, t });
+}
+
+/** El último cambio de avatar que salió (dentro de la ventana de la queja), o null. */
+export function cambioAvatarReciente(correo: string, ahora = Date.now()): CambioAvatar | null {
+  const v = cambiosAvatar.get(clave(correo));
+  if (!v) return null;
+  if (ahora - v.t > VENTANA_QUEJA_AVATAR_MS) {
+    cambiosAvatar.delete(clave(correo));
+    return null;
+  }
+  return { ...v };
+}
+
+export function soltarCambioAvatar(correo: string) {
+  cambiosAvatar.delete(clave(correo));
+}
+
+const NOMBRE_DE_AVATAR: Record<AvatarApp, { es: string; en: string }> = {
+  aura: { es: 'AU-RA', en: 'AU-RA' },
+  claudio: { es: 'Claudio', en: 'Claudio' },
+  antonio: { es: 'ANT-ONIO', en: 'ANT-ONIO' },
+  ojos: { es: 'el Guardián', en: 'the Guardian' },
+};
+
+/** «¿Te paso con Claudio?»: lo que se pregunta antes de cambiar (nada cambia todavía). */
+export function preguntaDeAvatar(v: AvatarApp, idioma: 'es' | 'en' = 'es'): string {
+  return idioma === 'en' ? `Should I switch you to ${NOMBRE_DE_AVATAR[v].en}?` : `¿Te paso con ${NOMBRE_DE_AVATAR[v].es}?`;
+}
+
+/** La frase de volver al de antes por su queja: una sola, sin bromas. */
+export function dichoDeAvatarDevuelto(v: AvatarApp, idioma: 'es' | 'en' = 'es'): string {
+  if (idioma === 'en') return v === 'ojos' ? 'Sorry, back to the Guardian.' : `Sorry, back to ${NOMBRE_DE_AVATAR[v].en}.`;
+  return v === 'aura' ? 'Perdón, ya volví: soy AU-RA otra vez.' : `Perdón, ya te regresé con ${NOMBRE_DE_AVATAR[v].es}.`;
+}
+
+/**
+ * El texto sin las frases que dan el cambio de avatar por hecho («Ahí va, ya me pongo en Claudio.», «Je, me cambié de
+ * ropa: ahora soy Claudio.»): el modelo las escribe al pedir el avatar, pero el avatar no cambió (se pregunta antes).
+ */
+export function sinFraseDeAvatar(texto: string): string {
+  const frasesT = String(texto || '').match(/[^.!?…]+[.!?…]*/g) || [];
+  const deAvatar = (f: string) => {
+    const q = plegar(f);
+    return /\b(claudio|aura|au ra|antonio|ant onio|guardian|avatar|ropa)\b/.test(q) && /\b(me pongo|me cambi|me paso|te paso|ya soy|ahora soy|ya estoy|cambi[eo]|switch|switching|i m now|here s)\b/.test(q);
+  };
+  return frasesT
+    .filter((f) => !deAvatar(f))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** El avatar que pide una orden de cambiar («cambia a Claudio», «necesito que me pases con AU-RA»), o null. */
+function avatarPedido(q: string): AvatarApp | null {
+  const sinVocativo = q
+    .replace(/^(hey |oye |ey )?(aura|au ra|claudio|antonio|ant onio|guardian)\s+(?=\S)/, '')
+    .replace(/^(oye|hey|ey|mira|a ver|bueno|porfa|por favor) /, '')
+    .replace(/ (por favor|porfa|porfis|please|gracias|ya|ahora|ahorita)$/, '');
+  const orden =
+    /^(?:(?:necesito|quiero|quisiera|me gustaria|puedes|podrias|me puedes|me podrias|i want you to|can you|could you)(?: que)? )?(?:cambia(?:me|te|r|rme)?|cambies|cambiarme|pasa(?:me|r|rme)?|pases|pon(?:me|er|erme)?|pongas|quiero hablar con|habla(?:me)? como|switch(?: me)?|change|swap)(?: (?:a|al|con|de avatar a|el avatar a|to))? (?:el |la )?(claudio|aura|au ra|au-ra|guardian|ojos|antonio|ant onio|ant-onio)$/.exec(
+      sinVocativo
+    );
+  if (!orden) return null;
+  const w = orden[1];
+  return w === 'claudio' ? 'claudio' : w === 'guardian' || w === 'ojos' ? 'ojos' : w.startsWith('ant') ? 'antonio' : 'aura';
+}
+
+/**
+ * ¿Se queja de un cambio de avatar? («me cambió a Claudio», «¿qué cambiaste?», «yo no pedí eso», «yo estaba hablando con
+ * Aura», «vuelve a Aura», «regresa»). `nombrado`: el avatar al que pide volver, si lo dice. «Regresa» o «vuelve» a secas
+ * solo cuentan con un cambio reciente (si no, son «atrás»). Una pregunta sin queja («¿quién es Claudio?») no cuenta.
+ */
+export function quejaDeAvatar(q: string, o: { hayCambio: boolean; reciente?: boolean }): { volverA: AvatarApp | null } | null {
+  const NOMBRE = '(aura|au ra|au-ra|claudio|antonio|ant onio|ant-onio|guardian|ojos)';
+  const deNombre = (w: string): AvatarApp => (w === 'claudio' ? 'claudio' : w === 'guardian' || w === 'ojos' ? 'ojos' : w.startsWith('ant') ? 'antonio' : 'aura');
+  // Sin el vocativo del principio («Aura, regresa» le habla a Aura: no la nombra como destino).
+  const sinVoc = q.replace(/^(hey |oye |ey )?(aura|au ra|au-ra|claudio|antonio|ant onio|ant-onio|guardian)\s+(?=\S)/, '');
+  // «Vuelve a Aura», «regresa con AU-RA», «ponme otra vez a Aura», "go back to Aura": volver a uno nombrado.
+  const volverA =
+    new RegExp(`\\b(?:vuelve|volve|regresa|regresate|regresame|devuelveme)(?: (?:otra vez|de nuevo))? (?:a|al|con) (?:el |la )?${NOMBRE}\\b`).exec(sinVoc) ||
+    new RegExp(`\\b(?:ponme|pasame|quiero)(?: (?:a|con))? (?:otra vez|de nuevo) (?:a |al |con )?(?:el |la )?${NOMBRE}\\b`).exec(sinVoc) ||
+    new RegExp(`\\b(?:go back|switch back|change back) to ${NOMBRE}\\b`).exec(sinVoc);
+  if (volverA) return { volverA: deNombre(volverA[1]) };
+  const nombrado = unoSolo(AVATAR_DICHO, sinVoc);
+  const hablaDeAvatar = !!nombrado || /\b(avatar|avatares)\b/.test(sinVoc);
+  // Las quejas que dicen de qué se quejan: «me cambió (a Claudio)», «¿qué cambiaste (, Claudio)? Si yo no…», «estaba
+  // hablando con Aura». Ancladas al final: «me cambió el horario» o «¿qué cambiaste en el documento?» no son del avatar.
+  const especifica =
+    new RegExp(`\\b(me|te|lo|la) (cambio|cambiaste|cambiaron)( (a|de|por|al|con) (el |la )?${NOMBRE}\\b.*| (de|el) avatar.*| sin .*| solit[oa].*| de repente.*| de la nada.*)?$`).test(sinVoc) ||
+    new RegExp(`\\b(que|por que|porque|quien) (me |te |lo )?(cambiaste|cambio|cambiaron)( ${NOMBRE})?( (si|pero) yo.*| yo no.*)?$`).test(sinVoc) ||
+    /\bestaba hablando con\b/.test(sinVoc) ||
+    /\b(you|it) (switched|changed) (me|you|it|the avatar|avatar)\b/.test(sinVoc);
+  // Las que no dicen de qué («yo no te pedí eso», «de la nada»): solo justo después de un cambio, o si nombran el avatar.
+  const generica = /\byo no (te )?(lo )?(pedi|dije|quise|queria)\b|\b(no te pedi|nadie te pidio|sin que te (lo )?(pidiera|dijera))\b|\b(de repente|de la nada)\b|\bi didn ?t ask\b/.test(sinVoc);
+  // Sin un cambio reciente, una queja solo es del avatar si lo nombra («me cambió a Claudio») o dice «avatar».
+  if ((especifica && (o.hayCambio || hablaDeAvatar)) || (generica && (o.reciente || hablaDeAvatar))) {
+    // «Me cambió a Claudio»: el nombrado es a dónde FUE; «estaba hablando con Aura», a dónde volver.
+    const conQuien = new RegExp(`\\bestaba hablando con (?:el |la )?${NOMBRE}\\b`).exec(sinVoc);
+    return { volverA: conQuien ? deNombre(conQuien[1]) : null };
+  }
+  // «Regresa», «vuelve», «regrésate» a secas: con un cambio reciente es volver al de antes.
+  if (o.hayCambio && /^(regresa(te|me)?|vuelve|volve|devuelveme|go back|switch back)( (por favor|porfa|please))?$/.test(sinVoc)) return { volverA: null };
+  return null;
+}
+
+/**
+ * El avatar por voz, antes que cualquier otra orden: la queja deshace el último cambio (al instante), el «sí» / «no» a
+ * «¿Te paso con …?» la cumple o la suelta, y una orden de cambiar solo PREGUNTA. undefined: no es del avatar.
+ */
+function ordenDeAvatar(_q: string, texto: string, o: OpcionesReglas, idioma: 'es' | 'en', ahora: number): OrdenRapida | undefined {
+  const d = DICHOS[idioma];
+  // La frase sin signos pero CON sus nombres: la limpieza de siempre quita «Aura» del final como vocativo, y aquí «vuelve a
+  // Aura» o «cambia a Aura» lo necesitan.
+  const q = plegar(texto).replace(/[.,;:!?¡¿"'«»“”()]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const actual = o.avatarActual ?? null;
+  const cambio = o.cambioAvatar && ahora - o.cambioAvatar.t <= VENTANA_QUEJA_AVATAR_MS ? o.cambioAvatar : null;
+  const queja = quejaDeAvatar(q, { hayCambio: !!cambio, reciente: !!cambio && ahora - cambio.t <= VENTANA_QUEJA_GENERICA_MS });
+  if (queja) {
+    // «Estaba hablando con Aura» nombra a dónde volver; si no, al de antes del último cambio.
+    const destino = queja.volverA ?? cambio?.antes ?? null;
+    if (!destino) {
+      // Se queja de un cambio que este servidor no hizo (o venció): no se adivina a cuál volver.
+      if (!actual) return undefined;
+      const lista = AVATARES.filter((a) => a !== actual && a !== 'antonio').map((a) => NOMBRE_DE_AVATAR[a][idioma]);
+      return { accion: null, decir: idioma === 'en' ? `Who do you want: ${lista.join(' or ')}?` : `¿Con quién quieres seguir: ${lista.join(' o ')}?`, via: 'reglas', soloDecir: true, soltarAvatar: true };
+    }
+    if (destino === actual) {
+      const n = NOMBRE_DE_AVATAR[destino][idioma];
+      return { accion: null, decir: idioma === 'en' ? `You're with ${n} now.` : `Ya estás con ${n}.`, via: 'reglas', soloDecir: true, soltarAvatar: true, avatarDevuelto: true };
+    }
+    return { accion: { tipo: 'avatar', valor: destino }, decir: dichoDeAvatarDevuelto(destino, idioma), via: 'reglas', soltarAvatar: true, avatarDevuelto: true };
+  }
+  const pedido = avatarPedido(q);
+  const prop = o.avatarPropuesto;
+  if (prop) {
+    const r = respuestaPura(texto);
+    if (r === 'si' || (pedido && pedido === prop.valor)) {
+      // Con otra cosa esperando su «sí» (un mensaje, una llamada), el «sí» suelto no decide.
+      const otras = decisionesApp(o);
+      if (otras.length && r === 'si') {
+        const n = NOMBRE_DE_AVATAR[prop.valor][idioma];
+        const lista = otras.map((p) => decirDecisionApp(p, o, idioma)).join(idioma === 'en' ? ' or ' : ' o ');
+        return { accion: null, decir: idioma === 'en' ? `Which one: switching you to ${n}, or ${lista}?` : `¿Cuál: pasarte con ${n}, o ${lista}?`, via: 'reglas', soloDecir: true };
+      }
+      return { accion: { tipo: 'avatar', valor: prop.valor }, decir: d[prop.valor], via: 'reglas', soltarAvatar: true, cambioAvatar: { antes: prop.antes ?? actual, ahora: prop.valor } };
+    }
+    if (r === 'no') return { accion: null, decir: idioma === 'en' ? "Okay, I'll stay." : 'Va, sigo yo.', via: 'reglas', soloDecir: true, soltarAvatar: true };
+  }
+  if (pedido) {
+    if (pedido === actual) {
+      const n = NOMBRE_DE_AVATAR[pedido][idioma];
+      return { accion: null, decir: idioma === 'en' ? `You're already with ${n}.` : `Ya estás con ${n}.`, via: 'reglas', soloDecir: true, soltarAvatar: true };
+    }
+    return { accion: null, decir: preguntaDeAvatar(pedido, idioma), via: 'reglas', avatarPropuesto: pedido };
+  }
+  return undefined;
+}
+
 /* ------------------------------------------------------------------ las lecturas del teléfono */
 
 /**
@@ -1044,7 +1262,7 @@ export function reglasAcciones(ctx: ContextoApp | null): string {
     'APP (puedes manejar la app de la persona): para hacer algo en su teléfono, escribe al final de tu respuesta UNA línea sola por acción, así:',
     'ACCION_APP: {"tipo":"atras"}',
     'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil|computadora|whatsapp|correos|misiones|conocer|circulo"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
-    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «abre tu computadora / muéstrame tu pantalla / lo que estás haciendo» → abrir computadora (la ves en vivo); «abre WhatsApp / mis WhatsApp» → abrir whatsapp; «abre mis correos» → abrir correos; «abre mis misiones» → abrir misiones; «qué has aprendido de mí / qué quedó pendiente» → abrir conocer; «abre mi círculo / mi familia en la app» → abrir circulo. Funciona desde cualquier pantalla. Si además piden HACER algo en páginas («usa tu computadora y busca…»), eso es PEDIR_HERRAMIENTA computadora: la pantalla se abre sola. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
+    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «abre tu computadora / muéstrame tu pantalla / lo que estás haciendo» → abrir computadora (la ves en vivo); «abre WhatsApp / mis WhatsApp» → abrir whatsapp; «abre mis correos» → abrir correos; «abre mis misiones» → abrir misiones; «qué has aprendido de mí / qué quedó pendiente» → abrir conocer; «abre mi círculo / mi familia en la app» → abrir circulo. Funciona desde cualquier pantalla. Si además piden HACER algo en páginas («usa tu computadora y busca…»), eso es PEDIR_HERRAMIENTA computadora: la pantalla se abre sola. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos), solo si lo pidió claro: la app le pregunta «¿Te paso con…?» y cambia con su «sí»; nunca digas que ya cambiaste. «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
     '«Escríbele a X que …»: busca a X en CONTACTOS (por nombre o parentesco: «mi mamá» es el contacto que se llama así). Si está, redactar con el mensaje escrito como lo escribiría la persona (en primera persona: «dile que llego tarde» → «Llego tarde»), y DI el borrador en voz alta: «Le escribo a Beto: “Llego tarde”. ¿Lo envío?». Si no está o hay dos parecidos, NO redactes: pregunta a quién.',
     'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «Va, lo mando.» (nunca «enviado» ni «listo»: la app avisa cuando de verdad salió). Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
     'redactar y enviar son los chats de AU-RA (PULSE2CHAT), NO WhatsApp. Si piden WhatsApp («mándale un WhatsApp a…»): eso es PEDIR_HERRAMIENTA whatsapp responder si lo tienes; si no lo tienes, di que su WhatsApp no está conectado aquí y ofrece mandarlo por los chats de AU-RA. Nunca digas que mandaste un WhatsApp con redactar.',
@@ -1106,6 +1324,17 @@ export type OrdenRapida = {
    * cuenta a quién va ahora. Quien lo empuja llama a confirmarCambioApp: el «sí» del turno siguiente ya es para esto.
    */
   confirmarCambio?: boolean;
+  /**
+   * EL CAMBIO DE AVATAR POR VOZ (José, 7-oct: «me cambió de avatar Aura a Claudio de la nada»): una frase oída nunca
+   * cambia el avatar sola. `avatarPropuesto`: se preguntó «¿Te paso con Claudio?» y eso espera el «sí» del turno
+   * siguiente (anotarAvatarPropuesto). `soltarAvatar`: la pregunta se contestó (o se desistió).
+   */
+  avatarPropuesto?: AvatarApp;
+  soltarAvatar?: boolean;
+  /** El cambio que sale de verdad (con un «sí» claro): de cuál a cuál, para volver al instante si se queja. */
+  cambioAvatar?: { antes: AvatarApp | null; ahora: AvatarApp };
+  /** Se quejó y se volvió al avatar de antes: el cambio guardado se suelta (otro «regresa» no lo deshace). */
+  avatarDevuelto?: boolean;
 };
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
@@ -1212,6 +1441,9 @@ export function ordenPorReglas(
       }
     }
   }
+  // El avatar por voz (José, 7-oct): la queja lo devuelve al instante; cambiar solo se pregunta y espera su «sí».
+  const av = ordenDeAvatar(q, texto, o, idioma, ahora);
+  if (av) return av;
   // Lo que espera su «sí» en la app (el borrador de AU-RA, la llamada o el recordatorio propuestos, lo escrito en el
   // chat abierto), con la regla única (lib/afirmacion.ts): el atajo ejecuta solo con una afirmación pura (o el verbo de
   // la acción); lo que nombra a quién o cuándo lo decide el turno completo (null), y con varias esperando se pregunta.
@@ -1350,6 +1582,12 @@ type OpcionesReglas = {
   estadoControles?: EstadoControles;
   /** AUR10: las opciones de la pregunta del turno anterior (aclaracionAnterior). */
   aclaracion?: ControlVoz[] | null;
+  /** El avatar que tiene enfrente (lo manda el teléfono en cada turno). */
+  avatarActual?: AvatarApp | null;
+  /** «¿Te paso con …?» del turno anterior (avatarPropuestoAnterior). */
+  avatarPropuesto?: { valor: AvatarApp; antes: AvatarApp | null } | null;
+  /** El último cambio de avatar que salió (cambioAvatarReciente): la queja vuelve al de antes. */
+  cambioAvatar?: { antes: AvatarApp | null; ahora: AvatarApp; t: number } | null;
 };
 
 const CONTROL_DE_TAREA: Record<QueTarea, ControlVoz> = { pausar: 'pausar_tarea', reanudar: 'reanudar_tarea', cancelar: 'cancelar_tarea', tomar: 'tomar_control' };
@@ -1409,12 +1647,7 @@ function reglasDeSiempre(q: string, o: OpcionesReglas): OrdenRapida | null {
   const presencia = presenciaDicha(q);
   if (presencia) return hecho({ tipo: 'presencia', valor: presencia }, d[presencia]);
 
-  const avatar = /^(?:cambia(?:me)?|pasa(?:me)?|pon(?:me)?|quiero hablar con|habla(?:me)? como|switch|change)(?: (?:a|al|con|to))? (claudio|aura|au ra|au-ra|guardian|ojos|antonio|ant onio|ant-onio)$/.exec(q);
-  if (avatar) {
-    const valor: AvatarApp =
-      avatar[1] === 'claudio' ? 'claudio' : avatar[1] === 'guardian' || avatar[1] === 'ojos' ? 'ojos' : avatar[1].startsWith('ant') ? 'antonio' : 'aura';
-    return hecho({ tipo: 'avatar', valor }, d[valor]);
-  }
+  // El avatar ya no se cambia aquí: «cambia a Claudio» lo pregunta ordenDeAvatar (José, 7-oct).
 
   // AUR10: el teléfono que sabe los controles separados recibe UN efecto por frase (lib/controles-voz.ts):
   // «cállate» calla lo que suena (no silencia el micrófono), «cuelga» cuelga, «cancela la tarea» la
@@ -1477,6 +1710,7 @@ type OpcionesEtiqueta = {
   pendiente?: { para: string; texto: string; reemplazoDe?: string } | null;
   propuesta?: PropuestaEsperando | null;
   estadoControles?: EstadoControles;
+  avatarActual?: AvatarApp | null;
 };
 
 /** Para lib/cognitivo/intencion-llamada: ¿algo espera su «sí»? */
@@ -1533,7 +1767,10 @@ export function ordenDeEtiqueta(
       const sinVocativo = q.replace(/^(hey |oye |ey )?(aura|au ra|claudio|antonio|ant onio|guardian)\s+(?=\S)/, '');
       // Y con un verbo de cambiar: «wake up AU-RA» nombra un avatar pero no pide cambiarlo.
       const v = RE_CAMBIAR_AVATAR.test(sinVocativo) ? unoSolo(AVATAR_DICHO, sinVocativo) : null;
-      return v ? hecho({ tipo: 'avatar', valor: v }, d[v]) : null;
+      if (!v) return null;
+      // José (7-oct): una frase oída no cambia el avatar sola; se pregunta y espera su «sí».
+      if (v === o.avatarActual) return { accion: null, decir: idioma === 'en' ? `You're already with ${NOMBRE_DE_AVATAR[v].en}.` : `Ya estás con ${NOMBRE_DE_AVATAR[v].es}.`, via, soloDecir: true };
+      return { accion: null, decir: preguntaDeAvatar(v, idioma), via, avatarPropuesto: v };
     }
     case 'app_presencia': {
       // «sal de pantalla completa» no dice a dónde: el cerebro.
@@ -1582,7 +1819,7 @@ const RE_CALLAR_YA = /\b(callate|shut up|be quiet|no hables|deja de hablar|stop 
 const RE_IR_A =
   /\b(abre|abreme|abrime|abrir|open|ve|vete|go|vamos|entra|entrar|muestra|muestrame|ensena|ensename|show|lleva|llevame|take|bring|pull|pasa|pasame|pon|ponme|regresa|vuelve|quiero ver|want to see|switch|metete|get me)\b/;
 const RE_CAMBIAR_AVATAR =
-  /\b(cambia|cambiame|cambiate|pasa|pasame|pon|ponme|switch|change|swap|bring|put|quiero|want|let me|dejame|como|as|salga|venga|atienda|use|usa|give me|regresa|vuelve|back|instead|platicar|hablar con|talk to|chat with|avatar)\b/;
+  /\b(cambia|cambiame|cambiate|cambies|pasa|pasame|pases|pon|ponme|pongas|switch|change|swap|bring|put|quiero|want|let me|dejame|como|as|salga|venga|atienda|use|usa|give me|regresa|vuelve|back|instead|platicar|hablar con|talk to|chat with|avatar)\b/;
 const RE_CONTRA_ATRAS = /\b(aura|au ra|claudio|antonio|guardian|ajustes|settings|chats?|perfil|profile|mesa|home|oscuro|claro|dark|light|llamada|call)\b/;
 
 /** El único valor cuya expresión aparece en la frase; si no aparece ninguno o aparecen dos distintos, null. */
@@ -1724,6 +1961,10 @@ export async function ordenRapida(
     /** AUR10: lo que está vivo y la pregunta del turno anterior (ver ordenPorReglas). */
     estadoControles?: EstadoControles;
     aclaracion?: ControlVoz[] | null;
+    /** El avatar por voz (José, 7-oct; ver ordenDeAvatar). */
+    avatarActual?: AvatarApp | null;
+    avatarPropuesto?: { valor: AvatarApp; antes: AvatarApp | null } | null;
+    cambioAvatar?: { antes: AvatarApp | null; ahora: AvatarApp; t: number } | null;
   } = {}
 ): Promise<OrdenRapida | null> {
   const r = ordenPorReglas(texto, o);
@@ -1770,6 +2011,13 @@ export function prepararAcciones(
     /** Una llamada o un recordatorio pedido en ESTE turno no se hace: se propone (espera el «sí»). */
     alProponer?: (p: Propuesta) => void;
     ahora?: number;
+    /** El avatar que tiene enfrente y el «¿Te paso con …?» del turno anterior (José, 7-oct). */
+    avatarActual?: AvatarApp | null;
+    avatarPropuesto?: { valor: AvatarApp; antes: AvatarApp | null } | null;
+    /** El modelo pidió cambiar de avatar en ESTE turno: no se hace, se pregunta (espera el «sí»). */
+    alProponerAvatar?: (v: AvatarApp) => void;
+    /** El cambio de avatar que sale (cumple la pregunta del turno anterior con un «sí» claro). */
+    alCambioAvatar?: (c: { antes: AvatarApp | null; ahora: AvatarApp }) => void;
   }
 ): AccionApp[] {
   // Permisos exactos (4-oct): lo que reemplazó a otra cosa del mismo turno no se cumple con este «sí» (pudo ser para la
@@ -1790,12 +2038,26 @@ export function prepararAcciones(
   let enviado = false;
   let propuesto = false;
   let cumplida = false;
+  let avatarVisto = false;
   const proponer = (p: Propuesta) => {
     if (propuesto || conRedactar) return;
     propuesto = true;
     o.alProponer?.(p);
   };
   for (const a of acciones) {
+    // José (7-oct, 00:31 UTC): el oído entendió «cambia a Claudio», el modelo pidió el avatar y la app cambió sin
+    // preguntar. El avatar del modelo nunca sale en el turno en que lo pide: se pregunta («¿Te paso con Claudio?») y
+    // solo la respuesta a ESA pregunta (un «sí» claro, sin otra cosa esperando) lo cambia. Uno por turno.
+    if (a.tipo === 'avatar') {
+      if (avatarVisto || a.valor === o.avatarActual) continue;
+      avatarVisto = true;
+      const prop = o.avatarPropuesto;
+      if (prop && prop.valor === a.valor && respuestaPura(o.mensaje) === 'si' && !decisionesApp(o).length) {
+        out.push(a);
+        o.alCambioAvatar?.({ antes: prop.antes ?? o.avatarActual ?? null, ahora: a.valor });
+      } else o.alProponerAvatar?.(a.valor);
+      continue;
+    }
     // Una mano que este teléfono no sabe hacer (APK viejo) no sale: no haría nada y AURA diría «listo».
     const mano = manoDe(a);
     if (mano && !puedeMano(o.contexto, mano)) {

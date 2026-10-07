@@ -31,6 +31,8 @@ import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { esVencida } from '../lib/intentoEntrada';
 import { generacionCuenta, sigueVigente } from '../lib/cuenta';
+// La frase nueva manda (José, 7-oct): la respuesta a una frase vieja no suena si ya llegó otra.
+import { fraseDuranteTurno } from '../lib/fraseNueva';
 import { api, CANCIONES_LOCAL, consultarTurnoGuardado, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, opinarTurno, rememberFact, turno, turnoStream, verCamara, type Cancion, type ChatResult, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { clasificarFallo, migaFalloTurno, reintentarFallo } from '../lib/falloTurno';
@@ -1629,9 +1631,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           }
           return;
         }
-        // Habló otra vez mientras pensaba: se juntan, no se pisan (Codex, 3-oct: la tercera frase borraba la
-        // segunda sin rastro). El cerebro recibe las dos en orden, como las dijo.
-        pending.current = pending.current ? `${pending.current} ${cmd}` : cmd;
+        // Habló otra vez mientras pensaba (José, 7-oct: la respuesta a la frase de antes sonaba después de la nueva). Si la
+        // respuesta todavía no suena, ese turno se corta: no suena ni hace nada, y la frase nueva va sola (lib/fraseNueva.ts).
+        // Si ya suena, como siempre: se juntan en orden y van después (Codex, 3-oct: «se juntan, no se pisan»).
+        const d = fraseDuranteTurno({ cmd, pendiente: pending.current, pensando: !!abortTurno.current, hablando: speakingRef.current });
+        if (d.cortar) {
+          turnoCancelado.current = true;
+          abortTurno.current?.();
+          miga('mesa: llegó otra frase antes de contestar; la respuesta a la de antes ya no suena');
+        }
+        pending.current = d.pendiente;
         pendienteOidaEn.current = oidaEn || pendienteOidaEn.current;
         return;
       }
