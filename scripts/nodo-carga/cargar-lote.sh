@@ -3,8 +3,8 @@
 # ELECTRUM — carga un lote entero desde el nodo de carga. Se corre EN el nodo, como root, dentro
 # de tmux (una carga de 26 GB son horas y una consola de SSM se corta):
 #
-#   cargar-lote <lote>                    el lote está en s3://<cubo>/entrada/<lote>/
-#   cargar-lote s3://cubo/entrada/x/      o el prefijo entero
+#   cargar-lote <lote>                    el lote está en s3://electrum-lotes-…/<lote>/
+#   cargar-lote s3://cubo/entrada/x/      o cualquier prefijo entero (p. ej. el de trasvase)
 #
 # En orden, y cada paso se puede relanzar sin repetir lo hecho:
 #   1. Baja el lote a /datos/<lote>/original con `aws s3 sync` (relanzar continúa).
@@ -25,7 +25,7 @@ set -euo pipefail
 
 LOTE="${1:-}"
 REGION="${AWS_DEFAULT_REGION:-us-east-1}"
-BUCKET="${ELECTRUM_BUCKET:-electrum-expedientes-548380372606}"
+LOTES="${ELECTRUM_LOTES:-electrum-lotes-548380372606}"
 CEREBRO="${CEREBRO:-i-06530893af0dd0638}"
 # TEI escucha solo en la IP privada del cerebro (docs/NODO-T4.md, «Embeddings BGE-M3»).
 EMBED_HOST="${EMBED_HOST:-172.31.23.34}"
@@ -45,14 +45,14 @@ verde() { printf '\033[32m%s\033[0m\n' "$*"; }
 paso()  { printf '\n\033[36m== %s\033[0m\n' "$*"; }
 peso()  { numfmt --to=iec --suffix=B "$1"; }
 
-[ -n "$LOTE" ] || { rojo "Falta el lote."; echo "  cargar-lote <lote>   (s3://${BUCKET}/entrada/<lote>/)"; exit 1; }
+[ -n "$LOTE" ] || { rojo "Falta el lote."; echo "  cargar-lote <lote>   (s3://${LOTES}/<lote>/)"; exit 1; }
 [ "$(id -u)" = 0 ] || { rojo "Corré esto como root (sudo -i)."; exit 1; }
 [ -x "$TSX" ] || { rojo "No está el código en ${CODIGO}. ¿Terminó la preparación? tail /var/log/electrum-carga.log"; exit 1; }
 [ -n "${TMUX:-}${STY:-}" ] || echo "Aviso: no estás dentro de tmux. Si se corta la consola, se corta la carga (tmux new -s carga)."
 
 case "$LOTE" in
   s3://*) ORIGEN="${LOTE%/}/" ;;
-  *)      ORIGEN="s3://${BUCKET}/entrada/${LOTE%/}/" ;;
+  *)      ORIGEN="s3://${LOTES}/${LOTE%/}/" ;;
 esac
 NOMBRE="$(basename "${ORIGEN%/}")"
 DIR="/datos/${NOMBRE}"
@@ -63,7 +63,7 @@ mkdir -p "$ORIG" "$APARTE" "$OCR" "$INF"
 paso "1. Bajando ${ORIGEN}"
 aws s3 sync "$ORIGEN" "$ORIG" --only-show-errors
 N=$(find "$ORIG" -type f | wc -l)
-[ "$N" -gt 0 ] || { rojo "No bajó nada. ¿Está bien el lote? aws s3 ls s3://${BUCKET}/entrada/"; exit 1; }
+[ "$N" -gt 0 ] || { rojo "No bajó nada. ¿Está bien el lote? aws s3 ls s3://${LOTES}/"; exit 1; }
 echo "  ${N} archivos, $(du -sh "$ORIG" | cut -f1)"
 
 # ── 2 ──────────────────────────────────────────────────────────────────────────────────────────

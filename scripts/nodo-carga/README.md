@@ -18,7 +18,7 @@ SSM** (el mismo camino que `scripts/electrum/cargar.sh`). No abre ningún puerto
 Al cerebro solo llega texto: el PDF no se guarda en la base.
 
 ```
- tu PC ──aws s3 sync──▶ s3://electrum-expedientes-…/entrada/<lote>/
+ tu PC ──aws s3 sync──▶ s3://electrum-lotes-548380372606/<lote>/
                                    │ (red interna)
                                    ▼
                        nodo de carga (m6i.2xlarge, 200 GB)
@@ -39,7 +39,7 @@ Desde tu computadora, con la CLI de AWS y credenciales de administrador de la cu
 scripts/nodo-carga/nodo.sh crear
 
 # 2. Subir el lote al cubo. Se puede cortar y relanzar; maneja archivos de más de 5 GB.
-aws s3 sync /ruta/a/los/26gb s3://electrum-expedientes-548380372606/entrada/<lote>/
+aws s3 sync /ruta/a/los/26gb s3://electrum-lotes-548380372606/<lote>/
 
 # 3. Entrar y cargar
 scripts/nodo-carga/nodo.sh entrar
@@ -69,15 +69,17 @@ Lo que se aparta a propósito, y qué hacer con ello:
 - **Disco del cerebro**: el volumen es de 120 GB. El texto de 26 GB de expedientes son pocos GB, pero cada
   fragmento lleva un vector de 1024 dimensiones (~4 KB más su índice HNSW). Comprobar `df -h` y el tamaño
   de la base antes, y tener una copia.
-- **El cubo borra todo a los 60 días**: la regla `limpiar-trasvase` tiene el prefijo vacío, así que también
-  alcanza a `biblioteca/` y `nodo-carga/`. El lote tiene que cargarse dentro de ese plazo.
+- **Los lotes van a su propio cubo**, `electrum-lotes-548380372606` (privado, cifrado, solo TLS). Los
+  conserva: solo limpia subidas multiparte cortadas a los 7 días. El cubo de trasvase
+  (`electrum-expedientes-…`) en cambio borra TODO a los 60 días —su regla `limpiar-trasvase` tiene el prefijo
+  vacío y alcanza también a `biblioteca/`—; `cargar-lote s3://…/entrada/x/` sigue sirviendo para lo de ahí.
 - **Coste**: m6i.2xlarge ≈ 0,38 USD/h encendido. Apagado solo se paga el disco (200 GB gp3 ≈ 16 USD/mes);
   destruido, nada.
 
 ## Permisos del nodo (rol `electrum-carga`)
 
 - `AmazonSSMManagedInstanceCore` para entrar por SSM.
-- Leer `entrada/*` y `nodo-carga/*` del cubo. No puede borrar ni escribir en la biblioteca.
+- Leer el cubo de lotes y `entrada/*` y `nodo-carga/*` del de trasvase. No puede borrar ni escribir en ninguno.
 - `ssm:StartSession` solo hacia el cerebro y solo con los dos documentos de reenvío de puerto: puede abrir
   los túneles, pero no una consola.
 

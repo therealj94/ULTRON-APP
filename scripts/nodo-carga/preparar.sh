@@ -13,6 +13,7 @@ echo "== preparación $(date -Is)"
 
 export DEBIAN_FRONTEND=noninteractive
 BUCKET="__BUCKET__"
+LOTES="__LOTES__"
 REGION="__REGION__"
 
 apt-get update -q
@@ -42,6 +43,7 @@ mkdir -p /opt/electrum-carga /datos
 cat > /etc/profile.d/electrum-carga.sh <<PERFIL
 export AWS_DEFAULT_REGION=${REGION}
 export ELECTRUM_BUCKET=${BUCKET}
+export ELECTRUM_LOTES=${LOTES}
 PERFIL
 
 # Traer (o volver a traer) el código. Se reemplaza entero: un árbol a medias de dos versiones es

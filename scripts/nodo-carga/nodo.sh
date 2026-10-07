@@ -32,6 +32,9 @@ TIPO="${TIPO:-m6i.2xlarge}"          # 8 vCPU, 32 GB: OCR en paralelo y PDFs eno
 DISCO_GB="${DISCO_GB:-200}"          # 26 GB bajados + extraídos de zip/rar + páginas rasterizadas
 CEREBRO="${CEREBRO:-i-06530893af0dd0638}"
 BUCKET="${BUCKET:-electrum-expedientes-548380372606}"
+# Los lotes grandes van a su propio cubo: el de trasvase borra todo a los 60 días, y 26 GB que
+# costó horas subir tienen que seguir ahí si una carga hay que repetirla.
+LOTES="${LOTES:-electrum-lotes-548380372606}"
 # Misma zona que el cerebro: el túnel no cruza zonas y no cobra transferencia entre ellas.
 SUBRED="${SUBRED:-subnet-0411e35d4107e77a7}"
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -85,7 +88,7 @@ asegurar_rol() {
   else
     echo "  ya estaba"
   fi
-  # Lo justo: leer lo que se subió a entrada/ y el código, y abrir túneles SOLO al cerebro y solo
+  # Lo justo: leer los lotes, lo que se subió a entrada/ y el código, y abrir túneles SOLO al cerebro y solo
   # con los dos documentos de reenvío de puerto. No puede borrar del cubo, ni escribir en la
   # biblioteca, ni abrir una consola en ninguna máquina.
   local cuenta; cuenta=$(aws sts get-caller-identity --query Account --output text)
@@ -97,6 +100,8 @@ asegurar_rol() {
      "Condition": {"StringLike": {"s3:prefix": ["entrada/*", "entrada/", "nodo-carga/*"]}}},
     {"Effect": "Allow", "Action": "s3:GetObject",
      "Resource": ["arn:aws:s3:::${BUCKET}/entrada/*", "arn:aws:s3:::${BUCKET}/nodo-carga/*"]},
+    {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:GetObject"],
+     "Resource": ["arn:aws:s3:::${LOTES}", "arn:aws:s3:::${LOTES}/*"]},
     {"Effect": "Allow", "Action": "ssm:StartSession",
      "Resource": [
        "arn:aws:ec2:${REGION}:${cuenta}:instance/${CEREBRO}",
@@ -148,7 +153,7 @@ crear() {
   ami=$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
     --query Parameter.Value --output text)
   datos="$(mktemp)"
-  sed "s|__BUCKET__|${BUCKET}|g; s|__REGION__|${REGION}|g" "${AQUI}/preparar.sh" > "$datos"
+  sed "s|__BUCKET__|${BUCKET}|g; s|__LOTES__|${LOTES}|g; s|__REGION__|${REGION}|g" "${AQUI}/preparar.sh" > "$datos"
   # Un perfil recién creado tarda unos segundos en verse desde EC2: se reintenta en vez de fallar.
   for intento in 1 2 3 4 5 6; do
     if id=$(aws ec2 run-instances --image-id "$ami" --instance-type "$TIPO" --subnet-id "$SUBRED" \
@@ -191,7 +196,7 @@ siguiente() {
 
 Siguiente:
   1. Subí el lote al cubo desde donde estén los archivos (se puede cortar y relanzar):
-       aws s3 sync /ruta/a/los/26gb s3://${BUCKET}/entrada/<lote>/
+       aws s3 sync /ruta/a/los/26gb s3://${LOTES}/<lote>/
   2. Entrá al nodo y cargalo:
        ./nodo.sh entrar
        sudo -i
