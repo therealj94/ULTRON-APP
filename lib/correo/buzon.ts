@@ -482,6 +482,46 @@ export async function leer(quien: string, c: CuentaCorreo, uid: number): Promise
   }
 }
 
+/** Lo más grande que se baja un correo entero para sacarle un adjunto, y lo más grande que se lee de un adjunto. */
+export const MAX_CORREO_CON_ADJUNTOS = 30 * 1024 * 1024;
+export const MAX_ADJUNTO_CORREO = 10 * 1024 * 1024;
+
+export type AdjuntoCorreo =
+  | { estado: 'ok'; nombre: string; tipo: string; bytes: number; datos: Buffer; n: number; total: number; de: string; deCorreo: string; asunto: string }
+  | { estado: 'fuera'; total: number; nombres: string[] }
+  | { estado: 'grande'; bytes: number; nombre?: string };
+
+/**
+ * El adjunto `n` (desde 1, en el orden en que `leer` los nombra: sin las imágenes metidas en el cuerpo) de un correo de
+ * ESA cuenta. Sin marcarlo leído (el buzón se abre de solo lectura). null si el correo ya no está. Un correo de más de
+ * MAX_CORREO_CON_ADJUNTOS ni se baja; un adjunto de más de MAX_ADJUNTO_CORREO no se devuelve.
+ */
+export async function adjunto(quien: string, c: CuentaCorreo, uid: number, n: number): Promise<AdjuntoCorreo | null> {
+  const cliente = await imapPara(c.proveedor, await credencial(quien, c));
+  try {
+    const candado = await cliente.getMailboxLock('INBOX', { readOnly: true });
+    try {
+      const meta = await cliente.fetchOne(String(uid), { uid: true, size: true }, { uid: true });
+      if (!meta) return null;
+      if (Number(meta.size) > MAX_CORREO_CON_ADJUNTOS) return { estado: 'grande', bytes: Number(meta.size) };
+      const m = await cliente.fetchOne(String(uid), { uid: true, source: true }, { uid: true });
+      if (!m || !m.source) return null;
+      const p = await simpleParser(m.source);
+      const adjuntos = (p.attachments || []).filter((a) => !a.related);
+      const a = adjuntos[n - 1];
+      if (!a) return { estado: 'fuera', total: adjuntos.length, nombres: adjuntos.map((x) => x.filename || 'adjunto') };
+      const nombre = a.filename || 'adjunto';
+      if (a.size > MAX_ADJUNTO_CORREO) return { estado: 'grande', bytes: a.size, nombre };
+      const de = nombreDe(p.from);
+      return { estado: 'ok', nombre, tipo: a.contentType || 'application/octet-stream', bytes: a.size, datos: Buffer.from(a.content), n, total: adjuntos.length, de: de.nombre, deCorreo: de.correo, asunto: p.subject || '(sin asunto)' };
+    } finally {
+      candado.release();
+    }
+  } finally {
+    await cliente.logout().catch(() => {});
+  }
+}
+
 export type Envio = {
   para: string[];
   cc?: string[];

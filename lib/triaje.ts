@@ -27,6 +27,7 @@ import { listar } from './correo/buzon';
 import { leerCuentasSeguro } from './correo/cuentas';
 import { chatsWA, mensajesWA, whatsappDisponible, whatsappPermitido, estadoWA } from '../server/whatsapp';
 import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
+import { agregarVip, quitarVip, vipsDe, VipNoDisponible } from './contactos-vip';
 
 export type Importancia = 'urgente' | 'importante' | 'normal' | 'ruido';
 export type Intencion = 'pregunta' | 'dinero' | 'familia' | 'trabajo' | 'publicidad' | 'grupo' | 'estafa';
@@ -429,7 +430,8 @@ export async function correrTriaje(dueno: string, arg: string, _ambito = '', fue
  */
 export async function correrTriajeConEstado(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje, vista?: VistaTexto): Promise<ResultadoHerramienta> {
   if (!dueno) return fallo('TRIAJE: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
-  const v = plegar(String(arg || '').split(/\s+/)[0] || 'revisar');
+  const v = plegar(String(arg || '').trim().split(/\s+/)[0] || 'revisar');
+  if (v === 'vip') return correrVip(dueno, String(arg || '').trim().replace(/^\S+\s*/, ''));
   const canal: 'todo' | 'whatsapp' | 'correo' = /^(whatsapp|wa|chats)$/.test(v) ? 'whatsapp' : /^(correo|correos|email|mail)$/.test(v) ? 'correo' : 'todo';
   if (canal === 'whatsapp' && !fuentes?.whatsapp && !(whatsappDisponible() && (await whatsappPermitido(dueno)))) return fallo('TRIAJE: su WhatsApp no está conectado aquí. No lo revisé; dilo con naturalidad.', 'no-disponible');
   try {
@@ -440,5 +442,44 @@ export async function correrTriajeConEstado(dueno: string, arg: string, _ambito 
     return exito(r.resumen, { efecto: 'ninguno', proveedor: 'triaje', ...(r.errores.length ? { incompleto: true } : {}) });
   } catch (e: any) {
     return fallo(`TRIAJE: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
+  }
+}
+
+/**
+ * Sus contactos importantes (A-6, lib/contactos-vip.ts): «triaje vip listar», «triaje vip agregar Ana | +504… | ana@…»,
+ * «triaje vip quitar Ana». Es SU ajuste: no sale nada a nadie. Solo se dice que quedó si se guardó.
+ */
+async function correrVip(dueno: string, arg: string): Promise<ResultadoHerramienta> {
+  const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
+  const m = cabeza.match(/^(\S+)\s*(.*)$/s);
+  const verbo = plegar(m?.[1] || 'listar');
+  const persona = (m?.[2] || '').trim();
+  try {
+    if (/^(listar|lista|ver|cuales|quienes)$/.test(verbo)) {
+      const r = await vipsDe(dueno);
+      if (r.ok === false) return fallo('VIP: no pude leer su lista de contactos importantes ahora mismo. No digas que está vacía.', 'almacen');
+      if (!r.contactos.length) return exito('VIP: todavía no tiene contactos importantes. Ofrécele marcar a alguien («avísame cuando me escriba Ana»).', { efecto: 'ninguno' });
+      return exito(`VIP (${r.contactos.length}): ${r.contactos.map((c) => `${c.nombre}${c.numero ? ` (+${c.numero})` : ''}${c.correo ? ` <${c.correo}>` : ''}`).join(' · ')}.`, { efecto: 'ninguno' });
+    }
+    if (/^(agregar|agrega|anadir|marcar|marca|guardar|poner)$/.test(verbo)) {
+      const [numero = '', correo = ''] = partes;
+      const correoDe = correo || (persona.includes('@') ? persona : '');
+      const numeroDe = numero || (/^\+?[\d\s()-]{8,}$/.test(persona) ? persona : '');
+      if (!persona && !numeroDe && !correoDe) return fallo('VIP: ¿a quién marco como importante? Falta el nombre, el número o el correo.', 'falta-dato');
+      const r = await agregarVip(dueno, { nombre: persona, numero: numeroDe, correo: correoDe });
+      if (r.lleno) return fallo('VIP: ya tiene 50 contactos importantes; no agregué a nadie. Pregúntale a quién quita.', 'limite');
+      const como = r.contacto.numero ? `por su número (+${r.contacto.numero})` : r.contacto.correo ? `por su correo (${r.contacto.correo})` : `por su nombre exacto «${r.contacto.nombre}» como lo tiene guardado (con su número sería más seguro)`;
+      return exito(`VIP GUARDADO: ${r.contacto.nombre}${r.nuevo ? '' : ' (ya estaba; lo actualicé)'}. Lo reconoceré ${como}. Sus mensajes le llegan como aviso al teléfono; de noche (22:00–07:00) solo si dicen que es urgente.${r.durable ? '' : ' OJO: quedó solo en este servidor por ahora (el almacén no contestó); díselo si pregunta.'}`, { efecto: 'guardado', durable: r.durable });
+    }
+    if (/^(quitar|quita|borrar|borra|eliminar|sacar|saca)$/.test(verbo)) {
+      if (!persona) return fallo('VIP: ¿a quién quito? Falta el nombre, el número o el correo.', 'falta-dato');
+      const r = await quitarVip(dueno, persona);
+      if (!r.quitados.length) return fallo(`VIP: no tengo a «${persona}» entre sus contactos importantes. No quité a nadie.`, 'no-encontrado');
+      return exito(`VIP QUITADO: ${r.quitados.map((c) => c.nombre).join(', ')}. Ya no le llegarán avisos por ser VIP.`, { efecto: 'guardado', durable: r.durable });
+    }
+    return fallo(`VIP: no entiendo «${verbo}». Usa listar, agregar o quitar.`, 'no-entiendo');
+  } catch (e: any) {
+    if (e instanceof VipNoDisponible) return fallo('VIP: no pude leer su lista guardada ahora mismo; no cambié nada. Dile que lo intente en un momento.', 'almacen');
+    return fallo(`VIP: falló (${String(e?.message || e).slice(0, 120)}). No cambié nada.`, 'excepcion');
   }
 }

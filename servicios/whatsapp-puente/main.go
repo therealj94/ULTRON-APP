@@ -3,7 +3,8 @@
 // cuenta de WhatsApp por cuenta de AU-RA, cada una en su carpeta; cuentas.go). Corre como servicio PRIVADO de Render
 // (sin dirección pública: solo el servidor de AU-RA lo alcanza por la red interna) y además pide clave.
 //
-// Variables: PUENTE_CLAVE (obligatoria), DATOS (carpeta del disco, /data), PORT (8080),
+// Variables: PUENTE_CLAVE (obligatoria), DATOS (carpeta del disco, /data), PORT (8080), AURA_AVISO_URL (opcional: a
+// dónde se avisa cada mensaje nuevo, firmado con PUENTE_CLAVE; aviso.go),
 // WHATSAPP_MAX_CUENTAS (cuántas cuentas caben; 25), WHATSAPP_RESERVA_JUNTA (de esas, cuántas solo para la junta y el
 // padrón; 2), NIVEL_LOG (INFO; el de whatsmeow va siempre en WARN: en INFO escribe números y JIDs).
 //
@@ -30,6 +31,7 @@ import (
 // Lo que el puente lee del entorno al arrancar.
 type Config struct {
 	clave   string
+	aviso   string
 	datos   string
 	puerto  string
 	max     int
@@ -50,7 +52,7 @@ func configDelEntorno(env func(string) string) (Config, error) {
 		}
 		return def
 	}
-	c := Config{clave: env("PUENTE_CLAVE"), datos: o("DATOS", "/data"), puerto: o("PORT", "8080"), nivel: o("NIVEL_LOG", "INFO")}
+	c := Config{clave: env("PUENTE_CLAVE"), aviso: o("AURA_AVISO_URL", ""), datos: o("DATOS", "/data"), puerto: o("PORT", "8080"), nivel: o("NIVEL_LOG", "INFO")}
 	if len(c.clave) < MinClavePuente {
 		return c, fmt.Errorf("falta PUENTE_CLAVE (%d caracteres o más): sin ella no se arranca con varias cuentas", MinClavePuente)
 	}
@@ -80,8 +82,19 @@ func main() {
 		os.Exit(1)
 	}
 	ctx := context.Background()
-	cuentas, err := NuevoRegistro(datos, max, log, func(clave, dir string, alm *Almacen) (Cuenta, error) {
-		return NuevaCuentaWA(ctx, filepath.Join(dir, "sesion.db"), filepath.Join(dir, "fotos"), alm, log.Sub(nombreLog(clave)))
+	// Sin AURA_AVISO_URL, nil: no se avisa nada (como antes).
+	avisador := NuevoAvisador(conf.aviso, clave, log.Sub("aviso"))
+	if avisador != nil {
+		log.Infof("los mensajes nuevos se avisan al servidor de AU-RA")
+	}
+	cuentas, err := NuevoRegistro(datos, max, log, func(claveCuenta, dir string, alm *Almacen) (Cuenta, error) {
+		var alLlegar func(Mensaje, bool, string)
+		if avisador != nil {
+			alLlegar = func(m Mensaje, grupo bool, nombreChat string) {
+				avisador.Avisar(avisoDe(claveCuenta, m, grupo, nombreChat))
+			}
+		}
+		return NuevaCuentaWA(ctx, filepath.Join(dir, "sesion.db"), filepath.Join(dir, "fotos"), alm, log.Sub(nombreLog(claveCuenta)), alLlegar)
 	})
 	if err != nil {
 		log.Errorf("cuentas: %v", err)

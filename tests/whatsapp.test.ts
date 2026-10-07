@@ -24,6 +24,8 @@ process.env.ULTRON_TAREA_CURSO_DIR = path.join(DIR_DATOS, 'tarea-en-curso');
 process.env.ULTRON_ABIERTOS_DIR = path.join(DIR_DATOS, 'abiertos');
 // El registro durable de los envíos (lib/durable.ts sin S3), también en el temporal.
 process.env.ULTRON_DURABLE_DIR = path.join(DIR_DATOS, 'durable');
+// De quién es cada cuenta del puente (A-6, lib/duenos-cuenta-wa.ts), también en el temporal.
+process.env.ULTRON_WA_DUENOS_DIR = path.join(DIR_DATOS, 'wa-duenos');
 
 const CLAVE = 'clave-del-puente-de-prueba-123';
 const ahora = Date.now();

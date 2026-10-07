@@ -68,6 +68,7 @@ import {
   vistaDe,
 } from '../logica.ts';
 import { atrasWhatsapp, registrarAtras } from '../atras.ts';
+import { alPedirChatWA, hayPedidoWA, pedidoValido, pedirChatWA, tomarPedidoWA, VIDA_PEDIDO_MS } from '../pedido.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const pruebas = [];
@@ -577,6 +578,30 @@ prueba('revisión del 5-oct: el caché de fotos y archivos es de UNA cuenta y se
   const sesion = fs.readFileSync(path.join(AQUI, '..', '..', 'app', 'sesion.ts'), 'utf8');
   assert.match(sesion, /export function salirDeLaSesion\(\) \{[\s\S]*?fijarUsuario\(null\);/);
   assert.match(sesion, /export function fijarUsuario[\s\S]*?fijarCuenta\(u\?\.correo \?\? null\);/);
+});
+
+prueba('el aviso de un WhatsApp importante abre ESE chat con la sugerencia como borrador (A-6): una vez, y vence', () => {
+  assert.equal(pedidoValido({ jid: 'no-es-jid', borrador: 'x' }), null);
+  assert.equal(pedirChatWA({ jid: 'javascript:alert(1)' }), false);
+  const t = 1_000_000;
+  assert.equal(pedirChatWA({ jid: '50499991111@s.whatsapp.net', nombre: '  Ana   Paz ', borrador: ' Hola Ana ' }, t), true);
+  assert.equal(hayPedidoWA(t + 10), true);
+  assert.deepEqual(tomarPedidoWA(t + 10), { jid: '50499991111@s.whatsapp.net', nombre: 'Ana Paz', borrador: 'Hola Ana', en: t });
+  assert.equal(tomarPedidoWA(t + 20), null, 'se toma una sola vez');
+  let n = 0;
+  const dejar = alPedirChatWA(() => n++);
+  pedirChatWA({ jid: '50499991111@s.whatsapp.net', borrador: 'x'.repeat(5000) }, t);
+  dejar();
+  pedirChatWA({ jid: '50499991111@s.whatsapp.net' }, t);
+  assert.equal(n, 1, 'avisa a quien escucha mientras escucha');
+  assert.equal(tomarPedidoWA(t + VIDA_PEDIDO_MS + 1), null, 'vencido no abre nada');
+  // La pantalla lo toma y lo pone en la caja de texto; ConversacionWA no lo manda (solo «Enviar» lo hace).
+  const pantalla = fs.readFileSync(path.join(AQUI, '..', 'PantallaWhatsapp.tsx'), 'utf8');
+  assert.match(pantalla, /const ped = tomarPedidoWA\(\);/);
+  assert.match(pantalla, /borradorInicial=\{borradorInicial\}/);
+  const conv = fs.readFileSync(path.join(AQUI, '..', 'ConversacionWA.tsx'), 'utf8');
+  assert.match(conv, /useState\(borradorInicial\)/);
+  assert.doesNotMatch(conv, /enviar\(borradorInicial\)/, 'la sugerencia nunca se manda sola');
 });
 
 let ok = 0;

@@ -16,6 +16,9 @@ package main
 //	GET  /mensajes?chat=&limite=&antes=  los de un chat, del más viejo al más nuevo
 //	GET  /buscar?q=&limite=              en el texto de todos los chats
 //	POST /enviar {chat, texto}           lo manda (el servidor solo lo llama con el «sí» de la persona)
+//	POST /enviar-media {chat, tipo, datos, mime?, nombre?, pie?, id?}
+//	                                     una foto, un documento, un audio o una nota de voz (Ogg/Opus), en base64
+//	                                     en `datos` (hasta 16 MB; medios.go). Igual que /enviar: solo con su «sí»
 //	POST /leido {chat}                   marca el chat como leído (también en su teléfono)
 //	GET  /media?chat=&id=                la foto o el archivo de un mensaje (410 si ya no está en WhatsApp)
 //	GET  /foto?chat=                     la foto de perfil del chat (JPEG chico; 404 si no tiene)
@@ -51,6 +54,8 @@ type Cuenta interface {
 	Desvincular() error
 	// id: el id del mensaje que pide AU-RA (AUR13, derivado de su operación); vacío = uno nuevo de WhatsApp.
 	Enviar(chat, texto, id string) (Mensaje, error)
+	// Una foto, un documento, un audio o una nota de voz ya comprobados (medios.go), con el mismo `id` que Enviar.
+	EnviarMedia(chat string, m MediaSaliente, id string) (Mensaje, error)
 	MarcarLeido(chat string) error
 	Media(chat, id string) ([]byte, string, error)
 	// La foto de perfil (ErrSinFoto si no tiene) y si ya se sabe sin preguntar (nil: no se sabe).
@@ -209,6 +214,7 @@ func (a *API) Rutas() http.Handler {
 		escribir(w, 200, map[string]any{"mensajes": ms})
 	}))
 	m.HandleFunc("POST /enviar", a.deCuenta(enviar))
+	m.HandleFunc("POST /enviar-media", a.deCuentaTope(MaxCuerpoMedia, enviarMedia))
 	// AUR13: un mensaje propio por su id (para que AU-RA reconcilie un envío del que no supo el final).
 	m.HandleFunc("GET /mensaje", a.deCuenta(func(w http.ResponseWriter, r *http.Request, e *Espacio) {
 		id := r.URL.Query().Get("id")
@@ -391,15 +397,75 @@ func enviar(w http.ResponseWriter, r *http.Request, e *Espacio) {
 	escribir(w, 200, map[string]any{"mensaje": m})
 }
 
+// POST /enviar-media {chat, tipo, datos (base64), mime?, nombre?, pie?, id?}: como /enviar, con un archivo. El archivo
+// se comprueba antes de subirlo (medios.go): una «nota» que no es Ogg/Opus o una «imagen» que no es una foto no salen.
+// Con `id`, el mismo mensaje no sale dos veces (AUR13).
+func enviarMedia(w http.ResponseWriter, r *http.Request, e *Espacio) {
+	var c struct {
+		Chat   string `json:"chat"`
+		Tipo   string `json:"tipo"`
+		Datos  []byte `json:"datos"`
+		Mime   string `json:"mime"`
+		Nombre string `json:"nombre"`
+		Pie    string `json:"pie"`
+		ID     string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+		var grande *http.MaxBytesError
+		if errors.As(err, &grande) {
+			fallo(w, 413, ErrMediaGrande)
+			return
+		}
+		fallo(w, 400, errors.New("no entendí el archivo (se manda en base64 en «datos»)"))
+		return
+	}
+	if c.Chat == "" {
+		fallo(w, 400, errors.New("falta el chat"))
+		return
+	}
+	m := MediaSaliente{Tipo: c.Tipo, Datos: c.Datos, Mime: c.Mime, Nombre: c.Nombre, Pie: c.Pie}
+	if err := validarMediaSaliente(&m); err != nil {
+		code := 400
+		if errors.Is(err, ErrMediaGrande) {
+			code = 413
+		}
+		fallo(w, code, err)
+		return
+	}
+	if c.ID != "" {
+		if !idDeAura.MatchString(c.ID) {
+			fallo(w, 400, errors.New("ese id de mensaje no tiene la forma esperada"))
+			return
+		}
+		e.enviando.Lock()
+		defer e.enviando.Unlock()
+		if msg, err := e.almacen.MioPorID(c.ID); err == nil {
+			escribir(w, 200, map[string]any{"mensaje": msg, "repetido": true})
+			return
+		}
+	}
+	msg, err := e.cuenta.EnviarMedia(c.Chat, m, c.ID)
+	if err != nil {
+		fallo(w, codigoDe(err), err)
+		return
+	}
+	escribir(w, 200, map[string]any{"mensaje": msg})
+}
+
+// Lo más que se lee del cuerpo de un pedido (salvo /enviar-media, que lleva el archivo).
+const MaxCuerpo = 64 << 10
+
 // Toda ruta salvo /salud pide la clave (comparada en tiempo constante).
-func (a *API) con(f http.HandlerFunc) http.HandlerFunc {
+func (a *API) con(f http.HandlerFunc) http.HandlerFunc { return a.conTope(MaxCuerpo, f) }
+
+func (a *API) conTope(tope int64, f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dada := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if a.clave == "" || subtle.ConstantTimeCompare([]byte(dada), []byte(a.clave)) != 1 {
 			fallo(w, 401, errors.New("clave"))
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, tope)
 		f(w, r)
 	}
 }
@@ -407,7 +473,11 @@ func (a *API) con(f http.HandlerFunc) http.HandlerFunc {
 // Con la clave del puente y la cuenta de AU-RA (X-Cuenta) bien formada. Sin ella no se toca ninguna cuenta. Toda
 // respuesta de aquí en adelante lleva el eco de la cuenta (X-Cuenta-Eco).
 func (a *API) conClave(f func(w http.ResponseWriter, r *http.Request, clave string)) http.HandlerFunc {
-	return a.con(func(w http.ResponseWriter, r *http.Request) {
+	return a.conClaveTope(MaxCuerpo, f)
+}
+
+func (a *API) conClaveTope(tope int64, f func(w http.ResponseWriter, r *http.Request, clave string)) http.HandlerFunc {
+	return a.conTope(tope, func(w http.ResponseWriter, r *http.Request) {
 		clave := strings.TrimSpace(r.Header.Get(CabeceraCuenta))
 		if !claveValida.MatchString(clave) {
 			escribir(w, 400, map[string]any{"error": "falta la cuenta de AU-RA (o no tiene la forma esperada)", "codigo": "SIN_CUENTA"})
@@ -420,7 +490,11 @@ func (a *API) conClave(f func(w http.ResponseWriter, r *http.Request, clave stri
 
 // Con una cuenta que ya existe en el puente. Si no está: 412 SIN_VINCULAR, sin crear nada ni mirar otra.
 func (a *API) deCuenta(f func(w http.ResponseWriter, r *http.Request, e *Espacio)) http.HandlerFunc {
-	return a.conClave(func(w http.ResponseWriter, r *http.Request, clave string) {
+	return a.deCuentaTope(MaxCuerpo, f)
+}
+
+func (a *API) deCuentaTope(tope int64, f func(w http.ResponseWriter, r *http.Request, e *Espacio)) http.HandlerFunc {
+	return a.conClaveTope(tope, func(w http.ResponseWriter, r *http.Request, clave string) {
 		e, ok := a.cuentas.Obtener(clave)
 		if !ok {
 			fallo(w, 412, ErrSinVincular)
@@ -432,6 +506,10 @@ func (a *API) deCuenta(f func(w http.ResponseWriter, r *http.Request, e *Espacio
 
 func codigoDe(err error) int {
 	switch {
+	case errors.Is(err, ErrMediaGrande):
+		return 413
+	case errors.Is(err, ErrMediaInvalida):
+		return 400
 	case errors.Is(err, ErrYaVinculado):
 		return 409
 	case errors.Is(err, ErrSinVincular):

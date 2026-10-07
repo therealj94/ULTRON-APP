@@ -28,6 +28,7 @@ import { ConversacionWA } from './ConversacionWA';
 import { IconoWA, type NombreIconoWA } from './IconoWA';
 import { NuevoChatWA } from './NuevoChatWA';
 import { guardarWA, leerGuardadoWA } from './guardado';
+import { alPedirChatWA, tomarPedidoWA } from './pedido';
 import { fuente } from '../ui/tipografia';
 import { AvatarWA } from './PiezasWA';
 import {
@@ -101,6 +102,8 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [abierto, setAbierto] = useState<ChatWA | null>(null);
+  /** La respuesta sugerida de un aviso (A-6): va como borrador en la caja de texto del chat; no se manda sola. */
+  const [borradorInicial, setBorradorInicial] = useState('');
   const [nuevo, setNuevo] = useState(false);
   /** Lo que se ve es lo último guardado en el teléfono (sin red): se dice arriba, sin esconder la lista. */
   const [deGuardado, setDeGuardado] = useState(false);
@@ -214,10 +217,31 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       },
     ]);
 
+  // A-6: tocar el aviso de un WhatsApp importante pide abrir ESE chat con la sugerencia como borrador (whatsapp/pedido.ts).
+  // Se toma en cuanto esta pantalla está a la vista y vinculada; si el pedido llega con la pantalla ya abierta, también.
+  useEffect(() => {
+    if (!activa || vista !== 'listo') return;
+    const tomar = () => {
+      const ped = tomarPedidoWA();
+      if (!ped) return;
+      setNuevo(false);
+      setBorradorInicial(ped.borrador);
+      setAbierto(chatDeContacto({ jid: ped.jid, nombre: ped.nombre, numero: '' }, chats || []));
+    };
+    tomar();
+    return alPedirChatWA(tomar);
+  }, [activa, vista, chats]);
+
+  const abrirDeLista = useCallback((c: ChatWA) => {
+    setBorradorInicial('');
+    setAbierto(c);
+  }, []);
+
   const cerrarNuevo = useCallback(() => setNuevo(false), []);
   const elegirContacto = useCallback(
     (k: ContactoWA) => {
       setNuevo(false);
+      setBorradorInicial('');
       setAbierto(chatDeContacto(k, chats || []));
     },
     [chats]
@@ -225,6 +249,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
 
   const cerrarChat = useCallback(() => {
     setAbierto(null);
+    setBorradorInicial('');
     void leer();
   }, [leer]);
 
@@ -337,7 +362,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
           initialNumToRender={14}
           contentContainerStyle={{ paddingBottom: ins.bottom + 96, paddingLeft: ins.left, paddingRight: ins.right }}
           ListEmptyComponent={<Text style={{ color: w.previa, textAlign: 'center', marginTop: 32, fontSize: 15 }}>{tr(`Ningún chat con «${q.trim()}»`, `No chats matching “${q.trim()}”`)}</Text>}
-          renderItem={({ item }) => <FilaChat c={item} w={w} idioma={idioma} onAbrir={setAbierto} />}
+          renderItem={({ item }) => <FilaChat c={item} w={w} idioma={idioma} onAbrir={abrirDeLista} />}
         />
       )}
 
@@ -356,7 +381,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
 
       {abierto ? (
         <View style={[StyleSheet.absoluteFill, { backgroundColor: w.chat }]}>
-          <ConversacionWA key={abierto.jid} chat={abierto} onAtras={cerrarChat} />
+          <ConversacionWA key={abierto.jid} chat={abierto} onAtras={cerrarChat} borradorInicial={borradorInicial} />
         </View>
       ) : null}
     </View>

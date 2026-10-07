@@ -538,7 +538,8 @@ test('leer: resuelve la referencia, lee el cuerpo limpio y en trozos, pregunta s
     assert.equal(f.leidos.length, 0, 'no adivina');
     const banco = await correrCorreo('lola@x.hn', 'leer el de Banco Atlántida', 'tel');
     assert.match(banco, /^CORREO 2 de 3 — de Banco Atlántida <notificaciones@bancatlan\.hn>, para Lola <lola@prueba\.hn> — «Estado de cuenta de septiembre» — hoy 9:15 a\. m\. \(hora de Honduras\)\./);
-    assert.match(banco, /\nAdjuntos: estado-septiembre\.pdf \(121 KB\)\./);
+    // A-5: numerados, con cómo abrir cada uno (correo adjunto <n>).
+    assert.match(banco, /\nAdjuntos: 1\. estado-septiembre\.pdf \(121 KB\)\. Para leer uno: PEDIR_HERRAMIENTA: correo adjunto <número>\./);
     assert.match(banco, /Su estado de cuenta de septiembre ya está disponible\. Saldo: L\. 12,500\.00/);
     assert.match(banco, /Detalles: \[enlace a bancatlan\.hn\]/);
     assert.doesNotMatch(banco, /oculto|<p>|&aacute;|track=/);

@@ -37,9 +37,11 @@ import { abrirRuta, rutaActual, RUTAS_DE_SESION } from '../app/rutas';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
 import { pedirPanelTrabajos } from '../trabajos/abrirPanel';
 import { usuarioActual } from '../app/sesion';
+import { pedirChatWA } from '../whatsapp/pedido';
 import {
   anotarVisto,
   claveVisto,
+  destinoMensajeExterno,
   interpretarAperturaPush,
   interpretarToque,
   leerDatos,
@@ -226,6 +228,22 @@ async function hacer(x: Pendiente, correo: string) {
     const out = await turno({ message: pedido, mode: 'GUARDIAN', userName: u?.name || '', correo, historial: [], idTurno: `push-si-${d.id}-${nuevoIdTurno()}`.slice(0, 80) });
     for (const a of accionesDelTurno(out)) emitir('accion', a);
     decir(out.reply || (out.error ? tr('No pude terminar eso ahora.', "I couldn't finish that right now.") : null));
+    return;
+  }
+  if (d.tipo === 'mensaje-externo') {
+    // A-6: un WhatsApp importante abre ESE chat con la sugerencia en la caja de texto (sin mandar nada); un correo, sus
+    // correos, y AURA dice de quién es.
+    const dest = destinoMensajeExterno(d);
+    if (!dest) return;
+    miga(`aviso push: mensaje importante (${d.canal}) → abrir`);
+    if (dest.abrir === 'whatsapp') {
+      pedirChatWA({ jid: dest.chat, nombre: dest.nombre, borrador: dest.borrador });
+      abrirRuta('Chats', { whatsapp: Date.now() });
+      return;
+    }
+    for (let i = 0; i < 20 && !hayAnfitrion(); i++) await new Promise((r) => setTimeout(r, 250));
+    abrirHoja('correos');
+    decir(dest.decir);
     return;
   }
   if (d.tipo === 'computadora' || (d.tipo === 'mensaje' && (d.abrir === 'computadora' || d.abrir === 'correos'))) {

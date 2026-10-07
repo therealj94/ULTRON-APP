@@ -20,6 +20,12 @@
  *                                        «Luego» se contesta al servidor sin abrir nada.
  *   recordatorio {texto}                → aviso; al tocarlo, AURA lo dice.
  *   computadora  {texto}                → «Terminé en mi computadora: …»; al tocarlo, la vista en vivo.
+ *   mensaje-externo {canal, titulo, texto, sugerencia, chat, nombre, urgente?}
+ *                                        → un WhatsApp o un correo IMPORTANTE que le llegó (server, lib/alertas-
+ *                                        mensajes.ts): una línea de qué dijo y la respuesta sugerida. Al tocarlo,
+ *                                        WhatsApp: se abre ESE chat con la sugerencia como borrador en la caja de
+ *                                        texto (whatsapp/pedido.ts; no sale nada sin tocar «Enviar»). Correo: se abren
+ *                                        sus correos y AURA dice de quién es.
  *
  * Nada se enseña si `para` no es de quien está registrado en este teléfono (teléfono compartido: si ya
  * entró otra persona, el aviso de la anterior no aparece). Cada aviso una sola vez (por tipo e id).
@@ -30,7 +36,7 @@ import { avisoDeLlamada, avisoNormal, CANAL_LLAMADA, type ConstantesNotifee } fr
 /** Las constantes de notifee que se usan (las de los recordatorios y el estilo de texto largo). */
 export type ConstantesPush = ConstantesNotifee & { AndroidStyle?: { BIGTEXT: number } };
 
-export const TIPOS_PUSH = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora'] as const;
+export const TIPOS_PUSH = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora', 'mensaje-externo'] as const;
 export type TipoPush = (typeof TIPOS_PUSH)[number];
 
 /** Lo que llega, ya validado y acotado. */
@@ -47,6 +53,16 @@ export type DatosPush = {
   pedido: string;
   /** mensaje: qué abrir al tocarlo. */
   abrir: string;
+  /** mensaje-externo: 'whatsapp' | 'correo'. */
+  canal: string;
+  /** mensaje-externo: el chat de WhatsApp (jid) o la ref del correo. */
+  chat: string;
+  /** mensaje-externo: quién escribió (o el grupo). */
+  nombre: string;
+  /** mensaje-externo: la respuesta sugerida (va como borrador; nunca se manda sola). */
+  sugerencia: string;
+  /** mensaje-externo: '1' si es urgente. */
+  urgente: string;
 };
 
 export const CANAL_AVISOS = 'aura-avisos';
@@ -59,7 +75,7 @@ export const LLAMADA_VIEJA_MS = 90_000;
 export const VENTANA_VISTOS_MS = 6 * 3600_000;
 export const MAX_VISTOS = 80;
 /** `tareas`: la mesa con el panel de tareas abierto (p. ej. «Terminé de investigar», server/investigar.ts). */
-export const ABRIBLES = ['mesa', 'chats', 'ajustes', 'computadora', 'correos', 'tareas'] as const;
+export const ABRIBLES = ['mesa', 'chats', 'ajustes', 'computadora', 'correos', 'tareas', 'whatsapp'] as const;
 
 const linea = (s: unknown, max: number) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -75,6 +91,11 @@ export function leerDatos(d: unknown): DatosPush | null {
   const para = String(x.para || '');
   if (!/^u[0-9a-f]{16}$/.test(para)) return null;
   const abrir = linea(x.abrir, 20).toLowerCase();
+  const canal = linea(x.canal, 12).toLowerCase();
+  // El chat de un mensaje externo: un jid de WhatsApp o la ref de un correo («<cuenta>:<uid>»); otra cosa no se abre.
+  const chat = linea(x.chat, 140);
+  const chatValido = canal === 'whatsapp' ? /^[0-9A-Za-z._:-]{3,120}@[a-z.]{2,40}$/.test(chat) : canal === 'correo' ? /^[A-Za-z0-9_-]{1,80}:\d{1,12}$/.test(chat) : false;
+  if (tipo === 'mensaje-externo' && !chatValido) return null;
   return {
     tipo,
     id,
@@ -85,6 +106,11 @@ export function leerDatos(d: unknown): DatosPush | null {
     motivo: linea(x.motivo, 300),
     pedido: linea(x.pedido, 600),
     abrir: (ABRIBLES as readonly string[]).includes(abrir) ? abrir : '',
+    canal: canal === 'whatsapp' || canal === 'correo' ? canal : '',
+    chat: chatValido ? chat : '',
+    nombre: linea(x.nombre, 80),
+    sugerencia: linea(x.sugerencia, 300),
+    urgente: x.urgente === '1' || x.urgente === true ? '1' : '',
   };
 }
 
@@ -94,7 +120,17 @@ export const idAviso = (p: Pick<DatosPush, 'tipo' | 'id'>) => `aura-push-${p.tip
 
 /** Lo que va en `data` del aviso (notifee solo acepta texto): de dónde vino y qué hacer al tocarlo. */
 function datosAviso(p: DatosPush): Record<string, string> {
-  return { aura: 'push', tipo: p.tipo, id: p.id, para: p.para, titulo: p.titulo, texto: p.texto, pedido: p.pedido, abrir: p.abrir };
+  return {
+    aura: 'push',
+    tipo: p.tipo,
+    id: p.id,
+    para: p.para,
+    titulo: p.titulo,
+    texto: p.texto,
+    pedido: p.pedido,
+    abrir: p.abrir,
+    ...(p.tipo === 'mensaje-externo' ? { canal: p.canal, chat: p.chat, nombre: p.nombre, sugerencia: p.sugerencia, urgente: p.urgente } : {}),
+  };
 }
 
 function privado(k: ConstantesNotifee): Record<string, unknown> {
@@ -202,7 +238,28 @@ export function planear(p: DatosPush, o: { dueno: string; ahora: number; k: Cons
         // El título lo pone el servidor según cómo terminó de verdad (nunca «Terminé» si no quedó); uno viejo no lo manda.
         aviso: avisoComun(p, k, p.titulo || tr('Terminé en mi computadora', 'Done on my computer'), p.texto || tr('Ya terminé la tarea.', 'I finished the task.')),
       };
+    case 'mensaje-externo':
+      return { que: 'mostrar', canales: [canalAvisos(k)], aviso: avisoMensajeExterno(p, k) };
   }
+}
+
+/** El aviso de un mensaje importante: quién y qué dijo, y la respuesta sugerida (que se abre como borrador al tocarlo). */
+export function avisoMensajeExterno(p: DatosPush, k: ConstantesPush): Record<string, unknown> {
+  const titulo = p.titulo || (p.canal === 'correo' ? tr('Correo importante', 'Important email') : tr('WhatsApp importante', 'Important WhatsApp'));
+  const cuerpo = `${p.texto || tr('Te escribieron.', 'Someone wrote to you.')}${p.sugerencia ? `\n${tr('Sugerencia', 'Suggestion')}: «${p.sugerencia}»` : ''}`;
+  const responder = p.canal === 'whatsapp' && p.sugerencia ? [{ title: tr('Responder', 'Reply'), pressAction: { id: ACCION_ABRIR, launchActivity: 'default' } }] : [];
+  return avisoComun(p, k, titulo, cuerpo, responder.length ? { actions: responder } : {});
+}
+
+/**
+ * Qué hace la app al tocar un mensaje importante. WhatsApp: abrir ESE chat con la sugerencia como borrador (no se manda).
+ * Correo: abrir sus correos y que AURA diga de quién es. null si el aviso no trae a dónde ir.
+ */
+export function destinoMensajeExterno(p: DatosPush): { abrir: 'whatsapp'; chat: string; nombre: string; borrador: string } | { abrir: 'correos'; decir: string } | null {
+  if (p.tipo !== 'mensaje-externo' || !p.chat) return null;
+  if (p.canal === 'whatsapp') return { abrir: 'whatsapp', chat: p.chat, nombre: p.nombre, borrador: p.sugerencia };
+  if (p.canal === 'correo') return { abrir: 'correos', decir: p.texto };
+  return null;
 }
 
 /* ── los toques ──────────────────────────────────────────────────────────────────────────── */
