@@ -6,6 +6,7 @@
  * mismo catastro tres veces dejaba tres «catastro · 2 entidades» y quien lo miraba contaba seis
  * concesiones donde había dos.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { identificar, puedeEscribir, reiniciarPadron } from '../lib/acceso';
@@ -20,7 +21,7 @@ test('quién puede alimentar el cerebro de Dr Electrum', async (t) => {
 
   await t.test('José carga; un nombre escrito a mano, no', () => {
     reiniciarPadron();
-    assert.equal(puedeEscribir(identificar({ correo: 'j.ordonez@ordenglobal.org' }), 'electrum'), true);
+    assert.equal(puedeEscribir(identificar({ correo: 'j.herrera@ordenglobal.org' }), 'electrum'), true);
     assert.equal(puedeEscribir(identificar({ nombre: 'José' }), 'electrum'), false);
   });
 

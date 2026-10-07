@@ -2,6 +2,7 @@
  * El cerebro rápido de la voz (lib/cerebro-rapido.ts): qué turnos van por Bedrock, cómo se le pasan los
  * mensajes, y que se eche para atrás («PASO») sin decir nada cuando le piden hacer algo.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { aBedrock, anotarExitoRapido, anotarFalloRapido, cerebroRapidoActivo, esPaso, esSoloConversacion, podriaSerPaso, FALLOS_PARA_APAGAR, MODELO_RAPIDO_OMISION } from '../lib/cerebro-rapido';

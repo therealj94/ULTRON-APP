@@ -167,7 +167,8 @@ prueba('qué camino: el nuevo solo con todo a favor; si no, el de siempre y el m
 prueba('cuándo un fallo apaga el camino nuevo en la sesión', () => {
   for (const codigo of ['pista', 'interno', 'puente', 'formato']) assert.equal(falloDeSesion({ codigo }, 1), true, codigo);
   assert.equal(falloDeSesion({ codigo: 'http', status: 404 }, 1), true, 'servidor viejo sin la ruta');
-  assert.equal(falloDeSesion({ codigo: 'http', status: 401 }, 1), true);
+  assert.equal(falloDeSesion({ codigo: 'http', status: 401 }, 1), false, 'un 401 suelto: el respaldo renueva el token');
+  assert.equal(falloDeSesion({ codigo: 'http', status: 401 }, 2), true, 'dos seguidos: apagado');
   assert.equal(falloDeSesion({ codigo: 'http', status: 503 }, 1), false, 'un 503 suelto: solo esa frase');
   assert.equal(falloDeSesion({ codigo: 'red' }, 1), false, 'una caída de red: solo esa frase');
   assert.equal(falloDeSesion({ codigo: 'red' }, 2), true, 'dos seguidas: apagado');

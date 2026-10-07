@@ -61,7 +61,7 @@ test('el guion: 12 escenas, cada línea con su texto en los dos idiomas, su paso
 
 test('el nombre: se saluda con el primero y, sin nombre, la frase queda bien', () => {
   const l = G.ESCENAS[0].lineas[0];
-  assert.match(G.textoDe(l, 'es', 'José Ordóñez'), /¡Hola otra vez, José!/);
+  assert.match(G.textoDe(l, 'es', 'José Herrera'), /¡Hola otra vez, José!/);
   assert.equal(G.textoDe(l, 'es', ''), '¡Hola otra vez! Ahora te enseño AURA en tu computadora.');
   assert.equal(G.textoDe(l, 'en', ''), 'Hi again! Now I’ll show you AURA on your computer.');
 });

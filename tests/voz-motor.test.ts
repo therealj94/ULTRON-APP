@@ -41,6 +41,9 @@ process.env.ULTRON_MEMORIA_BUCKET = '';
 process.env.AURA_SUSPENSIONES = 'ninguna';
 const LLAVE = 'sk_prueba_del_motor_0123456789';
 process.env.ELEVENLABS_API_KEY = LLAVE;
+// Los agentes de ElevenLabs llegan por entorno (el repo es público): ids inventados.
+process.env.ELEVENLABS_AGENTE_AURA_ES = 'agent_inventado_aura_es';
+process.env.ELEVENLABS_AGENTE_CLAUDIO_ES = 'agent_inventado_claudio_es';
 process.env.AURA_MOTOR_VOZ = 'speech-engine';
 process.env.ELEVENLABS_SPEECH_ENGINE_AURA_ES = 'seng_pruebaMotor01';
 delete process.env.ELEVENLABS_SPEECH_ENGINE_CLAUDIO_ES;
@@ -555,8 +558,8 @@ test('apagado por cuenta: /api/voz/agente da el agente de siempre y una llamada 
   try {
     const yo = await persona(false);
     const { j } = await abrir(s.base, yo.token);
-    assert.equal(j.agente, 'agent_6801m3qbvv83fzgvg42eev85m8m5');
-    assert.equal(s.pedidas.at(-1), 'https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=agent_6801m3qbvv83fzgvg42eev85m8m5');
+    assert.equal(j.agente, 'agent_inventado_aura_es');
+    assert.equal(s.pedidas.at(-1), 'https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=agent_inventado_aura_es');
     assert.equal('motor' in j, false);
     assert.equal('primerMensaje' in j, false);
     const el = await llamada(s, j.pase);
@@ -573,7 +576,7 @@ test('apagado por avatar sin recurso: el agente de siempre aunque la cuenta teng
   try {
     const yo = await persona();
     const { j } = await abrir(s.base, yo.token, 'claudio', 'es');
-    assert.equal(j.agente, 'agent_3501m3qbvyc5e9b946hm5byv3c7g');
+    assert.equal(j.agente, 'agent_inventado_claudio_es');
     assert.equal('motor' in j, false);
   } finally {
     await s.cerrar();
@@ -587,7 +590,7 @@ test('apagado en el servidor (sin AURA_MOTOR_VOZ): ni WebSocket, ni vínculo, ni
   try {
     const yo = await persona();
     const { j } = await abrir(s.base, yo.token);
-    assert.equal(j.agente, 'agent_6801m3qbvv83fzgvg42eev85m8m5', 'la cuenta está en la lista, pero el servidor lo tiene apagado');
+    assert.equal(j.agente, 'agent_inventado_aura_es', 'la cuenta está en la lista, pero el servidor lo tiene apagado');
     assert.equal('motor' in j, false);
     assert.equal(await conectar(s.ws, cabecerasBuenas(j.pase)), 'rechazada');
     const v = await fetch(`${s.base}${M.RUTA_MOTOR}/vincular`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ultron-sesion': yo.token }, body: JSON.stringify({ pase: j.pase, conversacion: 'conv_123456' }) });

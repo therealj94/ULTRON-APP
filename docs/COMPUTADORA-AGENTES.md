@@ -6,13 +6,13 @@ Cada avatar de AU-RA tiene su propia computadora en la nube: un escritorio Ubunt
 
 | Pieza | Qué es | De dónde sale |
 |---|---|---|
-| GPU | `g6.xlarge` (NVIDIA L4, 24 GB), `aura-computadora`, IP elástica 54.85.85.77 | AMI oficial *Deep Learning Base OSS Nvidia Driver GPU (Ubuntu 24.04)* |
+| GPU | `g6.xlarge` (NVIDIA L4, 24 GB), `aura-computadora`, IP elástica (en Render, `COMPUTADORA_URL`; no va en el repositorio) | AMI oficial *Deep Learning Base OSS Nvidia Driver GPU (Ubuntu 24.04)* |
 | Modelo gratis | Hcompany/Holo-3.1-9B (Apache 2.0) en vLLM 0.30, FP8 | Banderas de la guía de H Company («Local inference») |
 | Escritorio | Ubuntu + Xvfb + VNC + noVNC + Firefox + LibreOffice, 1280×800 | Imagen de la demo oficial de *computer use* de Anthropic |
 | Ciclo del agente | `scripts/nodo-computadora/agente.py` | Guía de Holo («Core concepts», «Function calling») y documentación de *computer use* de Claude |
-| Puerta | Caddy con TLS (`https://54-85-85-77.sslip.io/api`), clave Bearer | `scripts/nodo-computadora/Caddyfile` |
+| Puerta | Caddy con TLS (`https://<ip-con-guiones>.sslip.io/api`), clave Bearer | `scripts/nodo-computadora/Caddyfile` |
 
-Instalación en el nodo: `sudo COMPUTADORA_CLAVE=... DOMINIO=54-85-85-77.sslip.io bash scripts/nodo-computadora/instalar.sh`.
+Instalación en el nodo: `sudo COMPUTADORA_CLAVE=... DOMINIO=<ip-con-guiones>.sslip.io bash scripts/nodo-computadora/instalar.sh`.
 
 Plan visible, su sí antes de algo sensible, pausar, tomar el control, tarjeta del resultado e historial (2-oct, «como el agente de ChatGPT»): ver [COMPUTADORA.md](COMPUTADORA.md), con los pasos para desplegar el `agente.py` nuevo.
 

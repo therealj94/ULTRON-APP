@@ -1,3 +1,4 @@
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolverQuien, quienVerificado } from '../lib/memoria';
@@ -5,7 +6,7 @@ import { puedeCambiarSistema } from '../lib/junta';
 
 test('con sesión, el body no escala: Carlos no se vuelve José por poner un correo', () => {
   const sesionCarlos = { nombre: 'Carlos', correo: '' };
-  const body = { usuario: 'José', correo: 'j.ordonez@ordenglobal.org' };
+  const body = { usuario: 'José', correo: 'j.herrera@ordenglobal.org' };
   // La sesión identifica solo por su CORREO (server/nivel.ts): el nombre de una sesión lo elige quien
   // entra, y con Genesis abierto cualquiera podría llamarse «Carlos» o «José». Sin correo del padrón,
   // nadie; y el correo del cuerpo, menos.
@@ -41,5 +42,5 @@ test('Telegram verificado sí identifica y da mando a José', () => {
 });
 
 test('sesión de José da mando', () => {
-  assert.equal(puedeCambiarSistema(quienVerificado({}, { nombre: 'José', correo: 'j.ordonez@ordenglobal.org' })), true);
+  assert.equal(puedeCambiarSistema(quienVerificado({}, { nombre: 'José', correo: 'j.herrera@ordenglobal.org' })), true);
 });

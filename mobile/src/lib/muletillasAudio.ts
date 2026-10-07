@@ -11,7 +11,7 @@
  * Lo que falla se vuelve a intentar en la próxima sesión (una vez por sesión, para no gastar voz en bucle).
  */
 import * as FileSystem from 'expo-file-system/legacy';
-import { sessionHeaders, ttsUrl } from './api';
+import { renovarTokenVoz, sessionHeaders, ttsUrl } from './api';
 import { MAX_CLIP_MS, VOLUMEN_ASENTIR, frasesAsentir, textoParaVoz } from './asentir';
 import { callarClipEfecto, cargarClipEfecto, soltarClipEfecto, sonarClipEfecto, type ClipEfecto } from './sfx';
 
@@ -52,8 +52,10 @@ async function existente(base: string): Promise<string | null> {
 async function bajar(base: string, frase: string, avatar: string, idioma: 'es' | 'en'): Promise<string | null> {
   const tmp = `${base}.tmp`;
   try {
-    const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
-    const r = await FileSystem.downloadAsync(ttsUrl(textoParaVoz(frase), 'speak', 'neutral', avatar, idioma), tmp, { headers });
+    const url = ttsUrl(textoParaVoz(frase), 'speak', 'neutral', avatar, idioma);
+    let r = await FileSystem.downloadAsync(url, tmp, { headers: { Accept: 'audio/*', ...(await sessionHeaders()) } });
+    // Sin una sesión viva el servidor solo da lo ya guardado: con el token vencido, se renueva una vez y se repite.
+    if (r.status === 401 && (await renovarTokenVoz())) r = await FileSystem.downloadAsync(url, tmp, { headers: { Accept: 'audio/*', ...(await sessionHeaders()) } });
     const ct = cabecera(r.headers, 'Content-Type');
     const motor = cabecera(r.headers, 'X-Ultron-TTS');
     if (r.status !== 200 || !/audio|octet/i.test(ct) || !/^elevenlabs/i.test(motor)) throw new Error('no sirve');

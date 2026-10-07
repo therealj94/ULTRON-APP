@@ -2,6 +2,7 @@
  * Expresiones de voz ([risa], [suspiro]…) y el banco de clips nuevo: canciones del estudio, frases
  * grabadas con Dora y reacciones al tacto.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -353,7 +354,7 @@ describe('el banco de la web', () => {
   });
 
   it('las frases nuevas suenan cuando la respuesta es exactamente esa frase', () => {
-    const nuevas = ['bienvenido', 'vertejose', 'vertemedardo', 'vertecarlos', 'vertemayra', 'holadenuevo', 'mealegra', 'unmomento', 'dameunsegundo', 'claroquesi', 'congusto', 'perfecto', 'yaesta', 'aquilotenes', 'noentendi', 'sinconexion', 'denada', 'cuandoquieras', 'hastaluego', 'quedescanses'];
+    const nuevas = ['bienvenido', 'vertejose', 'vertecarlos', 'holadenuevo', 'mealegra', 'unmomento', 'dameunsegundo', 'claroquesi', 'congusto', 'perfecto', 'yaesta', 'aquilotenes', 'noentendi', 'sinconexion', 'denada', 'cuandoquieras', 'hastaluego', 'quedescanses'];
     for (const id of nuevas) {
       const c = clipPorId(id)!;
       assert.ok(c?.texto, id);
@@ -364,8 +365,9 @@ describe('el banco de la web', () => {
 
   it('saluda por nombre a la junta y da la bienvenida a los demás', () => {
     assert.equal(saludoDe('José').id, 'vertejose');
-    assert.equal(saludoDe('Medardo Ordóñez').id, 'vertemedardo');
-    assert.equal(saludoDe('mayra').id, 'vertemayra');
+    // Los saludos grabados con otros nombres de la junta salieron del repo público (auditoría C-1): bienvenida.
+    assert.equal(saludoDe('Ramiro Herrera').id, 'bienvenido');
+    assert.equal(saludoDe('Carlos').id, 'vertecarlos');
     assert.equal(saludoDe('Invitado').id, 'bienvenido');
     assert.equal(saludoDe('').id, 'bienvenido');
   });

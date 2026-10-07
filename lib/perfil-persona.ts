@@ -6,8 +6,8 @@
  * de allá porque ese archivo trae tipos de React Native; se copia aquí la forma y se valida TODO lo que
  * llega, porque viene de un teléfono.
  *
- * Es por CORREO, no por miembro de la junta: la memoria de lib/memoria.ts es de la junta (José,
- * Medardo…), y el perfil es de cualquiera que entra a AU-RA. Se guarda donde la memoria:
+ * Es por CORREO, no por miembro de la junta: la memoria de lib/memoria.ts es de la junta (un cajón
+ * por persona del padrón), y el perfil es de cualquiera que entra a AU-RA. Se guarda donde la memoria:
  *   · caché en memoria (el turno lo lee en cada vuelta y no puede esperar a S3);
  *   · disco (`data/perfiles/`, o ULTRON_PERFILES_DIR), que sirve en local y en las pruebas;
  *   · S3 (`ULTRON_MEMORIA_BUCKET`, `ultron/perfiles/<huella>.json`), la copia que sobrevive a un

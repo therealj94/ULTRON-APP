@@ -213,7 +213,7 @@ export function saludoHonduras(ahora = new Date()): 'Buenos días' | 'Buenas tar
   return 'Buenas noches';
 }
 
-/** El nombre de pila para saludar: «José Ordóñez» → «José». Los genéricos no se dicen. */
+/** El nombre de pila para saludar: «Ana Rivera» → «Ana». Los genéricos no se dicen. */
 const TRATAMIENTOS = /^(ing|lic|licda|dr|dra|sr|sra|srta|don|doña|arq|abg|abog|prof|ph\.?d)\.?$/i;
 
 export function nombreDePila(nombre: string | null | undefined): string | null {

@@ -7,6 +7,7 @@
 
 import { EMOCIONES, EMOCION_INFO, type Emocion } from './emocion';
 import { perfilActivo, type Herramienta, type PerfilCerebro } from './perfiles';
+import { enumerar, miembrosUltron, nombresConNivel, quienesMandan } from './junta';
 
 export type GrupoCapacidad = 'herramientas' | 'voz' | 'personalidad' | 'gestos' | 'canales' | 'memoria';
 
@@ -176,7 +177,7 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       requiere: 'taller',
       grupo: 'herramientas',
       titulo: 'Ejecutar Python',
-      detalle: 'Corre código en sandbox. Solo José y Medardo con sesión.',
+      detalle: `Corre código en sandbox. Solo ${quienesMandan('y')} con sesión.`,
       ejemplos: ['ejecuta este código', 'corré el script'],
       vivo: n.ejecutor,
       falta: n.ejecutor ? undefined : 'ejecutor apagado o sin sandbox',
@@ -286,7 +287,7 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       requiere: 'telegram',
       grupo: 'canales',
       titulo: 'Telegram de la junta',
-      detalle: 'Responde en privado a José, Medardo, Carlos y Mayra. Manda fotos, PDF y notas de voz. Avisa urgencias.',
+      detalle: `Responde en privado a ${enumerar(Object.values(miembrosUltron()).map((m) => m.nombre).filter(Boolean), 'y', 'la junta')}. Manda fotos, PDF y notas de voz. Avisa urgencias.`,
       ejemplos: ['mandá esto por telegram', '/audio en Telegram'],
       vivo: n.telegram && n.telegramIn,
       falta: n.telegram && n.telegramIn ? undefined : 'TELEGRAM_BOT_TOKEN, CHAT_ID o WEBHOOK_SECRET',
@@ -297,7 +298,7 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       requiere: 'taller',
       grupo: 'canales',
       titulo: 'Redesplegar la mesa en Render',
-      detalle: 'Solo mando (José, Medardo) con sesión.',
+      detalle: `Solo mando (${nombresConNivel('mando').join(', ') || 'la junta con mando'}) con sesión.`,
       ejemplos: ['redesplegá la mesa'],
       vivo: null,
       donde: 'ambas',

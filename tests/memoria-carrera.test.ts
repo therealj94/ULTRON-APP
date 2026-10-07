@@ -8,6 +8,7 @@
  * S3 falso con lecturas lentas (la PRIMERA lectura de cada vuelta tarda más que las demás, como un S3 que se atasca),
  * 50 vueltas con tiempos al azar, y un reinicio de verdad (caché y disco vacíos) antes de comprobar lo que quedó.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

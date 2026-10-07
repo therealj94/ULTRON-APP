@@ -2,8 +2,8 @@
  * Memoria de largo plazo POR PERSONA en el teléfono de la mesa.
  *
  * El teléfono lo comparten varios miembros de la junta. Antes había una sola lista para todos y cada
- * turno le mandaba al cerebro lo que había dicho cualquiera: lo que José le pidió recordar le llegaba
- * también a Medardo. Ahora cada quien tiene su clave (por correo; sin correo, por nombre).
+ * turno le mandaba al cerebro lo que había dicho cualquiera: lo que uno le pidió recordar le llegaba
+ * también a otro. Ahora cada quien tiene su clave (por correo; sin correo, por nombre).
  *
  * La lista vieja se reparte UNA vez, sin filtrar nada ajeno: quien entra primero se queda solo con los
  * hechos firmados con su nombre exacto («José: …», que es como la mesa los escribía) y el resto se

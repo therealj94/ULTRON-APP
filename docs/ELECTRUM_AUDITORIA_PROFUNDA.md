@@ -1,6 +1,6 @@
 # Auditoría profunda de Dr Electrum — versión 3, etapas 1 y 2 cerradas
 
-Fecha: 30 de septiembre de 2026, Honduras. Base: la auditoría de Medardo sobre `25d6591`
+Fecha: 30 de septiembre de 2026, Honduras. Base: la auditoría de la junta sobre `25d6591`
 («DR_ELECTRUM_AUDITORIA_PROFUNDA_PARA_CLAUDE.md»). Esta versión la contrasta, hallazgo por
 hallazgo, con el código actual de la rama `ccr-732a8335-3t1xol` (PR #84), corrige lo que la
 primera versión dijo mal, agrega lo que apareció al verificar y deja resuelta la etapa 1.

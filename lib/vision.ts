@@ -15,6 +15,7 @@ import { clave } from './boveda';
 import { destinoPublico } from './red-publica';
 import { presupuesto, type Presupuesto } from './presupuesto';
 import { pareceErrorDeServicio, parsearVista, promptCompacto, promptEstructurado, vistaVacia, type FocoVision, type VistaEstructurada } from './vision-estructurada';
+import { gastarCupoDiario } from './freno-gasto';
 
 export type Vista = { texto: string; via: string; foto?: Buffer };
 
@@ -270,6 +271,8 @@ async function verConLosOjos(imagen: string, p: PedidoOjos): Promise<Vista> {
     console.warn('[vision] sin ojo: falta ULTRON_OJO_URL+ULTRON_OJO_CLAVE, GEMINI_API_KEY o credenciales de AWS (Bedrock)');
     return { texto: NO_PUDE_VER, via: 'ninguno' };
   }
+  // El freno de gasto diario (lib/freno-gasto.ts): una mirada, una llamada. Pasado el tope, no se mira.
+  if (!gastarCupoDiario('vision', 1)) return { texto: NO_PUDE_VER, via: 'tope' };
   for (const nombre of listos) {
     if (!p.reloj.alcanza()) {
       console.warn(`[vision] sin tiempo para ${nombre}: el cliente ya no espera esta respuesta`);

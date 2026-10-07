@@ -7,6 +7,7 @@
  *  · El hilo de Telegram vivía solo en memoria: cada redespliegue lo borraba. Ahora se guarda en
  *    cognitivo.hilo y se trae de vuelta (esto necesita ELECTRUM_DB_URL; sin ella, se salta).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { informeConversacion } from '../server/electrum/informe';

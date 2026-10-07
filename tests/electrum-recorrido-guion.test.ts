@@ -2,6 +2,7 @@
  * El guion del recorrido sale de los datos: la zona con más mapas escaneados, su mejor concesión,
  * el foco de oro de las muestras y las frases de la ficha, con renglones como los de producción.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analisisDeFicha, concesionesEn, enOracion, focoDeOro, nombreDePila, saludoHonduras, vencimientos, zonaMasRica, type Encuadre } from '../src-electrum/demo/guion';
@@ -102,8 +103,8 @@ test('el saludo va con la hora de Honduras (UTC−6), no la del navegador', () =
 });
 
 test('se saluda por el nombre de pila, sin tratamientos ni nombres genéricos', () => {
-  assert.equal(nombreDePila('José Ordóñez'), 'José');
-  assert.equal(nombreDePila('Medardo Ordóñez'), 'Medardo');
+  assert.equal(nombreDePila('José Herrera'), 'José');
+  assert.equal(nombreDePila('Ramiro Herrera'), 'Ramiro');
   assert.equal(nombreDePila('keidy'), 'Keidy');
   assert.equal(nombreDePila('Ing. María López'), 'María');
   assert.equal(nombreDePila('Lic Carlos'), 'Carlos');

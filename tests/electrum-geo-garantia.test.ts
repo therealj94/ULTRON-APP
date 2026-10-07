@@ -2,6 +2,7 @@
  * «Ahí tenés los tres» sin haber dibujado nada (La Escalera, 28-09): la garantía dibuja los mapas
  * con la misma herramienta, o corrige la respuesta si no se pudo.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { garantizarMapasGeo, PIDE_MAPAS_GEO, tipoPedido, zonaDelPedido } from '../server/electrum/geo-garantia';

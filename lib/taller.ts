@@ -8,7 +8,7 @@ import { catalogoCanales, fotoSistema, redesplegarMesa } from './sistema';
 import { agregarTarea, marcarTarea, resumenTareas } from './tareas';
 import { fotoBoveda, clave } from './boveda';
 import { dictarSistema, notaDeVoz, pideNotaDeVoz } from './voz';
-import { puedeCambiarSistema, type MiembroId } from './junta';
+import { enumerar, nombresConNivel, puedeCambiarSistema, quienesMandan, type MiembroId } from './junta';
 import type { Nivel } from './acceso';
 import type { NivelAura } from './perfiles/tipos';
 import { autorizar, evaluar, textoDeDecision, type Efecto } from './cognitivo/politica';
@@ -530,9 +530,9 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
   if (consulta && (p.accion === 'redeploy' || p.accion === 'mantenimiento')) {
     tools.push(p.accion);
     hechos.push(
-      'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No redespliego, no hago mantenimiento ni corro el ejecutor. José o Medardo sí pueden. El resto del taller (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.'
+      `ACCESO: consulta. ${enumerar(nombresConNivel('lee'), 'y', 'Quien tiene acceso de consulta')} no cambia${nombresConNivel('lee').length > 1 ? 'n' : ''} el sistema. No redespliego, no hago mantenimiento ni corro el ejecutor. ${quienesMandan()} sí pueden. El resto del taller (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.`
     );
-    return out('Eso cambia el sistema. Tu acceso es consulta: no lo hago. Pedile a José o a Medardo.');
+    return out(`Eso cambia el sistema. Tu acceso es consulta: no lo hago. Pedile a ${enumerar(nombresConNivel('mando'), 'o', 'alguien de la junta con mando').replace(/ o (?=[^ ]+$)/, ' o a ')}.`);
   }
 
   if (p.accion === 'sistema' || p.accion === 'mantenimiento') {

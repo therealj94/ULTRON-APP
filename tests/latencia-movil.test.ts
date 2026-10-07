@@ -12,6 +12,7 @@
  *    fotos al servidor; con todos reconocidos y la vista cerrada, también menos fotos (camaraModo, seguimiento, vistaCamara);
  *  · reconocer más rápido: un solo reconocimiento MUY seguro ya pone el nombre; lo dudoso sigue con 2 de 3 votos.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TrazaTurno } from '../mobile/src/lib/trazaTurno';

@@ -8,6 +8,7 @@
  *    aun así tiene tope por día;
  *  · las rutas: todo por la sesión (otro no ve ni borra nada), 401 sin sesión, triaje solo para el dueño.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -48,7 +49,7 @@ test('a quién se refiere: «mi esposa», «la esposa», «mi mujer», «Ana», 
     persona({ nombre: 'Ana María', relacion: 'esposa', canales: { whatsapp: '+50499990000' } }),
     persona({ nombre: 'Beto', relacion: 'hijo' }),
     persona({ nombre: 'Carlos', relacion: 'hijo', alias: ['Charly'] }),
-    persona({ nombre: 'Medardo', relacion: 'socio' }),
+    persona({ nombre: 'Ramiro', relacion: 'socio' }),
   ];
   const nombre = (r: any) => (r && 'persona' in r ? r.persona.nombre : r && 'ambiguas' in r ? r.ambiguas.map((p: any) => p.nombre) : null);
   assert.equal(nombre(C.resolverPersona(xs, 'mi esposa')), 'Ana María');
@@ -59,7 +60,7 @@ test('a quién se refiere: «mi esposa», «la esposa», «mi mujer», «Ana», 
   assert.deepEqual(nombre(C.resolverPersona(xs, 'mi hijo')), ['Beto', 'Carlos'], 'dos hijos: hay que preguntar');
   assert.equal(nombre(C.resolverPersona(xs, 'mi hijo Beto')), 'Beto');
   assert.equal(nombre(C.resolverPersona(xs, 'Charly')), 'Carlos');
-  assert.equal(nombre(C.resolverPersona(xs, 'mi socio')), 'Medardo');
+  assert.equal(nombre(C.resolverPersona(xs, 'mi socio')), 'Ramiro');
   assert.equal(nombre(C.resolverPersona(xs, '9999-0000')), 'Ana María');
   assert.equal(C.resolverPersona(xs, 'mi mamá'), null);
   assert.equal(C.resolverPersona(xs, 'Pedro'), null);

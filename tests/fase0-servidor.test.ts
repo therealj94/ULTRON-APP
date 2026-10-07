@@ -9,6 +9,7 @@
  *  · 0.6: una sesión de Dr Electrum (código temporal o persona solo de Electrum) no abre la mesa.
  *  · 0.10: la visión no le enseña a nadie la dirección del ojo.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -280,6 +281,9 @@ test('0.4 un cuerpo grande sin sesión se corta sin leerlo (401 en las rutas de 
   assert.ok('via' in ((await o.json()) as any), 'contestó la ruta del oído');
   // Una ruta que no lleva archivos sigue con el tope general aunque haya sesión.
   assert.equal((await turno('/api/memoria', { hecho: 'x'.repeat(2_000_000) }, h)).status, 413);
-  // Y lo normal, chico, pasa como siempre (también sin sesión: la APK pide etiquetas de la mesa).
-  assert.equal((await turno('/api/vision/analyze', { ...vision, base64Data: 'data:image/jpeg;base64,AAAA' })).status, 200);
+  // Lo normal, chico, pasa con sesión; sin sesión ya no (auditoría C-2: mirar gasta la visión de José).
+  assert.equal((await turno('/api/vision/analyze', { ...vision, base64Data: 'data:image/jpeg;base64,AAAA' }, h)).status, 200);
+  const sinSesion = await turno('/api/vision/analyze', { ...vision, base64Data: 'data:image/jpeg;base64,AAAA' });
+  assert.equal(sinSesion.status, 401);
+  assert.equal(((await sinSesion.json()) as any).code, 'sesion_requerida');
 });

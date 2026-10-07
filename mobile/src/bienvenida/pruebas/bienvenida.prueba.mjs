@@ -58,7 +58,7 @@ prueba('conectar el correo y el WhatsApp desde la primera vez (saltable), con in
   // José (3-oct): «desde el principio… conectar WhatsApp y el correo». Se ofrece siempre, saltable.
   assert.ok(pasosDelPlan(borradorDesde(null, 'Ana')).includes('conectar'), 'se ofrece siempre, aunque el objetivo no la pida');
   assert.equal(cambiosDelPaso('conectar', borradorDesde(null, 'Ana')), null, 'no escribe en el perfil (lo guarda el servidor)');
-  assert.ok(esCorreoOrdenGlobal('j.ordonez@ordenglobal.org') && esCorreoOrdenGlobal('  Ana@OrdenGlobal.ORG '));
+  assert.ok(esCorreoOrdenGlobal('j.herrera@ordenglobal.org') && esCorreoOrdenGlobal('  Ana@OrdenGlobal.ORG '));
   for (const no of ['ana@gmail.com', 'ana@ordenglobal.org.hn', 'ana@mail-ordenglobal.org', 'ordenglobal.org', '']) assert.ok(!esCorreoOrdenGlobal(no), no);
   const pc = leer('primeravez/pasos/PasoConectar.tsx');
   assert.match(pc, /'\/api\/correo\/cuentas'/, 'conecta de verdad (el servidor prueba leer y mandar)');
@@ -132,7 +132,7 @@ prueba('lo dictado marca las opciones que nombró y deja lo demás como texto', 
 });
 
 prueba('lo que cada paso guarda en el perfil (como motorComputadora/iniciativa: guardarPerfil)', () => {
-  const b = { ...borradorDesde(null, 'José Enamorado'), encuesta: { trabajo: 'Minería', ayuda: 'Revisar mis correos' }, iniciativa: 'baja' };
+  const b = { ...borradorDesde(null, 'José Villeda'), encuesta: { trabajo: 'Minería', ayuda: 'Revisar mis correos' }, iniciativa: 'baja' };
   assert.equal(b.apodo, 'José');
   assert.deepEqual(cambiosDelPaso('encuesta:trabajo', b), { encuesta: { trabajo: 'Minería' } });
   assert.deepEqual(cambiosDelPaso('encuesta:ayuda', b), { encuesta: { ayuda: 'Revisar mis correos' } });

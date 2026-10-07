@@ -56,7 +56,7 @@ POST = {
 # ── lo que se rellena (se reparte entre entrenamiento, validación y prueba) ────────────────────
 RELLENO = {
     'es': {
-        'c': ['mi mamá', 'beto', 'la ana', 'mi esposa', 'mi hermano', 'don chepe', 'karla', 'el profe carlos', 'mi papá', 'la abuela', 'medardo',
+        'c': ['mi mamá', 'beto', 'la ana', 'mi esposa', 'mi hermano', 'don chepe', 'karla', 'el profe carlos', 'mi papá', 'la abuela', 'ramiro',
               'mi jefe', 'la tía rosa', 'josé', 'mi hija', 'el licenciado', 'maría josé', 'mi compadre', 'mi prima', 'el doctor ramírez', 'la vecina',
               'mi suegra', 'el pastor', 'lupita', 'mi cuñado', 'don ramón', 'mi hijo', 'la seño marta', 'kevin', 'la doña chayo'],
         'h': ['a las 5', 'a las cinco', 'a las 5 de la tarde', 'a las siete de la mañana', 'a las 3 y media', 'mañana a las 7', 'a las 9 de la noche',

@@ -10,6 +10,7 @@
  *  · las rutas: todo por la sesión, nadie ve ni toca los teléfonos de otro, la prueba es de la junta;
  *  · el seudónimo `para` es el mismo que calcula el teléfono (mobile/src/lib/cuenta.ts).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -203,7 +204,7 @@ test('token de acceso: se canjea UNA vez, se reutiliza y se renueva a 5 min de v
 
 test('solo datos, todo texto: la llamada con prioridad alta y 60 s de vida; `para` es el seudónimo del teléfono', async () => {
   conCuenta();
-  const c = 'Jose@OrdenGlobal.org';
+  const c = 'Jose.H@OrdenGlobal.org';
   await P.registrarToken(c, { token: tok('jose'), aparato: 'tel-jose' });
   const r = await P.llamarConAura(c, 'Llegó el correo del banco que esperabas', 'llam-1');
   assert.equal(r.enviados, 1);
@@ -215,8 +216,8 @@ test('solo datos, todo texto: la llamada con prioridad alta y 60 s de vida; `par
   assert.equal(e.data.de, 'AURA');
   assert.equal(e.data.id, 'llam-1');
   assert.equal(e.data.aura, 'push');
-  // El mismo valor que da mobile/src/lib/cuenta.ts seudonimoDe('Jose@OrdenGlobal.org ') (calculado allá).
-  assert.equal(e.data.para, 'u590213d687c8aef4');
+  // El mismo valor que da mobile/src/lib/cuenta.ts seudonimoDe('Jose.H@OrdenGlobal.org ') (calculado allá).
+  assert.equal(e.data.para, 'uf9c6853080b664fa');
   assert.equal(P.seudonimoDe('maría@ejemplo.com'), 'u4ac3c79e3ae85c4f');
   // Un mensaje normal vive más.
   await P.avisarConAura(c, 'AURA', 'Hola');
@@ -461,15 +462,15 @@ const K = {
   EventType: { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 },
   AndroidStyle: { BIGTEXT: 1 },
 };
-const YO = P.seudonimoDe('jose@ordenglobal.org');
-const llega = (datos: any, ahora = 1_000_000) => L.leerDatos(P.datosParaFcm('jose@ordenglobal.org', datos, ahora));
+const YO = P.seudonimoDe('jose.h@ordenglobal.org');
+const llega = (datos: any, ahora = 1_000_000) => L.leerDatos(P.datosParaFcm('jose.h@ordenglobal.org', datos, ahora));
 
 test('teléfono: lo que manda el servidor se lee tal cual; lo que no es de AURA o viene roto, no', () => {
   const p = llega({ tipo: 'mensaje', id: 'm1', titulo: 'AURA', texto: 'Hola', abrir: 'computadora' });
   assert.deepEqual([p?.tipo, p?.id, p?.para, p?.texto, p?.abrir], ['mensaje', 'm1', YO, 'Hola', 'computadora']);
   assert.equal(L.leerDatos({ tipo: 'mensaje', id: 'x', para: YO }), null, 'sin aura: push');
   assert.equal(L.leerDatos({ aura: 'push', tipo: 'otro', id: 'x', para: YO }), null);
-  assert.equal(L.leerDatos({ aura: 'push', tipo: 'mensaje', id: 'x', para: 'jose@ordenglobal.org' }), null, '`para` es un seudónimo, nunca un correo');
+  assert.equal(L.leerDatos({ aura: 'push', tipo: 'mensaje', id: 'x', para: 'jose.h@ordenglobal.org' }), null, '`para` es un seudónimo, nunca un correo');
   assert.equal(llega({ tipo: 'mensaje', id: 'm2', texto: 'x', abrir: 'https://malo' })?.abrir, '', 'abrir solo lo conocido');
   // «Terminé de investigar» (server/investigar.ts) abre sus Tareas.
   assert.equal(llega({ tipo: 'mensaje', id: 'inv-tk_1', titulo: 'Terminé de investigar', texto: '«Copán»: listo.', abrir: 'tareas' })?.abrir, 'tareas');

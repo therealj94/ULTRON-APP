@@ -10,6 +10,7 @@
  * Lo de 2, 3 y 4 se comprueba contra el servidor compilado, levantado como en producción, con un
  * cerebro remoto y un ojo de mentira en el mismo proceso de la prueba.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -22,7 +23,7 @@ import type { AddressInfo } from 'node:net';
 import { DOMINIO_CODIGO, esInvitado, emitirSesion, sesionDe, borrarSesion, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, FRENO_ENTRADA, _olvidarCacheSesiones } from '../server/seguridad';
 import { destinoPublico } from '../lib/red-publica';
 
-const JOSE = 'j.ordonez@ordenglobal.org';
+const JOSE = 'j.herrera@ordenglobal.org';
 const req = (token: string) => ({ headers: { 'x-ultron-sesion': token } }) as any;
 
 /** Un token como los de este servidor, firmado con la llave que uno quiera. */

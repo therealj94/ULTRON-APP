@@ -5,6 +5,7 @@
  *
  * S3 es un cubo falso EN MEMORIA detrás de fetch (ninguna petición sale de la máquina).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -182,12 +183,12 @@ test('Genesis siembra el perfil la primera vez (completado: false) y después so
 });
 
 test('lo que lee el cerebro: apodo, cumple (y felicitar ese día), dónde vive, familia y gustos, como dato', () => {
-  const p = { ...perfilInicial({ apodo: 'Pepe', nombreGenesis: 'José Enamorado', cumple: '09-30' }), encuesta: { vive: 'Tegucigalpa', familia: 'dos hijas', gustos: 'el fútbol', musica: 'boleros' } };
+  const p = { ...perfilInicial({ apodo: 'Pepe', nombreGenesis: 'José Villeda', cumple: '09-30' }), encuesta: { vive: 'Tegucigalpa', familia: 'dos hijas', gustos: 'el fútbol', musica: 'boleros' } };
   // 30 de septiembre al mediodía en Honduras (18:00 UTC).
   const dia = new Date('2026-09-30T18:00:00Z');
   const t = lineaPerfil(p, dia);
   assert.match(t, /Le dices «Pepe»/);
-  assert.match(t, /José Enamorado/);
+  assert.match(t, /José Villeda/);
   assert.match(t, /HOY ES SU CUMPLEAÑOS \(30 de septiembre\): felicítale/);
   assert.match(t, /Vive en: Tegucigalpa\./);
   assert.match(t, /Su familia: dos hijas\./);

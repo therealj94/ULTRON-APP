@@ -232,12 +232,12 @@ Variables nuevas en `/etc/computadora.env` (opcionales):
 No necesita paquetes nuevos (`re` es de la biblioteca estándar), ni cambios en Caddy (todo va por `/api/*`) ni en el escritorio.
 
 ```bash
-# Desde el repositorio, con acceso a aura-computadora (54.85.85.77; usuario ubuntu de la AMI, o por SSM):
-scp scripts/nodo-computadora/agente.py ubuntu@54.85.85.77:/tmp/agente.py
-ssh ubuntu@54.85.85.77 'sudo install -m 644 /tmp/agente.py /opt/computadora/agente.py && sudo systemctl restart computadora'
+# Desde el repositorio, con acceso a aura-computadora (<IP del nodo>; usuario ubuntu de la AMI, o por SSM):
+scp scripts/nodo-computadora/agente.py ubuntu@<IP del nodo>:/tmp/agente.py
+ssh ubuntu@<IP del nodo> 'sudo install -m 644 /tmp/agente.py /opt/computadora/agente.py && sudo systemctl restart computadora'
 
 # Comprobar: debe listar las capacidades.
-curl -s https://54-85-85-77.sslip.io/api/salud
+curl -s https://<ip-con-guiones>.sslip.io/api/salud
 # → {"ok": true, "motores": ["holo"], ..., "capacidades": ["pausar", "confirmar", "control", "entrada", "seguro"]}
 ```
 

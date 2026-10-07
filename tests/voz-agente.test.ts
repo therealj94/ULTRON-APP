@@ -11,6 +11,7 @@
  *    se leen; si la persona interrumpe, la señal del turno de adentro se aborta de verdad;
  *  · la respuesta que sigue a una interrupción empieza con un «perdón» breve.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -674,7 +675,7 @@ test('/api/voz/agente: 401 sin sesión, 503 sin configurar, 502 si ElevenLabs fa
     assert.equal(ok.status, 200);
     const j: any = await ok.json();
     assert.equal(j.token, 'tok-el');
-    assert.match(pedidas.at(-1)!, /agent_id=agent_4901/);
+    assert.match(pedidas.at(-1)!, /agent_id=agent_prueba_claudio_en/);
     const p = leerPase(j.pase)!;
     assert.equal(p.correo, yo.correo);
     assert.equal(p.avatar, 'claudio');

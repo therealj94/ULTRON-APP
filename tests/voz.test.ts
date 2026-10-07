@@ -1,3 +1,4 @@
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { expresar, cancionPorPedido, vozDe, hablar, notaDeVozBuffer, sinEtiquetas, estadoVoz, PERFIL_AURA, PERFIL_ELECTRUM } from '../server/voz';
@@ -43,7 +44,7 @@ test('el repertorio se reconoce en lenguaje natural', () => {
   assert.equal(cancionPorPedido('canta 1')?.id, 'bohemian');
   assert.equal(cancionPorPedido('cantá way maker')?.id, 'waymaker');
   assert.equal(cancionPorPedido('cantame algo en inglés')?.id, 'waymaker');
-  assert.equal(cancionPorPedido('canta la de Medardo')?.id, 'bittersweet');
+  assert.equal(cancionPorPedido('canta la de Ramiro')?.id, 'bittersweet');
   assert.equal(cancionPorPedido('canta algo de salsa'), null);
 });
 

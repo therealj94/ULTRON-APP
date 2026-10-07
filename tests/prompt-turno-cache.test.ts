@@ -5,6 +5,7 @@
  * («AHORA: …», cambia cada minuto) iba casi al principio y los HECHOS en medio, así que el nodo releía
  * ~4 000 fichas en cada turno y la primera palabra de la llamada tardaba 7–9 s (ElevenLabs corta a los 4).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONGELAR_INACTIVA_MS, CONGELAR_MAX_MS, CONGELAR_MAX_NUEVOS, HILO_BASE, LIMITES_VOZ, ventanaDelHilo, _olvidarFijos, fijoDeLaConversacion, piezasDelTurno, personalidadDelTurno, renovarFijo } from '../server/prompt-turno';

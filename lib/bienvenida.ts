@@ -2,18 +2,21 @@
  * Bienvenida de AU-RA FP a un miembro de junta. Texto, sin emojis, sin palabras prohibidas.
  */
 
-import { puedeCambiarSistema, type MiembroId } from './junta';
+import { enumerar, nombresConNivel, puedeCambiarSistema, type MiembroId } from './junta';
 
 export function mensajeBienvenidaUltron(opts: { nombre: string; quien: MiembroId }): string {
   const nombre = opts.nombre;
   const consulta = !puedeCambiarSistema(opts.quien);
+  // Los nombres salen del padrón (en el entorno, no en el repo público): quién manda y quién más consulta.
+  const mandan = enumerar(nombresConNivel('mando'), 'y', 'la junta');
+  const otrosConsultan = nombresConNivel('lee', opts.quien);
   const acceso = consulta
-    ? `Una sola diferencia con José y Medardo: vos y ${opts.quien === 'mayra' ? 'Carlos Paguada' : 'Mayra Enamorado'} no cambian el sistema. Si pedís redespliegue, mantenimiento o correr código, te lo digo claro y no lo hago. El resto del taller es el mismo.`
-    : 'Con tu acceso podés pedir redespliegue de la mesa, mantenimiento y el ejecutor. Eso no se comparte con Carlos ni Mayra.';
+    ? `Una sola diferencia con ${mandan}: ${otrosConsultan.length ? `vos y ${enumerar(otrosConsultan)} no cambian` : 'vos no cambiás'} el sistema. Si pedís redespliegue, mantenimiento o correr código, te lo digo claro y no lo hago. El resto del taller es el mismo.`
+    : `Con tu acceso podés pedir redespliegue de la mesa, mantenimiento y el ejecutor.${nombresConNivel('lee').length ? ` Eso no se comparte con ${enumerar(nombresConNivel('lee'), 'ni')}.` : ''}`;
   return [
     `${nombre}.`,
     '',
-    'Soy AU-RA FP, el asistente privado de la junta de Orden Global. José y Medardo te abrieron este canal. Tu cerebro es tuyo: lo que me digas no se mezcla con el de nadie más. Queda en memoria durable, en S3, atado a vos.',
+    `Soy AU-RA FP, el asistente privado de la junta de Orden Global. ${nombresConNivel('mando').length > 1 ? `${mandan} te abrieron` : `${mandan === 'la junta' ? 'La junta' : mandan} te abrió`} este canal. Tu cerebro es tuyo: lo que me digas no se mezcla con el de nadie más. Queda en memoria durable, en S3, atado a vos.`,
     '',
     'Qué soy, sin teatro:',
     '',

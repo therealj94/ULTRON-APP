@@ -67,7 +67,7 @@
 {"q": "Ya, quiero platicar con antonio dale", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/16"}
 {"q": "hey aura, volvamos al español", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/6"}
 {"q": "aura por favor, contestale que ya sali please", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/7"}
-{"q": "Dale una llamada a medardo por favor", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/6"}
+{"q": "Dale una llamada a ramiro por favor", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/6"}
 {"q": "Aura please, make the app white", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/7"}
 {"q": "uh go 2 the my wife chat", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/4"}
 {"q": "fijate fijate que basta callate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/19"}
@@ -530,7 +530,7 @@
 {"q": "Aura, i want 2 see my son, video call them", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/4"}
 {"q": "Kill the reminder in 5 minutes", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/13"}
 {"q": "Fíjate que escríbele a beto que llego tarde porfa", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/0"}
-{"q": "mi reina contéstale a medardo medardo que sí ahorita", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/1"}
+{"q": "mi reina contéstale a ramiro ramiro que sí ahorita", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/1"}
 {"q": "aura márcame un ratito", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/10"}
 {"q": "so, look at me pls.", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/1"}
 {"q": "hey i want to know more about you", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/133"}
@@ -682,7 +682,7 @@
 {"q": "hey summer is coming back soon", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/161"}
 {"q": "Vaya vaya ya salte de esa pantalla", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/23"}
 {"q": "um i need a call at 330 about karla's birthday", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/9"}
-{"q": "ya, abre mis mensajes con medardo.", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/14"}
+{"q": "ya, abre mis mensajes con ramiro.", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/14"}
 {"q": "aura please, open my chats", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/1"}
 {"q": "turn notifications back on for my my mom", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/6"}
 {"q": "My nephew is named antonio antonio", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/87"}
@@ -1080,7 +1080,7 @@
 {"q": "yo, go to my messages now", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/20"}
 {"q": "camera on pls thanks.", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/10"}
 {"q": "porfa si mandalo porfa", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/4"}
-{"q": "mira dile por el chat a medardo que me yame", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/18"}
+{"q": "mira dile por el chat a ramiro que me yame", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/18"}
 {"q": "Yo, answer that i am coming", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/9"}
 {"q": "porfa quiero ver mis mensajes porfis", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/7"}
 {"q": "aura please, pull up my profile please", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/23"}
@@ -1093,7 +1093,7 @@
 {"q": "go back one screen.", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/3"}
 {"q": "eh, mi mama cumple anos manana", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/83"}
 {"q": "cámbiame a antonio ya.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/19"}
-{"q": "mira, ¿que dice medardo? ahorita", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/18"}
+{"q": "mira, ¿que dice ramiro? ahorita", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/18"}
 {"q": "aura, perfect, send it thanks", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/10"}
 {"q": "hey, hmm", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/30"}
 {"q": "could u end the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/1"}
@@ -1129,7 +1129,7 @@
 {"q": "Okay aura, could u give me a call", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/14"}
 {"q": "hey aura, para de hablar", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/6"}
 {"q": "Oye la seño marta es mi vecina", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/132"}
-{"q": "escríbele a medardo diciendo que llego en diez por favor", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/16"}
+{"q": "escríbele a ramiro diciendo que llego en diez por favor", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/16"}
 {"q": "Mire, quiero platicar con antonio", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/16"}
 {"q": "aura por favor ayuda ahorita.", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/0"}
 {"q": "call kevin on video", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/3"}
@@ -1155,13 +1155,13 @@
 {"q": "Ya, pon una alarma manana temprano a las 6 para llamar al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/19"}
 {"q": "oye, contéstale que que ahí voy", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/10"}
 {"q": "please open my conversation with lupita now", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/6"}
-{"q": "quitale el silencio a medardo", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/7"}
+{"q": "quitale el silencio a ramiro", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/7"}
 {"q": "regresa, ya puedes hablar", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/7"}
 {"q": "Fijate que a mi dime tono", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/19"}
 {"q": "Aura pls back out thanks", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/7"}
 {"q": "mirá contéstale a mi suegra que sí porfis", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/1"}
 {"q": "place a call to lupita", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/9"}
-{"q": "claudio, muéstrame el chat con medardo.", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/3"}
+{"q": "claudio, muéstrame el chat con ramiro.", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/3"}
 {"q": "este... ya, ya, háblame.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/18"}
 {"q": "ey que no me suene mi hijo", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/13"}
 {"q": "mira, me mudé hace dos años años", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/144"}
@@ -1401,7 +1401,7 @@
 {"q": "porfa modo claro porfa", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/14"}
 {"q": "hey what did you set for me", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/6"}
 {"q": "fíjate que recuérdalo tú, yo no", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/194"}
-{"q": "mire, dime qué me mandó medardo pues", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/13"}
+{"q": "mire, dime qué me mandó ramiro pues", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/13"}
 {"q": "hey aura, set a reminder tomorrow morning at 6 to buy tortillas", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/1"}
 {"q": "Antonio, turn off the reminder at 3:30 right now", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/7"}
 {"q": "el guardian de la escuela es buena gente", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/112"}
@@ -1592,7 +1592,7 @@
 {"q": "oye aura, quédate a mi lado", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/14"}
 {"q": "hey aura use my phone setting for the theme.", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/18"}
 {"q": "Eh, avísame mañana a las 9 para el cumpleaños de karla", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/7"}
-{"q": "porfa ¿que dice medardo? porfis", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/18"}
+{"q": "porfa ¿que dice ramiro? porfis", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/18"}
 {"q": "A ver, ¿qué hora es?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/24"}
 {"q": "A ver busqué y no encontré nada", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/130"}
 {"q": "aura, my birthday is may 2 now", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/16"}
@@ -1882,7 +1882,7 @@
 {"q": "ey, llama a maria jose", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/0"}
 {"q": "ya, soy enfermera porfis.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/27"}
 {"q": "Enséñame mi perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/34"}
-{"q": "Mira que no me moleste el chat de medardo pues.", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/10"}
+{"q": "Mira que no me moleste el chat de ramiro pues.", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/10"}
 {"q": "go back to spanish please", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/7"}
 {"q": "so delete the alarm at 430", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/10"}
 {"q": "hey antonio is my friend", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/144"}
@@ -1978,7 +1978,7 @@
 {"q": "Aura please, find out bank hours today please", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/12"}
 {"q": "avisale a lupita que no puedo ir please", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/3"}
 {"q": "vaya, si, enviaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/7"}
-{"q": "fijate q llevame al chat de medardo", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/4"}
+{"q": "fijate q llevame al chat de ramiro", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/4"}
 {"q": "hey claudio find bank hours today on the internet.", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/4"}
 {"q": "A ver mi hermano no contesta nunca", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/49"}
 {"q": "hey claudio i want light mode thank you", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/13"}
@@ -2003,7 +2003,7 @@
 {"q": "please mute my daughter for now thanks", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/7"}
 {"q": "antonio ponle de respuesta que gracias ya", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/12"}
 {"q": "A ver, que me veas, activa la camara dale", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/14"}
-{"q": "a ver, ¿me haces videollamada con medardo? ya", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/14"}
+{"q": "a ver, ¿me haces videollamada con ramiro? ya", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/14"}
 {"q": "ey, ya no hace falta que me recuerdes pagar la luz", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/13"}
 {"q": "oye cállate vos jaja no te creo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/184"}
 {"q": "Um, unmute", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/1"}
@@ -2034,7 +2034,7 @@
 {"q": "what do you think about the weather", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/23"}
 {"q": "ok aura vuelve a escucharme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/3"}
 {"q": "eh mis recordatorios", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/1"}
-{"q": "mira, video llamada con medardo", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/10"}
+{"q": "mira, video llamada con ramiro", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/10"}
 {"q": "Eh, ponlo blanco ahorita", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/7"}
 {"q": "i want light mode right now", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/13"}
 {"q": "Mi reina quiero a aura otra vez please", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/9"}
@@ -2078,7 +2078,7 @@
 {"q": "Mira mejor dime chepe.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/14"}
 {"q": "Oye nunca me acuerdo de los cumpleaños", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/58"}
 {"q": "A ver, escríbele a mi mamá si puedes.", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/7"}
-{"q": "Vaya, llama a medardo al celular", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/23"}
+{"q": "Vaya, llama a ramiro al celular", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/23"}
 {"q": "Alert me at 5 to do homework with my daughter pls", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/16"}
 {"q": "um, i want to send my wife a message.", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/10"}
 {"q": "claudio mira en internet el precio del café.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/20"}
@@ -2113,7 +2113,7 @@
 {"q": "leeme los recordatorios.", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/4"}
 {"q": "So i am going 2 hang the picture", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/9"}
 {"q": "quiero que me cuentes un cuento", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/159"}
-{"q": "Hey aura, quítale el silencio a medardo", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/7"}
+{"q": "Hey aura, quítale el silencio a ramiro", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/7"}
 {"q": "porfa ¿qué me escribió la seño marta? si puedes", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/4"}
 {"q": "Aura por favor, favor, ¿qué dice el mensaje de la seño marta?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/9"}
 {"q": "um, get serious", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/72"}
@@ -2280,7 +2280,7 @@
 {"q": "aura please could you give me a call.", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/14"}
 {"q": "Eh lee lo ultimo de karla", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/6"}
 {"q": "Remind me at 7 in the morning to do homework with my daughter right now.", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/0"}
-{"q": "bueno redacta un mensaje para medardo diciendo que gracias gracias", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/6"}
+{"q": "bueno redacta un mensaje para ramiro diciendo que gracias gracias", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/6"}
 {"q": "A ver quiero que me recuerdes llevar el carro al taller a las 430.", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/16"}
 {"q": "hey the topic at church was nice", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/80"}
 {"q": "read me the last message", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/14"}
@@ -2298,7 +2298,7 @@
 {"q": "me llamó la atención eso", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/76"}
 {"q": "claudio, abre mi perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/3"}
 {"q": "Hey my settings at work are a mess", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/127"}
-{"q": "Ok aura abri la conversacion de medardo pues", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/7"}
+{"q": "Ok aura abri la conversacion de ramiro pues", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/7"}
 {"q": "aura por favor busca en mis mensajes la clave del wifi", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/6"}
 {"q": "A ver, silencio en la la sala.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/23"}
 {"q": "sabes quién es claudio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/174"}
@@ -2773,7 +2773,7 @@
 {"q": "Fíjate que llámame", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/0"}
 {"q": "antonio, previous screen thanks", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/4"}
 {"q": "ey, ya ya no hables ya", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/3"}
-{"q": "antonio bideollamada a medardo", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/7"}
+{"q": "antonio bideollamada a ramiro", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/7"}
 {"q": "porfa busca el precio del café en internet", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/14"}
 {"q": "antonio, marcale a beto", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/1"}
 {"q": "can u change the avatar.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/6"}
@@ -2993,7 +2993,7 @@
 {"q": "mira qué claro se ve el cielo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/146"}
 {"q": "oye, usa el tema del sistema mi reina", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/9"}
 {"q": "Aura can we switch to english.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/9"}
-{"q": "bueno echa echa una llamada a medardo.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/12"}
+{"q": "bueno echa echa una llamada a ramiro.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/12"}
 {"q": "so, i am quiet today", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/154"}
 {"q": "yo can you remind me at 5 about buy tortillas ok", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/4"}
 {"q": "Ya volvi del trabajo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/166"}
@@ -3017,7 +3017,7 @@
 {"q": "hey, call it a day", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/124"}
 {"q": "Mire, llévame al chat de lupita", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/4"}
 {"q": "oye aura buscame en el chat la ubicacion de la finca", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/7"}
-{"q": "desilencia el chat de medardo", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/6"}
+{"q": "desilencia el chat de ramiro", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/6"}
 {"q": "okay aura can you remind me at 5 about call the bank thanks", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/4"}
 {"q": "Despues te digo.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/39"}
 {"q": "claudio atras porfa", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/26"}
@@ -3353,7 +3353,7 @@
 {"q": "quita el recordatorio de regar las matas", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/1"}
 {"q": "eh, ayudame a pensar un nombre para mi negocio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/109"}
 {"q": "Ey, ¿que me escribio karla?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/4"}
-{"q": "aura por favor, contestale a medardo que si", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/1"}
+{"q": "aura por favor, contestale a ramiro que si", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/1"}
 {"q": "okay aura, search the web web for who won the game", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/0"}
 {"q": "hey aura, dame un timbrazo porfa.", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/18"}
 {"q": "quiet down thanks.", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/16"}
@@ -4027,7 +4027,7 @@
 {"q": "uh, pls be quiet", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/14"}
 {"q": "ya, ponle el modo de día", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/10"}
 {"q": "eh, ¿qué me toca hoy?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/13"}
-{"q": "este escribele a medardo diciendo que llego en diez", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/16"}
+{"q": "este escribele a ramiro diciendo que llego en diez", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/16"}
 {"q": "Mire, desilencia el chat de la vecina", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/6"}
 {"q": "Karla is my best friend", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/41"}
 {"q": "alright, send it", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/1"}
@@ -4172,7 +4172,7 @@
 {"q": "mira ponlo en en claro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/23"}
 {"q": "mira, apaga la camara", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/6"}
 {"q": "um, my birthday is may 2", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/16"}
-{"q": "Aura por favor, comunícame con medardo", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/4"}
+{"q": "Aura por favor, comunícame con ramiro", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/4"}
 {"q": "okay aura, what can i ask you", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/14"}
 {"q": "so answer the doctor yes", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/1"}
 {"q": "fijate q para, para, para mi reina", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/13"}
@@ -4189,7 +4189,7 @@
 {"q": "Mira, qué claro se ve el cielo.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/146"}
 {"q": "reminder at 5: feed the dog dog", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/9"}
 {"q": "Fijate que ¿que cosas puedes hacer?", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/9"}
-{"q": "Este marca a medardo", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/14"}
+{"q": "Este marca a ramiro", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/14"}
 {"q": "a ver, ponte serio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/90"}
 {"q": "quiero la pantalla oscura", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/6"}
 {"q": "please you may speak", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/12"}
@@ -4478,7 +4478,7 @@
 {"q": "Ey, en ingles porfa dale", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/12"}
 {"q": "no me llames en 20 minutos, cancelalo porfis", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/7"}
 {"q": "Aura la ayuda del gobierno no llego", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/192"}
-{"q": "aura, llama medardo mi reina.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/0"}
+{"q": "aura, llama ramiro mi reina.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/0"}
 {"q": "Mirá, vete atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/0"}
 {"q": "¿dónde está la clave del wifi en mis mensajes?", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/16"}
 {"q": "aura please timer for half an hour", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/14"}
@@ -5018,7 +5018,7 @@
 {"q": "comunicame con mi hermano gracias", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/4"}
 {"q": "aura, dark mode", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/0"}
 {"q": "activa la camara", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/0"}
-{"q": "abrí la conversación conversación de medardo", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/7"}
+{"q": "abrí la conversación conversación de ramiro", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/7"}
 {"q": "hey aura drop my daughter a line that i am here", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/16"}
 {"q": "Antonio hay mensajes nuevos ya", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/7"}
 {"q": "can you remind me at 3:30 to pick up the kids", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/0"}

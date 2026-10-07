@@ -4,6 +4,7 @@
  * Lo que se prueba acá no es que el código corra: es que NO deje pasar. Cada caso de abajo fue, en
  * algún momento de este repositorio, un agujero real o un agujero a un descuido de distancia.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -43,24 +44,24 @@ function conEntorno(vars: Record<string, string | undefined>, fn: () => void) {
 }
 
 test('el padrón de arranque', async (t) => {
-  await t.test('José y Medardo mandan en las dos plataformas', () => {
+  await t.test('José y Ramiro mandan en las dos plataformas', () => {
     reiniciarPadron();
     assert.equal(nivelDe(personaPorId('jose'), 'ultron'), 'mando');
     assert.equal(nivelDe(personaPorId('jose'), 'electrum'), 'mando');
-    assert.equal(nivelDe(personaPorId('medardo'), 'electrum'), 'mando');
+    assert.equal(nivelDe(personaPorId('ramiro'), 'electrum'), 'mando');
   });
 
-  await t.test('Carlos y Mayra consultan AU-RA y NO existen en Dr Electrum', () => {
+  await t.test('Carlos y Brenda consultan AU-RA y NO existen en Dr Electrum', () => {
     reiniciarPadron();
     assert.equal(nivelDe(personaPorId('carlos'), 'ultron'), 'lee');
     assert.equal(nivelDe(personaPorId('carlos'), 'electrum'), null);
-    assert.equal(nivelDe(personaPorId('mayra'), 'electrum'), null);
-    assert.equal(puedeEntrar(personaPorId('mayra'), 'electrum'), false);
+    assert.equal(nivelDe(personaPorId('brenda'), 'electrum'), null);
+    assert.equal(puedeEntrar(personaPorId('brenda'), 'electrum'), false);
   });
 
   await t.test('un desconocido no entra a ninguna: se niega por omisión', () => {
     reiniciarPadron();
-    assert.equal(identificar({ nombre: 'Melany' }), null);
+    assert.equal(identificar({ nombre: 'Fabiola' }), null);
     assert.equal(identificar({ correo: 'cualquiera@gmail.com' }), null);
     assert.equal(identificar({ telegramUserId: '404040' }), null);
     assert.equal(puedeEntrar(null, 'electrum'), false);
@@ -81,7 +82,7 @@ test('decir quién sos no es serlo', async (t) => {
 
   await t.test('el correo de una sesión firmada sí da permiso', () => {
     reiniciarPadron();
-    const porCorreo = identificar({ correo: 'j.ordonez@ordenglobal.org' });
+    const porCorreo = identificar({ correo: 'j.herrera@ordenglobal.org' });
     assert.equal(porCorreo?.prueba, 'sesion');
     assert.equal(puedeMandar(porCorreo, 'ultron'), true);
     assert.equal(puedeEscribir(porCorreo, 'electrum'), true);
@@ -119,15 +120,15 @@ test('ULTRON_PADRON amplía sin desplegar', async (t) => {
     conEntorno({ ULTRON_PADRON: 'jose | | | 445566 |' }, () => {
       const j = personaPorId('jose');
       assert.ok(j?.telegram.includes('445566'), 'le entró el Telegram nuevo');
-      assert.ok(j?.correos.includes('j.ordonez@ordenglobal.org'), 'no le borró el correo de siempre');
+      assert.ok(j?.correos.includes('j.herrera@ordenglobal.org'), 'no le borró el correo de siempre');
       assert.equal(nivelDe(j, 'ultron'), 'mando', 'no le borró el mando');
     });
   });
 
   await t.test('baja de nivel: quitarle el mando a alguien es cambiar una palabra', () => {
-    conEntorno({ ULTRON_PADRON: 'medardo | | | | ultron=lee electrum=lee' }, () => {
-      assert.equal(puedeCambiarSistema('medardo'), false);
-      assert.equal(nivelDe(personaPorId('medardo'), 'electrum'), 'lee');
+    conEntorno({ ULTRON_PADRON: 'ramiro | | | | ultron=lee electrum=lee' }, () => {
+      assert.equal(puedeCambiarSistema('ramiro'), false);
+      assert.equal(nivelDe(personaPorId('ramiro'), 'electrum'), 'lee');
     });
   });
 
@@ -150,10 +151,10 @@ test('la puerta de Dr Electrum en Telegram', async (t) => {
   });
 
   await t.test('estar en la junta NO es estar en Electrum', () => {
-    conEntorno({ TELEGRAM_CARLOS_USER_ID: '1017697215', ELECTRUM_TELEGRAM_CHATS: '-100777' }, () => {
+    conEntorno({ TELEGRAM_CARLOS_USER_ID: '444555666', ELECTRUM_TELEGRAM_CHATS: '-100777' }, () => {
       // Carlos entra a AU-RA pero no tiene Electrum. Ni siquiera dentro de la sala de demostración:
       // a él se le dijo que no explícitamente, y eso pesa más que una sala abierta.
-      assert.equal(autorizarElectrum('-100777', '1017697215', 'Carlos'), null);
+      assert.equal(autorizarElectrum('-100777', '444555666', 'Carlos'), null);
     });
   });
 

@@ -209,6 +209,16 @@ export async function sessionHeaders(): Promise<Record<string, string>> {
   return token ? { 'x-ultron-sesion': token } : {};
 }
 
+/**
+ * Lo mismo que hace api() ante un 401, para las descargas de audio que no pasan por ahí (lib/tts.ts, las muletillas):
+ * la voz ya no corre sin sesión en el servidor (auditoría del 7-oct, C-2), así que un token vencido dejaba muda la
+ * mesa hasta el siguiente turno. Renueva con la clave guardada de quien está dentro (una sola renovación en vuelo) y
+ * dice si hay token nuevo; quien entró con Genesis no tiene clave y sigue con false.
+ */
+export function renovarTokenVoz(): Promise<boolean> {
+  return renovarSesion(generacionCuenta()).catch(() => false);
+}
+
 export type Health = {
   ok: boolean;
   qwen?: { vivo?: boolean; modelo?: string | null };

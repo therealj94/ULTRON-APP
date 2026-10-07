@@ -38,7 +38,7 @@ function sembrar() {
     { jid: JUNTA, nombre: 'Junta Orden Global', grupo: true, noLeidos: 5, hora: t - 35 * MIN, ultimo: 'Mañana a las 9 en la oficina de Tegucigalpa', ultimoMio: false, ultimoDe: 'Mario Zelaya' },
     { jid: MAMA, nombre: 'Mamá', grupo: false, noLeidos: 0, hora: t - 2 * HORA, ultimo: 'Sí mami, ya comí 🙏', ultimoMio: true },
     { jid: BETO, nombre: 'Beto · Maple Minerals', grupo: false, noLeidos: 0, hora: t - DIA - 3 * HORA, ultimo: '📄 Contrato-concesion-v3.pdf', ultimoMio: false },
-    { jid: FAMILIA, nombre: 'Familia Ordóñez', grupo: true, noLeidos: 12, hora: t - 2 * DIA, ultimo: '🎤 Nota de voz (0:42)', ultimoMio: false, ultimoDe: 'Tía Rosa' },
+    { jid: FAMILIA, nombre: 'Familia Herrera', grupo: true, noLeidos: 12, hora: t - 2 * DIA, ultimo: '🎤 Nota de voz (0:42)', ultimoMio: false, ultimoDe: 'Tía Rosa' },
     { jid: DESCONOCIDO, nombre: '+504 9876-5432', grupo: false, noLeidos: 1, hora: t - 5 * DIA, ultimo: 'Buenas, ¿hablo con el ingeniero José?', ultimoMio: false },
     { jid: SOPORTE, nombre: 'Dr Electrum · soporte', grupo: false, noLeidos: 0, hora: t - 20 * DIA, ultimo: 'Listo, ya quedó actualizado el catastro.', ultimoMio: true },
   ];

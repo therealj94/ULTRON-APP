@@ -8,6 +8,7 @@
 import { clave } from './boveda';
 import { presupuesto, MINIMO_UTIL_MS, type Presupuesto } from './presupuesto';
 import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
+import { gastarCupoDiario, segundosDeAudio, SEGUNDOS_POR_PERMISO_TURBO } from './freno-gasto';
 
 /** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
 export type Oido = { texto: string; via: string; detalle: string; idioma?: IdiomaTurno };
@@ -355,6 +356,8 @@ export async function permisoTurbo(
 ): Promise<{ url: string; modelo: string } | null> {
   const key = clave('elevenlabs');
   if (!key) return null;
+  // El freno de gasto diario (lib/freno-gasto.ts): el oído en vivo también cuenta. Pasado el tope, sin permiso.
+  if (!gastarCupoDiario('stt', SEGUNDOS_POR_PERMISO_TURBO)) return null;
   const r = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', { method: 'POST', headers: { 'xi-api-key': key }, signal: reloj.senal(5000) }).catch(() => null);
   if (!r?.ok) {
     console.warn('[stt turbo] sin token de un solo uso', r?.status, r ? (await r.text().catch(() => '')).slice(0, 160) : '');
@@ -454,6 +457,10 @@ export async function transcribirAudio(opts: {
   }
   if (buf.length > MAX_BYTES) {
     return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
+  }
+  // El freno de gasto diario (lib/freno-gasto.ts), por los segundos de este audio. Pasado el tope, no se oye.
+  if (!gastarCupoDiario('stt', segundosDeAudio(buf, mime))) {
+    return { texto: '', via: 'tope', detalle: 'Por hoy ya no puedo oír más audios. Escríbeme.' };
   }
   const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
   const proveedores = opts.proveedores || (opts.plataforma === 'electrum' ? PROVEEDORES_OIDO_ELECTRUM : PROVEEDORES_OIDO);

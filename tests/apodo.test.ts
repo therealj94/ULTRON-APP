@@ -3,6 +3,7 @@
  * (POST /api/cerebro/conocer): sin apodo elegido AURA lo pregunta; lo que contesta se reconoce sin
  * modelo, se guarda en el perfil (`apodoElegido`) y ese mismo turno ya lo usa.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -73,7 +74,7 @@ test('detectarApodo: la respuesta corta justo después de preguntarlo', () => {
 });
 
 test('lineaApodoPendiente: le pide a AURA preguntar una vez; vacía si ya lo sabe', () => {
-  const l = A.lineaApodoPendiente(null, 'es', { nombre: 'José Enamorado' });
+  const l = A.lineaApodoPendiente(null, 'es', { nombre: 'José Villeda' });
   assert.match(l, /^AÚN NO SABES CÓMO QUIERE QUE LE LLAMES/);
   assert.match(l, /«¿Cómo quieres que te llame\?»/);
   assert.match(l, /«José»/);

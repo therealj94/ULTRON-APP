@@ -2,6 +2,7 @@
  * Memoria estructurada: fichas, relaciones y eventos, separadas por plataforma, y escritas solo por
  * quien tiene nivel para escribir (el motor de reglas, a través del bucle del agente).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

@@ -11,6 +11,7 @@
  * Se comprueba contra el servidor compilado, levantado como en producción, porque el fallo estaba
  * exactamente en la costura entre el cliente y el servidor.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -56,18 +57,18 @@ test(
       });
 
     await t.test('con `clave`, como manda la web, no se rechaza por campo ausente', async () => {
-      const r = await entrar({ correo: 'j.ordonez@ordenglobal.org', clave: 'lo-que-sea' });
+      const r = await entrar({ correo: 'j.herrera@ordenglobal.org', clave: 'lo-que-sea' });
       assert.notEqual(r.status, 400, 'un 400 aquí significa que no vio la clave');
     });
 
     await t.test('con `password`, como manda la app, tampoco', async () => {
       // Este es el caso que estaba roto. La APK publicada manda este nombre.
-      const r = await entrar({ correo: 'j.ordonez@ordenglobal.org', password: 'lo-que-sea' });
+      const r = await entrar({ correo: 'j.herrera@ordenglobal.org', password: 'lo-que-sea' });
       assert.notEqual(r.status, 400, 'la pantalla de entrada de la APK vuelve a estar rota');
     });
 
     await t.test('sin clave sí se rechaza, que para eso está la comprobación', async () => {
-      const r = await entrar({ correo: 'j.ordonez@ordenglobal.org' });
+      const r = await entrar({ correo: 'j.herrera@ordenglobal.org' });
       assert.equal(r.status, 400);
     });
 

@@ -3,6 +3,7 @@
  * (descubre la puerta, se registra, PKCE, cambia el código, renueva) contra nuestro servidor. Lo
  * único simulado es el navegador de la persona que aprieta «Permitir».
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -24,7 +25,7 @@ import { listarTrazas } from '../lib/cognitivo/traza';
 // modo desarrollo (lib/entorno.ts); sin la marca, basePublica anuncia https.
 process.env.AURA_DEV = '1';
 
-const JOSE = { correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' };
+const JOSE = { correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta' };
 
 async function conEntorno<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
   const antes: Record<string, string | undefined> = {};

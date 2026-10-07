@@ -28,7 +28,7 @@ describe('Campaña SFSP: quién contestó', () => {
   });
 
   it('el extracto es lo que escribió quien contesta, sin la cita', () => {
-    const t = 'Me interesa, conversemos el jueves.\n\nEl lun, 29 sept 2026 a las 8:00, José Ordoñez escribió:\n> Este correo no le llegó por casualidad.';
+    const t = 'Me interesa, conversemos el jueves.\n\nEl lun, 29 sept 2026 a las 8:00, José Herrera escribió:\n> Este correo no le llegó por casualidad.';
     assert.equal(extracto(t), 'Me interesa, conversemos el jueves.');
     assert.equal(textoDelCuerpo('Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\nU8OtLCBjb252ZXJzZW1vcy4=\n'), 'Sí, conversemos.');
   });

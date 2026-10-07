@@ -7,6 +7,7 @@
  *  - MENOR: sin WHATSAPP_ABIERTO=1 solo los dueños (cerrado por omisión), cuenta suspendida, sin la marca de comunidad no se da por buena, sin WHATSAPP_CUENTA_SECRETO solo los
  *    dueños, las fotos y archivos sin caché compartida y lo que no es imagen, audio o video como adjunto.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -26,8 +27,8 @@ const D = await import('../lib/durable');
 
 const CLAVE = 'clave-del-puente-de-prueba-123';
 const SECRETO = 'secreto-de-cuentas-de-prueba-de-24+';
-const JOSE = 'j.ordonez@ordenglobal.org'; // dueño: «legado»
-const MEDARDO = 'm.ordonez@ordenglobal.org'; // de la junta (en el padrón)
+const JOSE = 'j.herrera@ordenglobal.org'; // dueño: «legado»
+const RAMIRO = 'r.herrera@ordenglobal.org'; // de la junta (en el padrón)
 const ANA = 'ana.prueba@ejemplo.org'; // miembro de la comunidad (fuera del padrón, con la marca firmada)
 const BETO = 'beto.prueba@ejemplo.org';
 
@@ -259,14 +260,14 @@ test('MEDIO-2: /vincular por IP (cualquier identidad; IPv6 por su /64) y por cue
         // La prioridad: la junta (padrón) la lleva; la comunidad no, ni aunque la mande en su pedido.
         W._olvidarWhatsapp();
         p.pedidos.length = 0;
-        await como(MEDARDO, '/api/whatsapp/vincular', { metodo: 'POST', cuerpo: {} });
+        await como(RAMIRO, '/api/whatsapp/vincular', { metodo: 'POST', cuerpo: {} });
         await como(ANA, '/api/whatsapp/vincular', { metodo: 'POST', cuerpo: {}, comunidad: true, cabeceras: { 'x-cuenta-prioridad': 'junta' } });
         await como(JOSE, '/api/whatsapp/vincular', { metodo: 'POST', cuerpo: {} });
         const vin = p.pedidos.filter((x) => x.ruta === '/vincular');
         assert.deepEqual(
-          vin.map((x) => [x.cuenta === W.claveCuentaWhatsapp(MEDARDO) ? 'medardo' : x.cuenta === 'legado' ? 'legado' : 'ana', x.prioridad]),
+          vin.map((x) => [x.cuenta === W.claveCuentaWhatsapp(RAMIRO) ? 'ramiro' : x.cuenta === 'legado' ? 'legado' : 'ana', x.prioridad]),
           [
-            ['medardo', 'junta'],
+            ['ramiro', 'junta'],
             ['ana', ''],
             ['legado', 'junta'],
           ]
@@ -292,7 +293,7 @@ test('MENOR: una cuenta suspendida no usa WhatsApp (app, cerebro ni envío); sin
       assert.equal(await W.whatsappPermitido(ANA, { comunidad: true }), true);
       // Los dueños y la junta (padrón con AU-RA) no la necesitan: el cerebro y Telegram siguen igual para ellos.
       assert.equal(await W.whatsappPermitido(JOSE), true);
-      assert.equal(await W.whatsappPermitido(MEDARDO), true);
+      assert.equal(await W.whatsappPermitido(RAMIRO), true);
       assert.equal(await W.whatsappOfrecido(JOSE), true);
       assert.match(await W.correrWhatsapp(JOSE, 'revisar'), /Beto de José/);
       assert.equal(await W.whatsappPermitido('x@temporal.drelectrum', { comunidad: true }), false, 'un código temporal nunca');
@@ -404,7 +405,7 @@ test('MENOR: cerrado por omisión: sin WHATSAPP_ABIERTO=1 (sin fijarla, vacía, 
         async () => {
           assert.equal(W.whatsappAbierto(), false, String(abierto));
           assert.equal(await W.whatsappPermitido(ANA, { comunidad: true }), false, `comunidad con ${abierto}`);
-          assert.equal(await W.whatsappPermitido(MEDARDO), false, `junta con ${abierto}`);
+          assert.equal(await W.whatsappPermitido(RAMIRO), false, `junta con ${abierto}`);
           assert.equal(await W.whatsappPermitido(JOSE), true, 'los dueños siempre');
           const { como, cerrar } = await app();
           try {

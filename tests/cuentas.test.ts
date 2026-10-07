@@ -5,6 +5,7 @@
  * un Express real. El correo NO sale: se intercepta la llamada a SES y se lee lo que se habría
  * mandado, que es justo lo que importa (a quién, y a qué dirección apunta el enlace).
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -60,7 +61,7 @@ async function levantar(plataforma: 'electrum' | 'ultron') {
     },
     nombreYRol: (correo, n) => ({ nombre: n || correo.split('@')[0], rol: 'Prueba' }),
     // El cerebro remoto de mentira: la clave de siempre de José es «remota-de-siempre».
-    claveRemotaAbre: async (correo, clave) => correo === 'j.ordonez@ordenglobal.org' && clave === 'remota-de-siempre',
+    claveRemotaAbre: async (correo, clave) => correo === 'j.herrera@ordenglobal.org' && clave === 'remota-de-siempre',
   });
   const srv = app.listen(0);
   await new Promise((r) => srv.once('listening', r));
@@ -87,7 +88,7 @@ test('SES: la petición va firmada con SigV4 al servicio ses y lleva texto y HTM
   const b = JSON.parse(p.cuerpo);
   assert.equal(b.FromEmailAddress, 'Orden Global <no-responder@ordenglobal.org>');
   assert.equal(b.Content.Simple.Body.Html.Data, '<p>uno</p>');
-  assert.ok(correoValido('j.ordonez@ordenglobal.org'));
+  assert.ok(correoValido('j.herrera@ordenglobal.org'));
   assert.ok(!correoValido('sin arroba'));
   assert.ok(!correoValido('a@b'));
 });
@@ -106,8 +107,8 @@ test('claves: scrypt, nunca en claro, y reglas mínimas', async () => {
   assert.ok(cuentas.problemaDeClave('corta'));
   assert.ok(cuentas.problemaDeClave('1234567890'));
   assert.ok(cuentas.problemaDeClave('aaaaaaaaaaaa'));
-  assert.ok(cuentas.problemaDeClave('xx-jordonez-2026', 'jordonez@ordenglobal.org'));
-  assert.equal(cuentas.problemaDeClave('Montaña verde 2026', 'j.ordonez@ordenglobal.org'), null);
+  assert.ok(cuentas.problemaDeClave('xx-jherrera-2026', 'jherrera@ordenglobal.org'));
+  assert.equal(cuentas.problemaDeClave('Montaña verde 2026', 'j.herrera@ordenglobal.org'), null);
 });
 
 test('olvidé mi contraseña → enlace por correo → clave nueva; las sesiones viejas se cierran', { skip: sinBase ? 'sin base' : false }, async () => {
@@ -126,25 +127,25 @@ test('olvidé mi contraseña → enlace por correo → clave nueva; las sesiones
     assert.equal(nadie.status, 200);
     assert.equal(buzon.length, 0);
     // Parecido a José pero de otro dominio: tampoco.
-    await pedir('/api/ultron/clave/olvide', { correo: 'j.ordonez@gmail.com' });
+    await pedir('/api/ultron/clave/olvide', { correo: 'j.herrera@gmail.com' });
     assert.equal(buzon.length, 0);
 
-    const vieja = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
+    const vieja = emitirSesion({ correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta' });
     assert.ok(sesionDe(reqCon(vieja.token)));
 
     // José, con una cabecera Host tramposa: el enlace apunta igual a la dirección pública.
-    const r = await pedir('/api/ultron/clave/olvide', { correo: 'j.ordonez@ordenglobal.org' }, undefined, 'sitio-malo.com');
+    const r = await pedir('/api/ultron/clave/olvide', { correo: 'j.herrera@ordenglobal.org' }, undefined, 'sitio-malo.com');
     assert.equal(r.status, 200);
     assert.equal(r.json.message, nadie.json.message);
     assert.equal(buzon.length, 1);
-    assert.equal(buzon[0].para, 'j.ordonez@ordenglobal.org');
+    assert.equal(buzon[0].para, 'j.herrera@ordenglobal.org');
     assert.ok(buzon[0].texto.includes(`${origenPublico('electrum')}/?restablecer=`), buzon[0].texto);
     assert.ok(!buzon[0].texto.includes('sitio-malo'));
     const token = tokenDelEnlace(buzon[0].texto, 'restablecer');
     assert.ok(token.length >= 40);
 
     // Pedirlo de nuevo enseguida no manda otro (no sirve para inundar un buzón).
-    await pedir('/api/ultron/clave/olvide', { correo: 'j.ordonez@ordenglobal.org' });
+    await pedir('/api/ultron/clave/olvide', { correo: 'j.herrera@ordenglobal.org' });
     assert.equal(buzon.length, 1);
 
     assert.equal((await pedir(`/api/ultron/clave/enlace?token=${token}`)).json.tipo, 'restablecer');
@@ -157,8 +158,8 @@ test('olvidé mi contraseña → enlace por correo → clave nueva; las sesiones
     // El enlace ya no sirve.
     assert.equal((await pedir('/api/ultron/clave/restablecer', { token, clave: 'Otra montaña 2027' })).status, 410);
 
-    assert.equal(await cuentas.entrarConCuenta('j.ordonez@ordenglobal.org', 'Montaña verde 2026'), 'ok');
-    assert.equal(await cuentas.entrarConCuenta('j.ordonez@ordenglobal.org', 'remota-de-siempre'), 'mal');
+    assert.equal(await cuentas.entrarConCuenta('j.herrera@ordenglobal.org', 'Montaña verde 2026'), 'ok');
+    assert.equal(await cuentas.entrarConCuenta('j.herrera@ordenglobal.org', 'remota-de-siempre'), 'mal');
     // La sesión abierta antes del cambio ya no vale; la nueva sí.
     assert.equal(sesionDe(reqCon(vieja.token)), null);
     assert.ok(sesionDe(reqCon(bien.json.token)));
@@ -176,7 +177,7 @@ test('cambiar la contraseña sabiendo la actual (también la del cerebro remoto)
     await pg.query('TRUNCATE cuentas.cuenta, cuentas.enlace, cuentas.solicitud RESTART IDENTITY');
     await pg.end();
     await cuentas.recargarCuentas();
-    const s = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
+    const s = emitirSesion({ correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta' });
     assert.equal((await pedir('/api/ultron/clave/cambiar', { actual: 'x', nueva: 'Nueva clave 2026!' })).status, 401, 'sin sesión');
     const mal = await pedir('/api/ultron/clave/cambiar', { actual: 'no-es', nueva: 'Nueva clave 2026!' }, s.token);
     assert.equal(mal.status, 401);
@@ -223,7 +224,7 @@ test('pedir acceso → José aprueba con nivel → la persona crea su clave y en
     // Con su alias personal: se guarda bajo el correo con el que después va a entrar.
     const r = await pedir('/api/ultron/cuentas/solicitar', { nombre: 'Ana Pérez', correo: 'Ana.Personal@gmail.com', motivo: 'Ingeniera de campo de la concesión' });
     assert.equal(r.status, 200);
-    const alAprobador = buzon.find((m) => m.para === 'j.ordonez@ordenglobal.org');
+    const alAprobador = buzon.find((m) => m.para === 'j.herrera@ordenglobal.org');
     assert.ok(alAprobador, 'el aviso le llega a José');
     assert.ok(alAprobador!.texto.includes('Ana Pérez') && alAprobador!.texto.includes(`${origenPublico('electrum')}/?solicitudes=1`));
     assert.ok(buzon.some((m) => m.para === 'ana@mina.hn' && /recibimos/.test(m.asunto)));
@@ -232,18 +233,18 @@ test('pedir acceso → José aprueba con nivel → la persona crea su clave y en
     await pedir('/api/ultron/cuentas/solicitar', { nombre: 'Ana Pérez', correo: 'ana@mina.hn', motivo: 'Ingeniera de campo de la concesión' });
     assert.equal(buzon.length, antes);
     // Alguien que se hace pasar por José desde otro dominio.
-    await pedir('/api/ultron/cuentas/solicitar', { nombre: 'José Falso', correo: 'j.ordonez@gmail.com', motivo: 'Quiero entrar a todo' });
+    await pedir('/api/ultron/cuentas/solicitar', { nombre: 'José Falso', correo: 'j.herrera@gmail.com', motivo: 'Quiero entrar a todo' });
 
     // Solo el aprobador ve y decide.
-    const medardo = emitirSesion({ correo: 'm.ordonez@ordenglobal.org', nombre: 'Medardo', rol: 'Junta' });
-    assert.equal((await pedir('/api/ultron/cuentas/solicitudes', undefined, medardo.token)).status, 403);
+    const ramiro = emitirSesion({ correo: 'r.herrera@ordenglobal.org', nombre: 'Ramiro', rol: 'Junta' });
+    assert.equal((await pedir('/api/ultron/cuentas/solicitudes', undefined, ramiro.token)).status, 403);
     assert.equal((await pedir('/api/ultron/cuentas/solicitudes')).status, 401);
-    const jose = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
+    const jose = emitirSesion({ correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta' });
     const lista = await pedir('/api/ultron/cuentas/solicitudes', undefined, jose.token);
     assert.equal(lista.status, 200);
     assert.equal(lista.json.pendientes, 2);
     const ana = lista.json.solicitudes.find((s: any) => s.correo === 'ana@mina.hn');
-    const falso = lista.json.solicitudes.find((s: any) => s.correo === 'j.ordonez@gmail.com');
+    const falso = lista.json.solicitudes.find((s: any) => s.correo === 'j.herrera@gmail.com');
 
     assert.equal((await pedir(`/api/ultron/cuentas/solicitudes/${ana.id}`, { decision: 'aprobar' }, jose.token)).status, 400, 'sin nivel');
     buzon.length = 0;
@@ -277,7 +278,7 @@ test('pedir acceso → José aprueba con nivel → la persona crea su clave y en
 
     // Aunque José aprobara por error al falso, NO pasa por José: otro dominio no es la misma persona.
     await pedir(`/api/ultron/cuentas/solicitudes/${falso.id}`, { decision: 'aprobar', nivel: 'lee' }, jose.token);
-    const f = identificar({ correo: 'j.ordonez@gmail.com' });
+    const f = identificar({ correo: 'j.herrera@gmail.com' });
     assert.notEqual(f?.persona.id, 'jose');
     assert.equal(nivelDe(f, 'electrum'), 'lee');
   } finally {
@@ -293,12 +294,12 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
     const pg = await poolDePrueba();
     await pg.query('TRUNCATE cuentas.codigo RESTART IDENTITY');
     reiniciarPadron();
-    const jose = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
-    const medardo = emitirSesion({ correo: 'm.ordonez@ordenglobal.org', nombre: 'Medardo', rol: 'Junta' });
+    const jose = emitirSesion({ correo: 'j.herrera@ordenglobal.org', nombre: 'José', rol: 'Junta' });
+    const ramiro = emitirSesion({ correo: 'r.herrera@ordenglobal.org', nombre: 'Ramiro', rol: 'Junta' });
 
     assert.equal(cuentas.normalizarCodigo('de 7kq4 m9xp-2hrt'), 'DE-7KQ4-M9XP-2HRT');
     assert.equal(cuentas.normalizarCodigo('DE-7KQ4-M9XP-2HR0'), null, 'el 0 no está en el alfabeto');
-    assert.equal((await pedir('/api/ultron/codigos', { horas: 1 }, medardo.token)).status, 403, 'solo el aprobador');
+    assert.equal((await pedir('/api/ultron/codigos', { horas: 1 }, ramiro.token)).status, 403, 'solo el aprobador');
     assert.equal((await pedir('/api/ultron/codigos', { horas: 2 }, jose.token)).status, 400, 'solo 1, 5 o 24');
     assert.equal((await aura.pedir('/api/ultron/codigos', { horas: 1 }, jose.token)).status, 404, 'en AU-RA no hay códigos');
     // Sin el nombre de la persona no se crea: es con el que Dr Electrum la saluda.

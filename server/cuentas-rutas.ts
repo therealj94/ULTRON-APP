@@ -21,6 +21,7 @@ import { dominioPrincipal } from './dominio';
 import { identificar, personaPorCorreoExacto, puedeEntrar, type Nivel, type Plataforma } from '../lib/acceso';
 import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esDeComunidad, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
 import { correoDeCodigo } from './cuentas';
+import { avisarFaltaEnv } from '../lib/datos-privados';
 import {
   HORAS_CODIGO,
   NIVELES,
@@ -66,9 +67,14 @@ export function origenPublico(p: Plataforma): string {
   return base.replace(/\/+$/, '');
 }
 
-/** Quién aprueba las cuentas. Por defecto José; `CUENTAS_APROBADOR` acepta varios, separados por comas. */
+/**
+ * Quién aprueba las cuentas: `CUENTAS_APROBADOR`, uno o varios, separados por comas. Ya no hay un correo personal por
+ * omisión en el código (el repositorio es público; auditoría del 7-oct, C-1): sin la variable, las solicitudes quedan
+ * guardadas sin avisar a nadie y nadie las aprueba por enlace, con un aviso en el registro.
+ */
 export function aprobadores(): string[] {
-  const raw = String(process.env.CUENTAS_APROBADOR || 'j.ordonez@ordenglobal.org');
+  const raw = String(process.env.CUENTAS_APROBADOR || '');
+  if (!raw.trim()) avisarFaltaEnv('CUENTAS_APROBADOR', 'las solicitudes de cuenta no avisan a nadie y nadie las aprueba por enlace');
   return raw
     .split(/[,;\s]+/)
     .map((s) => s.trim().toLowerCase())

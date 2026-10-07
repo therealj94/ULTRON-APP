@@ -7,6 +7,7 @@
  *  2. que lo anotado desde el fondo del turno (sin recibir la traza) llega a la traza correcta,
  *  3. que cambiar un registro de auditoría se detecta.
  */
+import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -118,7 +119,7 @@ test('auditoría en archivos: la cadena cuadra y un cambio se detecta', () =>
     const f = path.join(process.env.COGNITIVO_DIR!, 'auditoria.jsonl');
     const lineas = fs.readFileSync(f, 'utf8').trim().split('\n');
     const dos = JSON.parse(lineas[1]);
-    dos.quien = 'medardo'; // alguien cambia quién lo hizo
+    dos.quien = 'ramiro'; // alguien cambia quién lo hizo
     lineas[1] = JSON.stringify(dos);
     fs.writeFileSync(f, lineas.join('\n') + '\n');
     const v = await verificarCadena();

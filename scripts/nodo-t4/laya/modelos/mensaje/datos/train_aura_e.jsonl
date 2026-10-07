@@ -14,12 +14,12 @@
 {"q": "voy manejando para Danlí", "e": ["tarea_conversacion"]}
 {"q": "la wallet caliente está comprometida, mueve todo a la fría ahora mismo", "e": ["razonar", "mueve_valor", "urgente", "tarea_transaccion"]}
 {"q": "¿Cuánto hemos gastado este trimestre en operaciones de la cadena?", "e": ["razonar", "tarea_empresa"]}
-{"q": "ya mismo mandale a Mayra la minuta", "e": ["razonar", "tarea_accion"]}
+{"q": "ya mismo mandale a Brenda la minuta", "e": ["razonar", "tarea_accion"]}
 {"q": "reenviale a Carlos el pdf que me mandaste ayer", "e": ["razonar", "tarea_accion"]}
 {"q": "transfiere 500 AUKA a la wallet de Pedro", "e": ["razonar", "mueve_valor", "tarea_transaccion"]}
 {"q": "¿Hay mantenimiento programado esta semana?", "e": ["razonar", "tarea_sistema"]}
 {"q": "todo bien?", "e": ["tarea_conversacion"]}
-{"q": "hola aura mandale un telegram a medardo que ya sali de danli y llego como a las 6", "e": ["razonar", "tarea_accion"]}
+{"q": "hola aura mandale un telegram a ramiro que ya sali de danli y llego como a las 6", "e": ["razonar", "tarea_accion"]}
 {"q": "sos una crack", "e": ["tarea_conversacion"]}
 {"q": "¿Un cliente puede tener dos Genesis ID?", "e": ["razonar", "tarea_empresa"]}
 {"q": "comparte el pdf de la presentación en el grupo de inversionistas", "e": ["razonar", "tarea_accion"]}
@@ -87,7 +87,7 @@
 {"q": "¿Qué podés hacer?", "e": ["razonar", "tarea_conversacion"]}
 {"q": "¿Este contrato está bien redactado o le falta algo?", "e": ["razonar", "tarea_documento"]}
 {"q": "explicame el flujo completo desde que el minero entrega el oro hasta que se emite el token", "e": ["razonar", "tarea_empresa"]}
-{"q": "Revisa este correo que le llegó a Mayra y dime qué señales de fraude tiene: \"Urgent wire transfer needed today, the CEO is traveling and asked me to process 18,000 USD to the new supplier account. Please keep this confidential.\"", "e": ["razonar", "tarea_documento"]}
+{"q": "Revisa este correo que le llegó a Brenda y dime qué señales de fraude tiene: \"Urgent wire transfer needed today, the CEO is traveling and asked me to process 18,000 USD to the new supplier account. Please keep this confidential.\"", "e": ["razonar", "tarea_documento"]}
 {"q": "¿Y el platino?", "e": ["razonar", "tarea_mercado"]}
 {"q": "investiga cuánto cuesta un seguro de oro en tránsito", "e": ["razonar", "tarea_web"]}
 {"q": "quedó bonito el pdf", "e": ["tarea_conversacion"]}
@@ -177,7 +177,7 @@
 {"q": "paga la factura de la auditora, son 3200 USD", "e": ["razonar", "mueve_valor", "tarea_transaccion"]}
 {"q": "¿Cuál es la tasa de referencia del BCH?", "e": ["razonar", "tarea_mercado"]}
 {"q": "grasias", "e": ["tarea_conversacion"]}
-{"q": "send Mayra a WhatsApp saying I'll be late", "e": ["razonar", "tarea_accion"]}
+{"q": "send Brenda a WhatsApp saying I'll be late", "e": ["razonar", "tarea_accion"]}
 {"q": "calcula cuánto le toca a cada minero si repartimos 45 mil lempiras entre 9", "e": ["razonar", "tarea_transaccion"]}
 {"q": "manda un mensaje al tecnico de danli que mañana pasamos a recoger las muestras", "e": ["razonar", "tarea_accion"]}
 {"q": "CADENA DE ORACIÓN: reenvía este mensaje a 12 personas y recibirás una bendición, si lo rompes tendrás siete años de mala suerte", "e": ["spam", "tarea_conversacion"]}
