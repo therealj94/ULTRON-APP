@@ -44,13 +44,16 @@ dpkg -i smp.deb && rm -f smp.deb
 cat > /usr/local/bin/electrum-carga-pmtiles <<'PMT'
 #!/usr/bin/env bash
 set -euo pipefail
-REL=$(curl -fsSL https://api.github.com/repos/protomaps/go-pmtiles/releases/latest)
-URL=$(echo "$REL" | jq -r '.assets[] | select(.name | test("Linux_x86_64\\.tar\\.gz$")) | .browser_download_url')
-SUMAS=$(echo "$REL" | jq -r '.assets[] | select(.name | test("checksums")) | .browser_download_url')
+# go-pmtiles no publica archivo de sumas; GitHub sí da la sha256 de cada archivo de la versión.
+ASSET=$(curl -fsSL https://api.github.com/repos/protomaps/go-pmtiles/releases/latest |
+  jq -c '[.assets[] | select(.name | test("_Linux_x86_64\\.tar\\.gz$"))][0]')
+URL=$(echo "$ASSET" | jq -r .browser_download_url)
+SUMA=$(echo "$ASSET" | jq -r '.digest // empty' | sed 's/^sha256://')
+[ -n "$SUMA" ] || { echo "GitHub no dio la suma de ${URL}: no lo instalo sin comprobarlo." >&2; exit 1; }
 T=$(mktemp -d); cd "$T"
-curl -fsSLO "$URL"; curl -fsSL "$SUMAS" -o sumas.txt
-grep " $(basename "$URL")\$" sumas.txt | sha256sum -c -
-tar -xzf "$(basename "$URL")" pmtiles && install -m 755 pmtiles /usr/local/bin/pmtiles
+curl -fsSL "$URL" -o pmtiles.tar.gz
+echo "${SUMA}  pmtiles.tar.gz" | sha256sum -c -
+tar -xzf pmtiles.tar.gz pmtiles && install -m 755 pmtiles /usr/local/bin/pmtiles
 cd / && rm -rf "$T"; pmtiles version 2>/dev/null | head -1 || true
 PMT
 chmod +x /usr/local/bin/electrum-carga-pmtiles
