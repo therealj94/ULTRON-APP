@@ -11,7 +11,11 @@
  *    Sin KMS ni ningún recurso nuevo de AWS;
  *  · la cabecera dice la versión (`v`), el algoritmo y el `kid` (8 bytes derivados del secreto, que no revelan nada de él);
  *    va autenticada (AAD) junto con el tipo y la huella de la cuenta: un sobre copiado a la cuenta de otra persona, o de
- *    caras a voces, no abre. Un byte cambiado tampoco (SobreIlegible).
+ *    caras a voces, no abre. Un byte cambiado tampoco (SobreIlegible);
+ *  · por fuera, en claro y también autenticado, va lo DURABLE (lib/biometria-durable.ts: `rev`, las lápidas, `borradoTodo`,
+ *    la marca de agua; solo ids y horas) con `personas: []`. Es para el despliegue sin cortes: una instancia con el código
+ *    de antes que lea un sobre ve «nadie» con la versión y las lápidas de verdad, así que ninguna copia vieja suya le gana
+ *    ni resucita a quien se olvidó (sin esto vería versión 0 y su disco viejo volvería a S3).
  *
  * Migración: lo viejo en claro se sigue leyendo (`abrirBiometria` lo deja pasar); el próximo guardado ya va en sobre; y al
  * arrancar `migrarAlSobre` recorre S3 (si el permiso de listar alcanza) y el disco y re-sella lo que siga en claro o con una
@@ -31,6 +35,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clave } from './boveda';
+import { sanearDurable } from './biometria-durable';
 
 export type TipoBiometria = 'caras' | 'voces';
 export const MARCA_SOBRE = 'aura-bio';
@@ -48,7 +53,10 @@ export type SobreBiometria = {
   iv: string;
   tag: string;
   datos: string;
-};
+  /** Para el código de antes (despliegue sin cortes): nadie, con la versión y las lápidas de verdad. Autenticado (AAD). */
+  version: 1;
+  personas: [];
+} & ReturnType<typeof sanearDurable>;
 
 /** El sobre no abre: llave desconocida o equivocada, alterado, de otra cuenta o de otro tipo. Nunca lleva el contenido. */
 export class SobreIlegible extends Error {}
@@ -100,7 +108,9 @@ export function esSobre(x: unknown): x is SobreBiometria {
 
 const b64 = (b: Buffer) => b.toString('base64url');
 const deB64 = (s: unknown) => Buffer.from(String(s || ''), 'base64url');
-const aad = (kid: string, tipo: TipoBiometria, huella: string) => Buffer.from(`${MARCA_SOBRE}|${VERSION_SOBRE}|${ALG}|${kid}|${tipo}|${huella}`, 'utf8');
+/** La cabecera, la cuenta y lo durable en claro: lo que el cifrado autentica sin cifrar. */
+const aad = (kid: string, tipo: TipoBiometria, huella: string, durable: ReturnType<typeof sanearDurable>) =>
+  Buffer.from(`${MARCA_SOBRE}|${VERSION_SOBRE}|${ALG}|${kid}|${tipo}|${huella}|${JSON.stringify(durable)}`, 'utf8');
 
 export type Contexto = { tipo: TipoBiometria; huella: string };
 
@@ -118,7 +128,9 @@ export function sellarBiometria(dato: unknown, ctx: Contexto): unknown {
     }
     return dato;
   }
-  const a = aad(l.kid, ctx.tipo, ctx.huella);
+  // Lo durable por fuera (saneado: idempotente, así quien abre lo vuelve a armar igual para el AAD).
+  const durable = sanearDurable(dato);
+  const a = aad(l.kid, ctx.tipo, ctx.huella, durable);
   const dek = crypto.randomBytes(32);
   const ivL = crypto.randomBytes(12);
   const env = crypto.createCipheriv('aes-256-gcm', l.kek, ivL);
@@ -130,7 +142,7 @@ export function sellarBiometria(dato: unknown, ctx: Contexto): unknown {
   c.setAAD(a);
   const datos = Buffer.concat([c.update(Buffer.from(JSON.stringify(dato), 'utf8')), c.final()]);
   dek.fill(0);
-  return { sobre: MARCA_SOBRE, v: VERSION_SOBRE, alg: ALG, kid: l.kid, tipo: ctx.tipo, llave, iv: b64(iv), tag: b64(c.getAuthTag()), datos: b64(datos) } satisfies SobreBiometria;
+  return { sobre: MARCA_SOBRE, v: VERSION_SOBRE, alg: ALG, kid: l.kid, tipo: ctx.tipo, llave, iv: b64(iv), tag: b64(c.getAuthTag()), datos: b64(datos), version: 1, personas: [], ...durable } satisfies SobreBiometria;
 }
 
 /**
@@ -146,7 +158,7 @@ export function abrirBiometria(x: unknown, ctx: Contexto): { dato: unknown; enCl
   if (x.tipo !== ctx.tipo) throw new SobreIlegible(`${ctx.tipo}: el sobre es de otro tipo`);
   const kek = llavesParaAbrir().get(String(x.kid || ''));
   if (!kek) throw new SobreIlegible(`${ctx.tipo}: no tengo la llave ${String(x.kid || '?').slice(0, 16)}`);
-  const a = aad(x.kid, ctx.tipo, ctx.huella);
+  const a = aad(x.kid, ctx.tipo, ctx.huella, sanearDurable(x));
   let dek: Buffer | null = null;
   try {
     const [ivL, tagL, dekC] = String(x.llave || '').split('.');

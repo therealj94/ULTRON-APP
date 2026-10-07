@@ -99,8 +99,11 @@ test('el permiso: la cara propia la pide la dueña; la de otra persona solo con 
   // A-7: en el disco va cifrado: ni la frase, ni el nombre, ni un número del vector se leen sin la llave.
   assert.ok(esSobre(JSON.parse(crudo)));
   // (Solo patrones que no pueden salir del base64url al azar: con tildes, espacios o largos.)
-  assert.doesNotMatch(crudo, /recuérdame|María|vectores|consentimiento|"personas"/);
-  assert.deepEqual(Object.keys(JSON.parse(crudo)).sort(), ['alg', 'datos', 'iv', 'kid', 'llave', 'sobre', 'tag', 'tipo', 'v']);
+  assert.doesNotMatch(crudo, /recuérdame|María|vectores|consentimiento/);
+  // Por fuera, solo la cabecera y lo durable (ids y horas) con «nadie»: para el código de antes en un despliegue sin cortes.
+  const fuera = JSON.parse(crudo);
+  assert.deepEqual(fuera.personas, []);
+  for (const k of Object.keys(fuera)) assert.ok(['sobre', 'v', 'alg', 'kid', 'tipo', 'llave', 'iv', 'tag', 'datos', 'version', 'personas', 'rev', 'lapidas', 'borradoTodo', 'marcaLapidas', 'vivosEnMarca'].includes(k), k);
   const abierto = JSON.stringify(delDisco('maria@ordenglobal.org'));
   assert.match(abierto, /Sí, claro, recuérdame/);
   assert.doesNotMatch(abierto, /base64|data:image|jpeg/i);

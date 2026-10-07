@@ -131,7 +131,9 @@ test('ida y vuelta: se sella con AES-256-GCM, cabecera versionada con kid, y abr
   assert.ok(!LLAVE_A.includes(s1.kid) && !JSON.stringify(s1).includes(LLAVE_A), 'el kid no es el secreto');
   assert.notEqual(s1.datos, s2.datos, 'IV y llave de datos nuevos en cada escritura');
   assert.notEqual(s1.llave, s2.llave);
-  assert.doesNotMatch(JSON.stringify(s1), /Bea|vectores|personas|lapidas/);
+  assert.doesNotMatch(JSON.stringify(s1), /Bea|vectores|consentimiento/);
+  // Por fuera, lo durable (ids y horas) con «nadie», para el código de antes; nada biométrico.
+  assert.deepEqual([s1.version, s1.personas, s1.rev, s1.lapidas], [1, [], 3, [{ id: 'z', t: 9 }]]);
   const r = sobre.abrirBiometria(s1, ctx);
   assert.equal(r.enClaro, false);
   assert.deepEqual(r.dato, dato);
@@ -173,7 +175,7 @@ function silencioSync<T>(f: () => T): T {
 
 test('alterado: un byte del cifrado, la llave envuelta, el tipo, la versión o la cuenta (huella) → no abre', () => {
   const ctx = { tipo: 'caras' as const, huella: 'c'.repeat(40) };
-  const s = sobre.sellarBiometria({ personas: [{ id: 'x' }] }, ctx) as any;
+  const s = sobre.sellarBiometria({ personas: [{ id: 'x' }], rev: 4, lapidas: [{ id: 'y', t: 3 }] }, ctx) as any;
   const voltear = (b64: string) => {
     const b = Buffer.from(b64, 'base64url');
     b[Math.floor(b.length / 2)] ^= 0x01;
@@ -187,6 +189,9 @@ test('alterado: un byte del cifrado, la llave envuelta, el tipo, la versión o l
     ['tipo', { ...s, tipo: 'voces' }, ctx],
     ['versión', { ...s, v: 2 }, ctx],
     ['otra cuenta', s, { ...ctx, huella: 'd'.repeat(40) }],
+    ['lápidas de fuera', { ...s, lapidas: [] }, ctx],
+    ['versión durable de fuera', { ...s, rev: 999 }, ctx],
+    ['«olvida todas» de fuera', { ...s, borradoTodo: 1 }, ctx],
     ['caras → voces', s, { ...ctx, tipo: 'voces' }],
   ];
   for (const [que, x, c] of casos) assert.throws(() => sobre.abrirBiometria(x, c), sobre.SobreIlegible, que);
@@ -365,6 +370,22 @@ test('sin permiso de listar S3: la migración lo dice (sin_listado) y el disco i
 });
 
 /* ── las lápidas, con el sobre ─────────────────────────────────────────────────────────────────────── */
+
+test('despliegue sin cortes: el código de ANTES que lee un sobre ve «nadie» con la versión y las lápidas; su disco viejo no resucita a nadie', () => {
+  const correo = correoNuevo();
+  const ctx = ctxCaras(correo);
+  const p = (id: string, creado: number) => ({ id, nombre: `N${id}`, relacion: 'conocido', vectores: [vec(128, creado)], consentimiento: { como: 'voz', t: 1 }, creado, actualizado: creado });
+  // La instancia nueva olvidó a «a» (lápida) y selló; la vieja tiene en disco la copia de antes, con «a».
+  const nuevo = sobre.sellarBiometria({ version: 1, rev: 20, personas: [p('b', 2)], lapidas: [{ id: 'a', t: 15 }] }, ctx) as any;
+  const discoViejo = { version: 1, rev: 10, personas: [p('a', 1), p('b', 2)], lapidas: [] };
+  // Lo que hace el código de antes con el sobre (sanear: personas del JSON + lo durable) y con su disco.
+  const comoAntes = (x: any) => ({ version: 1 as const, personas: durable.aplicarLapidas(Array.isArray(x.personas) ? x.personas : [], durable.sanearDurable(x)), ...durable.sanearDurable(x) });
+  const f = durable.fusionarCopias(comoAntes(discoViejo), comoAntes(nuevo));
+  assert.deepEqual(f.cajon!.personas.map((x: any) => x.id), [], 've «nadie», nunca a «a» de su disco viejo');
+  assert.equal(f.cajon!.rev, 20, 'la versión de verdad');
+  assert.ok(f.cajon!.lapidas!.some((l) => l.id === 'a'), 'con la lápida');
+  assert.ok(!f.atrasada.includes('s3'), 'y no tiene nada que «reparar» en S3');
+});
 
 test('lápidas con el sobre: olvidar una no vuelve por una copia local vieja (sellada); «olvida todas» + alta en el mismo ms', async () => {
   const s3 = s3Falso();

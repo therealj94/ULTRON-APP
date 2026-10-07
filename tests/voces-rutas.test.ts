@@ -187,8 +187,11 @@ test('aprender: la propia (nombre de la SESIÓN) y Ana con su «sí» y parentes
   const sobre = fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8');
   assert.ok(esSobre(JSON.parse(sobre)));
   // (Solo patrones que no pueden salir del base64url al azar: con tildes, espacios o largos.)
-  assert.doesNotMatch(sobre, /recordar mi voz|José|vectores|consentimiento|"personas"/);
-  assert.deepEqual(Object.keys(JSON.parse(sobre)).sort(), ['alg', 'datos', 'iv', 'kid', 'llave', 'sobre', 'tag', 'tipo', 'v']);
+  assert.doesNotMatch(sobre, /recordar mi voz|José|vectores|consentimiento|esposa/);
+  // Por fuera, solo la cabecera y lo durable (ids y horas) con «nadie»: para el código de antes en un despliegue sin cortes.
+  const fuera = JSON.parse(sobre);
+  assert.deepEqual(fuera.personas, []);
+  for (const k of Object.keys(fuera)) assert.ok(['sobre', 'v', 'alg', 'kid', 'tipo', 'llave', 'iv', 'tag', 'datos', 'version', 'personas', 'rev', 'lapidas', 'borradoTodo', 'marcaLapidas', 'vivosEnMarca'].includes(k), k);
   const crudo = JSON.stringify(delDisco('jose.h@ordenglobal.org'));
   assert.match(crudo, /Sí, puedes recordar mi voz/);
   assert.doesNotMatch(crudo, /RIFF|UklGR|base64|audio/i, 'ni rastro del audio');
