@@ -1873,3 +1873,34 @@ test('la ráfaga del turno especulativo (5 frases a medias en <1 s, como el 6-oc
     await s.cerrar();
   }
 });
+
+test('revisión del 7-oct (MENOR): tras un cambio de avatar que salió, la llamada sigue con ese (así «vuelve a Aura» funciona)', async () => {
+  // El pase firma el avatar del principio; antes, después de «sí, pásame con Claudio» cada turno seguía mandando «aura» y
+  // la queja «vuelve a Aura» contestaba «Ya estás con AU-RA» sin volver.
+  let n = 0;
+  const m = await montar(
+    async (t) => {
+      n++;
+      if (n === 1) {
+        t.retener.hacer(() => undefined);
+        t.enviar('delta', { text: '¡Va! Te paso con Claudio.', voz: '¡Va! Te paso con Claudio.' });
+        t.enviar('done', { reply: '¡Va! Te paso con Claudio.', acciones: [{ id: 'av1', accion: { tipo: 'avatar', valor: 'claudio' } }] });
+      } else {
+        t.enviar('delta', { text: 'Perdón, ya volví.', voz: 'Perdón, ya volví.' });
+        t.enviar('done', { reply: 'Perdón, ya volví.' });
+      }
+    },
+    { puenteMs: 0, graciaReintentoMs: 100, confirmarAccionMs: 150 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-avatar');
+    const primero = [{ role: 'user', content: 'sí, pásame con Claudio' }];
+    assert.equal(dichoDe(await (await llm(m.base, pase, primero)).text()), '¡Va! Te paso con Claudio.');
+    await dormir(50);
+    await (await llm(m.base, pase, [...primero, { role: 'assistant', content: '¡Va! Te paso con Claudio.' }, { role: 'user', content: 'vuelve a Aura' }])).text();
+    assert.equal(m.vistos[0].body.avatar, 'aura');
+    assert.equal(m.vistos[1].body.avatar, 'claudio', 'el turno siguiente manda el avatar que tiene ahora');
+  } finally {
+    await m.cerrar();
+  }
+});

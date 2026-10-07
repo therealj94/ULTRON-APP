@@ -225,10 +225,16 @@ test('el camino rápido por reglas: las órdenes simples y claras, y nada que se
   assert.deepEqual(o('ponlo oscuro'), { tipo: 'tema', valor: 'oscuro' });
   assert.deepEqual(o('modo claro'), { tipo: 'tema', valor: 'claro' });
   assert.deepEqual(o('dark mode'), { tipo: 'tema', valor: 'oscuro' });
-  assert.deepEqual(o('cambia a Claudio'), { tipo: 'avatar', valor: 'claudio' });
-  assert.deepEqual(o('cambia a ANT-ONIO'), { tipo: 'avatar', valor: 'antonio' });
-  assert.deepEqual(o('quiero hablar con antonio'), { tipo: 'avatar', valor: 'antonio' });
-  assert.deepEqual(o('pásame con el guardián'.replace('el ', '')), { tipo: 'avatar', valor: 'ojos' });
+  // El avatar ya no cambia con una frase oída (José, 7-oct): se pregunta y espera su «sí» (tests/mesa-avatar-voz.test.ts).
+  const av = (t: string) => {
+    const r = ordenPorReglas(t);
+    return r && !r.accion ? r.avatarPropuesto ?? null : null;
+  };
+  assert.equal(av('cambia a Claudio'), 'claudio');
+  assert.equal(av('cambia a ANT-ONIO'), 'antonio');
+  assert.equal(av('quiero hablar con antonio'), 'antonio');
+  assert.equal(av('pásame con el guardián'.replace('el ', '')), 'ojos');
+  assert.equal(ordenPorReglas('cambia a Claudio')?.decir, '¿Te paso con Claudio?');
   assert.deepEqual(o('cállate'), { tipo: 'silencio', valor: true });
   assert.deepEqual(o('ya puedes hablar'), { tipo: 'silencio', valor: false });
   // No son órdenes.

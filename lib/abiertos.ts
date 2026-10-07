@@ -334,15 +334,94 @@ const QUIEN: Record<TipoAbierto, string> = {
  * El bloque del turno: QUEDÓ A MEDIAS. Le pide a AU-RA que lo retome ella, una cosa a la vez, sin recitar
  * la lista. Cabe en TOPE_ABIERTOS (la voz, `compacto`, lleva menos). Vacío si no hay nada.
  */
-export function bloqueAbiertos(persona: string, compacto = false, ahora = Date.now()): string {
-  const xs = abiertosEnCache(persona, ahora).slice(0, compacto ? 3 : 6);
+export function bloqueAbiertos(persona: string, compacto = false, ahora = Date.now(), o: { mensaje?: string } = {}): string {
+  // José (7-oct): un pendiente se menciona como mucho UNA vez por sesión, salvo que la persona pregunte por sus pendientes.
+  const pregunta = !!o.mensaje && preguntaPorPendientes(o.mensaje);
+  const dichos = pregunta ? new Set<string>() : mencionadosEnSesion(persona, ahora);
+  const xs = abiertosEnCache(persona, ahora)
+    .filter((a) => !dichos.has(a.id))
+    .slice(0, compacto ? 3 : 6);
   if (!xs.length) return '';
   const max = compacto ? TOPE_ABIERTOS.compacto : TOPE_ABIERTOS.normal;
-  const enc = compacto
-    ? 'QUEDÓ A MEDIAS (retómalo tú si viene al caso, una cosa, p. ej. «Ayer quedamos en…, ¿lo terminamos?»):'
-    : 'QUEDÓ A MEDIAS (cosas sin terminar de conversaciones anteriores; si viene al caso —al saludar o cuando haya pausa— retómalas tú, UNA a la vez: «Ayer quedamos en…, ¿lo terminamos?». No recites la lista. Si dice que ya está, dale por hecho):';
+  const enc = pregunta
+    ? 'QUEDÓ A MEDIAS (te pregunta por sus pendientes: díselos, cortos y en orden; no hagas nada de esto sin que lo pida):'
+    : compacto
+      ? // Corto: va en el mensaje de cada turno de la voz (tests/aura-app-extremo: lo del turno cabe en 2 500 letras).
+        'QUEDÓ A MEDIAS (una vez, si viene al caso: «Ayer quedamos en…, ¿lo terminamos?»; sin herramientas):'
+      : 'QUEDÓ A MEDIAS (cosas sin terminar de conversaciones anteriores; si viene al caso —al saludar o cuando haya pausa— retómalas tú, UNA a la vez y una sola vez: «Ayer quedamos en…, ¿lo terminamos?». No recites la lista ni uses una herramienta por esto si no te lo pide. Si dice que ya está, dale por hecho):';
   const lineas = xs.map((a) => `- ${a.importante ? '[importante] ' : ''}${linea(a.texto, compacto ? 90 : 160)} (${haceCuanto(a.creado, ahora)}, ${QUIEN[a.tipo]}${a.cuando ? `, «${a.cuando}»` : ''})`);
   return bloqueConTope(enc, lineas, max);
+}
+
+/* ------------------------------------------------------------------ una vez por sesión (José, 7-oct) */
+
+/**
+ * PENDIENTES INSISTENTES (José, 7-oct, 00:31–00:33 UTC): «te quedó pendiente enviarle un WhatsApp a …» (un contacto suyo) salía en
+ * cada turno (estaba en QUEDÓ A MEDIAS de cada turno y el modelo lo retomaba otra vez, y hasta abría WhatsApp sin que
+ * nadie se lo pidiera). Ahora: lo que AU-RA ya mencionó en esta sesión no vuelve al prompt hasta que la sesión acabe
+ * (SESION_ABIERTOS_MS sin volver a mencionarlo), salvo que la persona pregunte por sus pendientes.
+ */
+export const SESION_ABIERTOS_MS = 3 * 3600_000;
+const mencionados = new Map<string, Map<string, number>>();
+
+/**
+ * «¿Qué tenemos pendiente?», «¿qué me falta?», «¿qué quedó a medias?», «¿qué tareas tengo?», "what's pending": pregunta
+ * por sus pendientes. Solo lo explícito (revisión independiente del 7-oct, M1): «¿cómo va todo?», «eso es todo»,
+ * «gracias por todo», «lo que queda del día» o «¿qué falta para llegar?» no preguntan por pendientes.
+ */
+export function preguntaPorPendientes(mensaje: string): boolean {
+  const q = plegar(mensaje).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return (
+    /\b(pendientes?|a medias|que (nos |me |te )?(falta|faltaba|queda|quedaba|quedo) (por hacer|hacer|pendiente)|lo que (me |nos )?(falta|queda) (por )?hacer|que (tenemos|tengo|hay) (que hacer|pendiente|para hoy)|(mis|que|las) tareas|en que (quedamos|ibamos)|que me (debes|prometiste)|to ?do list|what (s|is) pending|whats pending|anything pending|what did we leave)\b/.test(q) ||
+    // «¿Qué me falta?», «¿y qué nos queda hoy?»: la frase entera (con algo detrás, «… para llegar», ya no es eso).
+    /^(y )?que (me|nos) (falta|faltaba|queda|quedaba)( (hoy|por hoy|todavia|aun))?$/.test(q)
+  );
+}
+
+/** ¿La respuesta menciona este pendiente? (la mayoría de sus palabras con contenido, o todas si son pocas). */
+function mencionaAbierto(respuesta: string, a: Abierto): boolean {
+  const r = ` ${plegar(respuesta).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ')} `;
+  const vacias = /^(para|pero|como|cuando|donde|desde|hasta|sobre|entre|tiene|tengo|quedo|queda|hacer|algo|esto|eso|este|esta|estos|estas|todo|todos|mañana|manana|luego|despues|porque|sobre|enviarle|mandarle|decirle|escribirle)$/;
+  const ws = [...new Set(plegar(a.texto).replace(/[^a-z0-9ñ\s]+/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !vacias.test(w)))];
+  if (!ws.length) return false;
+  // Lo que lo distingue: los nombres propios (con mayúscula, sin contar la primera palabra: «Marisol», «WhatsApp»). Si
+  // los nombra todos, lo mencionó («te quedó pendiente escribirle a Marisol por WhatsApp»).
+  const nombres = [
+    ...new Set(
+      String(a.texto)
+        .split(/\s+/)
+        .slice(1)
+        .filter((w) => /^[A-ZÁÉÍÓÚÑ]/.test(w) || /[a-z][A-Z]/.test(w))
+        .map((w) => plegar(w).replace(/[^a-z0-9ñ]+/g, ''))
+        .filter((w) => w.length >= 3)
+    ),
+  ];
+  if (nombres.length && nombres.every((w) => r.includes(` ${w} `))) return true;
+  const n = ws.filter((w) => r.includes(` ${w} `)).length;
+  return ws.length <= 2 ? n === ws.length : n / ws.length >= 0.6;
+}
+
+/** Anota los pendientes que la respuesta de AU-RA mencionó (al terminar cada turno). */
+export function anotarMencionesAbiertos(persona: string, respuesta: string, ahora = Date.now()): string[] {
+  const clave = clavePersona(persona);
+  if (!clave || !String(respuesta || '').trim()) return [];
+  const ids = abiertosEnCache(persona, ahora)
+    .filter((a) => mencionaAbierto(respuesta, a))
+    .map((a) => a.id);
+  if (!ids.length) return [];
+  const m = mencionados.get(clave) || new Map<string, number>();
+  for (const id of ids) m.set(id, ahora);
+  mencionados.delete(clave);
+  mencionados.set(clave, m);
+  if (mencionados.size > 5000) mencionados.delete(mencionados.keys().next().value as string);
+  return ids;
+}
+
+/** Los pendientes que ya mencionó en esta sesión (dentro de SESION_ABIERTOS_MS). */
+export function mencionadosEnSesion(persona: string, ahora = Date.now()): Set<string> {
+  const m = mencionados.get(clavePersona(persona));
+  if (!m) return new Set();
+  return new Set([...m].filter(([, t]) => ahora - t <= SESION_ABIERTOS_MS).map(([id]) => id));
 }
 
 /* ------------------------------------------------------------------ con el modelo */
@@ -389,4 +468,5 @@ export async function extraerAbiertos(
 /** Solo pruebas. */
 export function _olvidarCacheAbiertos() {
   cajones._olvidarCache();
+  mencionados.clear();
 }

@@ -644,6 +644,47 @@ prueba('«¿qué ves?» no espera al servidor: vista fresca al instante o la fot
   }
 });
 
+prueba('la frase nueva manda (José, 7-oct): si la respuesta a la de antes todavía no suena, ese turno se corta y no suena ni hace nada', async () => {
+  // 00:32:29: «Ahí va, ya me pongo en Claudio» contestaba a una frase de un minuto antes. Con la respuesta en camino (sin
+  // sonar) y una frase nueva: se corta y la nueva va sola. Si ya suena: como siempre (se juntan y van después).
+  const { fraseDuranteTurno } = await import('../../src/lib/fraseNueva.ts');
+  assert.deepEqual(fraseDuranteTurno({ cmd: '¿Qué tenemos pendiente?', pendiente: null, pensando: true, hablando: false }), { cortar: true, pendiente: '¿Qué tenemos pendiente?' });
+  assert.deepEqual(fraseDuranteTurno({ cmd: 'y mañana', pendiente: null, pensando: true, hablando: true }), { cortar: false, pendiente: 'y mañana' });
+  assert.deepEqual(fraseDuranteTurno({ cmd: 'otra', pendiente: 'una', pensando: false, hablando: false }), { cortar: false, pendiente: 'una otra' });
+  // La costura: la mesa la usa con el stream en camino (abortTurno) y la voz que suena (speakingRef); al cortar, el turno
+  // queda cancelado (askBrain no dice ni emite sus acciones: turnoCancelado) y el stream se corta (el servidor tampoco).
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const enCurso = src.slice(src.indexOf('if (handling.current) {'), src.indexOf('handling.current = true;'));
+  assert.match(enCurso, /fraseDuranteTurno\(\{ cmd, pendiente: pending\.current, pensando: !!abortTurno\.current, hablando: speakingRef\.current, efecto: efectoTurno\.current \}\)/);
+  assert.match(enCurso, /if \(d\.cortar\) \{\s+turnoCancelado\.current = true;\s+abortTurno\.current\?\.\(\);/);
+  const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('));
+  const trasStream = cuerpo.slice(cuerpo.indexOf('let result = await st.promise'), cuerpo.indexOf('emitirAccionesDelTurno(result);'));
+  assert.match(trasStream, /if \(turnoCancelado\.current\) \{\s+if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);\s+return;/, 'cortado: ni suena ni emite acciones');
+});
+
+prueba('revisión del 7-oct (G2): «¿hola?», «¿me oyes?» o un «ajá» mientras piensa no cortan; con un envío en curso tampoco', async () => {
+  // Antes cualquier frase oída mientras pensaba cortaba el turno y la pregunta se perdía; y un «sí» a un envío podía
+  // quedar cortado con el envío a medias (sin decirlo ni anotar el recibo).
+  const { fraseDuranteTurno, esFraseDeRelleno } = await import('../../src/lib/fraseNueva.ts');
+  for (const cmd of ['¿Hola?', '¿Me oyes?', 'Aura, ¿me escuchas?', 'ajá', 'mmm', 'eh', '¿sigues ahí?', 'ok', 'sí']) {
+    assert.equal(esFraseDeRelleno(cmd), true, cmd);
+    assert.deepEqual(fraseDuranteTurno({ cmd, pendiente: null, pensando: true, hablando: false }), { cortar: false, pendiente: '', descartada: true }, cmd);
+  }
+  for (const cmd of ['¿Qué tenemos pendiente?', 'no, espera', 'cancela eso', 'sí, mándalo']) assert.equal(esFraseDeRelleno(cmd), false, cmd);
+  // Corta y sin verbo de pedido: no corta, espera y va después.
+  assert.deepEqual(fraseDuranteTurno({ cmd: '¿y Beto?', pendiente: null, pensando: true, hablando: false }), { cortar: false, pendiente: '¿y Beto?' });
+  // «no» o «espera» sí cortan (piden algo).
+  assert.equal(fraseDuranteTurno({ cmd: 'no, espera', pendiente: null, pensando: true, hablando: false }).cortar, true);
+  // Con una herramienta con efectos en curso, ninguna frase corta: el turno termina, anota y lo dice; la nueva va después.
+  assert.deepEqual(fraseDuranteTurno({ cmd: '¿Qué tenemos pendiente?', pendiente: null, pensando: true, hablando: false, efecto: true }), { cortar: false, pendiente: '¿Qué tenemos pendiente?' });
+  // La costura: el relleno no toca lo pendiente ni corta; el progreso de una herramienta que no es web/leer marca el efecto.
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const enCurso = src.slice(src.indexOf('if (handling.current) {'), src.indexOf('handling.current = true;'));
+  assert.match(enCurso, /if \(d\.descartada\) \{[^}]*return;\s*\}\s*if \(d\.cortar\)/);
+  assert.match(src, /e\.fase === 'empece' && e\.herramienta !== 'web' && e\.herramienta !== 'leer'\) efectoTurno\.current = true/);
+  assert.match(src, /turnoCancelado\.current = false;\s+efectoTurno\.current = false;/);
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

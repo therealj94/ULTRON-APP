@@ -413,9 +413,13 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     assert.equal(calla2.via, 'app-laya');
     assert.ok(alLaya.some((l) => l.startsWith('/v1/comando ')));
     // En inglés, con la app en español: la acción y la respuesta en inglés.
+    // El avatar no se cambia con una frase oída (José, 7-oct): se pregunta, en inglés, y espera su «sí».
     const avatarEn = await turno('switch me to claudio');
-    assert.deepEqual(avatarEn.acciones.map((e: any) => e.accion), [{ tipo: 'avatar', valor: 'claudio' }]);
-    assert.equal(avatarEn.reply, 'Sure! Switching you to Claudio.');
+    assert.deepEqual(avatarEn.acciones.map((e: any) => e.accion), []);
+    assert.equal(avatarEn.reply, 'Should I switch you to Claudio?');
+    const siEn = await turno('yes');
+    assert.deepEqual(siEn.acciones.map((e: any) => e.accion), [{ tipo: 'avatar', valor: 'claudio' }]);
+    assert.equal(siEn.reply, 'Sure! Switching you to Claudio.');
     assert.equal(alNodo.length, 0, 'sin el modelo grande');
 
     // Por voz también (el mismo turno): la voz dice «Va.» y la acción llega al teléfono.

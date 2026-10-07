@@ -58,7 +58,7 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
   if (d.app) {
     t.push(
       tool('abrir_pantalla', 'Abrir una pantalla de su app. «abre ajustes», «mis correos», «tu computadora» (verla en vivo), «mi círculo».', { pantalla: str('Cuál.', { enum: PANTALLAS }) }, ['pantalla']),
-      tool('ajustar_app', 'Cambiar algo de la app: atrás, tema, callarte, cómo te ves, qué avatar. «vete atrás», «ponlo oscuro», «cállate», «ponte en grande», «cambia a Claudio».', { cambio: str('Qué cambio.', { enum: CAMBIOS_APP }) }, ['cambio']),
+      tool('ajustar_app', 'Cambiar algo de la app: atrás, tema, callarte, cómo te ves, qué avatar. «vete atrás», «ponlo oscuro», «cállate», «ponte en grande», «cambia a Claudio» (el avatar solo si lo pidió claro: la app pregunta antes de cambiar; no digas que ya cambiaste).', { cambio: str('Qué cambio.', { enum: CAMBIOS_APP }) }, ['cambio']),
       tool(
         'chat_aura',
         'Los chats de AU-RA (PULSE2CHAT), NO WhatsApp. redactar deja el borrador: dilo en voz alta y pregunta «¿Lo envío?». enviar SOLO cuando en el turno siguiente diga que sí. abrir abre el chat con alguien; descartar borra el borrador.',
@@ -311,6 +311,35 @@ export function cuandoHN(ms: number): string {
 
 const accionApp = (o: Record<string, unknown>) => `ACCION_APP: ${JSON.stringify(o)}`;
 const pedido = (herramienta: string, arg = '') => `PEDIR_HERRAMIENTA: ${herramienta}${arg ? ` ${arg}` : ''}`;
+
+/** Lo que dice algo de mensajes o de WhatsApp (leer, escribir, mandar, quién dijo qué). */
+const HABLA_DE_MENSAJES =
+  /\b(whats ?app|whats\w*|wats\w*|guats\w*|wasap\w*|guasap\w*|wsp|pregunt\w*|mensaje\w*|chat\w*|escrib\w*|mand\w*|envi\w*|respond\w*|contest\w*|dile|decile|digale|le digo|dijo|dice|escribio|lee\w*|leer|leeme|revis\w*|novedad\w*|avis\w*|text\w*|message\w*|write|send|reply|read)\b/;
+
+/**
+ * ¿La herramienta de WhatsApp está fuera de tema en este turno? (José, 7-oct, 00:31–00:33 UTC: «te quedó pendiente
+ * enviarle un WhatsApp a …» (un contacto suyo) estaba en lo que quedó a medias, y el modelo abría WhatsApp en turnos que hablaban de
+ * cambiar de avatar o de qué había pendiente). Vale solo si la persona habla de mensajes o de WhatsApp, nombra a quien
+ * va (el chat que pide la herramienta), contesta con un «sí» a una pregunta de AU-RA sobre mensajes, o algo de WhatsApp
+ * espera su «sí». Si no, devuelve el motivo y la llamada no se corre (null: vale).
+ */
+export function herramientaFueraDeTema(
+  nombre: string,
+  input: Record<string, any> | undefined,
+  ctx: { mensaje: string; anterior?: string; afirma?: boolean; esperaWhatsapp?: boolean }
+): string | null {
+  if (nombre !== 'whatsapp') return null;
+  if (ctx.esperaWhatsapp) return null;
+  const m = plano(ctx.mensaje).replace(/[^a-z0-9ñ\s]+/g, ' ');
+  if (HABLA_DE_MENSAJES.test(m)) return null;
+  // Nombra a quién: «¿y Marisol?», «lo de mi compadre».
+  const chat = plano(String(input?.chat || '')).replace(/[^a-z0-9ñ\s]+/g, ' ');
+  const palabras = chat.split(/\s+/).filter((w) => w.length >= 3 && !/^(mi|mis|el|la|los|las|del|con|para|grupo)$/.test(w));
+  if (palabras.some((w) => new RegExp(`\\b${w}\\b`).test(m))) return null;
+  // Un «sí» a «¿Le escribo a …?».
+  if (ctx.afirma && ctx.anterior && HABLA_DE_MENSAJES.test(plano(ctx.anterior))) return null;
+  return 'la persona no habló de mensajes ni de WhatsApp en este turno';
+}
 
 /**
  * La línea de siempre para una llamada a una herramienta (o null si vino mal: sin lo imprescindible).
