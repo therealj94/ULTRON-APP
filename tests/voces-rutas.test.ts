@@ -112,6 +112,9 @@ const quien = async (token: string, audio: string) => {
 };
 const listar = async (token: string) => ((await (await fetch(`${base}/api/voces`, { headers: h(token) })).json()) as any).personas as any[];
 const archivo = (correo: string) => path.join(process.env.ULTRON_VOCES_DIR!, `${huellaVoces(correo)}.json`);
+/** A-7: lo guardado va en sobre (lib/biometria-sobre.ts); para mirarlo hay que abrirlo con la llave del servidor. */
+const { abrirBiometria, esSobre } = await import('../lib/biometria-sobre');
+const delDisco = (correo: string) => abrirBiometria(JSON.parse(fs.readFileSync(archivo(correo), 'utf8')), { tipo: 'voces', huella: huellaVoces(correo) }).dato as any;
 const frases = (f: number) => [wavB64(voz(f, 2.2)), wavB64(voz(f * 1.01, 2.0)), wavB64(voz(f * 0.99, 2.4))];
 
 test('sin sesión no hay voces: GET, POST y DELETE son 401', async () => {
@@ -180,7 +183,13 @@ test('aprender: la propia (nombre de la SESIÓN) y Ana con su «sí» y parentes
   const l = await listar(junta.token);
   assert.deepEqual(l.map((p) => [p.nombre, p.relacion, p.parentesco || null]).sort(), [['Ana', 'conocido', 'esposa'], ['José', 'yo', null]]);
   assert.ok(l.every((p) => !('vectores' in p)), 'las huellas no salen del servidor');
-  const crudo = fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8');
+  // A-7: en el disco va cifrado: ni la frase, ni el nombre, ni un número de la huella se leen sin la llave.
+  const sobre = fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8');
+  assert.ok(esSobre(JSON.parse(sobre)));
+  // (Solo patrones que no pueden salir del base64url al azar: con tildes, espacios o largos.)
+  assert.doesNotMatch(sobre, /recordar mi voz|José|vectores|consentimiento|"personas"/);
+  assert.deepEqual(Object.keys(JSON.parse(sobre)).sort(), ['alg', 'datos', 'iv', 'kid', 'llave', 'sobre', 'tag', 'tipo', 'v']);
+  const crudo = JSON.stringify(delDisco('jose.h@ordenglobal.org'));
   assert.match(crudo, /Sí, puedes recordar mi voz/);
   assert.doesNotMatch(crudo, /RIFF|UklGR|base64|audio/i, 'ni rastro del audio');
   assert.equal(JSON.parse(crudo).modelo, MODELO_VOZ.id);
@@ -250,7 +259,7 @@ test('la dueña es una sola y suma huellas (hasta MAX_MUESTRAS); un conocido con
   const conocidas = l.filter((p) => p.relacion === 'conocido');
   assert.equal(conocidas.length, 1, '«ána» es la misma Ana');
   assert.equal(conocidas[0].parentesco, 'esposa', 'el parentesco se conserva si no se dice otro');
-  const enDisco = JSON.parse(fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8'));
+  const enDisco = delDisco('jose.h@ordenglobal.org');
   assert.ok(enDisco.personas.every((p: any) => p.vectores.length <= MAX_MUESTRAS));
 });
 
@@ -294,7 +303,7 @@ test('olvidar de verdad: una por id y después todas; tras un redespliegue tampo
   assert.deepEqual(await r.json(), { ok: true, borradas: 1, honesto: true });
   _olvidarCacheVoces();
   assert.deepEqual(await listar(junta.token), []);
-  assert.deepEqual(JSON.parse(fs.readFileSync(archivo('jose.h@ordenglobal.org'), 'utf8')).personas, []);
+  assert.deepEqual(delDisco('jose.h@ordenglobal.org').personas, []);
 });
 
 test('si S3 no guarda, borrar no se confirma (503) y al reintentar se borra de verdad', async () => {
