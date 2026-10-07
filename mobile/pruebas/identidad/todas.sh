@@ -4,13 +4,14 @@
 # auditoría del 3-oct: el reintento y el intento de entrar son de quien los empezó (AUTH01, AUTH03), el
 # alta tardía del chat no revive tras salir (AUTH02) y cómo cierra el turno en stream (VOICE01, VOICE02). Y de la
 # revisión 9: el visor de la computadora de A (abierto, lo escrito, el lote pendiente) no queda para B. Y el id de
-# instalación con el que el teléfono dice qué build corre (x-aura-cliente) es de la cuenta que está dentro.
+# instalación con el que el teléfono dice qué build corre (x-aura-cliente) es de la cuenta que está dentro. Y la clave de
+# la 5.6.0 que pasa detrás de la huella sin dejar a nadie fuera, y cuándo se pide la huella (huella.cjs, revisión #157).
 # Construye el paquete para node y corre cada prueba. Sin relevo ni servidor: todo lo de afuera va simulado.
 # IDENTIDAD=/ruta/otro-paquete.cjs corre las mismas pruebas contra otro código (ver construir.cjs).
 cd "$(dirname "$0")" || exit 1
 node construir.cjs || exit 1
 fallos=0
-for t in sesion perfil recordatorios ota chat cifrado intento alta turno tardia visor recepcion; do
+for t in sesion perfil recordatorios ota chat cifrado intento alta turno tardia visor recepcion huella; do
   echo "\n══ $t"
   timeout 120 node "$t.cjs" || fallos=$((fallos + 1))
 done

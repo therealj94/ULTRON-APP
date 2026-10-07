@@ -55,7 +55,8 @@ async function bajar(base: string, frase: string, avatar: string, idioma: 'es' |
     const url = ttsUrl(textoParaVoz(frase), 'speak', 'neutral', avatar, idioma);
     let r = await FileSystem.downloadAsync(url, tmp, { headers: { Accept: 'audio/*', ...(await sessionHeaders()) } });
     // Sin una sesión viva el servidor solo da lo ya guardado: con el token vencido, se renueva una vez y se repite.
-    if (r.status === 401 && (await renovarTokenVoz())) r = await FileSystem.downloadAsync(url, tmp, { headers: { Accept: 'audio/*', ...(await sessionHeaders()) } });
+    // Es una precarga de fondo: la renovación NO pide la huella (lib/permisoHuella.ts); si hace falta, espera al turno.
+    if (r.status === 401 && (await renovarTokenVoz(false))) r = await FileSystem.downloadAsync(url, tmp, { headers: { Accept: 'audio/*', ...(await sessionHeaders()) } });
     const ct = cabecera(r.headers, 'Content-Type');
     const motor = cabecera(r.headers, 'X-Ultron-TTS');
     if (r.status !== 200 || !/audio|octet/i.test(ct) || !/^elevenlabs/i.test(motor)) throw new Error('no sirve');

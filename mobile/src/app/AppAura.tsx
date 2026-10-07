@@ -49,6 +49,7 @@ import { LoQueSabe } from '../ajustes/LoQueSabe';
 import { PrimeraVez } from '../primeravez/PrimeraVez';
 import { useAccionesDeAura } from './acciones';
 import { AvisoActualizacion } from './AvisoActualizacion';
+import { AvisoDesbloqueo } from './AvisoDesbloqueo';
 import { ComputadoraEnVivo } from './ComputadoraEnVivo';
 import { HojasCartera } from '../cartera/HojasCartera';
 import { LimitePantalla } from './LimitePantalla';
@@ -188,6 +189,8 @@ export function AppAura() {
         {/* «Actualización lista · Reiniciar» (lib/ota.ts) en TODAS las pantallas, también antes de entrar (José, 5-oct:
             salía hasta llegar al avatar). */}
         <AvisoActualizacion />
+        {/* «Toca para desbloquear»: la sesión venció y su clave está detrás de la huella (lib/permisoHuella.ts). */}
+        {enSesion && <AvisoDesbloqueo />}
         {/* Su computadora en vivo (se abre sola al empezar una tarea) y sus correos, encima de cualquier pantalla. */}
         {enSesion && <ComputadoraEnVivo />}
         {/* Su cartera de Veta Wallet y «Enviar dinero» (cartera/): se abren desde un chat, el menú o por voz. */}

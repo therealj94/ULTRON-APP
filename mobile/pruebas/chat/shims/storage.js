@@ -10,3 +10,4 @@ exports.saveSession = async (s) => {
 };
 exports.loadCreds = async () => null;
 exports.leerClaveConHuella = async () => null;
+exports.claveParaRenovar = async () => ({ clave: null, via: 'ninguna' });

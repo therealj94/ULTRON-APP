@@ -6,10 +6,14 @@
  * un correo o una llamada de verdad, ni escriba en la memoria de José, entra con una cuenta DEDICADA (los secretos
  * AURA_PRUEBA_CORREO y AURA_PRUEBA_CLAVE) y antes se comprueba aquí que:
  *
- *   1. el correo NO es de la junta que la app conoce (mobile/src/config.ts: DESK_USERS y EMAIL_ALIASES): ni se
- *      intenta entrar con él;
+ *   1. NO es de la junta, por dos lados:
+ *      a. el correo no está en la lista de la junta que llega por secreto (AURA_CORREOS_JUNTA: correos separados por
+ *         comas, espacios o líneas): con uno de esos ni se intenta entrar. La lista NO vive en el repositorio (es
+ *         público): antes salía de mobile/src/config.ts (DESK_USERS), que quedó vacío y dejaba esta guarda en nada;
+ *      b. y lo que manda: el SERVIDOR la ve como `miembro` (GET /api/ultron/sesion → user.nivel), no como junta, y su
+ *         rol no es de la junta. Esto vale aunque la lista falte o esté vieja;
  *   2. la clave entra (POST /api/ultron/entrar, el mismo que usa la pantalla «Otras formas de entrar»);
- *   3. el servidor la ve como `miembro`, no como junta (GET /api/ultron/sesion);
+ *   3. (1b) el nivel del servidor, justo después de entrar;
  *   4. no tiene WhatsApp vinculado (GET /api/whatsapp/estado → vinculado: false);
  *   5. no tiene correos conectados (GET /api/correo/cuentas → ninguna);
  *   6. su computadora en la nube no tiene una tarea en curso (GET /api/computadora; solo informa).
@@ -27,11 +31,27 @@ import { fileURLToPath } from 'node:url';
 const BASE = (process.env.AURA_URL || 'https://aura-fp.onrender.com').replace(/\/+$/, '');
 const CORREO = String(process.env.AURA_PRUEBA_CORREO || '').trim().toLowerCase();
 const CLAVE = String(process.env.AURA_PRUEBA_CLAVE || '');
-const AQUI = path.dirname(fileURLToPath(import.meta.url));
 
-/** Los correos de la junta que la app trae escritos (la lista de cuentas y sus alias). */
-export function correosDeLaJunta(configTs) {
-  return new Set((String(configTs).match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).map((c) => c.toLowerCase()));
+/** Los correos de la junta que llegan por secreto (AURA_CORREOS_JUNTA): separados por comas, espacios, `;` o líneas. */
+export function correosDeLaJunta(texto) {
+  return new Set((String(texto || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).map((c) => c.trim().toLowerCase()));
+}
+
+/** ¿El correo está en la lista de la junta? (sin entrar con él) */
+export function esDeLaListaDeLaJunta(correo, junta) {
+  return junta.has(String(correo || '').trim().toLowerCase());
+}
+
+/**
+ * Lo que dice el SERVIDOR de la sesión de la cuenta de prueba (GET /api/ultron/sesion). Solo `miembro` pasa: la junta,
+ * un nivel desconocido o un rol de la junta, no. null = segura; si no, el motivo.
+ */
+export function motivoDelNivel(sesion, correo) {
+  const u = sesion?.user || {};
+  if (!sesion?.authenticated || String(u.correo || '').trim().toLowerCase() !== String(correo || '').trim().toLowerCase()) return 'La sesión no se pudo comprobar.';
+  if (u.nivel !== 'miembro') return `La cuenta de prueba tiene nivel «${u.nivel || 'desconocido'}» en el servidor: debe ser «miembro» (fuera del padrón de la junta).`;
+  if (/junta/i.test(String(u.rol || ''))) return `La cuenta de prueba tiene rol «${u.rol}»: es de la junta.`;
+  return null;
 }
 
 async function pedir(ruta, { metodo = 'GET', token = '', cuerpo, ms = 30_000 } = {}) {
@@ -63,18 +83,14 @@ async function principal() {
     informe.motivo = 'Faltan los secretos AURA_PRUEBA_CORREO y/o AURA_PRUEBA_CLAVE.';
     return salida(informe);
   }
-  let junta = new Set();
-  try {
-    junta = correosDeLaJunta(fs.readFileSync(path.join(AQUI, '../../src/config.ts'), 'utf8'));
-  } catch {
-    informe.motivo = 'No pude leer mobile/src/config.ts para descartar las cuentas de la junta.';
+  // 1a. La lista de la junta llega por secreto (nunca escrita en el repositorio). Sin ella, manda el nivel del servidor (1b).
+  const junta = correosDeLaJunta(process.env.AURA_CORREOS_JUNTA);
+  informe.comprobado.listaJunta = junta.size;
+  if (esDeLaListaDeLaJunta(CORREO, junta)) {
+    informe.motivo = 'AURA_PRUEBA_CORREO está en AURA_CORREOS_JUNTA: es una cuenta de la junta. La prueba nunca entra con ella.';
     return salida(informe);
   }
-  if (junta.has(CORREO)) {
-    informe.motivo = 'AURA_PRUEBA_CORREO es una cuenta de la junta (José o Medardo). La prueba nunca entra con ella.';
-    return salida(informe);
-  }
-  informe.comprobado.noEsDeLaJunta = true;
+  informe.comprobado.noEstaEnLaListaDeLaJunta = true;
 
   let token = '';
   try {
@@ -88,18 +104,17 @@ async function principal() {
     token = e.json.token;
     informe.comprobado.entra = true;
 
+    // 1b. El nivel que le da el SERVIDOR: solo «miembro» pasa.
     const s = await pedir('/api/ultron/sesion', { token });
     const u = s.json?.user || {};
-    if (s.status !== 200 || !s.json?.authenticated || String(u.correo || '').toLowerCase() !== CORREO) {
-      informe.motivo = `La sesión no se pudo comprobar (HTTP ${s.status}).`;
-      return salida(informe);
-    }
     informe.comprobado.nivel = u.nivel || 'desconocido';
     informe.comprobado.rol = u.rol || '';
-    if (u.nivel !== 'miembro') {
-      informe.motivo = `La cuenta de prueba tiene nivel «${u.nivel || 'desconocido'}»: debe ser «miembro» (fuera del padrón de la junta).`;
+    const noMiembro = s.status !== 200 ? `La sesión no se pudo comprobar (HTTP ${s.status}).` : motivoDelNivel(s.json, CORREO);
+    if (noMiembro) {
+      informe.motivo = noMiembro;
       return salida(informe);
     }
+    informe.comprobado.noEsDeLaJunta = true;
 
     const w = await pedir('/api/whatsapp/estado', { token });
     if (w.status !== 200 || !w.json) {

@@ -13,6 +13,7 @@ import { logoutRemote } from '../lib/api';
 import { cargarPerfil, soltarPerfil } from '../lib/perfil';
 import { borrarRastrosViejos, getFingerprintUnlock, loadCreds, saveCreds, saveMesaToken, saveSession } from '../lib/storage';
 import { fijarCuenta, generacionCuenta, sigueVigente } from '../lib/cuenta';
+import { huellaResuelta } from '../lib/permisoHuella';
 import { confirmarIntento, type Intento } from '../lib/intentoEntrada';
 import { salir as salirDelChat } from '../pulse/relevo';
 import { miga } from '../lib/reporte';
@@ -47,6 +48,8 @@ export function useUsuario(): SessionUser | null {
 }
 
 export function fijarUsuario(u: SessionUser | null) {
+  // Otra persona (o nadie): ni el «Toca para desbloquear» ni la pausa de la huella de la anterior siguen.
+  if ((u?.correo || '').toLowerCase() !== (usuario?.correo || '').toLowerCase()) huellaResuelta();
   usuario = u;
   // La generación de la sesión (lib/cuenta.ts): lo que siga en vuelo de la persona anterior ya no aplica.
   fijarCuenta(u?.correo ?? null);
