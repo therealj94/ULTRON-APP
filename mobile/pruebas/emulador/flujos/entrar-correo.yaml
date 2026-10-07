@@ -1,0 +1,24 @@
+# Entrar, parte 1: «Otras formas de entrar» → «Otra cuenta» → el correo de la cuenta de PRUEBA.
+# El correo llega por la variable de entorno MAESTRO_CORREO_PRUEBA (el secreto AURA_PRUEBA_CORREO), nunca escrito aquí.
+# Nunca se toca «Entrar solo al escritorio» ni una de las cuentas de la junta de la lista.
+# correr.sh no hace capturas ni graba la pantalla durante la entrada (el correo se vería).
+appId: link.ordenglobal.ultronfp
+name: Entrar con la cuenta de prueba (correo)
+---
+- runFlow: abrir.yaml
+# «Otras formas de entrar» va al pie de la pantalla de Genesis ID, debajo del formulario de Veta Wallet.
+- scrollUntilVisible:
+    element: "Otras formas de entrar"
+    direction: DOWN
+    timeout: 20000
+- tapOn: "Otras formas de entrar"
+- extendedWaitUntil:
+    visible: "Otra cuenta"
+    timeout: 20000
+- tapOn: "Otra cuenta"
+# El campo de correo de «Otra cuenta» (su pista es la dirección de ejemplo). Si no aparece, no se sigue.
+- extendedWaitUntil:
+    visible: "correo@ordenglobal.org"
+    timeout: 20000
+- tapOn: "correo@ordenglobal.org"
+- inputText: ${MAESTRO_CORREO_PRUEBA}

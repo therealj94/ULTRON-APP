@@ -62,6 +62,7 @@ export function ChatMesa(p: Props) {
             p.onCambiarAvatar();
           }}
           style={s.quien}
+          testID="mesa-avatar"
           accessibilityRole="button"
           accessibilityLabel={tr(`Hablando con ${p.nombreAvatar}. Tocar para cambiar de avatar`, `Talking to ${p.nombreAvatar}. Tap to switch avatar`)}
         >
@@ -90,6 +91,7 @@ export function ChatMesa(p: Props) {
             p.onMenu();
           }}
           style={s.menu}
+          testID="mesa-mas"
           accessibilityRole="button"
           accessibilityLabel={tr('Más: cámara, caras, modo, qué puedo hacer y ajustes', 'More: camera, faces, mode, what I can do and settings')}
           hitSlop={8}
@@ -100,12 +102,12 @@ export function ChatMesa(p: Props) {
         </Pressable>
       </View>
 
-      <ScrollView ref={lista} style={s.lista} contentContainerStyle={s.listaContenido} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={lista} testID="mesa-transcripcion" style={s.lista} contentContainerStyle={s.listaContenido} keyboardShouldPersistTaps="handled">
         {p.mensajes.length === 0 && !p.parcial ? (
           <Text style={s.vacio}>{tr(`Háblale o escríbele a ${p.nombreAvatar}. Lo que digan queda aquí.`, `Talk or write to ${p.nombreAvatar}. Your conversation stays here.`)}</Text>
         ) : null}
         {p.mensajes.map((m, i) => (
-          <View key={i} style={[s.burbuja, m.rol === 'usuario' ? [s.mia, { backgroundColor: tema.acentoFondo }] : s.suya]}>
+          <View key={i} testID={m.rol === 'usuario' ? 'mesa-msg-usuario' : 'mesa-msg-avatar'} style={[s.burbuja, m.rol === 'usuario' ? [s.mia, { backgroundColor: tema.acentoFondo }] : s.suya]}>
             <Text style={[s.texto, m.rol === 'usuario' && { color: tema.acentoTexto }]} selectable>
               {m.texto}
             </Text>
@@ -137,6 +139,7 @@ export function ChatMesa(p: Props) {
           placeholder={tr(`Escríbele a ${p.nombreAvatar}…`, `Write to ${p.nombreAvatar}…`)}
           placeholderTextColor={T.texto3}
           style={s.entrada}
+          testID="mesa-entrada"
           multiline
           onSubmitEditing={p.onEnviar}
           blurOnSubmit
@@ -150,6 +153,7 @@ export function ChatMesa(p: Props) {
               p.onEnviar();
             }}
             style={[s.boton, { backgroundColor: tema.acento }]}
+            testID="mesa-enviar"
             accessibilityRole="button"
             accessibilityLabel={tr('Enviar', 'Send')}
           >

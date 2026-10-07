@@ -1,0 +1,44 @@
+# La mesa lista para escribir: sin la ventana de bienvenida, en «Modo trabajo» (el chat con lo que se dijo,
+# components/ChatMesa.tsx), con AU-RA y el micrófono en silencio (todo por texto, nada por voz).
+appId: link.ordenglobal.ultronfp
+name: Preparar la mesa
+---
+- extendedWaitUntil:
+    visible: "Mensaje|Más opciones.*|Después|Hablando con .*"
+    timeout: 60000
+- runFlow: cerrar-avisos.yaml
+# Modo trabajo: «Más» → «Modo trabajo» (si ya está, el campo «Mensaje» ya se ve).
+- runFlow:
+    when:
+      notVisible: "Mensaje"
+    commands:
+      - tapOn: "Más opciones.*"
+      - extendedWaitUntil:
+          visible: "Modo trabajo.*"
+          timeout: 15000
+      - tapOn: "Modo trabajo.*"
+- extendedWaitUntil:
+    visible: "Mensaje"
+    timeout: 20000
+- runFlow: cerrar-avisos.yaml
+# Con AU-RA (si la cuenta tenía otro avatar guardado).
+- runFlow:
+    when:
+      notVisible: "Hablando con AU-RA.*"
+    commands:
+      - tapOn: "Hablando con .*"
+      - extendedWaitUntil:
+          visible: "AU-RA\\. .*"
+          timeout: 15000
+      - tapOn: "AU-RA\\. .*"
+- extendedWaitUntil:
+    visible: "Hablando con AU-RA.*"
+    timeout: 20000
+# El micrófono en silencio: la prueba es por texto.
+- runFlow:
+    when:
+      visible: "Silenciar el micrófono"
+    commands:
+      - tapOn:
+          text: "Silenciar el micrófono"
+          retryTapIfNoChange: false

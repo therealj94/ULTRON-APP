@@ -1,0 +1,14 @@
+# Lo que puede tapar la mesa: la ventana de bienvenida («Después») y una propuesta de AURA («Cerrar: luego»).
+appId: link.ordenglobal.ultronfp
+name: Cerrar avisos de la mesa
+---
+- runFlow:
+    when:
+      visible: "Después"
+    commands:
+      - tapOn: "Después"
+- runFlow:
+    when:
+      visible: "Cerrar: luego"
+    commands:
+      - tapOn: "Cerrar: luego"

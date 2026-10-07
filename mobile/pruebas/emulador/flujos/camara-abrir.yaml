@@ -1,0 +1,43 @@
+# Escenario 5: «Más» → «Cámara» → «Solo ahora» → «Lo que veo», y la cámara trasera (la escena virtual del emulador).
+appId: link.ordenglobal.ultronfp
+name: Abrir la cámara de la mesa
+---
+- runFlow: cerrar-avisos.yaml
+- tapOn: "Más: .*"
+- extendedWaitUntil:
+    visible: "Cámara\\..*"
+    timeout: 15000
+- tapOn: "Cámara\\..*"
+- extendedWaitUntil:
+    visible: "Solo ahora|Dejarla así"
+    timeout: 15000
+- runFlow:
+    when:
+      visible: "Solo ahora"
+    commands:
+      - tapOn: "Solo ahora"
+- runFlow:
+    when:
+      visible: "Dejarla así"
+    commands:
+      - tapOn: "Dejarla así"
+# Por si el permiso no quedó dado al instalar (correr.sh instala con -g).
+- runFlow:
+    when:
+      visible: "Mientras (la app está en uso|se usa la app)|While using the app"
+    commands:
+      - tapOn: "Mientras (la app está en uso|se usa la app)|While using the app"
+- extendedWaitUntil:
+    visible: "Ver lo que veo con la cámara"
+    timeout: 30000
+- tapOn: "Ver lo que veo con la cámara"
+- extendedWaitUntil:
+    visible: "Cerrar lo que veo"
+    timeout: 20000
+- runFlow:
+    when:
+      visible: "Cambiar de cámara"
+    commands:
+      - tapOn:
+          text: "Cambiar de cámara"
+          retryTapIfNoChange: false

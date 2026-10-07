@@ -543,10 +543,11 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
           />
         </Grupo>
         {selected.id === 'otro' && (
-          <Campo etiqueta={tr('Correo', 'Email')} value={customCorreo} onChangeText={setCustomCorreo} placeholder="correo@ordenglobal.org" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+          <Campo testID="entrar-correo" etiqueta={tr('Correo', 'Email')} value={customCorreo} onChangeText={setCustomCorreo} placeholder="correo@ordenglobal.org" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
         )}
         <Campo
           etiqueta={tr('Clave', 'Password')}
+          testID="entrar-clave"
           clave
           value={clave}
           onChangeText={setClave}
