@@ -24,7 +24,8 @@
  * computadora (respuestaAlBorrador, respuestaSiNo: devuelven «si» solo con una afirmación pura).
  */
 
-export type TipoDecision = 'correo' | 'whatsapp' | 'computadora' | 'mensaje' | 'chat' | 'llamar' | 'recordatorio' | 'cancelar_recordatorio';
+/** `evento`: un evento de su calendario que AU-RA propuso con los datos exactos (server/calendario.ts). */
+export type TipoDecision = 'correo' | 'whatsapp' | 'computadora' | 'mensaje' | 'chat' | 'llamar' | 'recordatorio' | 'cancelar_recordatorio' | 'evento';
 
 /**
  * Una decisión que espera. `destino`: a quién va, como texto (nombres, correos, números). `destinatarios`: si va a
@@ -166,12 +167,14 @@ const NOMBRES: Record<TipoDecision, Set<string>> = {
   llamar: set('llamada llama llamale llamala llamalo llamar marcale marcala marcalo call comunicame'),
   recordatorio: set('recordatorio recordatorios reminder alarma recuerdame recordar ponlo ponmelo ponselo guardalo agendalo programalo'),
   cancelar_recordatorio: set('recordatorio recordatorios reminder cancelalo cancelala quitalo quitala borralo borrala eliminalo cancel delete remove'),
+  evento: set('evento eventos calendario agenda cita reunion event meeting calendar agendalo agendala agendar'),
 };
 /** Los verbos de la acción misma: con ellos (y nada más) el atajo cumple una propuesta («llámale», «ponlo»). */
 const VERBOS: Partial<Record<TipoDecision, Set<string>>> = {
   llamar: set('llamale llamala llamalo marcale marcala marcalo comunicame'),
   recordatorio: set('ponlo ponmelo ponselo guardalo agendalo programalo'),
   cancelar_recordatorio: set('cancelalo cancelala quitalo quitala borralo borrala eliminalo'),
+  evento: set('agendalo agendala'),
 };
 const ACCION = new Set<string>([...NOMBRES.llamar, ...(VERBOS.recordatorio || [])]);
 const TIPOS_MENSAJE = new Set<TipoDecision>(['correo', 'whatsapp', 'mensaje', 'chat']);
@@ -524,7 +527,7 @@ function fichasDeTexto(texto: string | undefined): string[] {
 
 /** Lo que IDENTIFICA a una decisión sin contar los nombres: si es una pregunta o un recordatorio, su texto. */
 function fichasDelTexto(p: DecisionPendiente): string[] {
-  return p.tipo === 'computadora' || p.tipo === 'recordatorio' || p.tipo === 'cancelar_recordatorio' ? fichasDeTexto(p.texto) : [];
+  return p.tipo === 'computadora' || p.tipo === 'recordatorio' || p.tipo === 'cancelar_recordatorio' || p.tipo === 'evento' ? fichasDeTexto(p.texto) : [];
 }
 
 /** ¿La ficha `w` está en estas palabras de un texto? Un proveedor cuenta por su familia («google» y «gmail»). */

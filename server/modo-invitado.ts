@@ -118,7 +118,7 @@ export function modoInvitadoDe(body: any): ModoInvitado | null {
 
 /** Las herramientas de un invitado: ninguna privada ni del teléfono de la dueña (lo público —web, leer— sigue). Tampoco crear archivos: quedan en la cuenta de la dueña. */
 export function manosDeInvitado(base: ManosDelTurno): ManosDelTurno {
-  return { ...base, app: false, manos: [], sistema: false, computadora: false, correo: false, whatsapp: false, sesion: false, triaje: false, investigar: false, documentos: false };
+  return { ...base, app: false, manos: [], sistema: false, computadora: false, correo: false, whatsapp: false, sesion: false, triaje: false, investigar: false, documentos: false, calendario: false };
 }
 
 /** La línea para el modelo en un turno de invitado. */

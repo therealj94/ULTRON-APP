@@ -3335,6 +3335,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return setPcAbierta(true);
       case 'misiones':
         return setHojaCerebro('misiones');
+      case 'agenda':
+        return setHojaCerebro('agenda');
       case 'ajustes':
         // La pantalla de Ajustes entera (voz, oído, memoria, su cara, tema, perfil, permisos y sesión).
         return emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });

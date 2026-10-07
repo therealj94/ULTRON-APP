@@ -104,6 +104,7 @@ import {
   nuevoContextoTrabajos,
 } from './server/trabajos';
 import { correrDocumento, montarRutasDocumentos } from './server/documentos';
+import { avisosCalendario, correrCalendarioConEstado, montarRutasCalendario, propuestaEventoDe } from './server/calendario';
 import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
 import { trozoPromete, trozoPrometeUOfrece, vigilarPromesas, type PasoVigilado } from './lib/promesas';
 import { vezDelEvento } from './lib/envios';
@@ -1627,6 +1628,8 @@ alAvisarApp((quien, aviso, aparato) => {
   return n;
 });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+// Su calendario (Microsoft y Google) desde el teléfono: conectar, ver el día y lo que crea AU-RA con su «sí».
+montarRutasCalendario(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Lo que AU-RA propone por su cuenta y las misiones de cada persona (server/iniciativa.ts).
 // UN adaptador de contadores (correo y WhatsApp de cada quien, server/fuentes-iniciativa.ts) para las rutas y para
@@ -2997,6 +3000,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const ambitoTurno = ambitoDelTurno(body, opciones);
   // Lo que un envío confirmado en la voz terminó después de contestar (el resultado real, una vez).
   if (duenoComputadora) hechos.push(...avisosDeEnvio(duenoComputadora, ambitoTurno));
+  // Lo mismo con el evento que su «sí» hablado mandó crear en su calendario (el recibo real de la API, una vez).
+  if (duenoComputadora) hechos.push(...avisosCalendario(duenoComputadora, ambitoTurno));
   // Novena ronda: lo de la app que no salió al confirmar el turno de voz (cambió lo que esperaba): una vez.
   if (correoApp) hechos.push(...avisosAppDe(ambitoApp(correoApp, body?.aparato)));
   // Lo que investigó en segundo plano (server/investigar.ts): lo que terminó y no se le dijo, y lo que sigue
@@ -3620,6 +3625,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     investigar: !!duenoComputadora && investigacionDisponible(),
     // Crear Word, Excel y PDF con la API (server/documentos.ts): los archivos quedan en SU cuenta.
     documentos: !!duenoComputadora,
+    // Su calendario (server/calendario.ts): con sesión siempre; sin calendario conectado, la herramienta lo dice (no inventa).
+    calendario: !!duenoComputadora,
   };
   // Un invitado: ninguna herramienta privada ni del teléfono de la dueña (server/modo-invitado.ts).
   if (invitado) Object.assign(manosTurno, manosDeInvitado(manosTurno));
@@ -4235,6 +4242,8 @@ async function correrHerramientaPedida(
       // Word, Excel y PDF por la API (FILE-01): generar → comprobar → entregar con recibo; los requisitos salen de lo que
       // la persona pidió en este turno (tal cual), no de la paráfrasis del modelo.
       documento: (arg) => correrDocumento({ dueno, arg, pedido: compu?.pedido, senal }),
+      // Su calendario: leer y PROPONER (agendar nunca crea solo: lo crea el servidor con su «sí», server/decision-turno.ts).
+      calendario: (arg) => correrCalendarioConEstado(dueno, arg, ambito),
     },
     extraerPython(reply),
     nivel
@@ -4729,9 +4738,11 @@ function contextoHonestidad(p: TurnoHonesto, o: { recibos?: ReciboEfecto[]; acci
     const app = appEsperandoDe(ambitoApp(p.correoApp, p.aparato), p.contextoApp || null);
     if (app?.que === 'mensaje') borrador = { canal: 'chat', para: app.para };
   }
+  const ev = p.dueno ? propuestaEventoDe(p.dueno, p.ambito || '') : null;
   return {
     recibos,
     previos: quien ? efectosRecientes(quien) : [],
+    evento: ev ? { titulo: ev.titulo } : null,
     mensaje: p.crudo || p.message,
     anterior: [...(p.hilo || [])].reverse().find((m) => m.role === 'assistant')?.content,
     borrador,
@@ -5864,6 +5875,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           esperaSi: algoEsperaSuSi(),
           esperaWhatsapp: !!p.dueno && (!!borradorWhatsappDe(p.dueno, p.ambito) || apartadosWhatsappDe(p.dueno, p.ambito).length > 0),
           esperaCorreo: !!p.dueno && (!!borradorDe(p.dueno, p.ambito) || apartadosCorreoDe(p.dueno, p.ambito).length > 0),
+          esperaCalendario: !!p.dueno && !!propuestaEventoDe(p.dueno, p.ambito || ''),
           contactos: (p.contextoApp?.contactos || []).map((c) => String(c?.nombre || '')),
           conTarea: tools.includes('tarea'),
         })

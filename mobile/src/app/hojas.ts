@@ -10,7 +10,8 @@
  *
  * Sin React Native: un dato de módulo con oyentes (useSyncExternalStore en la vista).
  */
-export type HojaGlobal = 'computadora' | 'correos' | 'misiones' | 'conocer' | 'circulo';
+/** `agenda`: «Hoy», su calendario (agenda/HojaHoy.tsx). */
+export type HojaGlobal = 'computadora' | 'correos' | 'misiones' | 'conocer' | 'circulo' | 'agenda';
 type EstadoHojas = { abierta: HojaGlobal | null; tareaId: string | null };
 
 let estado: EstadoHojas = { abierta: null, tareaId: null };
