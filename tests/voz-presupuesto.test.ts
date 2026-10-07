@@ -256,7 +256,7 @@ test('un turno hablado pesado y realista cabe en el presupuesto y conserva lo qu
   const ma = medir(accion.nuevos[0]);
   const fichasAccion = fichasEstimadas(ma.total);
   console.log(`[presupuesto voz] con acción: herramientas ${ma.nombres.length}: ${ma.herramientas.length} car. · total ~${fichasAccion} fichas`);
-  assert.match(ma.herramientas, /solo deja un BORRADOR: léeselo y pregunta si lo mandas/);
+  assert.match(ma.herramientas, /solo dejan? un BORRADOR: léeselo(, di qué sale)? y pregunta si lo mandas/);
   assert.ok(ma.nombres.includes('whatsapp') && ma.nombres.includes('llamar_contacto') && ma.nombres.includes('correo'), `las manos de lo que pidió: ${ma.nombres.join(', ')}`);
   assert.ok(fichasAccion <= PRESUPUESTO_VOZ_FICHAS, `con acción: ~${fichasAccion} fichas > ${PRESUPUESTO_VOZ_FICHAS}`);
   contestar = () => `[EMO: neutral] ${respuestas[vuelta++ % respuestas.length]}`;

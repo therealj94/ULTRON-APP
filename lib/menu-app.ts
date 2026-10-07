@@ -193,7 +193,7 @@ export const MENU_APP: readonly LugarApp[] = [
     donde: { es: 'Más → Cámara: Apagada, Solo ahora o Siempre (empieza apagada); «¿qué ves?» la prende solo ahora. «Comenta lo que ve» (que comente sola): Más → Ajustes. Caras: Más → Caras', en: 'More → Camera: Off, Just now or Always (starts off); “what do you see?” turns it on just now. “Comments on what it sees” (unprompted remarks): More → Settings. Faces: More → Faces' },
     que: { es: 've y dice qué hay, lee papeles y reconoce a quien le presente, con permiso', en: 'sees and says what is there, reads papers and recognizes people introduced, with permission' },
     corto: { es: 'Cámara: Más → Cámara (Apagada, Solo ahora, Siempre)', en: 'Camera: More → Camera (Off, Just now, Always)' },
-    fuente: ['mobile/src/lib/camaraModo.ts', 'mobile/src/components/DeskMenu.tsx'],
+    fuente: ['mobile/src/lib/camaraModo.ts', 'mobile/src/components/HojaMas.tsx'],
   },
   {
     id: 'ajustes',
