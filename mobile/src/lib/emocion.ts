@@ -3,7 +3,7 @@
  * El servidor manda `emocion` en /api/turno (JSON) y como evento SSE `emocion` en /api/turno/stream;
  * la cara la traduce a un FaceState y la voz la recibe en /api/tts?emocion=.
  */
-import type { FaceState } from '../config';
+import type { FaceState } from '../caraTipos';
 import { expresionDe } from './expresiones';
 
 export const EMOCIONES = [
