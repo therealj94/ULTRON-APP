@@ -180,9 +180,13 @@ export type GuardaRepeticion = {
   vacia: boolean;
 };
 
-/** ¿Lo que queda dice algo? (una frase medible, o una pregunta). */
+/**
+ * ¿Lo que queda dice algo? Una pregunta, o al menos una frase de 5 palabras: «Claro que sí, José.» solo es el saludo de
+ * una respuesta que se quitó entera (revisión de 23b2f5f), y sonar solo eso la pierde.
+ */
 function util(texto: string): boolean {
-  return palabras(texto) >= 3 || /\?\s*$/.test(String(texto).trim());
+  const t = String(texto).trim();
+  return /\?\s*$/.test(t) || frasesDe(t).some((f) => palabras(f) >= 5);
 }
 
 export type OpcionesGuarda = {

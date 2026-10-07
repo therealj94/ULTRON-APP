@@ -77,6 +77,14 @@ describe('G1) la guarda de repetición no borra lo corregido ni lo actualizado',
     assert.equal(n.texto, 'Por cierto, el clima de hoy está despejado en Comayagua.');
   });
 
+  it('si de la respuesta solo queda el saludo («Claro que sí, José.»), cuenta como vacía: no suena solo el saludo', () => {
+    // Revisión de 23b2f5f: vuelve a preguntar con otras palabras, contesta lo mismo con un saludo delante.
+    const g = R.guardaRepeticion(`Claro que sí, José. ${PARRAFO}`, [PARRAFO], { mensaje: '¿A qué hora era lo del dentista?' });
+    assert.equal(g.repite, true);
+    assert.equal(g.vacia, true, 'el saludo solo no es una respuesta');
+    assert.equal(g.texto, '');
+  });
+
   it('nunca «ya te lo dije»: la frase fija se fue y la segunda vuelta no puede decirlo', () => {
     assert.equal((R as Record<string, unknown>).respuestaBreveSinRepetir, undefined, 'la frase «Eso ya te lo dije» ya no existe');
     assert.doesNotMatch(R.notaNoRepetir('es'), /Si no hay nada nuevo, dilo/);
