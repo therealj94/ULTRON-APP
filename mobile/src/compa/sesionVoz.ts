@@ -307,6 +307,8 @@ export function abrirSesionVoz(d: DepsSesionVoz): CerrarSesionVoz {
       // La boca sigue el volumen real de la voz del avatar (cada cuadro); si el teléfono no lo da, una
       // envolvente de habla mientras el agente habla. El de la persona, para el anillo que late.
       let sinVolumenDesde = 0;
+      /** El SDK ya dio un volumen de salida real en esta sesión (con eso, la envolvente de respaldo no vuelve). */
+      let volumenReal = false;
       let envolvente: ((ms: number) => number) | null = null;
       let t0 = 0;
       let antes = d.reloj();
@@ -328,7 +330,11 @@ export function abrirSesionVoz(d: DepsSesionVoz): CerrarSesionVoz {
           /* sin sesión todavía */
         }
         const ahora = d.reloj();
-        if (d.hablando.current && salida < 0.01) {
+        // El teléfono ya dio volumen de verdad en esta sesión: entonces su silencio es silencio (boca cerrada). La
+        // envolvente de respaldo es solo para el teléfono que no lo da nunca; antes también salía con el «speaking» del
+        // SDK antes de que sonara la voz o en una pausa, y la boca se movía sin audio (José, 7-oct).
+        if (salida >= 0.01) volumenReal = true;
+        if (d.hablando.current && salida < 0.01 && !volumenReal) {
           if (!sinVolumenDesde) sinVolumenDesde = ahora;
           if (ahora - sinVolumenDesde > sinVolumenMs) {
             if (!envolvente) {

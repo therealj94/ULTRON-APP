@@ -948,7 +948,9 @@ export default function App() {
         case 'cantar': {
           callarTodo();
           setEmocion('canto');
-          setFace('SING');
+          // Canta cuando SUENA (d.inicio: el `playing` del audio); mientras baja la canción, piensa (José, 7-oct: la
+          // boca se movía antes de que saliera la voz).
+          setFace('THINKING');
           const d = cantar({ pedido: it.pedido });
           hablando.current = d;
           d.inicio.then(() => hablando.current === d && setFace('SING'));
@@ -963,7 +965,8 @@ export default function App() {
         case 'orar': {
           callarTodo();
           setEmocion('oracion');
-          setFace('PRAY');
+          // Ora cuando SUENA (d.inicio); mientras se prepara, piensa.
+          setFace('THINKING');
           const d = hablar('oracion', { emocion: 'oracion' });
           hablando.current = d;
           d.inicio.then(() => hablando.current === d && setFace('PRAY'));

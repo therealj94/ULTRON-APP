@@ -87,7 +87,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { ClaudioRetrato, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { ClaudioDePie, FOTOS_ANTONIO_PIE } from '../avatares/ClaudioDePie';
 import { CuerpoMesa } from '../avatar3d/CuerpoMesa';
-import { vozSonando } from '../avatar3d/sonando';
+import { caraConVoz, vozSonando } from '../avatar3d/sonando';
 import { leeConHerramientas, ponerLee } from '../avatares/video/pistas';
 import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { hayVideo } from '../avatares/video/clips';
@@ -440,6 +440,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /**
    * ¿Suena la voz de la mesa? (lib/tts → avatar3d/sonando.ts). El cuerpo en video o 3D habla con ESTO, no
    * con la cara: la cara SPEAKING llega antes que el audio (José, 5-oct: «habla cuando no está diciendo nada»).
+   * Y desde el 7-oct también la cara (orbe, anillos, la clásica, las fotos): ver `hablaVoz` y `caraVista` abajo.
    */
   const audioMesa = useSyncExternalStore(vozSonando.escuchar, vozSonando.ahora);
   /** La mesa es la pantalla que se ve (la pila nativa la deja montada debajo de los chats y Ajustes). */
@@ -3009,6 +3010,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const dotColorNativo =
     status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? avatarPorId(avatar || 'aura').tema.acento : status === 'offline' ? T.texto3 : T.activo;
   /*
+   * ¿HABLA DE VERDAD? (José, 7-oct, SM-S942B: «empieza a mover la boca antes de que salga la voz»). La mesa pone la
+   * cara de hablar (y `status` «speaking») cuando DECIDE hablar: en `say` antes de pedir el audio, con la emoción del
+   * turno mientras el cerebro escribe, y en onAudioStart, que es ANTES de play (por el nativo en streaming, antes
+   * incluso de que llegue el primer byte). Lo que se VE habla solo desde que el reproductor confirma que suena hasta
+   * que la locución termina o la cortan (avatar3d/sonando.ts `hablando`), o mientras habla el agente de la
+   * conversación en vivo. Antes de eso la cara piensa (caraConVoz) y la línea dice «preparando».
+   */
+  const hablaVoz = audioMesa.hablando || (conversando && estadoConv === 'hablando');
+  const caraVista = caraConVoz(face, hablaVoz);
+  /*
    * EL PUNTO ÚNICO donde la mesa dice qué está haciendo (el HUD y la cabecera del chat de la mesa).
    * El banco de frases variadas de estado («escuchando», «pensando», «revisando»…) lo arma otra rama
    * (fraseDeEstado(estado, avatar, idioma), en la capa de lógica): cuando llegue, entra AQUÍ y en
@@ -3025,7 +3036,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         : status === 'thinking'
           ? tr('pensando', 'thinking')
           : status === 'speaking'
-            ? face === 'SING' ? tr('cantando', 'singing') : tr('hablando', 'speaking')
+            ? !hablaVoz ? tr('preparando', 'getting ready') : face === 'SING' ? tr('cantando', 'singing') : tr('hablando', 'speaking')
             : status === 'orando'
               ? tr('orando', 'praying')
             : status === 'reconnect'
@@ -3103,8 +3114,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       <OrbeAura
         // Arriba, el estado (y lo que dice la persona); abajo, la barra con su sugerencia: ahí no escribe.
         margen={{ arriba: 56, abajo: altoAbajo + 12 }}
-        face={face}
-        hablando={status === 'speaking'}
+        face={caraVista}
+        hablando={hablaVoz}
         frase={fraseOrbe}
         sonidos={settings.sfx}
         speechLevelSource={suscribirNivelVoz}
@@ -3114,7 +3125,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     ) : vista === 'anillos' ? (
       <CaraSegura
-        face={face}
+        face={caraVista}
         acento={mode === 'GOLD' ? '#FFD166' : undefined}
         gazeX={gaze.x}
         gazeY={gaze.y}
@@ -3131,7 +3142,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     ) : vista === 'clasica' ? (
       <UltronFace
-        face={face}
+        face={caraVista}
         mode={mode}
         caja={cajaCara}
         gazeX={gaze.x}
@@ -3158,7 +3169,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const fotosCara =
     reparto.pose === 'pie' ? (
       <ClaudioDePie
-        face={face}
+        face={caraVista}
         gazeX={gaze.x}
         speechLevelSource={suscribirNivelVoz}
         fotos={avatarId === 'antonio' ? FOTOS_ANTONIO_PIE : undefined}
@@ -3168,7 +3179,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     ) : (
       <ClaudioRetrato
-        face={face}
+        face={caraVista}
         gazeX={gaze.x}
         gazeY={gaze.y}
         speechLevelSource={suscribirNivelVoz}
@@ -3183,7 +3194,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       <CuerpoMesa
         avatar={avatarId}
         camara={reparto.pose === 'pie' ? 'cuerpo' : 'retrato'}
-        face={face}
+        face={caraVista}
         emocion={emocion}
         // Habla solo con audio de verdad: el de la mesa o el del agente en la conversación fluida. Sin audio,
         // piensa mientras el turno sigue (o la voz se prepara); si no, la cara decide (escucha, reposo…).

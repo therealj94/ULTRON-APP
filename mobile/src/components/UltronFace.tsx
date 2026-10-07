@@ -534,8 +534,12 @@ export function UltronFace({
   }, [speechLevelSource, aplicarVisema]);
 
   // Respaldo: si estamos "hablando" pero no llega nivel (audio ajeno a tts.ts), la boca se mueve sola.
+  // Con `speechLevelSource` (la mesa) NO: esa fuente es la voz real y su silencio es boca cerrada. Antes, con la cara
+  // de hablar puesta antes de que sonara la voz (o en el hueco entre frases), a los 700 ms sin nivel la boca se movía
+  // sola sin audio (José, 7-oct: «mueve la boca antes de que salga la voz»). Sin fuente (Electrum), como siempre.
+  const conFuente = !!speechLevelSource;
   useEffect(() => {
-    if (!MOUTH_LOOP.has(face)) return;
+    if (!MOUTH_LOOP.has(face) || conFuente) return;
     let loop: Animated.CompositeAnimation | null = null;
     const fast = face === 'LAUGH';
     const id = setInterval(() => {
@@ -568,7 +572,7 @@ export function UltronFace({
       clearInterval(id);
       loop?.stop();
     };
-  }, [face, mouthOpen, jawSpeech]);
+  }, [face, conFuente, mouthOpen, jawSpeech]);
 
   useEffect(() => {
     if (!firing) {

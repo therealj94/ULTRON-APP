@@ -52,6 +52,8 @@ const piezas = {
   RELLENO: 'lib/relleno',
   // La voz en streaming (5.5): lo puro (camino, boca, fallos) que tts.ts usa con el reproductor nativo simulado.
   VOZNATIVA: 'lib/vozNativa',
+  // ¿Suena la voz de la mesa? (la boca y la cara hablan solo con esto; pruebas/oido/boca.cjs).
+  SONANDO: 'avatar3d/sonando',
 };
 // Lo que no exista en esa copia (p. ej. el ciclo de la llamada en main) se deja fuera.
 const lineas = Object.entries(piezas)

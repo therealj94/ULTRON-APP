@@ -1136,7 +1136,8 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     if (st.caminando) cara.rasgos.miraY = 0.1;
     const conAudio = performance.now() - lipTs < 350;
     rostro.avanzar(dt, cara, {
-      habla: habla || animo === 'canto',
+      // El ánimo «canto» llega antes que la canción: canta con la boca solo si su voz suena (José, 7-oct).
+      habla: habla || (animo === 'canto' && conAudio),
       nivel: lip,
       conAudio,
       mirarX: st.mirarX + st.leer * 0.6,

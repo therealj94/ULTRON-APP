@@ -672,6 +672,11 @@ type PlayMeta = {
   kind?: EnvelopeKind;
   /** El reproductor confirmó que suena (primer aviso con isPlaying, sin haber terminado): una vez. */
   alSonar?: () => void;
+  /**
+   * La locución a la que pertenece este audio (un `speak`, un locutor, una canción): su primer «suena» la pasa a
+   * hablando en avatar3d/sonando.ts (la cara habla desde ahí, no desde que se pidió play).
+   */
+  locucion?: object;
 };
 
 /**
@@ -747,12 +752,13 @@ function playPrepared(sound: Reproducible, my: number, maxMs = 25_000, meta: Pla
     sound.setOnPlaybackStatusUpdate((st) => {
       if (done) return;
       if (!st.isLoaded) {
-        vozSonando.sonar(sound, false);
+        vozSonando.sonar(sound, false, meta.locucion);
         if ((st as any).error) end();
         return;
       }
       // El cuerpo habla mientras el reproductor dice que suena: no al pedir el audio, ni pausado o cargando.
-      vozSonando.sonar(sound, !!st.isPlaying && !st.didJustFinish);
+      // De otra generación (ya la callaron) no cuenta: un aviso tardío no reabre la boca.
+      vozSonando.sonar(sound, !!st.isPlaying && !st.didJustFinish && my === gen, meta.locucion);
       // El comienzo REAL de la voz: el primer aviso del reproductor diciendo que suena (no el play pedido).
       if (!confirmada && st.isPlaying && !st.didJustFinish && my === gen) {
         confirmada = true;
@@ -848,6 +854,16 @@ async function playSource(source: AVPlaybackSource | null, my: number, cb: Speak
   return true;
 }
 
+/**
+ * Una locución de un solo audio (canción, oración, un mp3): prepara desde que se pide hasta que suena, habla
+ * mientras suena y termina al final (avatar3d/sonando.ts). Devuelve la locución y cómo cerrarla.
+ */
+function locucionSuelta(): { locucion: object; cerrar: () => void } {
+  const locucion = {};
+  vozSonando.preparar(locucion, true);
+  return { locucion, cerrar: () => vozSonando.terminar(locucion) };
+}
+
 /** Una frase corta de la mesa («un momento», «de nada»), dicha en vivo por el avatar. */
 export async function speakFrase(id: FraseId, opts?: SpeakCallbacks & { emocion?: Emocion }): Promise<boolean> {
   return speak(frase(id), opts);
@@ -868,12 +884,14 @@ export async function speakUrl(pathOrUrl: string, opts?: SpeakCallbacks) {
   const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
   await stopSpeaking();
   const my = gen;
+  const loc = locucionSuelta();
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
   try {
-    return await playSource({ uri: url }, my, opts, 120_000);
+    return await playSource({ uri: url }, my, opts, 120_000, { locucion: loc.locucion });
   } finally {
+    loc.cerrar();
     endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
@@ -890,6 +908,7 @@ const songCache = new Map<string, string>();
 export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
   const my = gen;
+  const loc = locucionSuelta();
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
@@ -900,7 +919,7 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
     // de AU-RA: con otro avatar el servidor no lo sirve (la mesa lo explica antes de pedirlo).
     const key = `${avatar}|${idioma}|` + ('id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`);
     let uri = songCache.get(key) || null;
-    const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null };
+    const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null, locucion: loc.locucion };
     if (!uri) {
       opts?.onPreparing?.();
       uri = await downloadPost(CANTAR_ENDPOINT, { ...(req as Record<string, unknown>), avatar, idioma }, 55_000);
@@ -909,6 +928,7 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
     if (my !== gen) return false;
     return await playSource(uri ? { uri } : null, my, opts, 180_000, meta);
   } finally {
+    loc.cerrar();
     endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
@@ -923,6 +943,7 @@ const prayerCache = new Map<string, string>();
 export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
   const my = gen;
+  const loc = locucionSuelta();
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
@@ -930,7 +951,7 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
     const tema = (opts?.tema || '').trim();
     const avatar = avatarActual();
     const idioma = idiomaActual();
-    const meta: PlayMeta = { kind: 'pray' };
+    const meta: PlayMeta = { kind: 'pray', locucion: loc.locucion };
     const key = `${avatar}|${idioma}|tema:${tema}`;
     let uri = prayerCache.get(key) || null;
     if (!uri) {
@@ -941,6 +962,7 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
     if (my !== gen) return false;
     return await playSource(uri ? { uri } : null, my, opts, 300_000, meta);
   } finally {
+    loc.cerrar();
     endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
@@ -1045,7 +1067,7 @@ export async function speak(
       const primera = !spoke;
       if (!spoke) {
         spoke = true;
-        vozSonando.preparar(locucion, false);
+        // Todavía no suena (se manda a sonar): sigue «preparando» hasta que el reproductor lo confirme (locucion).
         opts?.onAudioStart?.();
       }
       // Por el nativo: la siguiente suena pegada a esta (sin hueco), si nada la invalidó.
@@ -1055,11 +1077,13 @@ export async function speak(
         text: sentences[i],
         kind: perf === 'sing' ? 'sing' : emocion === 'oracion' ? 'pray' : 'speak',
         alSonar: primera ? opts?.onSuena : undefined,
+        locucion,
       });
     }
     return spoke;
   } finally {
-    vozSonando.preparar(locucion, false);
+    // Terminó, la cortaron o no sonó nada: ni prepara ni habla (la cara deja de hablar en el acto).
+    vozSonando.terminar(locucion);
     if (nextPrepared) void nextPrepared.then((s) => s?.unloadAsync().catch(() => {}));
     endSpeak();
     if (my === gen) opts?.onEnd?.();
@@ -1127,6 +1151,8 @@ export class StreamSpeaker {
   private spoke = false;
   /** El sonido que puso ESTE locutor y suena ahora (cancelar lo calla; no toca el de nadie más). */
   private sonido: Reproducible | null = null;
+  /** Esta locución en avatar3d/sonando.ts: prepara desde la primera frase, habla desde que suena, termina al resolver. */
+  private readonly locucion = {};
   /** La frase siguiente, preparándose mientras suena la actual (o mientras termina el relleno). */
   private nextPrepared: { frase: FraseCola; p: Promise<Reproducible | null> } | null = null;
   private sources = new Map<string, Promise<Fuente | null>>();
@@ -1188,6 +1214,7 @@ export class StreamSpeaker {
     if (this.terminadoCon) return;
     this.terminadoCon = f;
     locutoresVivos.delete(this.vivo);
+    vozSonando.terminar(this.locucion);
     this.resolverFin(f);
   }
 
@@ -1329,6 +1356,8 @@ export class StreamSpeaker {
   }
 
   private enqueue(sentence: string) {
+    // Hay algo que decir y todavía no suena: la cara piensa (no habla) hasta la primera sílaba.
+    if (!this.spoke && this.vigente()) vozSonando.preparar(this.locucion, true);
     this.queue.push({ texto: sentence, previo: this.ultima, v: this.version });
     void this.source(sentence, this.ultima);
     this.ultima = sentence;
@@ -1388,6 +1417,7 @@ export class StreamSpeaker {
           text: frase.texto,
           kind: this.opts.emocion === 'oracion' ? 'pray' : 'speak',
           alSonar: primera ? () => this.vigente() && this.opts.onSuena?.() : undefined,
+          locucion: this.locucion,
         });
         if (this.sonido === sound) this.sonido = null;
       }
