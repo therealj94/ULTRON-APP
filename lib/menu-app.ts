@@ -107,6 +107,14 @@ export const MENU_APP: readonly LugarApp[] = [
     fuente: ['mobile/src/ajustes/Correos.tsx', 'mobile/src/correo/PantallaCorreos.tsx', 'server/correo.ts'],
   },
   {
+    id: 'calendario',
+    nombre: { es: 'Calendario', en: 'Calendar' },
+    donde: { es: 'Ajustes → «Calendario»; el día: Más → «Hoy»', en: 'Settings → “Calendar”; the day: More → “Today”' },
+    que: { es: 'Outlook o Google: AURA lee su agenda y propone eventos (se crean con su «sí»)', en: 'Outlook or Google: AURA reads the schedule and proposes events (created after a yes)' },
+    corto: { es: 'Calendario: Ajustes → «Calendario»; Más → «Hoy»', en: 'Calendar: Settings → “Calendar”; More → “Today”' },
+    fuente: ['mobile/src/ajustes/Calendario.tsx', 'mobile/src/agenda/HojaHoy.tsx', 'server/calendario.ts'],
+  },
+  {
     id: 'cartera',
     nombre: { es: 'Veta Wallet (cartera)', en: 'Veta Wallet (wallet)' },
     donde: { es: 'Ajustes → AURA → «Veta Wallet», o el menú de la mesa → Cartera, o decir «enséñame mi wallet»; para pagar: en un chat de PULSE2CHAT, la moneda de arriba («Enviar dinero») o «mándale 5 ORIGEN a Ana»', en: 'Settings → AURA → “Veta Wallet”, or the desk menu → Wallet, or say “show me my wallet”; to pay: in a PULSE2CHAT chat, the coin at the top (“Send money”) or “send Ana 5 ORIGEN”' },

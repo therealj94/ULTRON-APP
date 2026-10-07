@@ -23,6 +23,7 @@ import { otraVozDelTurno } from '../lib/voces-miembro';
 import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
 import { atadoAlPresentado, presentadoEnChat, type AtaduraEscrita } from './presentacion-decision';
 import { reciboDeDecision, type ReciboEfecto } from '../lib/honestidad';
+import { propuestaEventoDe, resolverPropuestaEvento } from './calendario';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
 export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
@@ -83,6 +84,8 @@ export type SalidaDecisionTurno = {
   delCorreo: string | null;
   delWhatsapp: string | null;
   deLaPregunta: string | null;
+  /** Lo que pasó con el evento propuesto de su calendario (server/calendario.ts), si se tocó. */
+  delCalendario?: string | null;
   /** No se hizo ninguna: varias esperando sin decir cuál, o lo nombrado no coincide con ninguna. */
   ambiguo: boolean;
   /** Lo que espera la app NO se hace en este turno (el mensaje fue ambiguo, no coincide, o eligió otra cosa). */
@@ -105,7 +108,7 @@ export type SalidaDecisionTurno = {
  * borrador que la persona tiene a la vista en la ventana de decisión (José, 5-oct); `apartado`: estaba apartado para el
  * panel (siguió con otra cosa) y cuenta solo porque lo tiene a la vista.
  */
-export type PendienteTurno = DecisionPendiente & { origen: 'correo' | 'whatsapp' | 'computadora' | 'app'; huella?: string; aVista?: boolean; apartado?: boolean; creado?: number };
+export type PendienteTurno = DecisionPendiente & { origen: 'correo' | 'whatsapp' | 'computadora' | 'app' | 'calendario'; huella?: string; aVista?: boolean; apartado?: boolean; creado?: number };
 
 /**
  * El borrador que la persona tiene a la vista en la ventana de decisión: el que se pasa, o el del registro
@@ -170,6 +173,9 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
     out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: grupo ? destinoWhatsapp(w) : `${destinoWhatsapp(w)} ${w.chat}`, ...(grupo ? { grupo: true } : {}), tema: w.texto, id: w.intento, huella: w.huella, ...marcas(x) });
   }
   for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId, ...(p.version !== undefined ? { huella: p.version } : {}) });
+  // El evento que AU-RA propuso para su calendario (server/calendario.ts): su título y su hora lo identifican.
+  const ev = propuestaEventoDe(o.dueno, o.ambito);
+  if (ev) out.push({ origen: 'calendario', tipo: 'evento', texto: ev.titulo, tema: ev.lugar || '', cuando: ev.inicio, ...(ev.invitados?.length ? { destino: ev.invitados.join(' ') } : {}), id: ev.intento, huella: ev.huella, creado: ev.creado });
   if (o.app) {
     const tipo = TIPO_APP[o.app.que] ?? 'mensaje';
     out.push({ origen: 'app', tipo, destino: o.app.para, ...(tipo === 'recordatorio' || tipo === 'cancelar_recordatorio' ? { texto: o.app.para } : {}), ...(o.app.cuando ? { cuando: o.app.cuando } : {}), ...(tipo === 'chat' ? { discreta: true } : {}), ...(o.app.huella ? { huella: o.app.huella } : {}), ...(o.app.video !== undefined ? { video: o.app.video } : {}) });
@@ -181,6 +187,7 @@ function decirPendiente(p: PendienteTurno): string {
   if (p.origen === 'correo') return `el correo a ${p.destino}`;
   if (p.origen === 'whatsapp') return `el WhatsApp a ${p.destino}`;
   if (p.origen === 'computadora') return `lo que pregunta su computadora («${p.texto}»)`;
+  if (p.origen === 'calendario') return `el evento «${p.texto}» para su calendario`;
   if (p.tipo === 'llamar') return `la llamada a ${p.destino}`;
   if (p.tipo === 'chat') return `lo que está escrito en el chat de ${p.destino}`;
   if (p.tipo === 'mensaje') return `el mensaje del chat para ${p.destino}`;
@@ -215,7 +222,7 @@ export function conLaVista<P extends PendienteTurno>(d: Decidido<P>, vista: Pick
   if (d.candidatos.some((p) => p !== vistas[0] && (p.creado ?? 0) >= vista.t)) return d;
   // Revisión independiente (G1): lo que espera la app (un mensaje, una llamada, un recordatorio) y la pregunta de su
   // computadora son preguntas del último turno de AU-RA: siempre más nuevas que lo que se ve. Ni el «sí» ni el «no».
-  if (d.candidatos.some((p) => p !== vistas[0] && (p.origen === 'app' || p.origen === 'computadora'))) return d;
+  if (d.candidatos.some((p) => p !== vistas[0] && (p.origen === 'app' || p.origen === 'computadora' || p.origen === 'calendario'))) return d;
   return d.analisis.niega ? { tipo: 'no', p: vistas[0], analisis: d.analisis } : { tipo: 'ejecutar', p: vistas[0], analisis: d.analisis };
 }
 
@@ -472,6 +479,14 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const version = elegido?.origen === 'computadora' ? elegido.huella : undefined;
   const deLaPregunta = toca('computadora') && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(dueno, respuesta, retener, { ambito, ...(elegida ? { elegida } : {}), ...(version !== undefined ? { version } : {}) }) : null;
   if (deLaPregunta) hechos.push(deLaPregunta);
+  // El evento propuesto para su calendario: lo crea el servidor con su «sí» (con el recibo de la API), un «no» lo
+  // descarta, y otra cosa lo deja sin valor (vale solo el turno siguiente). Solo el que vio la decisión.
+  const vistoEvento = elegido?.origen === 'calendario' ? elegido : pendientes.find((p) => p.origen === 'calendario');
+  const conEvento = toca('calendario') && vistoEvento ? await resolverPropuestaEvento(dueno, ambito, respuesta, retener, { intento: vistoEvento.id, huellaVista: vistoEvento.huella, decidido: elegido === vistoEvento }) : null;
+  const delCalendario = conEvento?.texto ?? null;
+  const reciboEvento = reciboDeDecision('calendario', conEvento, vistoEvento?.texto);
+  if (reciboEvento) recibos.push(reciboEvento);
+  if (delCalendario) hechos.push(delCalendario);
   // Un «sí» que no tiene a qué contestar (el borrador venció, el servidor se reinició o nunca se armó): que
   // el modelo no lo tome por un envío y diga «enviado» por el historial (José, 3-oct).
   if (!pendientes.length && d.analisis.pura && !o.appEspera && !o.app) {
@@ -500,7 +515,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
       );
     }
   }
-  return nada({ delCorreo, delWhatsapp, deLaPregunta, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null, recibos });
+  return nada({ delCorreo, delWhatsapp, deLaPregunta, delCalendario, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null, recibos });
 }
 
 /**

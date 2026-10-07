@@ -37,9 +37,13 @@ async function formulario(url: string, datos: Record<string, string>, traer: Fet
   return { status: r.status, ...j };
 }
 
-/** Pide el código que la persona escribe en microsoft.com/devicelogin. */
-export async function pedirCodigo(traer: Fetch = fetch): Promise<CodigoDispositivo> {
-  const j = await formulario(`${AUTORIDAD}/devicecode`, { client_id: clave('ms_client_id'), scope: PERMISOS_MICROSOFT }, traer);
+/**
+ * Pide el código que la persona escribe en microsoft.com/devicelogin. `permisos`: los del correo, o los del calendario
+ * (lib/calendario/proveedores.ts: la MISMA app de Microsoft pide además Calendars.ReadWrite —consentimiento
+ * incremental—: Microsoft solo pregunta por lo nuevo).
+ */
+export async function pedirCodigo(traer: Fetch = fetch, permisos: string = PERMISOS_MICROSOFT): Promise<CodigoDispositivo> {
+  const j = await formulario(`${AUTORIDAD}/devicecode`, { client_id: clave('ms_client_id'), scope: permisos }, traer);
   if (!j.device_code) throw new Error(j.error_description || j.error || 'Microsoft no dio el código');
   return {
     codigoDispositivo: j.device_code,
@@ -72,13 +76,13 @@ export async function consultarCodigo(codigoDispositivo: string, traer: Fetch = 
 }
 
 /** Un token de acceso nuevo con el de renovación (Microsoft puede devolver también un renovación nuevo). */
-export async function renovar(renovacion: string, traer: Fetch = fetch): Promise<TokensMicrosoft> {
+export async function renovar(renovacion: string, traer: Fetch = fetch, permisos: string = PERMISOS_MICROSOFT): Promise<TokensMicrosoft> {
   const j = await formulario(
     `${AUTORIDAD}/token`,
-    { grant_type: 'refresh_token', client_id: clave('ms_client_id'), refresh_token: renovacion, scope: PERMISOS_MICROSOFT },
+    { grant_type: 'refresh_token', client_id: clave('ms_client_id'), refresh_token: renovacion, scope: permisos },
     traer
   );
-  if (!j.access_token) throw new Error(j.error_description || j.error || 'No pude renovar el permiso de Microsoft');
+  if (!j.access_token) throw Object.assign(new Error(j.error_description || j.error || 'No pude renovar el permiso de Microsoft'), { codigo: j.error === 'invalid_grant' ? 'reconectar' : 'proveedor' });
   return aTokens(j, renovacion);
 }
 

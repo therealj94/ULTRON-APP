@@ -40,6 +40,8 @@ export type ManosDelTurno = {
   investigar?: boolean;
   /** Con sesión: crear archivos de Word, Excel y PDF con la API (server/documentos.ts). Sin el campo, con la sesión. */
   documentos?: boolean;
+  /** Con sesión: su calendario, leer y proponer eventos (server/calendario.ts). Sin el campo, NO va. */
+  calendario?: boolean;
 };
 
 type Props = Record<string, unknown>;
@@ -251,6 +253,31 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
       );
   }
   if (conDocumentos) t.push(herramientaDocumento());
+  if (d.sesion && d.calendario)
+    t.push(
+      tool(
+        'agenda',
+        'Leer su calendario (Outlook o Google), en hora de Honduras: «¿qué tengo hoy?», «¿y mañana?», «¿qué tengo el jueves?», «mi semana», «¿cuándo tengo libre una hora el viernes?». Contesta solo con lo que traiga; nunca inventes eventos.',
+        {
+          cuando: str('hoy, mañana, pasado mañana, el jueves, el próximo lunes, esta semana, la próxima semana o AAAA-MM-DD.'),
+          libres_minutos: { type: 'integer', description: 'Solo si busca un rato libre: cuántos minutos.' },
+        },
+        ['cuando']
+      ),
+      tool(
+        'agendar',
+        'Poner un evento en su calendario. Solo deja una PROPUESTA con los datos exactos: léeselos (qué, día, hora de inicio y fin, dónde, en qué calendario) y pregunta «¿Lo agendo?». Se crea cuando diga que sí (lo hace el servidor). Nunca digas que quedó agendado si no te llegó «EVENTO AGENDADO». Calcula la fecha con AHORA; sin día u hora claros, pregunta.',
+        {
+          titulo: str('Qué es, corto («Reunión con Ana»).'),
+          inicio: str('AAAA-MM-DDTHH:MM en hora de Honduras.'),
+          minutos: { type: 'integer', description: 'Cuánto dura (60 si no lo dijo).' },
+          lugar: str('Dónde, si lo dijo.'),
+          calendario: str('microsoft o google, solo si lo pidió.', { enum: ['microsoft', 'google'] }),
+          invitados: { type: 'array', items: { type: 'string' }, description: 'Correos exactos de los invitados, si los dio.' },
+        },
+        ['titulo', 'inicio']
+      )
+    );
   if (d.triaje)
     t.push(
       tool('ordenar_mensajes', 'Revisar sus mensajes (WhatsApp y correo), ordenarlos por importancia y sugerir respuestas cortas (borradores). «revisa mis mensajes», «¿qué tengo pendiente?».', { de: str('todo, whatsapp o correo.', { enum: ['todo', 'whatsapp', 'correo'] }) })
@@ -476,6 +503,20 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
     }
     case 'ordenar_mensajes':
       return pedido('triaje', i.de === 'whatsapp' || i.de === 'correo' ? i.de : 'revisar');
+    case 'agenda': {
+      const cuando = limpio(i.cuando, 60) || 'hoy';
+      const min = Math.round(Number(i.libres_minutos) || 0);
+      return min > 0 ? pedido('calendario', `libres ${cuando} | ${Math.min(min, 1440)}`) : pedido('calendario', `agenda ${cuando}`);
+    }
+    case 'agendar': {
+      const titulo = limpio(i.titulo, 200);
+      const inicio = limpio(i.inicio, 40);
+      if (!titulo || !inicio) return null;
+      const min = Math.round(Number(i.minutos) || 0);
+      const invitados = Array.isArray(i.invitados) ? i.invitados.map((x: unknown) => limpio(x, 120)).filter(Boolean).slice(0, 20).join(', ') : '';
+      const cal = i.calendario === 'google' || i.calendario === 'microsoft' ? i.calendario : '';
+      return pedido('calendario', `agendar ${titulo} | ${inicio} | ${min > 0 ? min : 60} | ${limpio(i.lugar, 200)} | ${cal} | ${invitados}`);
+    }
     case 'crear_documento': {
       // Uno suelto ({tipo, nombre, spec}) o varios ({archivos: […]}); la validación de verdad es del servidor (lib/oficina/spec.ts).
       const archivos = Array.isArray(i.archivos) ? i.archivos : i.tipo ? [{ tipo: i.tipo, nombre: i.nombre, spec: i.spec ?? i }] : [];
@@ -686,6 +727,8 @@ export function notaDeCumplir(idioma: 'es' | 'en' = 'es'): string {
  */
 const QUE_PROMETE: Array<[RegExp, string[]]> = [
   [/\b(recuerd|recordatorio|record|alarma|desperta|timer|program|agend|remind)/, ['recordatorio', 'llamarme']],
+  // Su calendario (server/calendario.ts): «te lo pongo en tu calendario», «reviso tu agenda».
+  [/\b(calendario|agenda|evento|calendar)\b/, ['agenda', 'agendar']],
   [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email|respond|contest|reenvi|despach|compart|recibi)|\ble llego\b|\b(les?|se lo|se la) (avis|pase)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
   [/\b(abr|open|pantalla|ajustes)/, ['abrir_pantalla', 'abrir_cartera', 'chat_aura']],
   [/\b(busc|investig|averig|consult|indag|rastre|recopil|search|research|look|find|dig)/, ['buscar_web', 'investigar', 'buscar_en_chats', 'leer_pagina', 'computadora']],

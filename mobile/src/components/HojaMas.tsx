@@ -16,6 +16,7 @@
  *   · Misiones          — las metas que AURA te ayuda a cumplir (ajustes/Misiones.tsx);
  *   · Mi círculo        — tu gente cercana y sus recordatorios (app/HojasCerebro.tsx);
  *   · Cartera           — tus saldos de Veta Wallet (cartera/);
+ *   · Hoy               — tu calendario de hoy, mañana o la semana (agenda/HojaHoy.tsx; se conecta en Ajustes);
  *   · Su computadora    — lo que hace la computadora en la nube del avatar, y encargarle algo
  *                         (ajustes/Computadora.tsx); solo si el servidor la tiene;
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
@@ -43,7 +44,7 @@ import { Hoja } from '../ui/Hoja';
 import { Icono, type NombreIcono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
 
-export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'voces' | 'avatar' | 'modo' | 'misiones' | 'circulo' | 'cartera' | 'computadora' | 'tutorial' | 'ajustes';
+export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'voces' | 'avatar' | 'modo' | 'misiones' | 'circulo' | 'cartera' | 'agenda' | 'computadora' | 'tutorial' | 'ajustes';
 
 type Props = {
   visible: boolean;
@@ -105,6 +106,7 @@ export function HojaMas(p: Props) {
     { id: 'misiones', icono: 'palomita', titulo: tr('Misiones', 'Missions'), sub: tr('Tus metas, paso a paso', 'Your goals, step by step') },
     { id: 'circulo', icono: 'personaMas', titulo: tr('Mi círculo', 'My circle'), sub: tr('Tu gente cercana y sus recordatorios', 'Your close people and their reminders') },
     { id: 'cartera', icono: 'dinero', titulo: tr('Cartera', 'Wallet'), sub: tr('Saldos de Veta Wallet. Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña', 'Veta Wallet balances. Card: AU-RA can show its details and top it up with your password') },
+    { id: 'agenda', icono: 'reloj', titulo: tr('Hoy', 'Today'), sub: tr('Tu calendario del día', 'Your calendar for the day') },
     ...(p.estadoComputadora != null
       ? [{ id: 'computadora' as const, icono: 'pantalla' as const, titulo: tr('Su computadora', 'Their computer'), sub: p.estadoComputadora, activo: !!p.computadoraTrabajando }]
       : []),
