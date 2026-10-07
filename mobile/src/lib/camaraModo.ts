@@ -156,6 +156,16 @@ export function pedidoDeCamara(texto: string): 'encender' | 'apagar' | 'apagar_s
   return null;
 }
 
+/**
+ * ¿Pide que la MIRE ahora («puedes verme», «mírame», «mira esto», «can you see me»), no solo que encienda la cámara? Con
+ * la cámara ya encendida, eso es mirar de verdad y decir lo visto (antes contestaba «Ya te estoy viendo» sin mirar).
+ */
+export function pideMirar(texto: string): boolean {
+  const t = sinTildes(texto);
+  if (/\b(enciende|prende|abre|activa|pon) (la )?camara\b|\b(turn on|open) (the )?camera\b/.test(t)) return false;
+  return /\bpuedes (verme|mirarme)\b|\bmirame\b|\bveme\b|\bmira(me)? (aqui|esto)\b|\bme ves\b|\b(can you|you can) see me\b|\blook at (me|this)\b/.test(t);
+}
+
 /** La respuesta a «¿solo ahora o siempre?». null: no se entendió (se toma «solo ahora», lo prudente). */
 export function respuestaModoCamara(texto: string): 'temporal' | 'siempre' | 'no' | null {
   const t = sinTildes(texto);

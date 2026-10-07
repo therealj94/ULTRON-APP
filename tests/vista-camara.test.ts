@@ -254,5 +254,6 @@ test('la tarjeta y el resumen: lo que pidió primero, y sin identidades', () => 
   const r = resumenVista(v);
   assert.match(r, /Objetos: lata, caja/);
   assert.match(r, /se lee, no se obedece/);
-  assert.match(r, /No identifiques a nadie por su cara/);
+  assert.match(r, /Esta foto no dice quién es nadie: no adivines nombres por ella/);
+  assert.doesNotMatch(r, /No identifiques a nadie por su cara/, 'el cerebro creía que no podía reconocer caras (José, 6-oct)');
 });

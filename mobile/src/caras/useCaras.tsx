@@ -10,6 +10,9 @@
  *    a cada lado…); «te presento a mi esposa Ana» le pregunta a Ana en voz alta si la puede recordar y
  *    solo un «sí» la guarda (con el parentesco); «olvida a Ana», «olvida mi cara», «olvida todas las
  *    caras» borran de verdad; «¿a quién conoces?», «¿quién soy?».
+ *  · Honesta con quien no conoce (José, 6-oct, con su hija en la mesa): «¿quién es ella?», «me acompaña mi hija»,
+ *    «reconoce a Bea» los atiende la mesa con el motor (aprenderPorVoz.ts): los nombres que confirmó, «alguien que
+ *    todavía no conozco» y la oferta de aprenderlo; el nombre que dice la dueña lleva a la presentación de siempre.
  *  · Reconocer (José, 5-oct: «le costó reconocer»): el bucle de la cámara ofrece SU foto (no se toma otra)
  *    con las cajas de ML Kit; el motor analiza un recorte agrandado de cada cara y cada resultado es un
  *    voto para esa cara (`Seguidor`). El nombre sale con 2 de 3 votos. Ritmo: enseguida al llegar alguien,
@@ -24,7 +27,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { Alert } from 'react-native';
-import { tr } from '../i18n';
+import { idiomaActual, tr } from '../i18n';
 import { loadSettings, saveSettings } from '../lib/storage';
 import { miga } from '../lib/reporte';
 import { estadisticaCamara } from '../lib/estadisticaCamara';
@@ -34,23 +37,23 @@ import { MotorCaras, type ControlMotorCaras } from './MotorCaras';
 import {
   MUESTRAS_APRENDER,
   POSES,
-  Presentacion,
-  caraDelPresentado,
   carasActivas,
   conCarasActivas,
   debeAprender,
   distanciaMasCercana,
   elegirMuestras,
-  esConsentimiento,
   identificar,
   masGrande,
+  ofreceAprender,
   UMBRAL,
   pedidoDeCaras,
+  quienesEnFoto,
   sumarMuestras,
   type CaraConocida,
   type CaraVista,
   type Reconocida,
 } from './caras';
+import { AprenderPorVoz } from './aprenderPorVoz';
 import { CONFIRMAR, Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
 import { GeneracionCaras, analizarVigente } from './cercoReconocer';
 import { fraseEscenaCaras } from './escenaCaras';
@@ -128,6 +131,13 @@ export type ApiCaras = {
   mesaOcupada: () => boolean;
   /** Por qué una pista sigue sin nombre (recortes, sin cara, «no sé» y la distancia más cercana): para las migas. */
   diagnosticoPista: (pista: number) => string;
+  /**
+   * ¿Es la respuesta de la dueña a «¿cómo se llama?» (la oferta de aprender una cara)? La mesa la pasa por «¿quién
+   * habla?» antes de `manejar`: el nombre lo da la dueña, nunca un invitado.
+   */
+  esperaNombre: (dicho: string) => boolean;
+  /** Lo que acaba de decir la mesa (o el cerebro): si ofreció aprender una cara y hay alguien sin nombre, se espera el nombre. */
+  alResponder: (texto: string) => void;
 };
 
 export function useCaras(o: Opciones): ApiCaras {
@@ -135,9 +145,8 @@ export function useCaras(o: Opciones): ApiCaras {
   const [conocidas, setConocidas] = useState<CaraConocida[] | null>(null);
   const [motorListo, setMotorListo] = useState(false);
   const motor = useRef<ControlMotorCaras>(null);
-  const presentacion = useRef(new Presentacion()).current;
-  /** El parentesco dicho al presentar («mi esposa Ana»), hasta su «sí». */
-  const parentescoPendiente = useRef<string | undefined>(undefined);
+  /** Aprender por voz (aprenderPorVoz.ts): «te presento a…», «¿quién es ella?», «me acompaña mi hija» y el «sí» de la persona. */
+  const aprenderVoz = useRef<AprenderPorVoz | null>(null);
   const seguidor = useRef(new Seguidor()).current;
   /** Por qué no sale el nombre de cada pista (lo lee la cámara en vivo para sus migas). */
   const diagnostico = useRef(new DiagnosticoReconocer()).current;
@@ -278,7 +287,7 @@ export function useCaras(o: Opciones): ApiCaras {
     generacion.subir();
     seguidor.olvidar();
     respaldo.olvidar();
-    presentacion.terminar();
+    aprenderVoz.current?.terminar();
     if (borrar) {
       try {
         await olvidarTodasLasCaras();
@@ -287,7 +296,7 @@ export function useCaras(o: Opciones): ApiCaras {
         Alert.alert(tr('Caras', 'Faces'), tr('No pude borrar ahora; inténtalo con conexión.', 'I couldn’t erase them now; try again when online.'));
       }
     }
-  }, [presentacion, seguidor]);
+  }, [seguidor]);
 
   const confirmarBorrarTodas = useCallback(() => {
     Alert.alert(tr('¿Olvidar todas las caras?', 'Forget all faces?'), tr('Se borran de tu cuenta los números de todas las caras que conozco. No se puede deshacer.', 'The numbers for every face I know are erased from your account. This can’t be undone.'), [
@@ -332,94 +341,106 @@ export function useCaras(o: Opciones): ApiCaras {
     return conocidasRef.current.find((c) => sinTildes(c.nombre) === n) || conocidasRef.current.find((c) => sinTildes(c.nombre).includes(n) || n.includes(sinTildes(c.nombre)));
   };
 
-  const guardarPresentado = useCallback(
-    async (nombre: string, frase: string, parentesco?: string) => {
-      const a = op.current;
-      await a.decir(tr(`Gracias, ${nombre}. Te pido unas poses para aprender bien tu cara.`, `Thanks, ${nombre}. A few poses so I learn your face well.`), 'feliz');
-      const conocidas0 = conocidasRef.current;
-      const caras = await tomarPoses((cs) => caraDelPresentado(cs, conocidas0));
-      if (!caras.length) {
-        presentacion.empezar(nombre);
-        parentescoPendiente.current = parentesco;
-        await a.decir(tr(`No te veo bien, ${nombre}. Ponte frente a la cámara y dime «sí» otra vez.`, `I can’t see you well, ${nombre}. Stand in front of the camera and say “yes” again.`), 'preocupado');
-        return;
-      }
-      try {
-        await guardarCara({ nombre, relacion: 'conocido', vectores: caras.map((c) => c.vector), consentimiento: { como: 'voz', frase }, ...(parentesco ? { parentesco } : {}) });
-        await refrescar();
-        saludados.current.add(sinTildes(nombre));
-        await a.decir(tr(`¡Mucho gusto, ${nombre}! Ya te recuerdo. Solo guardé números, no fotos.`, `Nice to meet you, ${nombre}! I’ll remember you. I only kept numbers, no photos.`), 'feliz');
-      } catch (e) {
-        await a.decir(tr(`No pude guardarte ahora, ${nombre}: ${String((e as Error)?.message || 'sin conexión')}`, `I couldn’t save you now, ${nombre}.`), 'preocupado');
-      }
-    },
-    [presentacion, refrescar, tomarPoses]
-  );
+  /** «Conóceme»: la cara de la dueña, con 5 muestras de poses dichas en voz alta. */
+  const conocerDuena = useCallback(async () => {
+    const a = op.current;
+    if (!(await asegurarCamara())) {
+      await a.decir(tr('Necesito la cámara para conocerte.', 'I need the camera to get to know you.'), 'preocupado');
+      return;
+    }
+    await a.decir(tr('Te voy a pedir unas poses para aprender bien tu cara. Mira a la cámara.', 'I’ll ask for a few poses to learn your face well. Look at the camera.'), 'curioso');
+    const mias = await tomarPoses(masGrande);
+    if (mias.length < 2) {
+      await a.decir(tr('No te vi bien. Ponte de frente, con luz, y dime «conóceme» otra vez.', 'I couldn’t see you well. Face the camera with some light and say “get to know me” again.'), 'preocupado');
+      return;
+    }
+    try {
+      await guardarCara({ nombre: a.nombre, relacion: 'yo', vectores: mias.map((c) => c.vector), consentimiento: { como: 'dueño' } });
+      await refrescar();
+      await a.decir(tr(`Listo, ${a.nombre}: ya conozco tu cara. Guardé números, no fotos; di «olvida mi cara» para borrarla.`, `Done, ${a.nombre}: I know your face now. I kept numbers, not photos; say “forget my face” to erase it.`), 'feliz');
+    } catch (e) {
+      await a.decir(tr(`No pude guardarla ahora: ${String((e as Error)?.message || 'sin conexión')}`, 'I couldn’t save it now.'), 'preocupado');
+    }
+  }, [asegurarCamara, refrescar, tomarPoses]);
+
+  /**
+   * Quién está a la vista AHORA según el motor (para «¿quién es ella?», «me acompaña mi hija», «reconoce a…»): lo seguido
+   * por la cámara si es claro (nombres confirmados o desconocidos ya mirados, sin nadie a medias); si no, una foto aparte
+   * al motor. Nunca un nombre que el motor no confirmó. Con la dueña sin su cara guardada, su cara cuenta entre las «sin
+   * nombre»: aprenderPorVoz.ts lo sabe y no ofrece aprender a ciegas (revisión del 6-oct: guardaba a la dueña como su hija).
+   */
+  const presentesAhora = useCallback(async () => {
+    const ya = seguidor.presentes(Date.now(), 3000);
+    const sinNombre = ya.desconocidas + ya.pendientes;
+    if ((ya.r.length || ya.desconocidas) && !ya.pendientes) return { r: ya.r, sinNombre };
+    // Sin el motor listo no se espera (verCaras esperaría hasta 20 s callada): lo que haya.
+    const caras = motor.current?.listo() ? ((await verCaras(1)) || [])[0] : undefined;
+    if (caras) return quienesEnFoto(caras, conocidasRef.current);
+    if (ya.r.length || sinNombre) return { r: ya.r, sinNombre };
+    // Sin ML Kit ni foto: lo último que vio el respaldo.
+    const rp = respaldo.presentes(Date.now());
+    return { r: rp.r, sinNombre: rp.desconocidas };
+  }, [respaldo, seguidor, verCaras]);
+
+  if (!aprenderVoz.current) {
+    aprenderVoz.current = new AprenderPorVoz({
+      decir: (t, e) => op.current.decir(t, e),
+      en: () => idiomaActual() === 'en',
+      nombreDuena: () => op.current.nombre,
+      asegurarCamara: () => asegurarCamaraRef.current(),
+      presentes: () => presentesRef.current(),
+      conocidas: () => conocidasRef.current,
+      tomarPoses: (elegir) => tomarPosesRef.current(elegir),
+      guardar: async (x) => {
+        await guardarCara(x);
+        await refrescarRef.current();
+      },
+      saludado: (nombre) => saludados.current.add(sinTildes(nombre)),
+      conoceme: () => conocerDuenaRef.current(),
+    });
+  }
+  const porVoz = aprenderVoz.current;
+  // El io de arriba llama siempre a la versión de este render (las de useCallback cambian con sus dependencias).
+  const asegurarCamaraRef = useRef(asegurarCamara);
+  asegurarCamaraRef.current = asegurarCamara;
+  const presentesRef = useRef(presentesAhora);
+  presentesRef.current = presentesAhora;
+  const tomarPosesRef = useRef(tomarPoses);
+  tomarPosesRef.current = tomarPoses;
+  const refrescarRef = useRef(refrescar);
+  refrescarRef.current = refrescar;
+  const conocerDuenaRef = useRef(conocerDuena);
+  conocerDuenaRef.current = conocerDuena;
 
   const manejar = useCallback(
     async (dicho: string): Promise<boolean> => {
       const a = op.current;
-      // 1) La respuesta a «¿te puedo recordar?»: solo un «sí» guarda.
-      const nombrePendiente = presentacion.pendiente();
-      if (nombrePendiente) {
-        presentacion.terminar();
-        const parentesco = parentescoPendiente.current;
-        parentescoPendiente.current = undefined;
-        const r = esConsentimiento(dicho);
-        if (r === 'si') {
-          await guardarPresentado(nombrePendiente, dicho, parentesco);
-          return true;
-        }
-        await a.decir(r === 'no' ? tr(`Entendido, ${nombrePendiente}: no te guardo.`, `Got it, ${nombrePendiente}: I won’t keep you.`) : tr(`Como no escuché un «sí», no guardé a ${nombrePendiente}.`, `I didn’t hear a “yes”, so I didn’t keep ${nombrePendiente}.`));
-        return true;
-      }
+      // 1) Lo que la mesa preguntó: el «sí» de la presentada (solo eso guarda) y el nombre que ofreció aprender. Una orden
+      //    («olvida a Bea», «apaga la cámara») o una pregunta suelta la espera y sigue aquí abajo o en la mesa (revisión
+      //    del 6-oct: antes la espera se las tragaba).
+      if (await porVoz.respuesta(dicho)) return true;
       const p = pedidoDeCaras(dicho);
       if (!p) return false;
+      // «Me acompaña mi hija»: solo si se puede mirar; si no (o no hay nadie sin nombre a la vista), sigue al cerebro.
+      if (p.tipo === 'acompanante') return activas && a.camaraEncendida ? porVoz.acompanante(p) : false;
       // Borrar y contar se puede siempre; aprender y reconocer, solo con el reconocimiento activado.
-      const necesitaActivas = p.tipo === 'conoceme' || p.tipo === 'presentar' || p.tipo === 'quien';
+      const necesitaActivas = p.tipo === 'conoceme' || p.tipo === 'presentar' || p.tipo === 'quien' || p.tipo === 'reconocer';
       if (necesitaActivas && !activas) {
         await a.decir(tr('Antes tienes que activar «reconocer caras». Te explico en la pantalla qué guardo.', 'First turn on “recognize faces”. I’ll explain on screen what I keep.'));
         const si = await activar();
         if (!si) return true;
       }
-      if (p.tipo !== 'conoceme' && p.tipo !== 'presentar' && p.tipo !== 'quien' && conocidas === null) await refrescar();
+      if (!necesitaActivas && conocidas === null) await refrescar();
       switch (p.tipo) {
-        case 'conoceme': {
-          if (!(await asegurarCamara())) {
-            await a.decir(tr('Necesito la cámara para conocerte.', 'I need the camera to get to know you.'), 'preocupado');
-            return true;
-          }
-          await a.decir(tr('Te voy a pedir unas poses para aprender bien tu cara. Mira a la cámara.', 'I’ll ask for a few poses to learn your face well. Look at the camera.'), 'curioso');
-          const mias = await tomarPoses(masGrande);
-          if (mias.length < 2) {
-            await a.decir(tr('No te vi bien. Ponte de frente, con luz, y dime «conóceme» otra vez.', 'I couldn’t see you well. Face the camera with some light and say “get to know me” again.'), 'preocupado');
-            return true;
-          }
-          try {
-            await guardarCara({ nombre: a.nombre, relacion: 'yo', vectores: mias.map((c) => c.vector), consentimiento: { como: 'dueño' } });
-            await refrescar();
-            await a.decir(tr(`Listo, ${a.nombre}: ya conozco tu cara. Guardé números, no fotos; di «olvida mi cara» para borrarla.`, `Done, ${a.nombre}: I know your face now. I kept numbers, not photos; say “forget my face” to erase it.`), 'feliz');
-          } catch (e) {
-            await a.decir(tr(`No pude guardarla ahora: ${String((e as Error)?.message || 'sin conexión')}`, 'I couldn’t save it now.'), 'preocupado');
-          }
+        case 'conoceme':
+          await conocerDuena();
           return true;
-        }
-        case 'presentar': {
-          if (!(await asegurarCamara())) {
-            await a.decir(tr('Necesito la cámara para conocer a alguien.', 'I need the camera to meet someone.'), 'preocupado');
-            return true;
-          }
-          presentacion.empezar(p.nombre);
-          parentescoPendiente.current = p.parentesco;
-          await a.decir(
-            tr(
-              `Hola, ${p.nombre}. ¿Te puedo recordar? Solo guardo unos números de tu cara, no fotos, y ${a.nombre} puede borrarlos cuando quiera. Dime «sí» o «no».`,
-              `Hi, ${p.nombre}. May I remember you? I only keep some numbers from your face, not photos, and ${a.nombre} can erase them anytime. Say “yes” or “no”.`
-            ),
-            'curioso'
-          );
+        case 'presentar':
+          await porVoz.presentar(p.nombre, p.parentesco);
           return true;
-        }
+        case 'reconocer':
+          await porVoz.reconocer(p);
+          return true;
         case 'olvidar':
         case 'olvidar_mia': {
           const c = p.tipo === 'olvidar_mia' ? conocidasRef.current.find((x) => x.relacion === 'yo') : buscarPorNombre(p.nombre);
@@ -458,27 +479,30 @@ export function useCaras(o: Opciones): ApiCaras {
             await a.decir(tr('La cámara está apagada. Dime «puedes verme» y te miro.', 'The camera is off. Say “you can see me” and I’ll look.'));
             return true;
           }
-          // Lo ya confirmado por votos (fresco) basta; si no hay, una foto aparte.
-          const ya = seguidor.presentes(Date.now(), 3000);
-          let r: Pick<Reconocida, 'nombre' | 'relacion'>[] = ya.r;
-          let total = ya.r.length + ya.desconocidas + ya.pendientes;
-          if (!ya.r.length) {
-            const caras = ((await verCaras(1)) || [])[0] || [];
-            r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
-            total = caras.length;
-          }
-          if (!total) {
-            await a.decir(tr('No veo a nadie frente a la cámara.', 'I don’t see anyone in front of the camera.'));
-            return true;
-          }
-          await a.decir(r.length ? `${tr('Veo a', 'I see')} ${r.map((x) => (x.relacion === 'yo' ? tr(`${x.nombre}: eres tú`, `${x.nombre}: that’s you`) : x.nombre)).join(', ')}${total > r.length ? tr(', y a alguien que no conozco', ', and someone I don’t know') : ''}.` : tr('Veo a alguien que no conozco.', 'I see someone I don’t know.'));
+          // Los nombres que el motor confirmó; a quien no conoce, «todavía no te conozco» y la oferta de aprenderlo.
+          await porVoz.quien();
           return true;
         }
       }
       return false;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activar, activas, asegurarCamara, conocidas, confirmarBorrarTodas, guardarPresentado, presentacion, refrescar, seguidor, tomarPoses, verCaras]
+    [activar, activas, porVoz, conocerDuena, conocidas, confirmarBorrarTodas, refrescar, seguidor]
+  );
+
+  const esperaNombre = useCallback((dicho: string) => porVoz.esperaNombre(dicho), [porVoz]);
+
+  /** La mesa o el cerebro ofreció aprender una cara («¿cómo se llama? … la recuerdo») con alguien sin nombre a la vista. */
+  const alResponder = useCallback(
+    (texto: string) => {
+      if (!activas || !op.current.camaraEncendida || !ofreceAprender(texto)) return;
+      const ahora = Date.now();
+      const p = seguidor.presentes(ahora, FRESCO_MS);
+      const sinNombre = p.desconocidas + p.pendientes || respaldo.presentes(ahora).desconocidas;
+      // Con la dueña sin guardar, una de esas caras puede ser la suya: ofrecida() decide (revisión del 6-oct).
+      if (sinNombre > 0 && !porVoz.presentacion.pendiente()) porVoz.ofrecida(undefined, sinNombre);
+    },
+    [activas, porVoz, respaldo, seguidor]
   );
 
   const quiereFoto = useCallback(
@@ -540,8 +564,8 @@ export function useCaras(o: Opciones): ApiCaras {
             const de = typeof c.indice === 'number' ? f.cajas[c.indice] : null;
             if (!de) continue;
             const r = identificar(c.vector, conocidasRef.current);
-            diagnostico.analizado(de.pista, { cara: true, reconocida: !!r, distancia: r ? r.distancia : distanciaMasCercana(c.vector, conocidasRef.current) });
             const v = seguidor.votar(de.pista, r, f.ts);
+            diagnostico.analizado(de.pista, { cara: true, reconocida: !!r, distancia: r ? r.distancia : distanciaMasCercana(c.vector, conocidasRef.current), ajeno: !!v.ajeno });
             // A un conocido presentado se le saluda una vez por sesión (a la dueña no: ya está hablando).
             if (v.confirmo && v.identidad?.relacion === 'conocido' && !saludados.current.has(sinTildes(v.identidad.nombre))) {
               saludados.current.add(sinTildes(v.identidad.nombre));
@@ -579,8 +603,9 @@ export function useCaras(o: Opciones): ApiCaras {
         try {
           const caras = await analizarVigente(() => motor.current?.analizar(f.b64), () => generacion.vigente(gen) && reconoceRef.current);
           if (!caras) return;
-          const r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
-          respaldo.poner(r, caras.length - r.length, Date.now());
+          // Dos caras no son la misma persona: la más parecida se queda con el nombre, la otra cuenta como desconocida.
+          const { r, sinNombre } = quienesEnFoto(caras, conocidasRef.current);
+          respaldo.poner(r, sinNombre, Date.now());
           // Al conocido presentado se le saluda una vez por sesión (a la dueña no: ya está hablando).
           const nuevo = r.find((x) => x.relacion === 'conocido' && !saludados.current.has(sinTildes(x.nombre)));
           if (nuevo) {
@@ -627,5 +652,5 @@ export function useCaras(o: Opciones): ApiCaras {
     [diagnostico, seguidor]
   );
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, duenaVistaEn, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada, diagnosticoPista };
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, duenaVistaEn, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada, diagnosticoPista, esperaNombre, alResponder };
 }

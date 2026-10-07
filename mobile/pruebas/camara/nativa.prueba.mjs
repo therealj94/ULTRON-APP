@@ -298,7 +298,8 @@ prueba('por qué no sale el nombre: recortes, sin cara, «no sé» y la distanci
   d.analizado(3, { cara: true, reconocida: false, distancia: 0.58 });
   d.analizado(3, { cara: true, reconocida: false, distancia: 0.54 });
   d.analizado(3, { cara: true, reconocida: true, distancia: 0.31 });
-  assert.equal(d.linea(3, 0.5), '4 recortes: 1 sin cara, 2 «no sé» (la más parecida a 0.54; umbral 0.50)');
+  // También los que salieron con nombre (José, 6-oct: «9 recortes: 4 sin cara, 0 "no sé"» no decía nada de los otros 5).
+  assert.equal(d.linea(3, 0.5), '4 recortes: 1 sin cara, 2 «no sé» (la más parecida a 0.54; umbral 0.50), 1 con nombre');
   d.podar([{ id: 9 }]);
   assert.equal(d.linea(3, 0.5), 'ningún recorte analizado', 'la pista que se fue se olvida');
 });

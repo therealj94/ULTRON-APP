@@ -375,7 +375,9 @@ const REGLAS: Regla[] = [
   {
     id: 'que_ves',
     max: 9,
-    re: /^(que ves( ahora| ahi| aqui)?|que estas viendo|que miras|que hay( aqui| en la mesa| frente a ti| delante| enfrente)|quien esta( aqui| conmigo| en la mesa)?|describe (lo que ves|la escena|la camara|la mesa)|mira (la camara|la mesa)( y dime que ves)?)$/,
+    // José, 6-oct: «Mira, mira» iba al cerebro sin foto y contestaba «¿Qué ves?» (devolvía la pregunta). «Mira», «mira
+    // esto», «¿me ves?» son mirar: vista fresca o foto, y la respuesta con lo visto y las caras que el motor reconoce.
+    re: /^(que ves( ahora| ahi| aqui)?|que estas viendo|que miras|que hay( aqui| en la mesa| frente a ti| delante| enfrente)|quien esta( aqui| conmigo| en la mesa)?|describe (lo que ves|la escena|la camara|la mesa)|mira (la camara|la mesa)( y dime que ves)?|mira( mira)*( esto| eso| aqui| aca| ahi)?|(ya |si )?me ves( ahora| bien| aqui)?|me estas viendo|ves esto|puedes ver esto|que ves de mi|look|look at this|do you see me|can you see this|what do you see)$/,
     build: () => ({ tipo: 'que_ves' }),
   },
   {

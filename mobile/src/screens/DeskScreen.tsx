@@ -115,12 +115,12 @@ import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../
 import { MemoriaNarrador } from '../compa/narrador';
 import { TrabajoMesa } from '../compa/trabajoMesa';
 import { reproductorAmbiente } from '../compa/ambienteSonido';
-import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
+import { ControlCamara, conPreferencia, pedidoDeCamara, pideMirar, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { useVoces, type ApiVoces } from '../voces/useVoces';
 import { escenaDelTurno, type QuienHablaTurno } from '../voces/voces';
-import { decidirPrivadoLocal, fraseNegarLocal, intencionPrivada, pedidoLocalPrivado } from '../lib/privadoLocal';
+import { decidirPrivadoLocal, fraseNegarLocal, intencionPrivada, negadoVaAlCerebro, pedidoLocalPrivado } from '../lib/privadoLocal';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
@@ -201,8 +201,10 @@ const GAG_FRASE: Record<string, FraseId> = { sad: 'triste', angry: 'molesto', st
 /** Lo que se le pide al cerebro según lo que se quiere ver (la vista ya va como hecho en el turno). */
 const PEDIDO_VISTA: Record<FocoVision, [string, string]> = {
   escena: [
-    'Dime en dos frases qué ves por la cámara: quién está (sin identificar a nadie por su cara), qué hace, qué objetos hay y dónde.',
-    'Tell me in two sentences what you see through the camera: who is there (without identifying anyone by their face), what they are doing, what objects there are and where.',
+    // José, 6-oct: «sin identificar a nadie por su cara» le hacía decir «no puedo identificar personas por su cara» (falso:
+    // el motor de caras del teléfono reconoce a las guardadas). Los nombres salen de ESCENA (lo que el motor confirmó).
+    'Dime en dos frases qué ves por la cámara: quién está (por su nombre solo si ESCENA dice que lo reconoces; a quien no reconoces, «alguien que todavía no conozco», sin adivinar nombres), qué hace, qué objetos hay y dónde.',
+    'Tell me in two sentences what you see through the camera: who is there (by name only if ESCENA says you recognize them; anyone else is “someone I don’t know yet”, never a guessed name), what they are doing, what objects there are and where.',
   ],
   leer: [
     'Léeme el texto que se ve en la cámara, tal cual y en orden. Si no se lee bien, dímelo y pídeme que lo acerque.',
@@ -771,6 +773,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     const paraHilo = parcial && texto ? `${texto} [respuesta cortada por un fallo; no terminó]` : texto;
     historial.current = [...historial.current, { rol: 'ultron' as const, texto: paraHilo }].slice(-12);
     if (texto) setMensajes((m) => [...m, { rol: 'ultron' as const, texto }].slice(-80));
+    // Si ofreció aprender una cara («¿cómo se llama? … la recuerdo») con alguien sin nombre a la vista, la respuesta de la
+    // dueña con el nombre la aprende (src/caras/aprenderPorVoz.ts), con el «sí» de esa persona.
+    if (texto && !parcial) carasRef.current?.alResponder(texto);
   }, []);
 
   /** Fin de cualquier audio: mic de vuelta, cara en reposo, HUD según mute real (ref, no closure). */
@@ -1680,9 +1685,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // ── Revisión 7 (G1): lo que el teléfono resuelve solo y toca lo privado de la dueña pasa por «¿quién habla?»
         // (src/lib/privadoLocal.ts): con su voz guardada, solo con su voz confirmada en esta frase o por continuidad.
         const decidirLocal = () => decidirPrivadoLocal({ oidaEn, paraTurno: vocesRef.current?.paraTurno, caraDuenaEn: carasRef.current?.duenaVistaEn?.() || 0 });
-        if (pedidoLocalPrivado(cmd)) {
+        // El nombre que contesta a «¿cómo se llama? … la recuerdo» también: aprender una cara lo pide la dueña, no un invitado.
+        // Solo si de verdad da un nombre (esperaNombre es estricta: una orden, una pregunta o una frase corta de un invitado
+        // no reciben «eso es de la dueña»; siguen su camino y sueltan la espera, aprenderPorVoz.ts interrumpeEspera).
+        if (pedidoLocalPrivado(cmd) || caras.esperaNombre(cmd)) {
           const d = await decidirLocal();
-          if (!d.permitido) return void (await say(fraseNegarLocal(d.quienHabla, idiomaActual() === 'en'), 'CONCERNED', { emocion: 'preocupado' }));
+          if (!d.permitido) {
+            // «Me acompaña mi hija» de un invitado no es aprender nada: es charla, va al servidor (en modo invitado).
+            if (negadoVaAlCerebro(cmd)) return void (await askBrain(cmd));
+            return void (await say(fraseNegarLocal(d.quienHabla, idiomaActual() === 'en'), 'CONCERNED', { emocion: 'preocupado' }));
+          }
         }
         if (intencionPrivada(intent.tipo)) {
           const d = await decidirLocal();
@@ -1718,9 +1730,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           return void (await say(dicho, 'SCAN'));
         }
         // La cámara por voz: «puedes verme», «mírame» → ¿solo ahora o siempre?; «apaga la cámara».
-        const pc = intent.tipo === 'vision_on' ? 'encender' : pedidoDeCamara(cmd);
+        // «Mira esto», «¿me ves?» son mirar (whatDoYouSee, abajo), no solo encenderla (José, 6-oct: «Mira, mira» → «¿Qué ves?»).
+        const pc = intent.tipo === 'vision_on' ? 'encender' : intent.tipo === 'que_ves' ? null : pedidoDeCamara(cmd);
         if (pc === 'encender') {
-          if (camara.encendida()) return void (await say(tr('Ya te estoy viendo.', 'I can already see you.'), 'HAPPY', { emocion: 'feliz' }));
+          // Ya encendida y pide que la mire («puedes verme», «mírame»): se mira de verdad y se dice lo visto.
+          if (camara.encendida()) return void (await (pideMirar(cmd) ? whatDoYouSee() : say(tr('Ya te estoy viendo.', 'I can already see you.'), 'HAPPY', { emocion: 'feliz' })));
           esperaModoCamara.current = true;
           return void (await say(tr('¿Te veo solo ahora, o siempre que entres?', 'Should I see you just now, or every time you come in?'), 'CURIOUS', { emocion: 'curioso' }));
         }

@@ -25,6 +25,31 @@ export const FACE_API_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@$
 export const FACE_API_SRI = 'sha384-M5nePoB6/w/a9JhtegEibSLGiJy/+QMZZMfvcxjWVCQW/HPwrQ7i21V/Px/8AyVA';
 export const MODELOS_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_VERSION}/model/`;
 
+/**
+ * DE LAS CARAS DE UN RECORTE, LA DE LA CAJA (va tal cual dentro de la página; la prueba la corre en Node:
+ * pruebas/caras/vivo.prueba.mjs). `rs`: lo que encontró el detector en el lienzo ({ x, y, w, h } en px del lienzo);
+ * `esperada`: dónde está la cara de la caja de ML Kit en ese mismo lienzo ({ cx, cy, lado } en px).
+ *
+ * José, 6-oct: «9 recortes: 4 sin cara» con dos personas en la mesa. Antes se elegía la cara más cercana al CENTRO del
+ * lienzo y se descartaba si quedaba a más de 0,3 del ancho. Pero el recorte se recorta contra el borde de la foto (el
+ * nativo y el motor, Cuadro.kt cuadradoConMargen y aquí): con la cara cerca de un borde —lo normal con el teléfono
+ * sobre la mesa y dos personas, cada una hacia un lado o con la cabeza arriba del cuadro— la cara de la caja NO queda
+ * en el centro: salía «sin cara» o, peor, ganaba la vecina que entraba en el margen (el voto de la otra persona). Ahora
+ * se elige la más cercana a donde la caja dice que está, y solo si cae cerca (menos de `0,66 × lado`, lo mismo que
+ * antes medido en tamaño de cara) y no es mucho más chica que la esperada (una cara del fondo no es la de la caja).
+ */
+export const ELEGIR_CARA_JS = `function elegirCara(rs, esperada) {
+  var mejor = -1, dmin = Infinity;
+  for (var i = 0; i < rs.length; i++) {
+    var b = rs[i];
+    var dd = Math.hypot(b.x + b.w / 2 - esperada.cx, b.y + b.h / 2 - esperada.cy);
+    if (dd < dmin) { dmin = dd; mejor = i; }
+  }
+  if (mejor < 0 || dmin > esperada.lado * 0.66) return -1;
+  if (Math.max(rs[mejor].w, rs[mejor].h) < esperada.lado * 0.35) return -1;
+  return mejor;
+}`;
+
 export const MOTOR_CARAS_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="${FACE_API_URL}" integrity="${FACE_API_SRI}" crossorigin="anonymous"></script>
@@ -53,6 +78,7 @@ export const MOTOR_CARAS_HTML = `<!doctype html>
     return listo;
   }
   var MAX_CAJAS = 4, LADO_RECORTE = 320, MARGEN_RECORTE = 2.2;
+  ${ELEGIR_CARA_JS}
   var lienzo = document.createElement('canvas');
   function cara(d, x, y, w, h, indice) {
     var o = {
@@ -95,14 +121,16 @@ export const MOTOR_CARAS_HTML = `<!doctype html>
               .detectAllFaces(lienzo, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
               .withFaceLandmarks()
               .withFaceDescriptors();
-            // La del centro del recorte (la de la caja), no una vecina que entró en el margen.
-            var mejor = null, dmin = Infinity;
-            rs.forEach(function (d) {
-              var b = d.detection.box;
-              var dd = Math.hypot(b.x + b.width / 2 - lienzo.width / 2, b.y + b.height / 2 - lienzo.height / 2);
-              if (dd < dmin) { dmin = dd; mejor = d; }
-            });
-            if (!mejor || dmin > lienzo.width * 0.3) continue;
+            // La de la caja (donde ML Kit dijo que está, en el lienzo), no una vecina que entró en el margen: con la cara
+            // contra el borde de la foto el recorte no la deja en el centro (ELEGIR_CARA_JS).
+            var esperada = {
+              cx: ((c.x + c.w / 2) * W - sx) * esc,
+              cy: ((c.y + c.h / 2) * H - sy) * esc,
+              lado: Math.max(c.w * W, c.h * H) * esc,
+            };
+            var k = elegirCara(rs.map(function (d) { var bb = d.detection.box; return { x: bb.x, y: bb.y, w: bb.width, h: bb.height }; }), esperada);
+            if (k < 0) continue;
+            var mejor = rs[k];
             var b = mejor.detection.box;
             caras.push(cara(mejor, (sx + b.x / esc) / W, (sy + b.y / esc) / H, b.width / esc / W, b.height / esc / H, i));
           }

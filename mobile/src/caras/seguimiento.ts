@@ -53,9 +53,10 @@ export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; pa
 /**
  * `ext`: el trackingId de ML Kit de la cámara en vivo (modules/aura-camara), si la pista viene de ahí. `reinicio`: desde
  * cuándo valen sus votos (tras un cruce o un salto). `cruce`: se está solapando con otra. `vencida`: cuándo venció su
- * nombre por falta de un voto fresco (CAM-F).
+ * nombre por falta de un voto fresco (CAM-F). `choques`: cuántas veces sus votos dieron el nombre que ya tenía otra cara a
+ * la vista (se quedó sin él: una persona no está en dos caras).
  */
-export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number; reinicio?: number; cruce?: boolean; vencida?: number };
+export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number; reinicio?: number; cruce?: boolean; vencida?: number; choques?: number };
 
 export function iou(a: CajaN, b: CajaN): number {
   const x1 = Math.max(a.x, b.x);
@@ -189,7 +190,7 @@ export class Seguidor {
    * Un reconocimiento para la pista `id` (r null = «no sé quién es»). Devuelve la identidad que queda y `aFavor`: cuántos
    * de los últimos votos dicen esa identidad (aprender con el uso pide `CONFIRMAR`, nunca un acierto suelto).
    */
-  votar(id: number, r: Reconocida | null, ts: number): { pista: Pista | null; identidad: Identidad | null; confirmo: boolean; aFavor: number } {
+  votar(id: number, r: Reconocida | null, ts: number): { pista: Pista | null; identidad: Identidad | null; confirmo: boolean; aFavor: number; ajeno?: boolean } {
     const p = this.pistas.find((x) => x.id === id);
     if (!p) return { pista: null, identidad: null, confirmo: false, aFavor: 0 };
     // Un voto de una foto de antes del cruce o del salto (el análisis tardó) no es de esta cara.
@@ -201,8 +202,26 @@ export class Seguidor {
     caducarIdentidad(p, ts); // CAM-F: un nombre vencido no vuelve por los votos viejos
     const antes = p.identidad;
     p.identidad = decidirIdentidad(p.votos, antes, ts);
+    // Una persona está en UNA cara: si otra pista viva ya tiene este nombre, se lo queda la más parecida y la otra queda
+    // sin nombre (José, 6-oct, con su hija al lado: dos cajas con el mismo nombre hacían decir «Reconozco a José» y
+    // nada más, como si la otra persona no estuviera; el cerebro la «adivinaba» con nombres de la memoria).
+    const nueva = p.identidad;
+    if (nueva) {
+      const otra = this.pistas.find((q) => q !== p && q.identidad?.id === nueva.id && ts - q.visto <= PERDIDA_MS);
+      if (otra) {
+        if (otra.identidad!.distancia <= nueva.distancia) {
+          p.identidad = null;
+          p.choques = (p.choques || 0) + 1;
+        } else {
+          otra.identidad = null;
+          otra.choques = (otra.choques || 0) + 1;
+        }
+      }
+    }
     const aFavor = p.identidad ? p.votos.filter((v) => v.id === p.identidad!.id).length : 0;
-    return { pista: p, identidad: p.identidad, confirmo: !!p.identidad && p.identidad.id !== antes?.id, aFavor };
+    // `ajeno`: este reconocimiento dio el nombre que tiene OTRA cara a la vista (para la miga de «sin nombre»).
+    const ajeno = !!r && r.id !== p.identidad?.id && this.pistas.some((q) => q !== p && q.identidad?.id === r.id && ts - q.visto <= PERDIDA_MS);
+    return { pista: p, identidad: p.identidad, confirmo: !!p.identidad && p.identidad.id !== antes?.id, aFavor, ...(ajeno ? { ajeno } : {}) };
   }
 
   /** Las pistas que se ven ahora (para dibujar). */

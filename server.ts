@@ -156,6 +156,7 @@ import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
 import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
+import { hechoCaras, preguntaPorVer as preguntaPorVerCamara } from './lib/caras-turno';
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, PRESUPUESTO_VISION_TURNO_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
@@ -3196,11 +3197,16 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     }
     // Escena que la cámara local ya interpretó (MediaPipe en la web, ML Kit en la APK): quién está y qué hace.
     const escena = String(body?.escena || '').replace(/\s+/g, ' ').trim().slice(0, 400);
-    const preguntaPorVer = /\b(qu[eé] ves|qu[eé] hay aqu[ií]|qui[eé]n (est[aá]|hay|anda)( aqu[ií]| ah[ií]| conmigo)?|me ves|c[oó]mo me ves|estoy solo|cu[aá]ntos somos|qu[eé] cara tengo|me veo)\b/.test(q);
+    // «Mira», «¿me ves?», «reconoce a…», «me acompaña mi hija» también preguntan por lo que se ve (lib/caras-turno.ts).
+    const preguntaPorVer = preguntaPorVerCamara(q);
     if (escena) {
       hechos.push(`ESCENA (tu cámara, ahora mismo): ${escena}${preguntaPorVer ? '' : ' (úsalo solo si viene al caso; no lo recites sin motivo).'}`);
       tools.push('escena');
     }
+    // Lo que puede de verdad con las caras (José, 6-oct: adivinó nombres de la memoria y dijo que no podía reconocer caras).
+    // Solo cuando el turno pregunta por lo que se ve o por alguien; la oferta de aprender, una vez por persona en la sesión.
+    const carasHecho = hechoCaras({ escena, mensaje: message, invitado: !!invitado, ambito });
+    if (carasHecho) hechos.push(carasHecho);
     // Las voces (mobile/src/voces): si la voz dice que quien pide NO es la dueña, lo privado no se le lee. Sale de la
     // escena o del campo aparte `quienHabla` (solo de la app con sesión y con una voz guardada de ESA cuenta): una
     // escena larga ya no se come la regla. Solo agrega cuidado.

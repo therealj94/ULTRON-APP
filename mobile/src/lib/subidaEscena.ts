@@ -3,7 +3,8 @@
  * probarla en Node (pruebas/camara/contratos.prueba.mjs). CAM-B, CAM-E y CAM-G del master §25:
  *
  *  · La voz primero (CAM-B): el mismo `intervaloServidor` que la cámara de fotos, CON `ocupada` (la mesa piensa o
- *    habla → no se sube nada). Si la mesa empieza a hablar mientras se sacaba la foto, no se sube.
+ *    habla → no se sube nada). Si la mesa empieza a hablar mientras se sacaba la foto, no se sube TODAVÍA: se guarda y
+ *    sube apenas la mesa calla, si sigue valiendo (José, 6-oct: «escena descartada (la mesa empezó a hablar)»).
  *  · La respuesta es de la cámara que la pidió (CAM-E): sello del cerco antes de la foto y otra vez antes de aplicar;
  *    cambiar frontal→trasera (o apagar) mientras el servidor mira hace que esa vista no se aplique a la escena nueva.
  *  · Fechada al capturar (CAM-G): la vista lleva la hora de captura de la foto (la del nativo; si no la trae, la de
@@ -41,6 +42,11 @@ export type IoEscena = {
 };
 
 export const MINIMO_FOTO_ESCENA = 4000;
+/**
+ * La foto guardada mientras la mesa hablaba sube al callarse si es de hace menos que esto: lo mismo que vale una vista
+ * fresca para «¿qué ves?» (lib/vistaTurno.ts VISTA_TURNO.frescaMs), así la que llega sirve al turno siguiente.
+ */
+export const PENDIENTE_MAX_MS = 20_000;
 
 export class SubidaEscena {
   private vivo = true;
@@ -56,6 +62,13 @@ export class SubidaEscena {
   /** Cuándo salió cada subida en vivo de la última hora (el tope SUBIDA.vivoMaxHora). */
   private vivasHora: number[] = [];
   private topeAvisado = false;
+  /**
+   * La foto que ya se sacó cuando la mesa empezó a hablar (José, 6-oct: «escena descartada (la mesa empezó a hablar)»).
+   * Antes se tiraba y, al callarse la mesa, había que sacar otra y esperar al servidor: lo que se veía mientras hablaba
+   * no llegaba al turno siguiente. Ahora se guarda y sube apenas la mesa queda libre, si sigue valiendo (misma cámara,
+   * de hace ≤ `PENDIENTE_MAX_MS` y sin que la escena cambiara después).
+   */
+  private pendiente: { f: { b64: string; ts?: number; epoca?: number; lado?: string }; sello: ReturnType<CercoCamara['sello']>; capturada: number; enVivo: boolean } | null = null;
 
   constructor(private io: IoEscena, private cerco: CercoCamara) {}
 
@@ -63,6 +76,18 @@ export class SubidaEscena {
   tic(): Promise<void> | null {
     if (!this.vivo || this.subiendo) return null;
     const st = this.io.estado();
+    if (this.pendiente && !st.ocupada) {
+      const pe = this.pendiente;
+      this.pendiente = null;
+      const ahora = this.io.ahora();
+      const vieja = ahora - pe.capturada > PENDIENTE_MAX_MS || (st.cambioEn ?? 0) > pe.capturada || (st.movidaEn ?? 0) > pe.capturada;
+      if (!vieja && this.cerco.vigente(pe.sello)) {
+        this.ultimo = ahora;
+        this.subiendo = true;
+        return this.subir(pe.f, pe.sello, pe.capturada, pe.enVivo, ahora);
+      }
+      this.io.descartada?.(vieja ? 'la guardada mientras hablaba ya es vieja' : 'la guardada mientras hablaba es de la cámara anterior');
+    }
     if (this.personasAntes >= 0 && st.personas !== this.personasAntes) this.sinCambios = 0;
     this.personasAntes = st.personas;
     const ahora = this.io.ahora();
@@ -87,37 +112,52 @@ export class SubidaEscena {
     this.subiendo = true;
     const sello = this.cerco.sello();
     return (async () => {
+      let sigue = false;
       try {
         const f = await this.io.foto();
         if (!this.vivo || !f?.b64 || f.b64.length < MINIMO_FOTO_ESCENA) return;
-        // Empezó a hablar mientras se sacaba la foto: no se sube (y se vuelve a intentar cuando termine).
-        if (this.io.estado().ocupada) {
-          this.ultimo = previo;
-          return this.io.descartada?.('la mesa empezó a hablar');
-        }
         const m = this.cerco.admitirResultado(f, sello, this.io.ahora(), ORIGEN.fotoMaxMs);
         if (m !== 'ok') return this.io.descartada?.(`foto ${m}`);
         const capturada = typeof f.ts === 'number' && f.ts > 0 ? f.ts : ahora;
-        // Cuenta para el tope la que de verdad va al servidor.
-        if (enVivo) this.vivasHora.push(ahora);
-        const v = await this.io.ver(f.b64).catch(() => null);
-        if (!this.vivo) return;
-        if (!v) {
-          this.fallos += 1;
-          return;
+        // Empezó a hablar mientras se sacaba la foto: no se sube ahora (la voz primero, CAM-B), pero tampoco se tira: se
+        // guarda y sube apenas la mesa quede libre (ver `pendiente`).
+        if (this.io.estado().ocupada) {
+          this.ultimo = previo;
+          this.pendiente = { f: { b64: f.b64, ts: f.ts, epoca: f.epoca, lado: f.lado }, sello, capturada, enVivo };
+          return this.io.descartada?.('la mesa empezó a hablar; la guardo para cuando calle');
         }
-        this.fallos = 0;
-        if (!this.cerco.vigente(sello)) return this.io.descartada?.('vista de la cámara anterior');
-        this.sinCambios = mismaEscena(this.antes, v) ? this.sinCambios + 1 : 0;
-        this.antes = v;
-        this.vistaEn = capturada;
-        this.io.aplicar({ v, ts: capturada, lado: sello.lado, epoca: sello.epoca, foto: f.b64 });
+        sigue = true;
+        await this.subir(f as { b64: string }, sello, capturada, enVivo, ahora);
       } catch {
         /* sin vista esta vez */
       } finally {
-        this.subiendo = false;
+        if (!sigue) this.subiendo = false;
       }
     })();
+  }
+
+  /** La foto (ya admitida) al servidor y, si vuelve con vista y la cámara sigue siendo la misma, a la mesa. */
+  private async subir(f: { b64: string }, sello: ReturnType<CercoCamara['sello']>, capturada: number, enVivo: boolean, ahora: number): Promise<void> {
+    try {
+      // Cuenta para el tope la que de verdad va al servidor.
+      if (enVivo) this.vivasHora.push(ahora);
+      const v = await this.io.ver(f.b64).catch(() => null);
+      if (!this.vivo) return;
+      if (!v) {
+        this.fallos += 1;
+        return;
+      }
+      this.fallos = 0;
+      if (!this.cerco.vigente(sello)) return this.io.descartada?.('vista de la cámara anterior');
+      this.sinCambios = mismaEscena(this.antes, v) ? this.sinCambios + 1 : 0;
+      this.antes = v;
+      this.vistaEn = capturada;
+      this.io.aplicar({ v, ts: capturada, lado: sello.lado, epoca: sello.epoca, foto: f.b64 });
+    } catch {
+      /* sin vista esta vez */
+    } finally {
+      this.subiendo = false;
+    }
   }
 
   detener() {
