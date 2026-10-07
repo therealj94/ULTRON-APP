@@ -133,7 +133,7 @@ async function yaRegistrada<R>(canal: CanalEnvio, dueno: string, op: Operacion, 
  * Manda UNA vez lo aprobado (ver el encabezado). `efecto` hace el envío y clasifica su resultado; si lanza, queda
  * incierto. `reconciliar(op)` busca el efecto de una operación por su id (la de ahora o una igual de antes).
  */
-export async function enviarUnaVez<R = unknown>(o: {
+type PedidoEnvio<R> = {
   canal: CanalEnvio;
   dueno: string;
   operacion: string;
@@ -145,7 +145,41 @@ export async function enviarUnaVez<R = unknown>(o: {
   efecto: () => Promise<SalidaEnvio<R>>;
   reconciliar: (operacion: string) => Promise<Reconciliacion>;
   almacen?: AlmacenDurable;
-}): Promise<ResultadoEnvio<R>> {
+};
+
+/** Un hash corto para el log (nunca el valor: ni el id del mensaje, ni la cuenta). */
+const corto = (s: string) => crypto.createHash('sha256').update(String(s || '')).digest('hex').slice(0, 10);
+
+/**
+ * LA LÍNEA DE CADA ENVÍO (auditoría del 7-oct, A3: «13 corridas de WhatsApp, 0 líneas de resultado»; no se podía auditar
+ * si algo salió). Una por envío, de la app o del «sí» a un borrador del cerebro, de WhatsApp o de correo: el resultado, de
+ * dónde vino, cuánto tardó y hashes del recibo y de la cuenta. Nada del contenido, del destino ni del chat.
+ *   `[envio] whatsapp ok origen=borrador ms=812 entrega=aceptado recibo=3fa1c9e2b0 cuenta=9b1d…`
+ */
+export function lineaDeEnvio(canal: CanalEnvio, dueno: string, r: Pick<ResultadoEnvio, 'estado' | 'entrega' | 'operacion' | 'repetido' | 'reconciliado' | 'referencia' | 'motivo'>, ms: number): string {
+  const estado = r.motivo && r.motivo !== 'en-curso' ? 'no-intentado' : r.estado === 'succeeded' ? 'ok' : r.estado === 'unknown' ? 'incierto' : 'error';
+  const origen = /-app-/.test(r.operacion) ? 'app' : 'borrador';
+  const partes = [`[envio] ${canal} ${estado}`, `origen=${origen}`, `ms=${Math.max(0, Math.round(ms))}`];
+  if (r.entrega) partes.push(`entrega=${r.entrega}`);
+  if (r.motivo) partes.push(`motivo=${r.motivo}`);
+  if (r.repetido) partes.push('repetido=1');
+  if (r.reconciliado) partes.push('reconciliado=1');
+  partes.push(`recibo=${r.referencia ? corto(r.referencia) : '-'}`, `op=${corto(r.operacion)}`, `cuenta=${corto(String(dueno || '').toLowerCase())}`);
+  return partes.join(' ');
+}
+
+export async function enviarUnaVez<R = unknown>(o: PedidoEnvio<R>): Promise<ResultadoEnvio<R>> {
+  const t0 = Date.now();
+  const r = await enviarUnaVezSinLinea(o);
+  try {
+    console.log(lineaDeEnvio(o.canal, o.dueno, r, Date.now() - t0));
+  } catch {
+    /* el log no rompe un envío */
+  }
+  return r;
+}
+
+async function enviarUnaVezSinLinea<R = unknown>(o: PedidoEnvio<R>): Promise<ResultadoEnvio<R>> {
   const a = o.almacen || almacenDurable();
   const base = { operacion: o.operacion, repetido: false };
 

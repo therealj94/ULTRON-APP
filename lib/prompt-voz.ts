@@ -57,7 +57,9 @@ export function reglasAppDelTurno(o: { voz: boolean; manosAqui: string; menuAqui
  * hilo, una pregunta que pide «analiza a fondo»). Medido con tests/voz-presupuesto.test.ts el 6-oct:
  *   · a2ccc94 (antes): system y mensajes ~5 586 fichas; con las 24 herramientas (~4 257), ~9 843;
  *   · con esto:         system y mensajes ~4 616 fichas; total ~8 873.
- * Las herramientas no cambian (sus descripciones llevan el «sí» antes de mandar y lo que nunca se dice sin resultado).
+ * Las descripciones de las herramientas no cambian (llevan el «sí» antes de mandar y lo que nunca se dice sin resultado).
+ * Desde el 7-oct (lib/herramientas-turno.ts) un turno hablado lleva solo las herramientas de lo que pide: la charla, ~1
+ * (~390 caracteres) en vez de las 25 (~15 500); el presupuesto de abajo sigue valiendo para el peor caso (todas).
  */
 export const PRESUPUESTO_VOZ_FICHAS = 9300;
 /** Solo el system y los mensajes (sin las herramientas). */

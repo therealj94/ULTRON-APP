@@ -155,8 +155,8 @@ function QuienProcesa({ cat }: { cat: Catalogo | null }) {
     },
     {
       que: 'La voz de AU-RA',
-      como: v?.voicebox && v.oficial
-        ? `La sintetiza ${v.oficial.motor}${v.servidor ? ` (${v.servidor})` : ''}.`
+      como: (v?.voicebox || v?.eleven) && v.oficial
+        ? `La sintetiza ${v.oficial.motor}.`
         : v
           ? 'Este servidor no tiene voz sintetizada configurada: suenan clips grabados desde el navegador y el texto queda en pantalla.'
           : 'Leyendo cómo está configurada…',

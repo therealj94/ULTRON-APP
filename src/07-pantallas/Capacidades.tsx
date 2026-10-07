@@ -13,7 +13,7 @@ type Capacidad = {
 };
 
 export type Catalogo = {
-  voz?: { oficial?: { nombre: string; motor: string; timbre: string; expresividad: string[]; respaldo?: string }; voicebox?: boolean; servidor?: string | null };
+  voz?: { oficial?: { nombre: string; motor: string; timbre: string; expresividad: string[]; respaldo?: string }; voicebox?: boolean; eleven?: boolean; servidor?: string | null };
   modos?: Array<{ id: string; etiqueta: string; tono: string }>;
   canciones?: Array<{ id: string; titulo: string; artista: string; pedir: string }>;
   capacidades?: Capacidad[];
@@ -73,13 +73,13 @@ export const VozOficial: React.FC<{ cat: Catalogo | null; onProbarVoz: () => voi
         </p>
         {v?.oficial && (
           <p className="text-[14px] text-(--aura-tinta-2) mt-1">
-            {v.voicebox ? `Suena con ${v.oficial.motor}${v.servidor ? ` (${v.servidor})` : ''}.` : 'La voz sintetizada no está configurada en este servidor: suenan solo los clips grabados y el texto queda en pantalla.'}
+            {v.voicebox || v.eleven ? `Suena con ${v.oficial.motor}.` : 'La voz sintetizada no está configurada en este servidor: suenan solo los clips grabados y el texto queda en pantalla.'}
           </p>
         )}
         {v && (
-          <p className={`text-[14px] mt-1 flex items-center gap-1.5 ${v.voicebox ? 'text-(--aura-ok-texto)' : 'text-(--aura-barro-texto)'}`}>
+          <p className={`text-[14px] mt-1 flex items-center gap-1.5 ${v.voicebox || v.eleven ? 'text-(--aura-ok-texto)' : 'text-(--aura-barro-texto)'}`}>
             <CircleDot className="w-3.5 h-3.5" aria-hidden="true" />
-            {v.voicebox ? 'Voz configurada' : 'Voz sin configurar'}
+            {v.voicebox || v.eleven ? 'Voz configurada' : 'Voz sin configurar'}
           </p>
         )}
       </div>
