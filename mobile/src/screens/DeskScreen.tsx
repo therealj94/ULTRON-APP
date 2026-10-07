@@ -28,7 +28,8 @@ import { T, SOMBRA } from '../tema';
 import { DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
 // La cámara de la mesa: la nueva en vivo o la de fotos (components/CamaraMesa.tsx decide; mismas props).
 import { CamaraMesa } from '../components/CamaraMesa';
-import { DeskMenu } from '../components/DeskMenu';
+import { MasDelAvatar } from '../components/MasDelAvatar';
+import { abrirCartera } from '../cartera/estado';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { esVencida } from '../lib/intentoEntrada';
@@ -353,24 +354,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [vistaCamara, setVistaCamara] = useState(false);
   /** La cámara de la mesa: frontal (te ve a ti) o trasera. Se guarda en los ajustes. */
   const [ladoCamara, setLadoCamara] = useState<Lado>('frontal');
-  const [menuOpen, setMenuOpen] = useState(false);
   /** El selector de avatar abierto desde el menú (al entrar se elige en App, antes de la mesa). */
   const [eligiendo, setEligiendo] = useState<'menu' | null>(null);
   // La mesa no se apaga sola: si la pantalla se bloquea, deja de escuchar y de verte.
   useKeepAwake('mesa');
-  // Botón atrás de Android: cierra el menú; con el menú cerrado hace lo de siempre.
+  // Botón atrás de Android: cierra el selector de avatar; con él cerrado hace lo de siempre («Más» se cierra solo: ui/Hoja).
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (eligiendo === 'menu') {
-        setEligiendo(null);
-        return true;
-      }
-      if (!menuOpen) return false;
-      setMenuOpen(false);
+      if (eligiendo !== 'menu') return false;
+      setEligiendo(null);
       return true;
     });
     return () => sub.remove();
-  }, [menuOpen, eligiendo]);
+  }, [eligiendo]);
   const [catalogRequest, setCatalogRequest] = useState(0);
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
@@ -1843,10 +1839,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             setPresence(intent.modo === 'EXPLORER' ? 'explore' : 'stay');
             return void (await say(intent.frase, intent.modo === 'GOLD' ? 'PROUD' : intent.modo === 'EXPLORER' ? 'SCAN' : 'IDLE', { emocion: intent.modo === 'GOLD' ? 'orgullo' : 'neutral' }));
           case 'menu':
-            setMenuOpen(true);
+            // Un solo menú (M-7): «menú» abre «Más».
+            setMasAbierto(true);
             return void (await playClip('listo', 'IDLE'));
           case 'catalogo':
-            setMenuOpen(true);
+            setMasAbierto(true);
             setCatalogRequest((n) => n + 1);
             return void (await playClip('todo', 'IDLE'));
           case 'conocer':
@@ -1902,7 +1899,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             return void (await askBrain(tr('Cuéntame un chiste corto, limpio y bueno. Solo el chiste.', 'Tell me a short, clean, good joke. Just the joke.')));
           case 'clip': {
             if (intent.id === 'puedo') {
-              setMenuOpen(true);
+              setMasAbierto(true);
               setCatalogRequest((n) => n + 1);
             }
             return void (await playClip(intent.id, 'HAPPY'));
@@ -2137,11 +2134,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     dragging.current = false;
     pausarMirada(800);
   }, [pausarMirada]);
-  const onSwipe = useCallback((dir: 'left' | 'right') => setMenuOpen(dir === 'left'), []);
+  const onSwipe = useCallback((dir: 'left' | 'right') => void (dir === 'left' && setMasAbierto(true)), []);
 
-  // El orbe: tocarlo es como tocarle la barbilla (le da cosquillas); deslizar hacia arriba abre el menú.
+  // El orbe: tocarlo es como tocarle la barbilla (le da cosquillas); deslizar hacia arriba abre «Más».
   const onTocarOrbe = useCallback(() => onTap('chin', 0, 0), [onTap]);
-  const onDeslizarOrbe = useCallback((dir: 'arriba' | 'abajo') => setMenuOpen(dir === 'arriba'), []);
+  const onDeslizarOrbe = useCallback((dir: 'arriba' | 'abajo') => void (dir === 'arriba' && setMasAbierto(true)), []);
   const onFalloOrbe = useCallback((motivo: string) => {
     miga(`orbe no disponible: ${motivo}`);
     setConOrbe(false);
@@ -2564,7 +2561,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Cambiar de avatar desde el menú: su voz desde ya, se guarda y se presenta él mismo. */
   const elegirAvatar = async (id: AvatarId) => {
     setEligiendo(null);
-    setMenuOpen(false);
+    setMasAbierto(false);
     await stopSpeaking();
     setAvatar(id);
     setAvatarVoz(id);
@@ -2582,7 +2579,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   const toggleConversar = () => {
     void haptic('medium');
-    setMenuOpen(false);
+    setMasAbierto(false);
     // En llamada, cuelga; sonando, rechaza; si no, la conversación se abre al instante (sin timbre).
     voz.alternar();
   };
@@ -2820,7 +2817,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (next) playSfx('tap');
   };
   const probarVoz = () => {
-    setMenuOpen(false);
+    setMasAbierto(false);
     const a = avatarPorId(avatar || 'aura');
     void say(
       tr(
@@ -2939,7 +2936,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     const conversandoAhora = conversandoRef.current;
     if (!mandarTurno(t)) return;
     setDraft('');
-    if (!conversandoAhora) setMenuOpen(false);
+    if (!conversandoAhora) setMasAbierto(false);
   };
 
   /* ── lo que AURA propone por su cuenta (compa/iniciativa.ts, server/iniciativa.ts) ──────────── */
@@ -3028,7 +3025,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // mesa, de a una y en orden. Espera a que no haya nada encima (chat, panel, recorrido, su computadora).
   const ventana = useVentanaDecision({
     trabajos,
-    activa: mesaVisible && !tutorialAbierto && !panelTrabajos && !menuOpen && !masAbierto && !pcAbierta && !pcVivoAbierta && !eligiendo && !visor && !hojaCerebro && !preguntasAbiertas,
+    activa: mesaVisible && !tutorialAbierto && !panelTrabajos && !masAbierto && !pcAbierta && !pcVivoAbierta && !eligiendo && !visor && !hojaCerebro && !preguntasAbiertas,
     idioma: idiomaActual() === 'en' ? 'en' : 'es',
     conversando: () => conversandoRef.current,
     hablando: () => speakingRef.current,
@@ -3040,12 +3037,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
 
-  // Borde derecho: tocar o arrastrar hacia la izquierda abre el menú (la cara deja libre esa franja).
+  // Borde derecho: tocar o arrastrar hacia la izquierda abre «Más» (la cara deja libre esa franja).
   const edgePan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onPanResponderRelease: (_e, g) => {
-        if (g.dx < -30 || (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12)) setMenuOpen(true);
+        if (g.dx < -30 || (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12)) setMasAbierto(true);
       },
     })
   ).current;
@@ -3276,7 +3273,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const acciones = avatarPorId(avatarId).acciones;
   // Calma en la mesa: le oye sin que nadie hable ni piense, sin frase a medias ni nada abierto encima.
   const calmaMesa =
-    (status === 'listening' || status === 'muted') && !partial && !dicho && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !menuOpen && !tutorialAbierto && !eligiendo;
+    (status === 'listening' || status === 'muted') && !partial && !dicho && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !tutorialAbierto && !eligiendo;
   /*
    * Colgó la llamada del avatar con la mesa delante: el avatar grande vuelve ENTRANDO desde un lado y
    * se acomoda en su lugar (en los chats lo hace la compañera, caminando). Con «reducir movimiento», no.
@@ -3336,7 +3333,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       case 'envivo':
         return toggleConversar();
       case 'escribir':
-        // El cursor en «Escríbele…» (o en el chat del modo trabajo). Ya no abre el menú viejo (DeskMenu).
+        // El cursor en «Escríbele…» (o en el chat del modo trabajo). Ya no hay menú viejo: un solo menú, «Más» (M-7).
         return void setTimeout(() => entradaEscribir.current?.focus(), 350);
       case 'camara':
         return menuCamara();
@@ -3353,6 +3350,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return setPcAbierta(true);
       case 'misiones':
         return setHojaCerebro('misiones');
+      case 'circulo':
+        return setHojaCerebro('circulo');
+      case 'cartera':
+        return abrirCartera();
       case 'ajustes':
         // La pantalla de Ajustes entera (voz, oído, memoria, su cara, tema, perfil, permisos y sesión).
         return emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });
@@ -3602,6 +3603,64 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         conChat={enCuadro}
         estadoComputadora={pcEstado?.configurada ? estadoEnPalabras(pcEstado, idiomaActual() === 'en' ? 'en' : 'es').texto : null}
         computadoraTrabajando={pcTrabajando(pcEstado?.actual?.estado)}
+        // Lo del avatar que vivía en el menú viejo de la derecha (M-7): un solo menú, «Más».
+        extra={
+          <MasDelAvatar
+            visible={masAbierto}
+            avatar={avatarId}
+            online={online}
+            mode={mode}
+            presence={presence}
+            canciones={canciones}
+            caraClasica={vista === 'clasica'}
+            conOrbe={enOrbe}
+            catalogRequest={catalogRequest}
+            onCommand={(t) => {
+              setMasAbierto(false);
+              mandarTurnoRef.current(t);
+            }}
+            onSetMode={(m) => {
+              setMasAbierto(false);
+              if (m === 'CONOCER') void startConocer(false);
+              else mandarTurnoRef.current(`modo ${m.toLowerCase()}`);
+            }}
+            onSetPresence={(p) => {
+              setMasAbierto(false);
+              setPresenceUI(p);
+            }}
+            onConocer={() => {
+              setMasAbierto(false);
+              void startConocer(false);
+            }}
+            onBlaster={() => {
+              setMasAbierto(false);
+              void fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.'));
+            }}
+            onSaber={() => {
+              setMasAbierto(false);
+              void fireSaber();
+            }}
+            onSingSong={(id) => {
+              setMasAbierto(false);
+              const c = canciones.find((s) => s.id === id);
+              mandarTurnoRef.current(c?.pedir || `canta ${id}`);
+            }}
+            onSingGenre={(g) => {
+              setMasAbierto(false);
+              mandarTurnoRef.current(`canta ${g}`);
+            }}
+            onOrar={() => {
+              setMasAbierto(false);
+              mandarTurnoRef.current('ora por el día');
+            }}
+            onRemember={(f) => mandarTurnoRef.current(`recuerda que ${f}`)}
+            onSearch={(q) => {
+              setMasAbierto(false);
+              mandarTurnoRef.current(`busca ${q}`);
+            }}
+            onProbarVoz={probarVoz}
+          />
+        }
       />
 
       <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
@@ -3658,7 +3717,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       {/* Lo que AURA propone por su cuenta: arriba (debajo del aviso de su computadora), sin tapar al avatar.
           En una conversación de voz se queda a la vista, sin sonar: no interrumpe. */}
-      {propuesta && mesaVisible && !tutorialAbierto && !eligiendo && !menuOpen && !masAbierto ? (
+      {propuesta && mesaVisible && !tutorialAbierto && !eligiendo && !masAbierto ? (
         <TarjetaPropuesta
           propuesta={propuesta}
           nombreAvatar={de(avatarPorId(avatarId).nombre)}
@@ -3677,82 +3736,6 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       {/* La ventana de bienvenida: ofrece el recorrido y las preguntas para conocerle (bienvenida/). */}
       <VentanaBienvenida correo={user.correo} nombre={user.name} onRecorrido={() => setTutorialAbierto(true)} onHablando={() => void startConocer(false)} onTapa={setPreguntasAbiertas} />
-
-      <DeskMenu
-        visible={menuOpen}
-        userName={user.name}
-        mode={mode}
-        presence={presence}
-        micMuted={micApagado}
-        listening={listening}
-        visionOn={visionOn && !!camPerm?.granted}
-        online={online}
-        objects={objects}
-        draft={draft}
-        catalogRequest={catalogRequest}
-        canciones={canciones}
-        onChangeDraft={setDraft}
-        onSendDraft={sendDraft}
-        onClose={() => setMenuOpen(false)}
-        onSetMode={(m) => {
-          setMenuOpen(false);
-          if (m === 'CONOCER') void startConocer(false);
-          else mandarTurnoRef.current(`modo ${m.toLowerCase()}`);
-        }}
-        onSetPresence={(p) => {
-          setMenuOpen(false);
-          setPresenceUI(p);
-        }}
-        onToggleMic={() => void toggleMute()}
-        onToggleVision={() => void toggleVision()}
-        onConocer={() => {
-          setMenuOpen(false);
-          void startConocer(false);
-        }}
-        onBlaster={() => {
-          setMenuOpen(false);
-          void fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.'));
-        }}
-        onSaber={() => {
-          setMenuOpen(false);
-          void fireSaber();
-        }}
-        onSingSong={(id) => {
-          setMenuOpen(false);
-          const c = canciones.find((s) => s.id === id);
-          mandarTurnoRef.current(c?.pedir || `canta ${id}`);
-        }}
-        onSingGenre={(g) => {
-          setMenuOpen(false);
-          mandarTurnoRef.current(`canta ${g}`);
-        }}
-        onOrar={() => {
-          setMenuOpen(false);
-          mandarTurnoRef.current('ora por el día');
-        }}
-        onWhatDoYouSee={() => {
-          setMenuOpen(false);
-          mandarTurnoRef.current('qué ves');
-        }}
-        onRemember={(f) => mandarTurnoRef.current(`recuerda que ${f}`)}
-        onCommand={(t) => {
-          setMenuOpen(false);
-          mandarTurnoRef.current(t);
-        }}
-        onProbarVoz={probarVoz}
-        onAbrirHoja={(h) => {
-          setMenuOpen(false);
-          setHojaCerebro(h);
-        }}
-        onSearch={(q) => {
-          setMenuOpen(false);
-          mandarTurnoRef.current(`busca ${q}`);
-        }}
-        conOrbe={enOrbe}
-        avatar={avatarId}
-        onSetAvatar={(id) => void elegirAvatar(id)}
-        caraClasica={vista === 'clasica'}
-      />
 
       {eligiendo && (
         <SelectorAvatar

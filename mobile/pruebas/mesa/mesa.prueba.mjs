@@ -307,31 +307,50 @@ prueba('mesa: «olvidar» borra también en el servidor; el puntito del Chat lle
   const sinLeer = /export function useSinLeerTotal[\s\S]*?\n\}/.exec(chats)?.[0] || '';
   const ms = Number(/sondear\(refrescarLista, \(\) => ([\d_]+)\)/.exec(sinLeer)?.[1].replace(/_/g, ''));
   assert.ok(ms >= 30_000, `el sondeo del puntito es tranquilo (≥ 30 s; es ${ms} ms)`);
-  // «Cerrar sesión» se mudó a Ajustes (José, 2-oct): ahí pregunta antes con su hoja; el menú ya no saca a nadie.
-  const menu = fuente('components/DeskMenu.tsx');
-  assert.doesNotMatch(menu, /onLogout/, 'el menú de la mesa ya no cierra la sesión');
+  // «Cerrar sesión» se mudó a Ajustes (José, 2-oct): ahí pregunta antes con su hoja; «Más» no saca a nadie.
+  for (const f of ['components/HojaMas.tsx', 'components/MasDelAvatar.tsx']) assert.doesNotMatch(fuente(f), /onLogout/, `${f} no cierra la sesión`);
   const ajustes = fuente('ajustes/Ajustes.tsx');
   assert.match(ajustes, /<Fila titulo=\{tr\('Cerrar sesión', 'Sign out'\)\}[^\n]*onPress=\{\(\) => abrir\('salir'\)\}/, 'en Ajustes, «Cerrar sesión» abre la pregunta');
   assert.match(ajustes, /<Hoja visible=\{hoja === 'salir'\}[\s\S]*?salirDeLaSesion\(\)/, 'y solo su botón saca');
 });
 
-prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada cortado; los ajustes viven en Ajustes', async () => {
-  const menu = fuente('components/DeskMenu.tsx');
-  // Antes: Math.min(460, width * 0.64) → ~250 dp en un teléfono, con «Olvidar» fuera de la pantalla.
-  assert.doesNotMatch(menu, /width \* 0\.64\)/);
-  const ancho = /export function anchoPanel\(ancho: number\): number \{\s*return ([^;]+);/.exec(menu)?.[1];
-  assert.ok(ancho, 'el ancho del panel sale de anchoPanel');
-  const anchoPanel = new Function('ancho', `return ${ancho};`);
-  assert.equal(anchoPanel(392), 360, 'vertical (392 dp): casi todo el ancho');
-  assert.equal(anchoPanel(360), 328);
-  assert.equal(anchoPanel(850), 440, 'acostado: una columna cómoda, no media pantalla');
-  assert.ok(anchoPanel(320) <= 320 - 32, 'nunca más ancho que la pantalla');
-  assert.match(menu, /textos: \{ flex: 1, minWidth: 0 \}/, 'el texto de cada fila se parte en renglones en vez de empujar el botón fuera');
-  assert.doesNotMatch(menu, /maxWidth: 300/);
-  assert.match(menu, /paddingBottom: ins\.bottom \+ 28, paddingRight: ins\.right \+ 20/, 'respeta la barra de gestos y la muesca acostado');
-  assert.match(menu, /emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Ajustes» abre la pantalla completa');
-  // Lo que se fue del menú… sin perder nada: cada opción está en Ajustes con la misma acción de la mesa.
-  for (const fuera of ['onSetSttEngine', 'onToggleProactive', 'onToggleSfx', 'onForget', 'memoryCount', 'onSetCara', 'onSetPostura']) assert.doesNotMatch(menu, new RegExp(fuera), `${fuera} ya no está en el menú`);
+prueba('un solo menú (M-7): lo que tenía el panel de la derecha vive en «Más»; «menú» abre «Más»; los ajustes viven en Ajustes', async () => {
+  // El panel viejo (DeskMenu) se fue: dos menús para una pantalla (auditoría del 7-oct, M-7).
+  assert.equal(fs.existsSync(path.join(RAIZ, 'mobile/src/components/DeskMenu.tsx')), false, 'sin DeskMenu');
+  const desk = fuente('screens/DeskScreen.tsx');
+  assert.doesNotMatch(desk, /<DeskMenu|menuOpen|setMenuOpen/, 'la mesa no lo monta ni guarda su estado');
+  // La orden de voz «menú» (y «catálogo», y el deslizar o el borde derecho) abren «Más».
+  assert.match(desk, /case 'menu':\s+\/\/[^\n]*\n\s+setMasAbierto\(true\);/);
+  assert.match(desk, /case 'catalogo':\s+setMasAbierto\(true\);\s+setCatalogRequest/);
+  assert.match(desk, /setMasAbierto\(true\);\s*\n\s*\},\s*\n\s*\}\)\s*\n\s*\)\.current;/, 'el borde derecho abre «Más»');
+  const { interpretar } = await import('../../src/lib/intenciones.ts');
+  assert.equal(interpretar('menú', { dormido: false, enConocer: false }).tipo, 'menu');
+  // «Más» monta lo del avatar debajo de los mosaicos, y suma «Mi círculo» y «Cartera» (con el texto verdadero de la tarjeta).
+  const mas = fuente('components/HojaMas.tsx');
+  assert.match(mas, /\{p\.extra\}\s*<\/Hoja>/);
+  assert.match(mas, /id: 'circulo'/);
+  assert.match(mas, /id: 'cartera'[^\n]*Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña/);
+  assert.match(desk, /extra=\{\s*<MasDelAvatar/);
+  assert.match(desk, /case 'circulo':\s+return setHojaCerebro\('circulo'\);\s+case 'cartera':\s+return abrirCartera\(\);/);
+  // Lo único del panel viejo, sin perder nada: atajos, tono y presencia, orar, cantar, recordar, investigar, catálogo.
+  const extra = fuente('components/MasDelAvatar.tsx');
+  for (const [que, re] of [
+    ['los atajos del avatar', /av\.acciones\.map/],
+    ['el tono (M-6: solo cambia cómo habla)', /Tono \(solo cambia cómo habla\)/],
+    ['la presencia', /p\.onSetPresence\(pr\)/],
+    ['conocerte', /onPress=\{p\.onConocer\}/],
+    ['el blaster y el sable con la cara clásica', /p\.caraClasica \? \([\s\S]*?p\.onBlaster[\s\S]*?p\.onSaber/],
+    ['recordar un hecho', /p\.onRemember\(fact\.trim\(\)\)/],
+    ['orar', /onPress=\{p\.onOrar\}/],
+    ['cantar (repertorio y géneros)', /p\.onSingSong\(c\.id\)[\s\S]*?p\.onSingGenre\(g\.id\)/],
+    ['investigar', /p\.onSearch\(query\.trim\(\)\)/],
+    ['el catálogo y probar voz', /fetchCapacidades\(\)[\s\S]*?onPress=\{p\.onProbarVoz\}/],
+    ['la orden «catálogo» lo despliega', /if \(p\.catalogRequest\) setCatOpen\(true\);/],
+  ]) assert.match(extra, re, `«Más» tiene ${que}`);
+  assert.doesNotMatch(extra, /<ScrollView/, 'sin un desplazable dentro de la hoja (ui/Hoja ya desplaza)');
+  assert.match(extra, /textos: \{ flex: 1, minWidth: 0 \}/, 'el texto se parte en renglones en vez de empujar fuera');
+  // Lo que se fue del panel hace tiempo sigue en Ajustes, con la misma acción de la mesa.
+  for (const fuera of ['onSetSttEngine', 'onToggleProactive', 'onToggleSfx', 'onForget', 'memoryCount', 'onSetCara', 'onSetPostura']) assert.doesNotMatch(extra + mas, new RegExp(fuera), `${fuera} no está en «Más»`);
   const ajustes = fuente('ajustes/Ajustes.tsx');
   for (const [que, re] of [
     ['la voz', /tr\('Voz', 'Voice'\)/],
@@ -343,7 +362,6 @@ prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada
     ['el orbe (José, 2-oct) o los anillos', /\{ id: 'orbe', texto: tr\('Orbe', 'Orb'\) \}/],
     ['lo que sé de ti', /abrir\('conocer'\)/],
   ]) assert.match(ajustes, re, `Ajustes tiene ${que}`);
-  const desk = fuente('screens/DeskScreen.tsx');
   // La cara de AURA es el orbe; si la WebView no puede, los anillos (y si tampoco, la clásica): nunca vacía.
   assert.match(desk, /<OrbeAura[\s\S]*?sonidos=\{settings\.sfx\}[\s\S]*?onFallo=\{onFalloOrbe\}/, 'el orbe con sus sonidos según Ajustes');
   assert.match(desk, /cara === 'orbe' && conOrbe \? 'orbe' : anillosOClasica/, 'si el orbe falla, los anillos');
