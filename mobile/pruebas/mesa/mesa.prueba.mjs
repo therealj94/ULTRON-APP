@@ -307,31 +307,50 @@ prueba('mesa: «olvidar» borra también en el servidor; el puntito del Chat lle
   const sinLeer = /export function useSinLeerTotal[\s\S]*?\n\}/.exec(chats)?.[0] || '';
   const ms = Number(/sondear\(refrescarLista, \(\) => ([\d_]+)\)/.exec(sinLeer)?.[1].replace(/_/g, ''));
   assert.ok(ms >= 30_000, `el sondeo del puntito es tranquilo (≥ 30 s; es ${ms} ms)`);
-  // «Cerrar sesión» se mudó a Ajustes (José, 2-oct): ahí pregunta antes con su hoja; el menú ya no saca a nadie.
-  const menu = fuente('components/DeskMenu.tsx');
-  assert.doesNotMatch(menu, /onLogout/, 'el menú de la mesa ya no cierra la sesión');
+  // «Cerrar sesión» se mudó a Ajustes (José, 2-oct): ahí pregunta antes con su hoja; «Más» no saca a nadie.
+  for (const f of ['components/HojaMas.tsx', 'components/MasDelAvatar.tsx']) assert.doesNotMatch(fuente(f), /onLogout/, `${f} no cierra la sesión`);
   const ajustes = fuente('ajustes/Ajustes.tsx');
   assert.match(ajustes, /<Fila titulo=\{tr\('Cerrar sesión', 'Sign out'\)\}[^\n]*onPress=\{\(\) => abrir\('salir'\)\}/, 'en Ajustes, «Cerrar sesión» abre la pregunta');
   assert.match(ajustes, /<Hoja visible=\{hoja === 'salir'\}[\s\S]*?salirDeLaSesion\(\)/, 'y solo su botón saca');
 });
 
-prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada cortado; los ajustes viven en Ajustes', async () => {
-  const menu = fuente('components/DeskMenu.tsx');
-  // Antes: Math.min(460, width * 0.64) → ~250 dp en un teléfono, con «Olvidar» fuera de la pantalla.
-  assert.doesNotMatch(menu, /width \* 0\.64\)/);
-  const ancho = /export function anchoPanel\(ancho: number\): number \{\s*return ([^;]+);/.exec(menu)?.[1];
-  assert.ok(ancho, 'el ancho del panel sale de anchoPanel');
-  const anchoPanel = new Function('ancho', `return ${ancho};`);
-  assert.equal(anchoPanel(392), 360, 'vertical (392 dp): casi todo el ancho');
-  assert.equal(anchoPanel(360), 328);
-  assert.equal(anchoPanel(850), 440, 'acostado: una columna cómoda, no media pantalla');
-  assert.ok(anchoPanel(320) <= 320 - 32, 'nunca más ancho que la pantalla');
-  assert.match(menu, /textos: \{ flex: 1, minWidth: 0 \}/, 'el texto de cada fila se parte en renglones en vez de empujar el botón fuera');
-  assert.doesNotMatch(menu, /maxWidth: 300/);
-  assert.match(menu, /paddingBottom: ins\.bottom \+ 28, paddingRight: ins\.right \+ 20/, 'respeta la barra de gestos y la muesca acostado');
-  assert.match(menu, /emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Ajustes» abre la pantalla completa');
-  // Lo que se fue del menú… sin perder nada: cada opción está en Ajustes con la misma acción de la mesa.
-  for (const fuera of ['onSetSttEngine', 'onToggleProactive', 'onToggleSfx', 'onForget', 'memoryCount', 'onSetCara', 'onSetPostura']) assert.doesNotMatch(menu, new RegExp(fuera), `${fuera} ya no está en el menú`);
+prueba('un solo menú (M-7): lo que tenía el panel de la derecha vive en «Más»; «menú» abre «Más»; los ajustes viven en Ajustes', async () => {
+  // El panel viejo (DeskMenu) se fue: dos menús para una pantalla (auditoría del 7-oct, M-7).
+  assert.equal(fs.existsSync(path.join(RAIZ, 'mobile/src/components/DeskMenu.tsx')), false, 'sin DeskMenu');
+  const desk = fuente('screens/DeskScreen.tsx');
+  assert.doesNotMatch(desk, /<DeskMenu|menuOpen|setMenuOpen/, 'la mesa no lo monta ni guarda su estado');
+  // La orden de voz «menú» (y «catálogo», y el deslizar o el borde derecho) abren «Más».
+  assert.match(desk, /case 'menu':\s+\/\/[^\n]*\n\s+setMasAbierto\(true\);/);
+  assert.match(desk, /case 'catalogo':\s+setMasAbierto\(true\);\s+setCatalogRequest/);
+  assert.match(desk, /setMasAbierto\(true\);\s*\n\s*\},\s*\n\s*\}\)\s*\n\s*\)\.current;/, 'el borde derecho abre «Más»');
+  const { interpretar } = await import('../../src/lib/intenciones.ts');
+  assert.equal(interpretar('menú', { dormido: false, enConocer: false }).tipo, 'menu');
+  // «Más» monta lo del avatar debajo de los mosaicos, y suma «Mi círculo» y «Cartera» (con el texto verdadero de la tarjeta).
+  const mas = fuente('components/HojaMas.tsx');
+  assert.match(mas, /\{p\.extra\}\s*<\/Hoja>/);
+  assert.match(mas, /id: 'circulo'/);
+  assert.match(mas, /id: 'cartera'[^\n]*Tarjeta: AU-RA puede mostrar sus datos y recargarla con tu contraseña/);
+  assert.match(desk, /extra=\{\s*<MasDelAvatar/);
+  assert.match(desk, /case 'circulo':\s+return setHojaCerebro\('circulo'\);\s+case 'cartera':\s+return abrirCartera\(\);/);
+  // Lo único del panel viejo, sin perder nada: atajos, tono y presencia, orar, cantar, recordar, investigar, catálogo.
+  const extra = fuente('components/MasDelAvatar.tsx');
+  for (const [que, re] of [
+    ['los atajos del avatar', /av\.acciones\.map/],
+    ['el tono (M-6: solo cambia cómo habla)', /Tono \(solo cambia cómo habla\)/],
+    ['la presencia', /p\.onSetPresence\(pr\)/],
+    ['conocerte', /onPress=\{p\.onConocer\}/],
+    ['el blaster y el sable con la cara clásica', /p\.caraClasica \? \([\s\S]*?p\.onBlaster[\s\S]*?p\.onSaber/],
+    ['recordar un hecho', /p\.onRemember\(fact\.trim\(\)\)/],
+    ['orar', /onPress=\{p\.onOrar\}/],
+    ['cantar (repertorio y géneros)', /p\.onSingSong\(c\.id\)[\s\S]*?p\.onSingGenre\(g\.id\)/],
+    ['investigar', /p\.onSearch\(query\.trim\(\)\)/],
+    ['el catálogo y probar voz', /fetchCapacidades\(\)[\s\S]*?onPress=\{p\.onProbarVoz\}/],
+    ['la orden «catálogo» lo despliega', /if \(p\.catalogRequest\) setCatOpen\(true\);/],
+  ]) assert.match(extra, re, `«Más» tiene ${que}`);
+  assert.doesNotMatch(extra, /<ScrollView/, 'sin un desplazable dentro de la hoja (ui/Hoja ya desplaza)');
+  assert.match(extra, /textos: \{ flex: 1, minWidth: 0 \}/, 'el texto se parte en renglones en vez de empujar fuera');
+  // Lo que se fue del panel hace tiempo sigue en Ajustes, con la misma acción de la mesa.
+  for (const fuera of ['onSetSttEngine', 'onToggleProactive', 'onToggleSfx', 'onForget', 'memoryCount', 'onSetCara', 'onSetPostura']) assert.doesNotMatch(extra + mas, new RegExp(fuera), `${fuera} no está en «Más»`);
   const ajustes = fuente('ajustes/Ajustes.tsx');
   for (const [que, re] of [
     ['la voz', /tr\('Voz', 'Voice'\)/],
@@ -343,7 +362,6 @@ prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada
     ['el orbe (José, 2-oct) o los anillos', /\{ id: 'orbe', texto: tr\('Orbe', 'Orb'\) \}/],
     ['lo que sé de ti', /abrir\('conocer'\)/],
   ]) assert.match(ajustes, re, `Ajustes tiene ${que}`);
-  const desk = fuente('screens/DeskScreen.tsx');
   // La cara de AURA es el orbe; si la WebView no puede, los anillos (y si tampoco, la clásica): nunca vacía.
   assert.match(desk, /<OrbeAura[\s\S]*?sonidos=\{settings\.sfx\}[\s\S]*?onFallo=\{onFalloOrbe\}/, 'el orbe con sus sonidos según Ajustes');
   assert.match(desk, /cara === 'orbe' && conOrbe \? 'orbe' : anillosOClasica/, 'si el orbe falla, los anillos');
@@ -627,7 +645,8 @@ prueba('voz (auditoría 6-oct): la traza mide cuando el reproductor confirma; el
   const catchStream = cuerpo.slice(cuerpo.indexOf('} catch (e) {'), cuerpo.indexOf('// 2) JSON clásico'));
   assert.match(catchStream, /if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);/);
   assert.match(cuerpo, /^\s+idTurno,$/m, 'el idTurno va en base');
-  assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await turno\(base, genTurno\);/);
+  // (Con la ficha del turno, A-2: la espera del JSON se puede cortar.)
+  assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await tk\.hasta\(turno\(base, genTurno\)\);/);
 });
 
 prueba('«¿qué ves?» no espera al servidor: vista fresca al instante o la foto en el turno; «Lo que vi» no se queda congelado', () => {
@@ -658,15 +677,16 @@ prueba('la frase nueva manda (José, 7-oct): si la respuesta a la de antes todav
   assert.deepEqual(fraseDuranteTurno({ cmd: '¿Qué tenemos pendiente?', pendiente: null, pensando: true, hablando: false }), { cortar: true, pendiente: '¿Qué tenemos pendiente?' });
   assert.deepEqual(fraseDuranteTurno({ cmd: 'y mañana', pendiente: null, pensando: true, hablando: true }), { cortar: false, pendiente: 'y mañana' });
   assert.deepEqual(fraseDuranteTurno({ cmd: 'otra', pendiente: 'una', pensando: false, hablando: false }), { cortar: false, pendiente: 'una otra' });
-  // La costura: la mesa la usa con el stream en camino (abortTurno) y la voz que suena (speakingRef); al cortar, el turno
-  // queda cancelado (askBrain no dice ni emite sus acciones: turnoCancelado) y el stream se corta (el servidor tampoco).
+  // La costura: la mesa la usa con lo que está en camino (el stream, o la espera del JSON con foto: la ficha del turno,
+  // lib/turnoMesa.ts, A-2) y la voz que suena (speakingRef); al cortar, ESE turno queda cortado (askBrain no dice ni emite
+  // sus acciones: su ficha deja de ser vigente) y el stream se corta (el servidor tampoco).
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
   const enCurso = src.slice(src.indexOf('if (handling.current) {'), src.indexOf('handling.current = true;'));
-  assert.match(enCurso, /fraseDuranteTurno\(\{ cmd, pendiente: pending\.current, pensando: !!abortTurno\.current, hablando: speakingRef\.current, efecto: efectoTurno\.current \}\)/);
-  assert.match(enCurso, /if \(d\.cortar\) \{\s+turnoCancelado\.current = true;\s+abortTurno\.current\?\.\(\);/);
+  assert.match(enCurso, /fraseDuranteTurno\(\{ cmd, pendiente: pending\.current, pensando: turnoMesa\.pensando\(\), hablando: speakingRef\.current, efecto: turnoMesa\.efecto\(\) \}\)/);
+  assert.match(enCurso, /if \(d\.cortar\) \{\s+turnoMesa\.cancelar\('frase_nueva'\);/);
   const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('));
   const trasStream = cuerpo.slice(cuerpo.indexOf('let result = await st.promise'), cuerpo.indexOf('emitirAccionesDelTurno(result);'));
-  assert.match(trasStream, /if \(turnoCancelado\.current\) \{\s+if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);\s+return;/, 'cortado: ni suena ni emite acciones');
+  assert.match(trasStream, /if \(!tk\.vigente\) \{\s+if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);\s+return;/, 'cortado: ni suena ni emite acciones');
 });
 
 prueba('revisión del 7-oct (G2): «¿hola?», «¿me oyes?» o un «ajá» mientras piensa no cortan; con un envío en curso tampoco', async () => {
@@ -688,8 +708,39 @@ prueba('revisión del 7-oct (G2): «¿hola?», «¿me oyes?» o un «ajá» mien
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
   const enCurso = src.slice(src.indexOf('if (handling.current) {'), src.indexOf('handling.current = true;'));
   assert.match(enCurso, /if \(d\.descartada\) \{[^}]*return;\s*\}\s*if \(d\.cortar\)/);
-  assert.match(src, /e\.fase === 'empece' && e\.herramienta !== 'web' && e\.herramienta !== 'leer'\) efectoTurno\.current = true/);
-  assert.match(src, /turnoCancelado\.current = false;\s+efectoTurno\.current = false;/);
+  assert.match(src, /e\.fase === 'empece' && e\.herramienta !== 'web' && e\.herramienta !== 'leer'\) tk\.marcarEfecto\(\)/);
+  // El efecto y el corte son de la ficha de CADA turno (lib/turnoMesa.ts): ningún turno «descorta» al anterior.
+  assert.match(src, /const tk = opts\?\.ficha \?\? turnoMesa\.empezar\(\);/);
+  assert.doesNotMatch(src, /turnoCancelado|abortTurno|efectoTurno/, 'sin banderas compartidas entre turnos');
+});
+
+prueba('A-2: cada turno con su ficha; el turno con foto se corta como cualquiera (también mientras mira)', async () => {
+  const { TurnoMesa, CORTADO } = await import('../../src/lib/turnoMesa.ts');
+  const mesa = new TurnoMesa();
+  const n = mesa.empezar();
+  let resolver;
+  const espera = n.hasta(new Promise((r) => (resolver = r)));
+  assert.equal(mesa.pensando(), true, 'esperando el JSON con foto cuenta como pensando');
+  mesa.cancelar('frase_nueva');
+  assert.equal(await espera, CORTADO);
+  resolver({ reply: 'tarde' });
+  const n1 = mesa.empezar();
+  assert.equal(n1.vigente, true);
+  assert.equal(n.vigente, false);
+  // La costura en la mesa: el JSON (con foto) y el reintento esperan con la ficha; «¿qué ves?» la crea al empezar a mirar y
+  // askBrain sigue con la misma.
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('), src.indexOf('const whatDoYouSee = useCallback('));
+  assert.match(cuerpo, /let out = await tk\.hasta\(turno\(base, genTurno\)\);/);
+  assert.match(cuerpo, /if \(out === CORTADO \|\| !tk\.vigente \|\| out\.vencida\) return;/);
+  assert.match(cuerpo, /tk\.ponerCorte\(st\.abort\);/);
+  assert.match(cuerpo, /turnoMesa\.terminar\(tk\);/);
+  const ver = src.slice(src.indexOf('const whatDoYouSee = useCallback('), src.indexOf('const runGag = useCallback('));
+  assert.match(ver, /const tk = turnoMesa\.empezar\(\);/);
+  assert.match(ver, /await tk\.hasta\(esperarFrame\(/);
+  assert.match(ver, /askBrain\(pedido, \{ image: `data:image\/jpeg;base64,\$\{foto\}`, foco, ficha: tk \}\)/);
+  // Todos los cortes (callar, oído, interrupción, llamada, salir de la mesa) van por la ficha del momento.
+  for (const m of ['callar', 'oido', 'barge_in', 'llamada', 'mesa_se_va']) assert.match(src, new RegExp(`turnoMesa\\.cancelar\\('${m}'\\)`), m);
 });
 
 for (const [nombre, f] of pruebas) {

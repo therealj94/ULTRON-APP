@@ -6,6 +6,8 @@
  *   POST   /api/voces/aprender { nombre, relacion: 'yo'|'conocido', parentesco?, audios: base64[] (o audio),
  *                                consentimiento: { como, frase? } } → { persona }
  *   POST   /api/voces/quien    { audio } → { persona: { id, nombre, relacion, parentesco? } | null, similitud, motivo }
+ *   POST   /api/voces/:id/confirmar → { ok } (A-7: la dueña confirma EN SU PANTALLA el permiso de un posible menor;
+ *                                el listado marca `porConfirmar: true` mientras falte)
  *   DELETE /api/voces/:id      → { ok, nombre } (404 si no estaba)
  *   DELETE /api/voces          → { ok, borradas }
  *
@@ -21,6 +23,7 @@ import type express from 'express';
 import {
   agregarVoz,
   cargarVoces,
+  confirmarConsentimientoVoz,
   identificarVoz,
   olvidarTodasLasVoces,
   olvidarVoz,
@@ -34,6 +37,7 @@ import {
 import { estadoMotorVoces, huellaDeVoz, MIN_VOZ_SEG, muestrasDeAudio, precalentarMotorVoces, soloVoz, VozNoDisponible } from '../lib/voces-motor';
 import type { Sesion } from './seguridad';
 import { BorradoDegradado } from '../lib/biometria-durable';
+import { pendienteDeConfirmar } from '../lib/biometria-consentimiento';
 
 type Deps = {
   exigirMesa: express.RequestHandler;
@@ -85,7 +89,11 @@ export function montarRutasVoces(app: express.Express, d: Deps) {
       const { personas } = await cargarVoces(s.correo);
       // Quien tiene voces guardadas va a hablar pronto: que el motor empiece a cargar ya, sin esperar.
       if (personas.length) precalentarMotorVoces();
-      return res.json({ personas: personas.map((p) => ({ ...publica(p), muestras: p.vectores.length, creado: p.creado })), motor: estadoMotorVoces().estado, honesto: true });
+      return res.json({
+        personas: personas.map((p) => ({ ...publica(p), muestras: p.vectores.length, creado: p.creado, ...(pendienteDeConfirmar(p.consentimiento) ? { porConfirmar: true } : {}) })),
+        motor: estadoMotorVoces().estado,
+        honesto: true,
+      });
     } catch (e) {
       return errorComun(res, e);
     }
@@ -151,6 +159,19 @@ export function montarRutasVoces(app: express.Express, d: Deps) {
       if (sv.vozSeg < MIN_VOZ_SEG) return res.json({ persona: null, similitud: 0, motivo: sv.vozSeg < 0.2 ? 'silencio' : 'muy_corta', honesto: true });
       const r = identificarVoz(await huellaDeVoz(sv.muestras, 20_000), personas);
       return res.json({ persona: r.persona ? publica(r.persona) : null, similitud: r.similitud, motivo: r.motivo, honesto: true });
+    } catch (e) {
+      return errorComun(res, e);
+    }
+  });
+
+  // A-7: la re-confirmación de la dueña, tocando su pantalla (no por voz: el micrófono no sabe quién dijo «sí»).
+  app.post('/api/voces/:id/confirmar', d.exigirMesa, d.limitar(30), async (req, res) => {
+    const s = d.sesionDe(req);
+    if (!s) return sinSesion(res);
+    try {
+      const p = await confirmarConsentimientoVoz(s.correo, String(req.params.id || '').slice(0, 40));
+      if (!p) return res.status(404).json({ error: 'No conozco esa voz.', honesto: true });
+      return res.json({ ok: true, honesto: true });
     } catch (e) {
       return errorComun(res, e);
     }

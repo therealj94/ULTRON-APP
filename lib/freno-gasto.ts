@@ -11,7 +11,8 @@
  *                                  fuerte con el oído Turbo podía gastar: revisión de #157). Cada permiso del oído Turbo
  *                                  en vivo cuenta SEGUNDOS_POR_PERMISO_TURBO (no se sabe cuánto va a durar), pero el que
  *                                  el teléfono pide POR ADELANTADO (`anticipado`) no se cobra hasta que dice que lo usó
- *                                  (`usado`): los que vencen sin usarse no cuentan.
+ *                                  (`usado`) o hasta que vence sin que avise: el token ya estaba en el teléfono y pudo
+ *                                  oír con él (revisión E4: antes los vencidos se olvidaban sin cobrar, una fuga del tope).
  *   AURA_TOPE_DIA_VISION_LLAMADAS  llamadas a los ojos al día (por omisión 5 000).
  *
  * Las cuentas de MANDO (lib/acceso.ts `puedeMandar`: José) no tienen tope de voz ni de oído: lo que gastan se anota
@@ -145,6 +146,8 @@ export function gastarCupoDiario(p: ProveedorGasto, cantidad: number, ahora = Da
 /** Lo gastado hoy por proveedor (para el estado del sistema). `exento`: lo de las cuentas de mando (sin tope). */
 export function estadoGasto(ahora = Date.now()): Record<ProveedorGasto, { usado: number; tope: number; dia: string; exento: number }> {
   const out = {} as Record<ProveedorGasto, { usado: number; tope: number; dia: string; exento: number }>;
+  // Lo adelantado que venció sin avisar ya es gasto: que el estado lo diga.
+  cobrarVencidos(ahora);
   for (const p of Object.keys(TOPES_GASTO_OMISION) as ProveedorGasto[]) {
     const c = cuenta(p, ahora);
     out[p] = { usado: Math.round(c.cantidad), tope: topeGasto(p), dia: c.dia, exento: Math.round(c.exento) };
@@ -156,13 +159,22 @@ export function estadoGasto(ahora = Date.now()): Record<ProveedorGasto, { usado:
 
 /** Cuántos permisos adelantados sin usar puede tener una cuenta: pasado eso, el más viejo se cobra como usado. */
 export const MAX_PERMISOS_ANTICIPADOS = 3;
-/** Un adelantado que no se usó en esto ya venció en ElevenLabs (15 min): se olvida sin cobrar. */
+/**
+ * Un adelantado del que no se supo en esto ya venció en ElevenLabs (15 min). Revisión E4: se COBRA como usado (una vez) y
+ * se olvida. Antes se olvidaba sin cobrar: un teléfono que pedía por adelantado y nunca avisaba oía gratis con esos
+ * tokens (vivos 15 min), fuera del tope. Lo que ElevenLabs no llegó a dar se suelta antes (soltarPermisoAnticipado).
+ */
 export const VIGENCIA_PERMISO_ANTICIPADO_MS = 20 * 60_000;
 
 const anticipados = new Map<string, { quien: string; en: number; mando: boolean }>();
 
-function olvidarVencidos(ahora: number) {
-  for (const [id, a] of anticipados) if (ahora - a.en > VIGENCIA_PERMISO_ANTICIPADO_MS) anticipados.delete(id);
+/** Los adelantados vencidos sin aviso: se cobran (al día de hoy, el del contador) y salen de la lista. */
+function cobrarVencidos(ahora: number) {
+  for (const [id, a] of anticipados)
+    if (ahora - a.en > VIGENCIA_PERMISO_ANTICIPADO_MS) {
+      anticipados.delete(id);
+      anotarUsado(a, ahora);
+    }
 }
 
 /** Un gasto que ya ocurrió (el permiso se usó): se anota siempre, aunque pase del tope. */
@@ -178,7 +190,7 @@ function anotarUsado(a: { mando: boolean }, ahora: number) {
  * MAX_PERMISOS_ANTICIPADOS sin usar, el más viejo se cobra como usado (un teléfono que nunca avisa no oye gratis).
  */
 export function reservarPermisoAnticipado(quien: string, ahora = Date.now()): string | null {
-  olvidarVencidos(ahora);
+  cobrarVencidos(ahora);
   const mando = gastoDeMando();
   const tope = topeGasto('stt');
   const c = cuenta('stt', ahora);
@@ -198,9 +210,12 @@ export function reservarPermisoAnticipado(quien: string, ahora = Date.now()): st
   return id;
 }
 
-/** El teléfono dice que usó el permiso adelantado `id`: ahí se cobra (una vez). false si no era suyo o ya venció. */
+/**
+ * El teléfono dice que usó el permiso adelantado `id`: ahí se cobra (una vez). false si no era suyo o ya venció (y entonces
+ * ya se cobró al vencer: nunca dos veces).
+ */
 export function cobrarPermisoUsado(id: string, quien: string, ahora = Date.now()): boolean {
-  olvidarVencidos(ahora);
+  cobrarVencidos(ahora);
   const a = anticipados.get(String(id || ''));
   if (!a || a.quien !== quien) return false;
   anticipados.delete(String(id));

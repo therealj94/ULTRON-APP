@@ -24,7 +24,8 @@ import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, ol
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
 import { montarRutasVoces } from './server/voces-rutas';
-import { reglaQuienHablaDeTurno } from './lib/voces-miembro';
+import { migrarVocesAlSobre, reglaQuienHablaDeTurno } from './lib/voces-miembro';
+import { migrarCarasAlSobre } from './lib/caras-miembro';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
@@ -6663,6 +6664,17 @@ async function startServer() {
         })
         .catch((e) => console.warn('[cognitivo] aprobaciones a medias', String(e?.message || e).slice(0, 160)));
     setTimeout(() => reconciliar(false), 15_000).unref?.();
+    // A-7: las caras y voces que sigan en claro (disco y S3) se re-sellan (lib/biometria-sobre.ts). Idempotente y con la
+    // condición del ETag: dos instancias arrancando a la vez no se pisan; el disco va síncrono (nada se mete en medio). Dos
+    // minutos después de arrancar: en un despliegue sin cortes, la instancia con el código de antes ya se fue y no lee sobres.
+    if (ES_ULTRON) {
+      setTimeout(() => {
+        for (const migrar of [migrarCarasAlSobre, migrarVocesAlSobre])
+          void migrar()
+            .then((r) => (r.s3.sellados || r.disco.sellados || r.s3.estado !== 'ok' ? console.log('[biometría] sobre', JSON.stringify(r)) : undefined))
+            .catch((e) => console.warn('[biometría] sobre', String(e?.message || e).slice(0, 160)));
+      }, 120_000).unref?.();
+    }
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));

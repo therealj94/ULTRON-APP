@@ -53,6 +53,10 @@ const vec = (semilla: number) => Array.from({ length: 128 }, (_, i) => Math.roun
 const post = (token: string, body: unknown) => fetch(`${base}/api/caras`, { method: 'POST', headers: h(token), body: JSON.stringify(body) });
 const listar = async (token: string) => ((await (await fetch(`${base}/api/caras`, { headers: h(token) })).json()) as any).personas as any[];
 const archivo = (correo: string) => path.join(process.env.ULTRON_CARAS_DIR!, `${huellaCaras(correo)}.json`);
+/** A-7: lo guardado va en sobre (lib/biometria-sobre.ts); para mirarlo hay que abrirlo con la llave del servidor. */
+const { abrirBiometria, esSobre } = await import('../lib/biometria-sobre');
+const abrir = (x: unknown, correo: string) => abrirBiometria(x, { tipo: 'caras', huella: huellaCaras(correo) }).dato as any;
+const delDisco = (correo: string) => abrir(JSON.parse(fs.readFileSync(archivo(correo), 'utf8')), correo);
 
 test('sin sesión no hay caras: GET, POST y DELETE son 401', async () => {
   assert.equal((await fetch(`${base}/api/caras`)).status, 401);
@@ -92,8 +96,17 @@ test('el permiso: la cara propia la pide la dueña; la de otra persona solo con 
   assert.equal(l[0].vectores[0].length, 128);
   // En el disco: la constancia del «sí» y ni rastro de una imagen.
   const crudo = fs.readFileSync(archivo('maria@ordenglobal.org'), 'utf8');
-  assert.match(crudo, /Sí, claro, recuérdame/);
-  assert.doesNotMatch(crudo, /base64|data:image|jpeg/i);
+  // A-7: en el disco va cifrado: ni la frase, ni el nombre, ni un número del vector se leen sin la llave.
+  assert.ok(esSobre(JSON.parse(crudo)));
+  // (Solo patrones que no pueden salir del base64url al azar: con tildes, espacios o largos.)
+  assert.doesNotMatch(crudo, /recuérdame|María|vectores|consentimiento/);
+  // Por fuera, solo la cabecera y lo durable (ids y horas) con «nadie»: para el código de antes en un despliegue sin cortes.
+  const fuera = JSON.parse(crudo);
+  assert.deepEqual(fuera.personas, []);
+  for (const k of Object.keys(fuera)) assert.ok(['sobre', 'v', 'alg', 'kid', 'tipo', 'llave', 'iv', 'tag', 'datos', 'version', 'personas', 'rev', 'lapidas', 'borradoTodo', 'marcaLapidas', 'vivosEnMarca'].includes(k), k);
+  const abierto = JSON.stringify(delDisco('maria@ordenglobal.org'));
+  assert.match(abierto, /Sí, claro, recuérdame/);
+  assert.doesNotMatch(abierto, /base64|data:image|jpeg/i);
   // El nombre del archivo no enseña el correo.
   assert.doesNotMatch(archivo('maria@ordenglobal.org'), /maria|ordenglobal/i);
 });
@@ -200,7 +213,7 @@ test('olvidar de verdad: una por id y después todas; el archivo tampoco las tie
   // Sin la caché del proceso (un redespliegue): del disco tampoco vuelven.
   _olvidarCacheCaras();
   assert.deepEqual(await listar(junta.token), []);
-  assert.deepEqual(JSON.parse(fs.readFileSync(archivo('maria@ordenglobal.org'), 'utf8')).personas, []);
+  assert.deepEqual(delDisco('maria@ordenglobal.org').personas, []);
   // Las del miembro siguen ahí.
   assert.deepEqual((await listar(miembro.token)).map((p) => p.nombre), ['José']);
 });
@@ -222,7 +235,7 @@ test('olvidar y sumar muestras a la vez: la cara olvidada no resucita (un cambio
       assert.equal(olvidada?.id, id, 'se olvidó');
       assert.equal(sumada, null, 'sumar después de olvidar no encuentra a nadie');
       assert.deepEqual(await listar(quien.token), [], `no resucita (${caliente ? 'con' : 'sin'} caché)`);
-      assert.deepEqual((Object.values(guardado).at(-1) as any).personas, [], 'tampoco en S3');
+      assert.deepEqual(abrir(Object.values(guardado).at(-1), correo).personas, [], 'tampoco en S3');
       _olvidarCacheCaras();
       assert.deepEqual(await listar(quien.token), [], 'ni en el disco');
     }
@@ -260,7 +273,7 @@ test('si S3 no guarda, borrar no se confirma (503) y al reintentar con S3 sano s
     s3Sano = true;
     r = await fetch(`${base}/api/caras/${id}`, { method: 'DELETE', headers: h(quien.token) });
     assert.equal(r.status, 200);
-    const enS3 = Object.values(guardado).at(-1) as any;
+    const enS3 = abrir(Object.values(guardado).at(-1), 's3-cae@ordenglobal.org');
     assert.deepEqual(enS3.personas, []);
     _olvidarCacheCaras();
     assert.deepEqual(await listar(quien.token), []);

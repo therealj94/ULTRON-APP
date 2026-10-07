@@ -55,6 +55,8 @@ const ENV: Record<string, string[]> = {
   // Correo de cada persona: la llave con que se cifran sus claves (si falta, la de la sesión) y la app de
   // Microsoft para entrar a Outlook/Microsoft 365 con OAuth (lib/correo).
   correo_cifrado: ['CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],
+  // Las caras y voces guardadas (lib/biometria-sobre.ts): su llave, o la del correo, o la de la sesión (sin KMS).
+  biometria_cifrado: ['BIOMETRIA_CLAVE_CIFRADO', 'CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],
   ms_client_id: ['MS_CLIENT_ID'],
   // Los avisos al teléfono con la app cerrada (lib/push.ts): el JSON entero de la cuenta de servicio de Firebase.
   firebase_cuenta: ['FIREBASE_SERVICE_ACCOUNT'],
