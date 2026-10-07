@@ -39,6 +39,23 @@ unzip -q -o awscli.zip && ./aws/install --update && rm -rf aws awscli.zip
 curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb -o smp.deb
 dpkg -i smp.deb && rm -f smp.deb
 
+# go-pmtiles, para empaquetar las teselas de los rásteres (teselas-lote). Comprobado contra la suma
+# que publica la propia versión.
+cat > /usr/local/bin/electrum-carga-pmtiles <<'PMT'
+#!/usr/bin/env bash
+set -euo pipefail
+REL=$(curl -fsSL https://api.github.com/repos/protomaps/go-pmtiles/releases/latest)
+URL=$(echo "$REL" | jq -r '.assets[] | select(.name | test("Linux_x86_64\\.tar\\.gz$")) | .browser_download_url')
+SUMAS=$(echo "$REL" | jq -r '.assets[] | select(.name | test("checksums")) | .browser_download_url')
+T=$(mktemp -d); cd "$T"
+curl -fsSLO "$URL"; curl -fsSL "$SUMAS" -o sumas.txt
+grep " $(basename "$URL")\$" sumas.txt | sha256sum -c -
+tar -xzf "$(basename "$URL")" pmtiles && install -m 755 pmtiles /usr/local/bin/pmtiles
+cd / && rm -rf "$T"; pmtiles version 2>/dev/null | head -1 || true
+PMT
+chmod +x /usr/local/bin/electrum-carga-pmtiles
+/usr/local/bin/electrum-carga-pmtiles
+
 mkdir -p /opt/electrum-carga /datos
 cat > /etc/profile.d/electrum-carga.sh <<PERFIL
 export AWS_DEFAULT_REGION=${REGION}
@@ -62,6 +79,7 @@ rm -rf /opt/electrum-carga/codigo
 mv "\$NUEVO" /opt/electrum-carga/codigo
 chmod +x /opt/electrum-carga/codigo/scripts/electrum/*.sh /opt/electrum-carga/codigo/scripts/nodo-carga/*.sh
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/cargar-lote.sh /usr/local/bin/cargar-lote
+ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/teselas-lote.sh /usr/local/bin/teselas-lote
 echo "código al día"
 CODIGO
 chmod +x /usr/local/bin/electrum-carga-codigo

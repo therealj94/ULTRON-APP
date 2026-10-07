@@ -17,6 +17,7 @@
 #   ./nodo.sh estado       en qué está (y si terminó de prepararse)
 #   ./nodo.sh entrar       abre una consola en el nodo (por SSM, sin llave SSH)
 #   ./nodo.sh actualizar   vuelve a mandar el código (HEAD) al nodo
+#   ./nodo.sh permisos     vuelve a aplicar la política del rol (tras cambiarla aquí)
 #   ./nodo.sh apagar       lo detiene: deja de cobrar la máquina, conserva el disco
 #   ./nodo.sh encender     lo vuelve a arrancar
 #   ./nodo.sh destruir     lo borra con su disco
@@ -88,7 +89,8 @@ asegurar_rol() {
   else
     echo "  ya estaba"
   fi
-  # Lo justo: leer los lotes, lo que se subió a entrada/ y el código, y abrir túneles SOLO al cerebro y solo
+  # Lo justo: leer los lotes, lo que se subió a entrada/ y el código, publicar teselas (y nada más
+  # de la biblioteca), y abrir túneles SOLO al cerebro y solo
   # con los dos documentos de reenvío de puerto. No puede borrar del cubo, ni escribir en la
   # biblioteca, ni abrir una consola en ninguna máquina.
   local cuenta; cuenta=$(aws sts get-caller-identity --query Account --output text)
@@ -102,6 +104,8 @@ asegurar_rol() {
      "Resource": ["arn:aws:s3:::${BUCKET}/entrada/*", "arn:aws:s3:::${BUCKET}/nodo-carga/*"]},
     {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:GetObject"],
      "Resource": ["arn:aws:s3:::${LOTES}", "arn:aws:s3:::${LOTES}/*"]},
+    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
+     "Resource": "arn:aws:s3:::${BUCKET}/biblioteca/teselas/*"},
     {"Effect": "Allow", "Action": "ssm:StartSession",
      "Resource": [
        "arn:aws:ec2:${REGION}:${cuenta}:instance/${CEREBRO}",
@@ -233,6 +237,7 @@ case "$ORDEN" in
     mandar_codigo
     en_nodo "$ID" '/usr/local/bin/electrum-carga-codigo 2>&1 | tail -3'
     ;;
+  permisos) asegurar_rol ;;
   apagar)   requiere; aws ec2 stop-instances --instance-ids "$ID" --query 'StoppingInstances[0].CurrentState.Name' --output text ;;
   encender) requiere; aws ec2 start-instances --instance-ids "$ID" --query 'StartingInstances[0].CurrentState.Name' --output text ;;
   destruir)
