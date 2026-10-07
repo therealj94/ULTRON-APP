@@ -2,6 +2,7 @@
 appId: link.ordenglobal.ultronfp
 name: Cerrar avisos de la mesa
 ---
+- runFlow: cerrar-anr.yaml
 - runFlow:
     when:
       visible: "Después"

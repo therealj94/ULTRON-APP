@@ -1,0 +1,12 @@
+# Lo que el EMULADOR pone encima de la app (no es AU-RA): «Pixel Launcher isn't responding», «System UI isn't
+# responding»… con un ANR del sistema la app queda tapada y las comprobaciones fallan aunque esté bien. Se toca «Wait».
+appId: link.ordenglobal.ultronfp
+name: Cerrar ANR del sistema
+---
+- runFlow:
+    when:
+      visible: ".*isn't responding.*|.*no responde.*"
+    commands:
+      - tapOn:
+          text: "Wait|Esperar"
+          optional: true
