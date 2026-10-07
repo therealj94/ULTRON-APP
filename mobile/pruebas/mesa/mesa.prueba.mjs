@@ -394,18 +394,19 @@ prueba('app: «abre tu computadora / WhatsApp / mis correos» desde cualquier pa
 
 prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo, Detener/Pausar/Tomar el control, su sí, resultado para compartir e historial (José, 2-oct)', () => {
   const hoja = fuente('ajustes/Computadora.tsx');
-  // De arriba abajo: la captura en vivo va antes que el plan, y el plan antes que los mandos y el final.
+  // De arriba abajo (auditoría del 7-oct, José: «no me ha convencido»): su sí ARRIBA de todo (antes quedaba debajo de la
+  // captura y fuera de la vista), luego la pantalla, los mandos, el resultado con su evidencia y, al final, el plan.
   const en = (re) => {
     const i = hoja.search(re);
     assert.ok(i >= 0, `falta ${re}`);
     return i;
   };
-  const pantalla = en(/La pantalla en vivo, arriba de todo/);
-  const pregunta = en(/tr\('Necesito tu sí para seguir'/);
-  const plan = en(/tr\('El plan', 'The plan'\)/);
+  const pregunta = en(/tr\('ANTES DE SEGUIR NECESITO TU SÍ'/);
+  const pantalla = en(/5 · La pantalla/);
   const mandos = en(/tr\('Pausar', 'Pause'\)/);
   const final = en(/<TarjetaFinal mision=\{misionDeAhora\}/);
-  assert.ok(pantalla < pregunta && pregunta < plan && plan < mandos && mandos < final, 'captura → su sí → plan → mandos → resultado');
+  const plan = en(/tr\('El plan', 'The plan'\)/);
+  assert.ok(pregunta < pantalla && pantalla < mandos && mandos < final && final < plan, 'su sí → pantalla → mandos → resultado → plan');
   // Detener: fijo abajo (el pie de la hoja, fuera del desplazamiento) y nunca bloqueado por otro botón en camino
   // (auditoría, 3-oct: quedaba debajo de todo y la guarda de «ocupado» lo ignoraba).
   assert.match(hoja, /pie=\{\s*tarea && sigue \?\s*\(\s*<Boton titulo=\{tr\('Detener la tarea', 'Stop the task'\)\}/);
@@ -423,7 +424,7 @@ prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo
   assert.match(hoja, /Linking\.openURL\(u\)/, 'los enlaces se abren');
   assert.match(hoja, /\/api\/computadora\/misiones\/\$\{encodeURIComponent\(m\.id\)\}\/seguir/, '«Seguir» una misión a medias');
   assert.match(hoja, /tr\('Misiones recientes', 'Recent missions'\)/, 'el historial');
-  assert.match(hoja, /sinRespuesta >= FALLOS_PARA_AVISAR/, 'si no llega nada, lo dice (nunca colgada en silencio)');
+  assert.match(hoja, /sinRespuesta >= FALLOS_SIN_NOTICIAS/, 'si no llega nada, lo dice (nunca colgada en silencio)');
   const vivo = fuente('app/ComputadoraEnVivo.tsx');
   assert.match(vivo, /planInicial=\{companero\.plan\}/);
   assert.match(vivo, /companero\.alEstado\(s\.actual\.id, trabajando\(s\.actual\.estado\), s\.actual\.estado\)/, 'el sondeo de fondo también ve si quedó quieta');

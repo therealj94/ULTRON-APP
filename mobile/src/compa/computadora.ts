@@ -313,10 +313,12 @@ export function marcaPlan(e: EstadoPlanPc): string {
  * Qué botones van, según lo que sabe su servicio y cómo está la tarea. Detener, siempre que esté viva;
  * Pausar/Seguir y Tomar el control/Devolver solo con el servicio nuevo (si no, se explica por qué no).
  */
-export function controlesPc(caps: readonly string[] | undefined, e: EstadoTareaPc | null | undefined) {
+export function controlesPc(caps: readonly string[] | undefined, e: EstadoTareaPc | null | undefined, sinNoticias = false) {
   const viva = trabajando(e);
-  const pausa = !!caps?.includes('pausar');
-  const control = !!caps?.includes('control');
+  // Sin noticias de la computadora (las lecturas fallan), pausar o tomar el control también fallarían: no se ofrecen
+  // como si funcionaran. Detener sigue (es lo que la persona necesita) y su sí también (puede llegar aunque leer falle).
+  const pausa = !!caps?.includes('pausar') && !sinNoticias;
+  const control = !!caps?.includes('control') && !sinNoticias;
   return {
     detener: viva,
     pausar: viva && pausa && enMarcha(e),
@@ -325,8 +327,119 @@ export function controlesPc(caps: readonly string[] | undefined, e: EstadoTareaP
     devolver: viva && control && e === 'control',
     contestar: viva && e === 'confirmar',
     /** El servicio todavía no sabe pausar ni dar el control: la app lo dice. */
-    faltaActualizar: viva && !pausa && !control,
+    faltaActualizar: viva && !sinNoticias && !caps?.includes('pausar') && !caps?.includes('control'),
   };
+}
+
+/* ── la tarjeta de la tarea (José, 7-oct: «no me ha convencido», ni cómo funciona ni cómo se ve) ─────────────── */
+
+/** Tras tantas lecturas seguidas sin respuesta, la app deja de mostrar avance: dice que no le llegan noticias. */
+export const FALLOS_SIN_NOTICIAS = 3;
+/** Una imagen de la pantalla es «en vivo» solo si tiene menos de esto (su edad en el nodo más lo que tardó en llegar). */
+export const VIVA_FRESCA_MS = 5_000;
+/** Cada cuánto se pide la pantalla de ahora para la tarjeta mientras AURA trabaja (con el control, la hoja pide más seguido). */
+export const VIVA_CADA_MS = 2_000;
+
+/**
+ * Lo que se muestra en la miniatura y lo que se puede decir de ella sin mentir:
+ *  · `viva`: la pantalla de ahora (GET …/pantalla), «EN VIVO» solo si es fresca y llegan noticias;
+ *  · `paso`: la captura de un paso (la que tocó la persona, o la del último paso si no hay pantalla de ahora);
+ *  · `final`: la pantalla al terminar (la evidencia del resultado).
+ * Antes la captura del último paso (de hasta ~5 s atrás) llevaba «● en vivo» siempre, aun sin noticias.
+ */
+export type FotoPc = { imagen: string; fuente: 'viva' | 'paso' | 'final'; etiqueta: string; enVivo: boolean };
+export function fotoPc(
+  o: {
+    estado: EstadoTareaPc | null | undefined;
+    viva?: { imagen: string; llegada: number; edadMs?: number | null } | null;
+    pasos?: readonly Pick<PasoPc, 'n' | 'miniatura'>[];
+    verPaso?: { n: number; imagen: string | null } | null;
+    finalCaptura?: string | null;
+    sinNoticias?: boolean;
+    ahora: number;
+  },
+  idioma: 'es' | 'en' = 'es'
+): FotoPc | null {
+  const en = idioma === 'en';
+  if (o.verPaso?.imagen) return { imagen: o.verPaso.imagen, fuente: 'paso', etiqueta: en ? `Step ${o.verPaso.n}` : `Paso ${o.verPaso.n}`, enVivo: false };
+  const viva = trabajando(o.estado);
+  const ultimo = [...(o.pasos ?? [])].reverse().find((p) => p.miniatura);
+  if (viva && o.viva?.imagen && o.estado !== 'en_cola') {
+    const edad = Math.max(0, o.ahora - o.viva.llegada) + Math.max(0, o.viva.edadMs ?? 0);
+    if (!o.sinNoticias && edad <= VIVA_FRESCA_MS) {
+      const etiqueta = o.estado === 'control' ? (en ? 'LIVE · you have control' : 'EN VIVO · tienes el control') : en ? 'LIVE' : 'EN VIVO';
+      return { imagen: o.viva.imagen, fuente: 'viva', etiqueta, enVivo: true };
+    }
+    const s = Math.round(edad / 1000);
+    return { imagen: o.viva.imagen, fuente: 'viva', etiqueta: en ? `Image from ${s} s ago` : `Imagen de hace ${s} s`, enVivo: false };
+  }
+  if (viva && ultimo?.miniatura) {
+    const extra = o.sinNoticias ? (en ? ' · last one that arrived' : ' · la última que llegó') : '';
+    return { imagen: ultimo.miniatura, fuente: 'paso', etiqueta: (en ? `Step ${ultimo.n}` : `Paso ${ultimo.n}`) + extra, enVivo: false };
+  }
+  if (!viva && o.finalCaptura) return { imagen: o.finalCaptura, fuente: 'final', etiqueta: en ? 'Screen at the end' : 'Pantalla al terminar', enVivo: false };
+  if (!viva && ultimo?.miniatura) return { imagen: ultimo.miniatura, fuente: 'paso', etiqueta: en ? `Step ${ultimo.n} (the last image)` : `Paso ${ultimo.n} (la última imagen)`, enVivo: false };
+  return null;
+}
+
+/**
+ * La etiqueta de la tarjeta (cómo va ESTA tarea, no la computadora en general): con su final, cómo terminó; sin noticias,
+ * «Sin noticias» (nunca «Trabajando» con ruedita cuando no se sabe).
+ */
+export function chipPc(
+  estado: EstadoTareaPc | null | undefined,
+  final: Pick<FinalPc, 'estado' | 'ok' | 'comprobado' | 'entregables' | 'respondida'> | null | undefined,
+  sinNoticias: boolean,
+  idioma: 'es' | 'en' = 'es'
+): { texto: string; tono: 'trabaja' | 'espera' | 'bien' | 'mal' | 'neutro' } {
+  const en = idioma === 'en';
+  if (trabajando(estado)) {
+    if (sinNoticias) return { texto: en ? 'No updates' : 'Sin noticias', tono: 'mal' };
+    if (estado === 'en_cola') return { texto: en ? 'In line' : 'En fila', tono: 'trabaja' };
+    if (estado === 'confirmar') return { texto: en ? 'Needs your OK' : 'Espera tu sí', tono: 'espera' };
+    if (estado === 'pausada') return { texto: en ? 'Paused' : 'En pausa', tono: 'espera' };
+    if (estado === 'control') return { texto: en ? 'You have control' : 'Tienes el control', tono: 'espera' };
+    return { texto: en ? 'Working' : 'Trabajando', tono: 'trabaja' };
+  }
+  if (final) {
+    const texto = finalEnPalabras(final, idioma);
+    if (final.ok) return { texto, tono: 'bien' };
+    if (final.estado === 'fallo') return { texto, tono: 'mal' };
+    if (final.estado === 'parada') return { texto, tono: 'neutro' };
+    return { texto, tono: 'espera' };
+  }
+  if (estado === 'hecha') return { texto: en ? 'Finished' : 'Terminó', tono: 'neutro' };
+  if (estado === 'parada') return { texto: en ? 'Stopped' : 'Detenida', tono: 'neutro' };
+  if (estado === 'fallo') return { texto: en ? 'Failed' : 'Falló', tono: 'mal' };
+  if (estado === 'sin_pasos') return { texto: en ? 'Unfinished' : 'A medias', tono: 'espera' };
+  return { texto: en ? 'Checking…' : 'Revisando…', tono: 'neutro' };
+}
+
+/** La línea «Ahora: …» de la tarjeta. Sin noticias no se finge avance: es la última noticia que llegó, dicha así. */
+export function pasoAhoraPc(t: Pick<TareaPc, 'estado' | 'pasos' | 'error'>, sinNoticias: boolean, idioma: 'es' | 'en' = 'es'): string {
+  const linea = tareaEnPalabras(t, idioma);
+  if (!sinNoticias || !trabajando(t.estado)) return linea;
+  const ultimo = [...t.pasos].reverse().find((p) => p.texto);
+  if (!ultimo) return idioma === 'en' ? 'No step has arrived yet' : 'Todavía no llegó ningún paso';
+  return idioma === 'en' ? `Last update: step ${ultimo.n} · ${ultimo.texto}` : `Última noticia: paso ${ultimo.n} · ${ultimo.texto}`;
+}
+
+/** Qué decir cuando no llegan noticias: cuánto hace, que no se sabe si sigue y qué puede hacer la persona. */
+export function avisoSinNoticias(desdeMs: number, idioma: 'es' | 'en' = 'es'): string {
+  const s = Math.max(0, Math.round(desdeMs / 1000));
+  const cuanto = s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
+  return idioma === 'en'
+    ? `I haven’t heard from your computer for ${cuanto}. I don’t know whether it’s still working or stopped; I keep trying. You can stop it.`
+    : `No me llega nada de tu computadora desde hace ${cuanto}. No sé si sigue trabajando o se detuvo; sigo intentando. Puedes detenerla.`;
+}
+
+/** Lo que dice la hoja cuando la computadora no contesta (el nodo con GPU apagado para ahorrar, o caído). */
+export function textoApagadaPc(configurada: boolean, idioma: 'es' | 'en' = 'es'): string {
+  const en = idioma === 'en';
+  if (!configurada) return en ? 'The computer isn’t connected on the server yet.' : 'La computadora todavía no está conectada en el servidor.';
+  return en
+    ? 'Your computer isn’t answering. It may be switched off to save money (it runs on a paid GPU) or down. I can’t use it right now: ask me in the chat and I’ll look it up on the web, or try again later.'
+    : 'Tu computadora no contesta. Puede estar apagada para ahorrar (corre en una GPU que se paga por hora) o caída. Ahora no puedo usarla: pídemelo en el chat y lo busco en la web, o inténtalo más tarde.';
 }
 
 /**

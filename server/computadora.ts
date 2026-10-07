@@ -134,6 +134,35 @@ export class ErrorNodo extends Error {
   }
 }
 
+/**
+ * Lo último que se supo del nodo por la red (cualquier pedido: la salud que mira la app, encargar, leer una tarea): cuándo
+ * contestó y cuándo ni siquiera se pudo hablar con él. José (7-oct): la instancia con GPU cuesta por hora y puede estar
+ * apagada para ahorrar; antes, encargar a un nodo apagado esperaba dos plazos de 15 s (más el reintento) antes de decir
+ * nada, y la voz se quedaba medio minuto callada. Ahora, si hace poco no contestaba, se mira su salud con un plazo corto y
+ * se dice al momento que no contesta.
+ */
+const CONTACTO: { ok: number; caida: { en: number; detalle: string } | null } = { ok: 0, caida: null };
+/** Una caída de red vale esto: dentro, encargar mira /salud (corto) antes de lanzar. */
+export const CAIDA_VALE_MS = 90_000;
+/** El plazo de esa mirada: un nodo encendido contesta su salud en milisegundos. */
+export const SONDA_MS = 3_000;
+
+/** ¿Hace poco que el nodo no contestaba (ni conectar)? */
+export function nodoSinContacto(ahora = Date.now()): boolean {
+  return !!CONTACTO.caida && ahora - CONTACTO.caida.en < CAIDA_VALE_MS && CONTACTO.ok < CONTACTO.caida.en;
+}
+
+/** Una mirada corta a /salud: true si contesta (aunque diga que está ocupado). Actualiza CONTACTO. */
+async function sondaRapida(): Promise<boolean> {
+  try {
+    await pedir('/salud', { ms: SONDA_MS });
+    return true;
+  } catch (e) {
+    // Contestó con un código (un 5xx al arrancar, un 401): está encendido.
+    return e instanceof ErrorNodo && !!e.status;
+  }
+}
+
 async function pedir(ruta: string, init: RequestInit & { ms?: number } = {}): Promise<any> {
   const c = conf();
   let r: Response;
@@ -144,8 +173,12 @@ async function pedir(ruta: string, init: RequestInit & { ms?: number } = {}): Pr
       signal: init.signal ?? AbortSignal.timeout(init.ms ?? 15_000),
     });
   } catch (e: any) {
+    // La interrupción del turno (AbortError de quien llama) no dice nada del nodo; un plazo vencido o la red, sí.
+    if (e?.name !== 'AbortError') CONTACTO.caida = { en: Date.now(), detalle: String(e?.cause?.code || e?.message || e).slice(0, 120) };
     throw new ErrorNodo(String(e?.cause?.code || e?.message || e).slice(0, 200));
   }
+  CONTACTO.ok = Date.now();
+  CONTACTO.caida = null;
   const texto = await r.text();
   let j: any = null;
   try {
@@ -1660,6 +1693,11 @@ async function crearConReintento(o: Parameters<typeof crearEncargo>[0]): Promise
     return await crearEncargo(conPedido);
   } catch (err) {
     if (!reintentable(err)) throw err;
+    // Ni conectar (sin código): antes del segundo intento, una mirada corta a su salud. Si tampoco contesta, está apagado
+    // o caído: se dice ya, sin otro plazo de 15 s (el mensaje de antes va dentro: ECONNREFUSED dice que no llegó nada).
+    if (!(err instanceof ErrorNodo && err.status) && !(await sondaRapida())) {
+      throw Object.assign(new ErrorNodo(`no contesta, ni su salud: ${String((err as Error)?.message || err).slice(0, 100)}`), { apagada: true });
+    }
     await esperar(TIEMPOS_SEGUIR.reintentoMs);
     try {
       return await crearEncargo(conPedido);
@@ -1704,6 +1742,13 @@ export function resumenTarea(t: Tarea, instruccion: string = t.instruccion, requ
  * sigue (y en qué paso va) y la tarea se sigue mirando: se narra en el teléfono y su final se le dice
  * en cuanto llegue. Al empezar, el teléfono abre la vista en vivo (`empieza`).
  */
+/** Encargar a un nodo que no contesta ni su salud (apagado para ahorrar, o caído): nada se encargó. */
+export const HECHO_APAGADA =
+  'HARNESS computadora: Tu computadora no contesta ahora (puede estar apagada para ahorrar o caída). No la usé y no encargué nada. Dilo con honestidad en una frase y ofrece buscarlo en la web o intentarlo más tarde. No inventes el resultado.';
+/** Dejó de contestar mientras se le encargaba: pudo llegarle o no. */
+export const HECHO_SE_CAYO =
+  'HARNESS computadora: Tu computadora dejó de contestar mientras le encargaba la tarea (puede estar apagada o caída); no sé si le llegó. Dilo con honestidad y no digas que la está haciendo; si vuelve a contestar y la hizo, se lo cuentas. No inventes el resultado.';
+
 export async function encargarTarea(o: {
   instruccion: string;
   quien: string;
@@ -1725,7 +1770,7 @@ export async function encargarTarea(o: {
    * «tres capturas» como «una captura»: los requisitos salen de los dos y gana lo más exigente.
    */
   pedidoPersona?: string;
-}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean; respondida?: boolean }> {
+}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean; respondida?: boolean; apagada?: boolean }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
   }
@@ -1737,6 +1782,9 @@ export async function encargarTarea(o: {
   let e: Encargo;
   let nota = '';
   const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, ambito: o.ambito ?? o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan, pedido: o.pedido, pedidoPersona: o.pedidoPersona };
+  // Hace poco no contestaba (apagado para ahorrar, o caído): una mirada corta a su salud antes de lanzar. Si sigue sin
+  // contestar, se dice al momento, sin encargar nada (antes: dos plazos de 15 s y un «no pude» genérico).
+  if (nodoSinContacto() && !(await sondaRapida())) return { hecho: HECHO_APAGADA, id: null, tarea: null, incierto: false, apagada: true };
   try {
     try {
       e = await crearConReintento({ ...base, motor: o.motor });
@@ -1747,6 +1795,12 @@ export async function encargarTarea(o: {
       nota = ' (La hizo el modelo gratis: Claude no está configurado en la computadora.)';
     }
   } catch (err: any) {
+    // Apagado o caído (ni su salud contestó): dicho así. Si el pedido pudo llegarle antes de caerse, no se dice que no
+    // se encargó nada.
+    if (err?.apagada) {
+      const pudo = pedidoPudoLlegar(err);
+      return { hecho: pudo ? HECHO_SE_CAYO : HECHO_APAGADA, id: null, tarea: null, incierto: pudo, apagada: true };
+    }
     // `incierto`: el nodo no contestó (o dio 5xx) después de que el pedido pudo llegarle; un 4xx o una conexión
     // rechazada son un no de verdad (no se creó nada).
     return { hecho: `HARNESS computadora: no pude encargarla (${String(err?.message || err).slice(0, 120)}). Dilo con honestidad y ofrece intentarlo en un momento. No inventes el resultado.`, id: null, tarea: null, incierto: pedidoPudoLlegar(err) };
@@ -2152,6 +2206,8 @@ export function _olvidarEncargos() {
   MISIONES.clear();
   HISTORIAL.clear();
   capsCache = null;
+  CONTACTO.ok = 0;
+  CONTACTO.caida = null;
   ULTIMA.clear();
   PENDIENTES.clear();
   HISTORIAL_LEIDO.clear();
@@ -3007,7 +3063,7 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     const pedido = typeof req.body?.requestId === 'string' && /^[A-Za-z0-9._:-]{8,80}$/.test(req.body.requestId) ? String(req.body.requestId) : '';
     const hacer = async (): Promise<{ code: number; j: any; incierto?: boolean }> => {
       const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0, aparato: /^[A-Za-z0-9._:-]{1,128}$/.test(aparato) ? aparato : null, idioma, decirPlan: true, pedido: pedido ? `app:${pedido}` : undefined });
-      if (!r.id) return { code: 503, incierto: !!r.incierto, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true } };
+      if (!r.id) return { code: 503, incierto: !!r.incierto, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), ...(r.apagada ? { code: 'apagada' } : {}), honesto: true } };
       return { code: 200, j: { id: r.id, mision: misionDeTarea(r.id) ? vistaMision(misionDeTarea(r.id)!) : null, honesto: true } };
     };
     if (!pedido) {
