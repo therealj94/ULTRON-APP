@@ -96,3 +96,31 @@ export function lineaTiemposTurno(id: string, m: MedidaTurno, ahora = Date.now()
   partes.push(`total ${ms(ahora - m.inicio)}`);
   return `[${m.camino || 'mesa'}] turno ${String(id || '').slice(0, 8)}${m.hablado ? ' (hablado)' : ''}: ${partes.join(' · ')}`;
 }
+
+/**
+ * DÓNDE SE VA «PREPARADO» (auditoría del 7-oct, M3: el turno `be0e7100` estuvo 10 416 ms preparando y no se sabía en
+ * qué). Cada paso de prepararTurno (server.ts) se marca al terminar; si preparar pasa de `umbralMs`, una línea con lo que
+ * tardó cada paso (solo nombres y milisegundos, nada de lo que dijo la persona).
+ */
+export const PREPARAR_LENTO_MS = 2_500;
+export function pasosDePreparar(inicio = Date.now()) {
+  const pasos: Array<{ nombre: string; t: number }> = [];
+  return {
+    marca(nombre: string, ahora = Date.now()) {
+      pasos.push({ nombre, t: ahora });
+    },
+    /** La línea del log si preparar fue lento ('' si no). */
+    linea(ahora = Date.now(), umbralMs = PREPARAR_LENTO_MS): string {
+      const total = ahora - inicio;
+      if (total < umbralMs) return '';
+      let previo = inicio;
+      const partes = pasos.map((p) => {
+        const d = Math.max(0, p.t - previo);
+        previo = p.t;
+        return `${p.nombre} ${d} ms`;
+      });
+      if (ahora - previo > 0) partes.push(`resto ${ahora - previo} ms`);
+      return `[turno] preparar lento: ${total} ms (${partes.join(' · ')})`;
+    },
+  };
+}

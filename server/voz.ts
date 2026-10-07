@@ -1,15 +1,17 @@
 /**
  * VOZ — el único camino por el que AU-RA habla.
  *
- *   hablar()  → ElevenLabs v4 Turbo si la plataforma tiene voz ahí (Dr Electrum; server/eleven.ts)
- *               → Voicebox (Kokoro, en el servidor propio de AU-RA) → null. Con [risa], [suspiro]…
- *               (lib/expresiones.ts) AU-RA pega la toma grabada entre los trozos hablados.
+ *   hablar()  → ElevenLabs primero (server/eleven.ts): cada avatar de AU-RA FP (AU-RA, Claudio, el Guardián, ANT-ONIO)
+ *               tiene su voz en español y en inglés, y Dr Electrum la suya; un miembro sin minutos de ElevenLabs
+ *               del día, o si ElevenLabs no contesta, → Voicebox (Kokoro, en el servidor propio de AU-RA), el
+ *               respaldo → null. Con [risa], [suspiro]… (lib/expresiones.ts) se pega la toma grabada entre los
+ *               trozos hablados.
  *   cantar()  → clip grabado del repertorio; una letra libre se DICE (Kokoro no canta)
  *   expresar()→ deja el texto listo para la boca: sin etiquetas de audio, cifras en palabras
  *
- * Aquí no hay selector de motor: hay UNA voz por plataforma y una política. Si Voicebox no
- * contesta, se devuelve null y quien llama se queda en silencio con el texto a la vista: nunca una
- * voz robótica de respaldo, nunca fingiendo.
+ * Aquí no hay selector de motor: hay UNA política. Si ni ElevenLabs ni Voicebox contestan, se devuelve null y quien
+ * llama se queda en silencio con el texto a la vista: nunca una voz robótica de respaldo, nunca fingiendo.
+ * (Auditoría del 7-oct, B-2: esta cabecera decía que Voicebox era el único camino.)
  */
 
 import crypto from 'crypto';
@@ -892,6 +894,8 @@ export function estadoVoz() {
   return {
     oficial: VOZ_OFICIAL,
     voicebox: vozConfigurada(),
+    // La voz de verdad (la llave está; si contesta lo dice /api/health `elevenlabs`).
+    eleven: !!clave('elevenlabs'),
     servidor,
     perfil: vozDe('ultron'),
     perfilElectrum: vozDe('electrum'),

@@ -283,10 +283,14 @@ async function verConLosOjos(imagen: string, p: PedidoOjos): Promise<Vista> {
         console.warn(`[vision] ${nombre} contestó algo que no sirve como vista (${Date.now() - t0} ms): ${vista.texto.replace(/\s+/g, ' ').slice(0, 120)}`);
         continue;
       }
+      // Auditoría del 7-oct (A1): las vistas que sí salen también dejan su línea (proveedor y milisegundos, nada de lo
+      // que se vio), para medir cuántas salen bien y por cuál ojo.
+      console.log(`[vision] ${nombre} ok (${Date.now() - t0} ms)${p.continuo ? ' continuo' : ''}${p.json ? ' estructurada' : ''}`);
       return vista;
     } catch (e: any) {
       const tipo = e?.name && e.name !== 'Error' ? `${e.name}: ` : '';
-      console.warn(`[vision] ${nombre} falló (${Date.now() - t0} ms):`, `${tipo}${String(e?.message || e)}`.slice(0, 160));
+      // 300 y no 160: el recurso negado (AccessDenied … on resource: arn:…:<modelo>) quedaba cortado.
+      console.warn(`[vision] ${nombre} falló (${Date.now() - t0} ms):`, `${tipo}${String(e?.message || e)}`.slice(0, 300));
     }
   }
   return { texto: NO_PUDE_VER, via: p.reloj.alcanza() ? 'error' : 'tiempo' };

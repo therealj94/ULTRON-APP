@@ -25,7 +25,7 @@
  * de datos o lo de terceros (G2); un «gracias» o un «ok» tras un envío real no lo desmiente, ni un apodo (M1).
  */
 import { plano } from './promesas';
-import { esDeAntes, frasesConCitas, sinCitas, sinLoQueNoAfirma } from './cerebro-manos';
+import { delTelefono, esDeAntes, frasesACorregir, frasesConCitas, herramientasPara, sinCitas, sinLoQueNoAfirma } from './cerebro-manos';
 import { analizarRespuesta } from './afirmacion';
 
 /* ------------------------------------------------------------------ los recibos */
@@ -501,4 +501,45 @@ export function sinLoRespaldado(texto: string, ctx: ContextoHonestidad): string 
 /** Para los registros: qué clases se corrigieron (sin el texto). */
 export function motivosDeHonestidad(falsas: ReadonlyArray<Afirmacion>): string {
   return [...new Set(falsas.map((a) => `${a.clase}${a.canal ? `:${a.canal}` : ''}`))].join(', ');
+}
+
+/* ------------------------------------------------------------------ las promesas en la voz en vivo */
+
+/*
+ * LO PROMETIDO NO SUENA ANTES DE SU RECIBO (auditoría del 7-oct, A3: en la voz en vivo «ya te lo mando» sonaba antes de
+ * que corrieran las guardas, y en 5 de 8 casos reales nunca se cumplió ni se desmintió). El stream de server.ts retenía
+ * lo que da por HECHO («enviado», «ya le respondí») y el trabajo prometido («voy a buscar», «te aviso»), no la promesa
+ * de una acción («ya te lo mando», «te llamo en 30 segundos», «ahí te marco», «te pongo el recordatorio»). Ahora también:
+ * se retiene hasta el final del turno, y sale solo si una herramienta del turno lo hizo (con su recibo) o si las guardas
+ * del final la dejan; si no, se dice la verdad en el mismo turno, sin que la promesa haya sonado.
+ */
+
+/**
+ * ¿Este trozo (lo que el stream está por soltar) promete o da por hecha una acción de AU-RA? Sin lo negado, lo referido,
+ * lo citado ni, con un borrador esperando su «sí», lo que se dice de ESE borrador («¿Lo mando?», «tócale Sí y sale»).
+ */
+export function trozoPrometeAccion(trozo: string, o: { borradorPendiente?: boolean } = {}): boolean {
+  return frasesACorregir(String(trozo || ''), o).length > 0;
+}
+
+/**
+ * ¿Queda en lo dicho una promesa de lo que la persona PIDIÓ, sin cumplir? (para cuando la re-pregunta contestó «NADA» o
+ * contestó el Qwen del nodo, que no tiene herramientas como tales). Solo si lo prometido es de la misma clase que lo
+ * pedido (su mensaje y lo último que dijo AU-RA): «Va, te lo mando» a «mándale a Ana que llego tarde» sin ningún borrador
+ * es una promesa incumplida; «Te mando un abrazo» a «buenas noches» no (ahí el «NADA» del modelo tiene razón).
+ */
+export function promesaSinCumplir(o: { dicho: string; mensaje?: string; anterior?: string; borradorPendiente?: boolean }): boolean {
+  // Los turnos que manda el teléfono, no la persona («[[recordatorio]] La pastilla», «[[llamada]]»): ahí «te llamo para
+  // recordarte…» describe la llamada que está pasando.
+  if (/^\s*\[\[/.test(String(o.mensaje || ''))) return false;
+  const falsas = frasesACorregir(String(o.dicho || ''), { borradorPendiente: o.borradorPendiente }).filter((f) => !delTelefono(f));
+  if (!falsas.length) return false;
+  const prometido = herramientasPara(falsas.join(' '));
+  // Llamarla o ponerle un recordatorio («te llamo en un minuto», «te pongo la alarma») es concreto: sin herramienta, no pasa.
+  if (prometido.has('llamarme') || prometido.has('recordatorio')) return true;
+  const pedido = herramientasPara(`${o.mensaje || ''}\n${o.anterior || ''}`);
+  if (!pedido.size) return false;
+  // «Ahí voy», «ya lo hago»: lo prometido es lo pedido.
+  if (!prometido.size) return true;
+  return [...prometido].some((h) => pedido.has(h));
 }

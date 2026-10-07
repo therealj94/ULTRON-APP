@@ -1,6 +1,6 @@
 # AURA para Windows 1.2
 
-La versión de escritorio de la app AU-RA: **el mismo cerebro (Qwen), las mismas voces (ElevenLabs, una por avatar) y los mismos avatares**, viviendo en un **notch negro arriba al centro de la pantalla** que crece y se encoge como la isla dinámica de Apple. Se le habla, contesta hablando, y hace cosas en la computadora.
+La versión de escritorio de la app AU-RA: **el cerebro del servidor de AU-RA, las mismas voces (ElevenLabs, una por avatar) y los mismos avatares**, viviendo en un **notch negro arriba al centro de la pantalla** que crece y se encoge como la isla dinámica de Apple. Se le habla, contesta hablando, y hace cosas en la computadora.
 
 ## El notch
 
@@ -103,7 +103,7 @@ Sin tocar Render, cada quien puede pegar Client ID propios en *Ajustes → Conex
 - **Archivos:** «abre la última descarga», «abre el archivo del contrato» (Descargas, Escritorio, Documentos y OneDrive). Un programa o instalador espera el «sí».
 - **Voz y oído de Windows:** si el servidor no contesta, habla con las voces de Windows (por el mismo altavoz: la boca se mueve igual) y oye con el dictado de Windows. En Ajustes se pueden dejar siempre así.
 
-Lo único que sigue necesitando el servidor es el **cerebro** (Qwen): las respuestas abiertas y redactar. Todo lo demás funciona sin internet.
+Lo único que sigue necesitando el servidor es el **cerebro**: las respuestas abiertas y redactar. Para Windows contesta el Qwen 27B del nodo propio de AU-RA (la app del teléfono, en cambio, piensa con GLM-5 y Kimi K2.5 en Amazon Bedrock, con sus manos como herramientas). Todo lo demás funciona sin internet.
 
 ## Qué hace («manos»)
 
@@ -150,7 +150,7 @@ Una revisión independiente del código 1.0 encontró y se corrigió:
 
 ## Límites
 
-- Lo probado en CI usa un servidor simulado: no acredita el Qwen, la voz ni el oído de producción, ni un micrófono físico. Eso se prueba en la PC.
+- Lo probado en CI usa un servidor simulado: no acredita el cerebro, la voz ni el oído de producción, ni un micrófono físico. Eso se prueba en la PC.
 - La escritura directa es para Word y el Bloc de notas (UI Automation, con foco verificado). No hay control universal del escritorio.
 - Laya del nodo necesita que se entrene y se reinicie el servicio en la T4 (no hay acceso desde aquí).
 - **Qué build corre, visto desde el servidor (5-oct): todavía no.** La app y la web mandan `x-aura-cliente` y el servidor lo enseña por cuenta en `/api/build` → `clientes` (lib/recepcion-clientes.ts). El .exe aún no la manda (su `User-Agent` dice `AURA-Windows/1.0` fijo, no la versión real): hace falta un id de instalación al azar guardado en Ajustes que se renueve al salir o cambiar de cuenta, y eso no se hizo sin poder compilar ni probar aquí. Para añadirlo: en `AuraApi.Pedido`, `x-aura-cliente: v1;p=windows;v=<AURA_VERSION>;os=<Environment.OSVersion.Version.Major>;i=<id>` (formato y validación en lib/recepcion-clientes.ts; el servidor ya acepta `p=windows`). Mientras, la versión del .exe se anota a mano (docs/entregas/PRUEBAS-REALES.md, G4).

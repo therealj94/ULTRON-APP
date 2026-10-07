@@ -451,6 +451,11 @@ export async function correrBucleHarness(o: {
   let ajeno: 'correo' | 'whatsapp' | null = null;
   const anotar = (p: PasoHarness) => {
     pasos.push(p);
+    // Auditoría del 7-oct (A3): las manos de mensajes del cerebro dejan su resultado en el log (sin lo que dicen ni a quién).
+    // El envío de verdad (tras el «sí») deja además su `[envio] …` (lib/envios.ts).
+    if (p.herramienta === 'whatsapp' || p.herramienta === 'correo' || p.herramienta === 'circulo') {
+      console.log(`[herramienta] ${p.herramienta} ${p.estado} efecto=${p.recibo?.efecto || '-'}${p.recibo?.codigo ? ` codigo=${String(p.recibo.codigo).replace(/[^\w.-]/g, '').slice(0, 40)}` : ''} ms=${Math.round(p.ms)} ronda=${p.ronda}`);
+    }
     try {
       o.alPaso?.(p);
     } catch {

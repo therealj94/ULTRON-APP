@@ -171,6 +171,27 @@ export function estadoEleven(): { configurado: boolean; pausado: boolean; ultimo
   return { configurado: !!clave('elevenlabs'), pausado: Date.now() < pausaHasta, ultimoFallo };
 }
 
+/**
+ * ¿ElevenLabs contesta con esta llave? (auditoría del 7-oct, A-1: el catálogo marcaba «voz caída» por la salud de
+ * Voicebox mientras la voz de verdad, ElevenLabs, funcionaba). Un pedido barato (la lista de modelos) con tope corto. Una
+ * llave restringida a la voz (sin permiso de leer modelos) también cuenta: ElevenLabs contestó y la llave vale; una llave
+ * inválida, la red o un 5xx, no. Con el freno puesto (fallos seguidos al hablar), no: la voz está en pausa.
+ */
+export async function saludEleven(timeoutMs = 2500): Promise<{ ok: boolean; status: number; detalle: string }> {
+  const key = clave('elevenlabs');
+  if (!key) return { ok: false, status: 0, detalle: 'ELEVENLABS_API_KEY vacío' };
+  if (!elevenListo()) return { ok: false, status: 0, detalle: `en pausa por fallos seguidos${ultimoFallo ? `: ${ultimoFallo.slice(0, 80)}` : ''}` };
+  try {
+    const r = await fetch(`${API}/models`, { headers: { 'xi-api-key': key }, signal: AbortSignal.timeout(timeoutMs) });
+    const texto = await r.text().catch(() => '');
+    if (r.ok) return { ok: true, status: r.status, detalle: 'ElevenLabs responde' };
+    if ((r.status === 401 || r.status === 403) && /missing[_ ]permission/i.test(texto)) return { ok: true, status: r.status, detalle: 'ElevenLabs responde (llave solo de voz)' };
+    return { ok: false, status: r.status, detalle: r.status === 401 ? 'ElevenLabs rechaza la llave' : `ElevenLabs ${r.status}` };
+  } catch (e: any) {
+    return { ok: false, status: 0, detalle: String(e?.message || e).slice(0, 120) };
+  }
+}
+
 /** Solo para pruebas. */
 export function _reiniciarFrenoEleven() {
   pausaHasta = 0;

@@ -198,7 +198,8 @@ function modeloRespaldo(): string | null {
  * de mediana (p75 7,2 s), Kimi K2.5 1,0 s (p75 1,5 s), con respuestas de la misma calidad en charla. En ACCIONES GLM-5
  * sigue siendo el mejor (13–14/14 contra 9–10/14 de Kimi), así que solo la charla sin pedidos (esSoloConversacion y
  * nada esperando su «sí»; lo decide server.ts) va primero a este; si no contesta a tiempo, el principal. Con las mismas
- * herramientas: si en la charla hace falta una, la usa igual. CEREBRO_VOZ_CHARLA cambia el modelo; «no» lo apaga.
+ * herramientas que el principal y la cobertura (las que eligió la frase: lib/herramientas-turno.ts; en la charla, buscar):
+ * si en la charla hace falta una, la usa igual. CEREBRO_VOZ_CHARLA cambia el modelo; «no» lo apaga.
  * De punta a punta (el servidor de verdad contra Bedrock de verdad, 8 frases de charla habladas, primer texto del SSE):
  * con la ruta de antes mediana 3,2 s y p75 5,0 s (3 de 8 cayeron al Qwen del nodo); con esta, 1,2 s y 1,2 s.
  */
@@ -281,6 +282,25 @@ export function modeloDegradado(modelo: string, ahora = Date.now()): boolean {
   const s = salud.get(modelo);
   return !!s && s.fallosSeguidos >= FALLOS_PARA_DEGRADAR && ahora - s.ultimoFallo < VENTANA_SALUD_MS;
 }
+/**
+ * El cerebro de verdad, para el catálogo y la salud (auditoría del 7-oct, A-1: el catálogo decía «Qwen 3.8 27B» mientras
+ * contestaban GLM-5 y Kimi en Bedrock). `activo`: se usa ahora; `apagado`: CEREBRO_VOZ=qwen; `pausado`: tres fallos
+ * seguidos abrieron el cortacircuitos (contesta el Qwen del nodo un rato); `degradados`: los que van detrás de los sanos.
+ */
+export function estadoCerebroRapido(env: NodeJS.ProcessEnv = process.env, ahora = Date.now()) {
+  const apagado = String(env.CEREBRO_VOZ || 'nova').toLowerCase() === 'qwen';
+  const modelos = [modeloCharla(), conf().modelo, modeloRespaldo(), ...modelosExtra()].filter((m, i, a): m is string => !!m && a.indexOf(m) === i);
+  return {
+    activo: cerebroRapidoActivo(env),
+    apagado,
+    pausado: !apagado && !disponible('cerebro_rapido'),
+    modelo: conf().modelo,
+    respaldo: modeloRespaldo(),
+    charla: modeloCharla(),
+    degradados: modelos.filter((m) => modeloDegradado(m, ahora)),
+  };
+}
+
 /** Para las pruebas: todos sanos. */
 export function reiniciarSaludModelos(): void {
   salud.clear();
