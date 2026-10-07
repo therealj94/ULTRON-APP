@@ -169,3 +169,22 @@ test('el puente de acciones: `marcar` solo con un número E.164 y su vía; `reco
   assert.equal(Acc.esAccionApp({ tipo: 'recordatorio', texto: 'x', cuando: AHORA, rid: RID }), true);
   assert.equal(Acc.esAccionApp({ tipo: 'recordatorio', texto: 'x', cuando: AHORA, rid: '../x' }), false);
 });
+
+test('reconciliar (revisión tanda E, B3): la alarma de la vez que el servidor ACABA de entregar no se quita aunque no haya sonado', () => {
+  // El servidor reclamó la vez T (ultimaEntrega = T) y movió la próxima a T + 24 h; el push llega y reconcilia. El reloj
+  // del teléfono va 3 s detrás (o Doze atrasó la alarma): la de T sigue puesta y es la única que va a sonar (su push se calla).
+  const T = AHORA + 3_000;
+  const deT = S.baseServidor(RID, T);
+  const diario = { recordatorios: [srv({ proxima: T + 24 * H, ultimaEntrega: T })], borrados: [] };
+  const p = S.planReconciliar(diario, [local(deT, T)], AHORA);
+  assert.deepEqual(p.quitar, [], 'la de T se queda');
+  assert.deepEqual(p.poner.map((x: any) => x.cuando), [T + 24 * H]);
+  // De una vez (ya sin próxima): tampoco se quita la que acaba de entregar.
+  const unaVez = { recordatorios: [srv({ proxima: null, sonado: true, ultimaEntrega: T })], borrados: [] };
+  assert.deepEqual(S.planReconciliar(unaVez, [local(deT, T)], AHORA).quitar, []);
+  // Borrado en el servidor: esa sí se quita.
+  assert.deepEqual(S.planReconciliar({ recordatorios: [], borrados: [RID] }, [local(deT, T)], AHORA).quitar, [deT]);
+  // listaDelServidor conserva ultimaEntrega.
+  const leida = S.listaDelServidor({ recordatorios: [{ id: RID, texto: 'x', proxima: null, llamada: false, repetir: { tipo: 'una' }, sonado: true, ultimaEntrega: T }], borrados: [] });
+  assert.equal(leida.recordatorios[0]?.ultimaEntrega, T);
+});

@@ -465,6 +465,7 @@ export class RelojRecordatorios {
   private cancelar: (() => void) | null = null;
   private vivo = false;
   private revisando: Promise<number> | null = null;
+  private atrasadas = 0;
   private readonly ahora: () => number;
   private readonly programar: (f: () => void, ms: number) => () => void;
   private readonly tolerancia: number;
@@ -488,7 +489,13 @@ export class RelojRecordatorios {
     const i = await indice.leer(LLAVE_INDICE).catch(() => ({ ok: false }) as const);
     if (i.ok) {
       for (const [c, p] of Object.entries(i.valor.cuentas)) if (!PROXIMAS.has(c)) PROXIMAS.set(c, p);
-    } else console.warn('[recordatorios] no pude leer el índice: reviso cuando cambie alguno');
+    } else {
+      console.warn('[recordatorios] no pude leer el índice: reviso cuando cambie alguno y lo vuelvo a leer en 5 min');
+      // Revisión tanda E: sin el índice no salían los avisos del servidor hasta reiniciar; se vuelve a intentar.
+      this.programar(() => {
+        if (this.vivo) void this.arrancar().catch(() => undefined);
+      }, 5 * 60_000);
+    }
     await this.revisar().catch(() => 0);
     this.reprogramar();
   }
@@ -505,7 +512,11 @@ export class RelojRecordatorios {
     this.cancelar?.();
     const ahora = this.ahora();
     const ts = [...PROXIMAS.values()].filter((t): t is number => t !== null);
-    const espera = ts.length ? Math.max(1_000, Math.min(VUELTA_MAX_MS, Math.min(...ts) - ahora)) : VUELTA_MAX_MS;
+    // Revisión tanda E: si lo atrasado sigue atrasado (S3 caído), no se reintenta cada segundo: 1 s, 2, 4… hasta 1 min.
+    const minimo = ts.length ? Math.min(...ts) : Infinity;
+    this.atrasadas = minimo <= ahora ? this.atrasadas + 1 : 0;
+    const piso = this.atrasadas > 1 ? Math.min(60_000, 1_000 * 2 ** Math.min(6, this.atrasadas - 1)) : 1_000;
+    const espera = ts.length ? Math.max(piso, Math.min(VUELTA_MAX_MS, minimo - ahora)) : VUELTA_MAX_MS;
     this.cancelar = this.programar(() => {
       void this.revisar()
         .catch(() => 0)

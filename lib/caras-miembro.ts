@@ -135,7 +135,12 @@ function deS3(c: string, x: unknown): CajonCaras {
 }
 /** Lo viejo en claro que se leyó de S3: se re-sella por detrás, con la condición del ETag (una vez por cuenta y arranque). */
 const reselladas = new Set<string>();
+/** Revisión tanda E: re-sellar al leer espera lo mismo que la migración de arranque (en producción, 2 min), para que una
+ * instancia vieja que aún sirve durante el despliegue no vea un sobre que no entiende. */
+const ARRANQUE_RESELLO = Date.now();
+const ESPERA_RESELLO_MS = Number(process.env.BIOMETRIA_RESELLAR_ESPERA_MS ?? (process.env.NODE_ENV === 'production' ? 120_000 : 0));
 function resellarSiEnClaro(c: string, x: unknown) {
+  if (Date.now() - ARRANQUE_RESELLO < ESPERA_RESELLO_MS) return;
   if (!x || esSobre(x) || !hayLlaveBiometria() || !s3Lee.getEtag || !s3.putCond || reselladas.has(c)) return;
   reselladas.add(c);
   const getEtag = s3Lee.getEtag;

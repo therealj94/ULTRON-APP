@@ -42,6 +42,8 @@ export type RecordatorioDelServidor = {
   sonado: boolean;
   /** La alarma vieja de este teléfono que adoptó. */
   local?: string;
+  /** La última vez que el servidor la entregó por push (ms). Su alarma de esa vez no se quita: puede no haber sonado aún. */
+  ultimaEntrega?: number;
 };
 
 export type ListaDelServidor = { recordatorios: RecordatorioDelServidor[]; borrados: string[] };
@@ -81,6 +83,7 @@ export function listaDelServidor(r: unknown): ListaDelServidor {
       repetir: { tipo, ...(Number.isInteger(dia) ? { dia } : {}) },
       repeticion: linea(o.repeticion, 60),
       sonado: o.sonado === true,
+      ...(Number.isFinite(Number(o.ultimaEntrega)) && Number(o.ultimaEntrega) > 0 ? { ultimaEntrega: Math.round(Number(o.ultimaEntrega)) } : {}),
       ...(typeof o.local === 'string' && /^aura-rec-[a-z0-9-]{1,80}$/.test(o.local) ? { local: o.local } : {}),
     });
   }
@@ -120,6 +123,10 @@ export function planReconciliar(servidor: ListaDelServidor, locales: readonly Re
       if (s) {
         // La de su próxima vez, que suena en unos segundos (ya no se «pone», pero tampoco se quita).
         if (s.proxima !== null && l.id === baseServidor(s.id, s.proxima)) continue;
+        // La vez que el servidor ACABA de entregar (su push llegó y por eso se reconcilia): si la alarma de aquí todavía no
+        // sonó (Doze la atrasa, o el reloj del teléfono va unos segundos detrás) y se quitara, no sonaría nunca, porque el
+        // push de esa vez se calla por «ya sonó aquí» (revisión de la tanda E, B3).
+        if (s.ultimaEntrega !== undefined && l.id === baseServidor(s.id, s.ultimaEntrega)) continue;
         // Otra vez (cambió la hora, ya pasó esta y toca la siguiente), o ya no hay próxima: esta alarma sobra.
         if (!plan.quitar.includes(l.id)) plan.quitar.push(l.id);
       } else if (borrados.has(rid)) plan.quitar.push(l.id);
