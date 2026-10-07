@@ -8,7 +8,8 @@ name: Emulador Android (AU-RA FP)
 # Cuándo: a mano (workflow_dispatch) y después de cada OTA publicada con éxito desde main. Nunca en cada push.
 #
 # La cuenta: los secretos AURA_PRUEBA_CORREO y AURA_PRUEBA_CLAVE (una cuenta DEDICADA, nivel miembro, sin WhatsApp ni
-# correos conectados; cuenta-prueba.mjs lo comprueba antes). Sin ellos, o si la cuenta no es segura, la prueba solo
+# correos conectados; cuenta-prueba.mjs lo comprueba antes: el nivel que le da el servidor, y que no esté en la lista de
+# la junta del secreto AURA_CORREOS_JUNTA, que no vive en el repositorio). Sin ellos, o si la cuenta no es segura, la prueba solo
 # instala y abre la app, y los escenarios que necesitan entrar salen como OMITIDO con el motivo en el resumen.
 #
 # El repositorio es público y sus artefactos se pueden bajar: ni el correo ni la clave de prueba salen en la
@@ -41,11 +42,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          # Solo la prueba y la lista de cuentas de la junta (que cuenta-prueba.mjs descarta).
+          # Solo la prueba (la lista de la junta llega por el secreto AURA_CORREOS_JUNTA, no del repositorio).
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /mobile/pruebas/emulador/
-            /mobile/src/config.ts
 
       # Los runners de Linux tienen KVM, pero el dispositivo no es de todos: la regla de udev de siempre.
       - name: Habilitar KVM
@@ -145,6 +145,7 @@ jobs:
         env:
           AURA_PRUEBA_CORREO: ${{ secrets.AURA_PRUEBA_CORREO }}
           AURA_PRUEBA_CLAVE: ${{ secrets.AURA_PRUEBA_CLAVE }}
+          AURA_CORREOS_JUNTA: ${{ secrets.AURA_CORREOS_JUNTA }}
         run: |
           mkdir -p "$EVIDENCIA/datos"
           node mobile/pruebas/emulador/cuenta-prueba.mjs | tee "$EVIDENCIA/datos/cuenta.json"

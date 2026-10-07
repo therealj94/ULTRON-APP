@@ -67,7 +67,11 @@ export type DepsTurbo = {
    * la grabación siguió sin él), se anota como fallo: queda en las migas y no se insiste.
    */
   ecoActivo?: () => boolean;
-  permiso(): Promise<{ url: string } | null>;
+  /**
+   * Un token de un solo uso. `anticipado`: se pide para tenerlo listo (puede vencer sin usarse): el servidor no lo cobra
+   * del tope diario del oído hasta que se usa. `usado`: el id del anticipado que se acaba de usar (ahí se cobra).
+   */
+  permiso(o?: { anticipado?: boolean; usado?: string }): Promise<{ url: string; id?: string } | null>;
   transcribirWav(wavB64: string, confirmar: boolean): Promise<string>;
   crearWs(url: string): WsTurbo;
   ahora?: () => number;
@@ -296,7 +300,9 @@ export class MotorTurbo {
   private fallosVivo = 0;
   private sinVivoHasta = 0;
 
-  private guardado: { url: string; en: number } | null = null;
+  private guardado: { url: string; en: number; id?: string; anticipado: boolean } | null = null;
+  /** El id del permiso anticipado que se usó y que el servidor todavía no sabe (va en el pedido siguiente). */
+  private usadoSinAvisar: string | undefined;
   private pidiendo: Promise<void> | null = null;
 
   /** Las frases salen en orden aunque una espere la confirmación de dinero. */
@@ -1035,12 +1041,18 @@ export class MotorTurbo {
     }
   }
 
-  private prepararPermiso() {
+  /**
+   * Pide el siguiente token. `anticipado` (lo normal: al activar y después de usar uno) = para tenerlo listo; el
+   * servidor no lo cobra del tope del oído hasta que este teléfono dice que lo usó (`usado`, en el pedido siguiente).
+   */
+  private prepararPermiso(anticipado = true) {
     if (this.pidiendo || (this.guardado && this.ahora() - this.guardado.en < this.t.vigenciaPermisoMs)) return;
+    const usado = this.usadoSinAvisar;
+    this.usadoSinAvisar = undefined;
     this.pidiendo = this.deps
-      .permiso()
+      .permiso({ anticipado, ...(usado ? { usado } : {}) })
       .then((p) => {
-        this.guardado = p?.url ? { url: p.url, en: this.ahora() } : null;
+        this.guardado = p?.url ? { url: p.url, en: this.ahora(), id: p.id, anticipado } : null;
       })
       .catch(() => {
         this.guardado = null;
@@ -1054,10 +1066,13 @@ export class MotorTurbo {
   private async tomarPermiso(): Promise<string | null> {
     if (this.guardado && this.ahora() - this.guardado.en >= this.t.vigenciaPermisoMs) this.guardado = null;
     if (!this.guardado) {
-      this.prepararPermiso();
+      this.prepararPermiso(false);
       await this.pidiendo;
     }
-    const url = this.guardado?.url || null;
+    const g = this.guardado;
+    const url = g?.url || null;
+    // Un anticipado que se usa: el servidor lo cobra cuando se le dice (en el pedido del siguiente).
+    if (g?.anticipado && g.id) this.usadoSinAvisar = g.id;
     this.guardado = null;
     this.prepararPermiso();
     return url;

@@ -263,7 +263,8 @@ import { expedientesListo, guardarExpediente, s3GetJson, s3Listo, s3PutJson } fr
 import { createHash, randomBytes } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
-import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
+import { identificar, nivelDe, padron, personaPorId, puedeMandar } from './lib/acceso';
+import { cobrarPermisoUsado, conPagadorGasto } from './lib/freno-gasto';
 import { buscarConcesiones, catastroGeojson, geometriaDe, traslapesGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum, unicaExacta } from './server/electrum/db';
 import { buscarLugar } from './server/electrum/lugares';
 import { comentarMesa, TEMAS as TEMAS_COMENTARIO, type Tema } from './server/electrum/comentario';
@@ -356,6 +357,16 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
   if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Lo que mandaste es demasiado grande.', honesto: true });
   if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'No entendí lo que mandaste (JSON mal formado).', honesto: true });
   return next(err);
+});
+/*
+ * QUIÉN PAGA (lib/freno-gasto.ts): las cuentas de MANDO no tienen tope diario de voz ni de oído (se anota aparte). El
+ * ámbito se abre aquí, ya leído el cuerpo, para todo lo que siga en esta petición; quién es se mira solo si algo gasta.
+ */
+app.use((req, _res, next) => {
+  conPagadorGasto(() => {
+    const id = identidadDe(req);
+    return puedeMandar(id, 'ultron') || puedeMandar(id, 'electrum');
+  }, next);
 });
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -2574,7 +2585,12 @@ app.post('/api/cantar', exigirMesaOClip, limitar(12), async (req, res) => {
  * teléfono manda su micrófono en vivo directo a Scribe v2 Realtime Turbo (sin pasar el audio por aquí).
  */
 app.post('/api/stt/turbo/permiso', exigirMesaODesk, limitar(40), async (req, res) => {
-  const permiso = await permisoTurbo(String(req.body?.language || 'es'));
+  // El freno de gasto del oído (lib/freno-gasto.ts): `anticipado` = para tenerlo listo (se cobra al usarlo); `usado` = el
+  // id del adelantado que el teléfono acaba de usar (ahí se cobra). Sin sesión (la llave del escritorio), por IP.
+  const quien = String(sesionDe(req)?.correo || '').trim().toLowerCase() || `ip:${String(req.ip || '')}`;
+  const usado = typeof req.body?.usado === 'string' ? req.body.usado.slice(0, 64) : '';
+  if (usado) cobrarPermisoUsado(usado, quien);
+  const permiso = await permisoTurbo(String(req.body?.language || 'es'), undefined, undefined, { anticipado: req.body?.anticipado === true, quien });
   if (!permiso) return res.status(503).json({ error: 'El oído en vivo no está disponible ahora.', honesto: true });
   res.setHeader('Cache-Control', 'no-store');
   return res.json({ ...permiso, honesto: true });

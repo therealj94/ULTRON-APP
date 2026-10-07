@@ -193,23 +193,41 @@ prueba('M-9: la clave de AU-RA solo se guarda detrás de la huella (requireAuthe
   assert.equal(ss.m.has(K) || ss.m.has(KC), false);
 });
 
-prueba('M-9 migración: la clave en claro de una versión anterior se borra al leer; correo y nombre siguen (nadie queda fuera)', async () => {
+prueba('M-9 migración perezosa: la clave en claro de la 5.6.0 NO se borra al leer; pasa detrás de la huella con la primera huella (revisión #157)', async () => {
   const { creds: C } = require('./out/veta.cjs');
-  const c = C.crearCreds({ get: (k, o) => SS.getItemAsync(k, o), set: (k, v, o) => SS.setItemAsync(k, v, o), del: (k) => SS.deleteItemAsync(k) });
+  const dialogos = [];
+  const c = C.crearCreds({
+    get: (k, o) => SS.getItemAsync(k, o),
+    set: (k, v, o) => SS.setItemAsync(k, v, o),
+    del: (k) => SS.deleteItemAsync(k),
+    autenticar: async (m) => (dialogos.push(m), true),
+  });
   ss.m.set(C.LLAVES_CREDS.creds, JSON.stringify({ correo: 'jose@og.test', clave: 'en-claro', name: 'José' }));
   const r = await c.leer();
-  assert.deepEqual(r, { correo: 'jose@og.test', name: 'José' });
-  assert.ok(!ss.m.get(C.LLAVES_CREDS.creds).includes('en-claro'), 'se reescribió sin la clave');
-  assert.equal(await c.claveConHuella('x'), null, 'no hay clave detrás de la huella: la próxima vez se escribe (y queda guardada de verdad)');
+  assert.deepEqual(r, { correo: 'jose@og.test', name: 'José', legado: true });
+  assert.ok(ss.m.get(C.LLAVES_CREDS.creds).includes('en-claro'), 'leer NO la borra: la renovación la sigue necesitando');
+  assert.deepEqual(await c.claveParaRenovar('jose@og.test', 'x', false), { clave: 'en-claro', via: 'legado' }, 'renueva sin preguntar, como antes de la OTA');
+  const d = await c.desbloquear('Desbloquear AU-RA');
+  assert.deepEqual(d, { clave: 'en-claro', migrada: true });
+  assert.deepEqual(dialogos, ['Desbloquear AU-RA']);
+  assert.equal(ss.opciones.get(C.LLAVES_CREDS.clave).requireAuthentication, true);
+  assert.ok(!ss.m.get(C.LLAVES_CREDS.creds).includes('en-claro'), 'migrada: ya no queda a la vista');
+  assert.equal((await c.leer()).conHuella, true);
+  assert.deepEqual(await c.claveParaRenovar('jose@og.test', 'x', false), { clave: null, via: 'sin_permiso' }, 'detrás de la huella: sin permiso, no pregunta');
+  await c.guardar(null);
   const api = leerSrc('lib/api.ts');
-  assert.match(api, /if \(!creds\?\.correo \|\| !creds\.conHuella\) return false;/, 'renovar solo con la clave detrás de la huella');
-  assert.match(api, /const clave = await leerClaveConHuella\(/);
-  assert.doesNotMatch(api, /creds\.clave/, 'la renovación ya no usa una clave a la vista');
+  assert.match(api, /if \(!creds\?\.correo \|\| !\(creds\.conHuella \|\| creds\.legado\)\) return false;/, 'renovar con la clave detrás de la huella o con la de antes');
+  assert.match(api, /await claveParaRenovar\(quien, MOTIVO_RENOVAR, pide\)/);
+  assert.match(api, /export const MOTIVO_RENOVAR = 'Desbloquear AU-RA';/);
+  assert.doesNotMatch(api, /creds\.clave/, 'la renovación no lee una clave a la vista');
   const login = leerSrc('screens/LoginScreen.tsx');
-  assert.match(login, /const guardada = await leerClaveConHuella\(tr\('Desbloquear AU-RA FP'/, 'la huella de la entrada ES la llave');
+  assert.match(login, /desbloquearConHuella\(tr\('Desbloquear AU-RA', 'Unlock AU-RA'\)\)/, 'la huella de la entrada ES la llave, con «Desbloquear AU-RA»');
+  assert.doesNotMatch(login, /Desbloquear AU-RA FP/, '«AU-RA FP» no es lo que dice el diálogo');
   assert.doesNotMatch(login, /creds\??\.clave\b/, 'la entrada no lee una clave a la vista');
-  assert.match(login, /claveCoincide\(creds, clave\)/, 'sin red, se compara la huella de la clave');
-  assert.match(leerSrc('app/pantallas/Intro.tsx'), /void loadCreds\(\)\.catch\(\(\) => null\);/, 'la migración corre al abrir la app');
+  assert.match(login, /claveGuardadaCoincide\(creds\.correo, clave\)/, 'sin red, se compara la huella de la clave (o la de antes)');
+  const intro = leerSrc('app/pantallas/Intro.tsx');
+  assert.doesNotMatch(intro, /void loadCreds\(\)\.catch/, 'abrir la app ya no reescribe la entrada guardada');
+  assert.match(intro, /reiniciarAClave\(tr\('Tu sesión terminó\. Entra con tu clave o con tu huella\.'/, 'con clave guardada, la intro manda a la clave o la huella, no solo a Genesis ID');
 });
 
 prueba('cerrar sesión borra JWT, refresco y correo', async () => {

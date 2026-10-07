@@ -503,7 +503,12 @@ async function fuenteDe(text: string, perf: Perf, emocion: Emocion, privado = fa
   return fetchSource(text, perf, emocion, privado, vecinos, voz, corte);
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId, corte?: CorteIO): Promise<AVPlaybackSource | null> {
+/**
+ * La frase entera en disco. `deLaPersona`: la voz de algo que la persona está esperando (una respuesta, una canción que
+ * pidió); si el token venció, la renovación puede pedir la huella (lib/permisoHuella.ts). Lo que se precarga
+ * (prefetchPhrases, prepararHabla) pasa false: no pregunta, falla callado y espera.
+ */
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId, corte?: CorteIO, deLaPersona = true): Promise<AVPlaybackSource | null> {
   // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
   if (callaPorConversacion || corte?.abortado) return null;
   // `voz`: habla otro que el avatar de la mesa (los anfitriones del recorrido, recorrido/).
@@ -512,7 +517,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
   if (privado) {
     // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
     // guarda el audio en su caché) y sin la caché de aquí.
-    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true, ...vecinosLimpios(vecinos) }, 40_000, corte);
+    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true, ...vecinosLimpios(vecinos) }, 40_000, corte, false, deLaPersona);
     return uri && !corte?.abortado ? { uri } : null;
   }
   const v = perf === 'sing' ? {} : vecinosLimpios(vecinos);
@@ -535,7 +540,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
       if (r.status === 401 && !renovado) {
         renovado = true;
         await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
-        if (!(await renovarTokenVoz())) return null;
+        if (!(await renovarTokenVoz(deLaPersona))) return null;
         headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
         attempt -= 1;
         continue;
@@ -552,7 +557,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
-        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, ...v }, 40_000, corte);
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, ...v }, 40_000, corte, false, deLaPersona);
         if (uri) guardarEnCache(key, uri);
         return uri && !corte?.abortado ? { uri } : null;
       }
@@ -569,12 +574,12 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
  * POST JSON → audio → disco. FileSystem.downloadAsync solo hace GET, así que /api/cantar y el POST de
  * /api/tts van por XHR (blob → base64 → archivo).
  */
-async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number, corte?: CorteIO, renovado = false): Promise<string | null> {
+async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number, corte?: CorteIO, renovado = false, deLaPersona = true): Promise<string | null> {
   const headers = await sessionHeaders();
   if (corte?.abortado) return null;
   const r = await postAudio(url, body, timeoutMs, headers, corte);
   // Token vencido (la voz, el canto o la oración que no estaban guardados piden sesión): se renueva una vez y se repite.
-  if (r === 401 && !renovado && !corte?.abortado && (await renovarTokenVoz())) return downloadPost(url, body, timeoutMs, corte, true);
+  if (r === 401 && !renovado && !corte?.abortado && (await renovarTokenVoz(deLaPersona))) return downloadPost(url, body, timeoutMs, corte, true, deLaPersona);
   return typeof r === 'string' ? r : null;
 }
 
@@ -993,7 +998,7 @@ export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neu
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;
-      await fetchSource(p, 'speak', emocion, false, undefined, voz).catch(() => null);
+      await fetchSource(p, 'speak', emocion, false, undefined, voz, undefined, false).catch(() => null);
     }
   };
   await Promise.all([worker(), worker()]);
@@ -1008,7 +1013,7 @@ export async function prepararHabla(text: string, o?: { emocion?: Emocion; voz?:
   const clean = cleanForSpeech(text);
   if (!clean || callaPorConversacion) return;
   const frases = splitSentences(clean);
-  await Promise.all(frases.map((f, i) => fetchSource(f, 'speak', o?.emocion || 'neutral', false, { previo: frases[i - 1], siguiente: frases[i + 1] }, o?.voz).catch(() => null)));
+  await Promise.all(frases.map((f, i) => fetchSource(f, 'speak', o?.emocion || 'neutral', false, { previo: frases[i - 1], siguiente: frases[i + 1] }, o?.voz, undefined, false).catch(() => null)));
 }
 
 export async function speak(

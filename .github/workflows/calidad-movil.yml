@@ -124,6 +124,7 @@ jobs:
           npx tsx pruebas/voz/nativa.prueba.mjs
           npx tsx pruebas/decisiones/decisiones.prueba.mjs
           npx tsx src/lib/pruebas/entrarConClave.prueba.mjs
+          npx tsx pruebas/emulador/cuenta-prueba.prueba.mjs
           sh pruebas/oido/todas.sh
           sh pruebas/muletillas/todas.sh
           sh pruebas/sonidos/todas.sh
