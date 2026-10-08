@@ -181,7 +181,7 @@ cd "$INF"   # el cargador deja aquí para-ocr.txt
 # ── 5 ──────────────────────────────────────────────────────────────────────────────────────────
 if [ "${ENSAYO:-1}" != 0 ]; then
   paso "5. Ensayo: qué entraría (no escribe nada)"
-  "$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --seco "$LISTO" 2>&1 | tee "${INF}/ensayo.log" | grep -E '^(──|[0-9]|El cerebro|La lista)' || true
+  "$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --seco --carpetas "$LISTO" 2>&1 | tee "${INF}/ensayo.log" | grep -E '^(──|[0-9]|El cerebro|La lista)' || true
   echo "  detalle en ${INF}/ensayo.log"
   if [ -s "${INF}/para-ocr.txt" ]; then
     touch "${INF}/escaneos.txt"
@@ -225,7 +225,9 @@ fi
 paso "7. Cargando"
 FUENTES=("$LISTO")
 [ -n "$(find "$OCR" -name '*.txt' -print -quit)" ] && FUENTES+=("$OCR")
-"$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --quien "$QUIEN" "${FUENTES[@]}" 2>&1 | tee "${INF}/carga.log" | grep -E '^(▸|[0-9]|Cruzando|El catastro|Catastro)' || true
+# Cada archivo a su carpeta del panel (la misma estructura que en el disco de quien lo subió) y
+# con su original anotado en el cubo de lotes.
+"$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --quien "$QUIEN" --carpetas --original "$ORIG" --origen "$ORIGEN" "${FUENTES[@]}" 2>&1 | tee "${INF}/carga.log" | grep -E '^(▸|[0-9]|Cruzando|El catastro|Catastro)' || true
 
 # ── 8 ──────────────────────────────────────────────────────────────────────────────────────────
 if [ -n "${EMBED_URL:-}" ]; then
