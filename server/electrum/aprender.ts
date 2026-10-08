@@ -755,12 +755,17 @@ export async function aprender(
      * lo cargado antes de guardarlos cuenta como entero si tiene al menos uno.
      */
     const esperados = Number(previo?.meta?.fragmentos);
-    const incompleto = !!previo && (Number.isFinite(esperados) && esperados > 0 ? previo.n < esperados : previo.n === 0);
+    // Un escaneo anotado «sin texto» (anotarSinTexto) no tiene fragmentos porque espera su OCR, no
+    // porque se cortara: tratarlo como incompleto lo borraba y lo volvía a leer en cada relanzada.
+    const pendienteOcr = previo?.meta?.pendiente === 'ocr';
+    const incompleto = !!previo && !pendienteOcr && (Number.isFinite(esperados) && esperados > 0 ? previo.n < esperados : previo.n === 0);
+    // La lectura que se hace para reparar se guarda: si no sirve, la de más abajo es la misma.
+    let releido: Leido | null = null;
     if (previo && incompleto) {
       console.warn(`[electrum] «${nombre}» estaba a medias (${previo.n}${esperados ? ` de ${esperados}` : ''} fragmentos): lo vuelvo a cargar entero`);
       // Se repara en su lugar —mismo documento, fragmentos nuevos en una transacción— para no perder
       // su id ni lo que lo referencia. Una foto se vuelve a transcribir desde cero.
-      const leido = imagen ? null : await leerDocumento(nombre, datos);
+      const leido = imagen ? null : (releido = await leerDocumento(nombre, datos));
       if (leido && leido.ok !== false) {
         await reemplazarFragmentos(previo.id, leido.paginas.length, leido.trozos, nombre);
         return {
@@ -770,7 +775,6 @@ export async function aprender(
           ui: { accion: 'documento', documento_id: previo.id, nombre, paginas: leido.paginas.length, fragmentos: leido.trozos.length, reparado: true },
         };
       }
-      await consulta(`DELETE FROM documento WHERE id = $1`, [previo.id]);
     }
     const ya = previo && !incompleto ? previo : null;
     if (ya) {
@@ -785,7 +789,8 @@ export async function aprender(
       // Un PDF indexado con el tope viejo de 8 000 caracteres se reconoce por la firma (varias
       // páginas y como mucho ~8 000 caracteres en total). Volver a subirlo lo repara en su lugar:
       // mismo documento, fragmentos nuevos. Lo que estaba bien se sigue saltando.
-      const reparado = /\.pdf$/i.test(nombre) ? await repararSiTruncado(ya.id, ya.paginas, nombre, datos) : null;
+      // Un escaneo pendiente de OCR no está truncado: releerlo solo da otra vez cero letras.
+      const reparado = /\.pdf$/i.test(nombre) && !pendienteOcr ? await repararSiTruncado(ya.id, ya.paginas, nombre, datos) : null;
       if (reparado) return reparado;
       return {
         clase: 'documento',
@@ -825,7 +830,7 @@ export async function aprender(
       avisos = [{ nivel: 'ojo', texto: `Leído con ${ojoQueLeyo(visto.via)}. Es una transcripción de una foto, no el documento original.` }];
       tipoPorDefecto = clasificarDoc(nombre, visto.texto);
     } else {
-      const leido = await leerDocumento(nombre, datos);
+      const leido = releido ?? (await leerDocumento(nombre, datos));
       // `escaneo` va en la ui para quien importa una carpeta: lo deja anotado en el panel como
       // «sin texto», con su original, en vez de que desaparezca sin rastro.
       if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos, ui: leido.motivo === 'escaneo' ? { escaneo: true, paginas: leido.paginas ?? null } : undefined };
@@ -834,6 +839,10 @@ export async function aprender(
       avisos = leido.avisos;
       tipoPorDefecto = clasificarDoc(nombre, leido.texto);
     }
+
+    // El documento a medias se borra recién ahora, con la lectura nueva en la mano: si la foto no se
+    // pudo transcribir o el PDF ya no se lee, queda lo que había en vez de nada.
+    if (previo && incompleto) await consulta(`DELETE FROM documento WHERE id = $1`, [previo.id]);
 
     // Lo cargado ANTES de que existiera la huella tiene la columna vacía, así que la consulta de
     // arriba no lo encuentra y la primera recarga lo duplicaría entero. Se adopta aquí: mismo
