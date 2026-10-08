@@ -81,6 +81,20 @@ test('teselas: tramos del cubo con sesión, índice de mapas escaneados, y los p
         base: true,
         rasters: [
           { clave: 'jica-olancho-geologico', nombre: 'Geológico de Olancho', encuadre: [-87, 14.6, -86.5, 15.4], zoomMax: 14 },
+          // Curvas de nivel como teselas vectoriales: lo que va a una expresión del mapa, saneado.
+          {
+            clave: 'lote-1-curvas',
+            nombre: 'Curvas',
+            encuadre: [-89.4, 12.9, -83.1, 16.6],
+            vector: { capa: 'curvas', color: '#E8C38A', etiqueta: 'cota', maestra: 'maestra' },
+          },
+          {
+            clave: 'lote-1-curvas-mal',
+            nombre: 'Curvas con basura',
+            encuadre: [-89.4, 12.9, -83.1, 16.6],
+            vector: { capa: 'curvas', color: 'red; x', etiqueta: ['get', 'secreto'], maestra: 'a b' },
+          },
+          { clave: 'lote-1-sin-capa', nombre: 'Sin capa', encuadre: [-89, 13, -83, 16], vector: { color: '#ffffff' } },
           // Estos dos no pasan: una clave que se sale de la carpeta y un encuadre roto.
           { clave: '../secreto', nombre: 'x', encuadre: [0, 0, 1, 1] },
           { clave: 'roto', nombre: 'Roto', encuadre: [0, 'a', 1] },
@@ -98,8 +112,15 @@ test('teselas: tramos del cubo con sesión, índice de mapas escaneados, y los p
   assert.equal(idx.base, true);
   assert.deepEqual(
     idx.rasters.map((r: any) => r.clave),
-    ['jica-olancho-geologico']
+    ['jica-olancho-geologico', 'lote-1-curvas', 'lote-1-curvas-mal', 'lote-1-sin-capa']
   );
+  const v = (c: string) => idx.rasters.find((r: any) => r.clave === c).vector;
+  assert.equal(v('jica-olancho-geologico'), undefined, 'un ráster no trae vector');
+  assert.deepEqual(v('lote-1-curvas'), { capa: 'curvas', color: '#E8C38A', etiqueta: 'cota', maestra: 'maestra' });
+  // Color que no es #rrggbb y nombres que no son simples: fuera; la capa sí queda.
+  assert.deepEqual(v('lote-1-curvas-mal'), { capa: 'curvas' });
+  // Sin nombre de capa no hay qué pintar: se queda como si fuera ráster.
+  assert.equal(v('lote-1-sin-capa'), undefined);
 
   // Un tramo: 206 con los bytes justos, su Content-Range y el ETag del cubo.
   const r1 = await pedir('/api/electrum/teselas/honduras.pmtiles', { range: 'bytes=100-199' });

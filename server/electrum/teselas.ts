@@ -86,11 +86,33 @@ export type RasterEscaneado = {
   grupo?: string;
   /** Qué quiere decir cada color, para las capas calculadas (Sentinel-2). */
   leyenda?: Array<{ color: string; texto: string }>;
+  /**
+   * Si las teselas son VECTORIALES (líneas, como las curvas de nivel) en vez de imagen: la capa del
+   * PMTiles, el color, y qué atributo se rotula y cuál marca las líneas maestras (más gruesas).
+   */
+  vector?: { capa: string; color?: string; etiqueta?: string; maestra?: string };
 };
 
 let indice: { cuando: number; rasters: RasterEscaneado[]; base: boolean } | null = null;
 
 const textoCorto = (v: unknown, n: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined);
+
+const NOMBRE_ATRIBUTO = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
+
+/** Lo que va a parar a una expresión del mapa: solo nombres simples y un color #rrggbb. */
+function vectorValido(v: unknown): RasterEscaneado['vector'] {
+  if (!v || typeof v !== 'object') return undefined;
+  const x = v as Record<string, unknown>;
+  const nombre = (k: unknown) => (typeof k === 'string' && NOMBRE_ATRIBUTO.test(k) ? k : undefined);
+  const capa = nombre(x.capa);
+  if (!capa) return undefined;
+  return {
+    capa,
+    color: typeof x.color === 'string' && /^#[0-9a-f]{6}$/i.test(x.color) ? x.color : undefined,
+    etiqueta: nombre(x.etiqueta),
+    maestra: nombre(x.maestra),
+  };
+}
 
 /** Solo colores #rrggbb y textos cortos: el índice lo escribe una persona a mano. */
 function leyendaValida(v: unknown): RasterEscaneado['leyenda'] {
@@ -124,7 +146,7 @@ export async function indiceTeselas(): Promise<{ rasters: RasterEscaneado[]; bas
           x.encuadre.length === 4 &&
           x.encuadre.every((n: unknown) => Number.isFinite(Number(n)))
         )
-        .map((x: any) => ({ ...x, grupo: textoCorto(x.grupo, 60), leyenda: leyendaValida(x.leyenda) }));
+        .map((x: any) => ({ ...x, grupo: textoCorto(x.grupo, 60), leyenda: leyendaValida(x.leyenda), vector: vectorValido(x.vector) }));
     } catch {
       console.error('[teselas] indice.json no es JSON válido');
     }
