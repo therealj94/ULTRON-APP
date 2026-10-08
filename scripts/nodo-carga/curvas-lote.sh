@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$LOTE" ] || { echo "  curvas-lote <lote> [--shp archivo.shp]"; exit 1; }
-for h in ogrinfo ogr2ogr tippecanoe python3; do command -v "$h" >/dev/null || { echo "Falta ${h} (apt install tippecanoe gdal-bin)."; exit 1; }; done
+for h in ogrinfo ogr2ogr tippecanoe pmtiles python3; do command -v "$h" >/dev/null || { echo "Falta ${h} (apt install tippecanoe gdal-bin)."; exit 1; }; done
 
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 LOTES="${ELECTRUM_LOTES:-electrum-lotes-548380372606}"
@@ -76,12 +76,15 @@ tippecanoe -o "$PM" --force -l curvas -n "Curvas de nivel" -Z 10 -z 14 -P \
   --no-tile-size-limit --simplification=2 --quiet "$SEQ"
 rm -f "$SEQ"
 
-python3 - "$SHP" "$CLAVE" "$NOMBRE" "${SHP#"$ORIG"/}" "${SAL}/entradas/${CLAVE}.json" <<'PY'
+python3 - "$SHP" "$CLAVE" "$NOMBRE" "${SHP#"$ORIG"/}" "${SAL}/entradas/${CLAVE}.json" "$PM" <<'PY'
 import json, re, subprocess, sys
-shp, clave, lote, rel, sal = sys.argv[1:]
+shp, clave, lote, rel, sal, pm = sys.argv[1:]
 info = subprocess.run(['ogrinfo', '-so', '-al', shp], capture_output=True, text=True).stdout
-m = re.search(r'Extent: \(([-\d.]+), ([-\d.]+)\) - \(([-\d.]+), ([-\d.]+)\)', info)
 n = re.search(r'Feature Count: (\d+)', info)
+# El encuadre, de las teselas ya hechas (en grados): el del shapefile viene en su propio sistema,
+# y unas curvas en UTM darían metros donde el mapa espera longitud y latitud.
+caja = subprocess.run(['pmtiles', 'show', pm], capture_output=True, text=True).stdout
+m = re.search(r'bounds: \(long: ([-\d.]+), lat: ([-\d.]+)\) \(long: ([-\d.]+), lat: ([-\d.]+)\)', caja)
 json.dump({
     'clave': clave,
     'nombre': 'Curvas de nivel cada 20 m (todo el país)',

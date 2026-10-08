@@ -7,6 +7,7 @@
 #   teselas-lote <lote>                                  convierte, no publica nada
 #   teselas-lote <lote> --mosaico "HOJAS CARTOGRAFICAS"  todo lo de esa carpeta, una sola capa
 #   teselas-lote <lote> --publicar                       sube a biblioteca/teselas/ y al índice
+#   teselas-lote <lote> --publicar --solo <clave>        publica solo esa capa (repetible)
 #
 # Por qué así:
 #   - El cargador aparta los rásteres: no van a la base sino como teselas, que el mapa lee a tramos
@@ -25,11 +26,12 @@
 # Variables: ZOOM_MAX (15), CALIDAD (85), GRUPO (sección del control de capas).
 set -euo pipefail
 
-LOTE=""; PUBLICAR=0; MOSAICOS=()
+LOTE=""; PUBLICAR=0; MOSAICOS=(); SOLO=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --publicar) PUBLICAR=1 ;;
     --mosaico)  MOSAICOS+=("${2:?--mosaico necesita el nombre de una carpeta}"); shift ;;
+    --solo)     SOLO+=("${2:?--solo necesita una clave}"); shift ;;
     -*) echo "No conozco ${1}." >&2; exit 1 ;;
     *)  LOTE="$1" ;;
   esac
@@ -71,6 +73,51 @@ print(re.sub(r'-+', '-', re.sub(r'[^a-z0-9]+', '-', t)).strip('-')[:60] or 'mapa
 PY
 }
 
+# ── 4 (publicar) ───────────────────────────────────────────────────────────────────────────────
+# Una función: se publica también un lote sin rásteres, cuando lo que hay en teselas/ lo dejó
+# curvas-lote.
+publicar() {
+  paso "4. Publicando en s3://${BUCKET}/biblioteca/teselas/"
+  # Lo que se publica: todo lo de teselas/, o solo las claves de --solo (las curvas, por ejemplo,
+  # esperan a que el mapa en producción sepa pintar líneas).
+  local pms=() entradas=() c
+  for pm in "${SAL}"/*.pmtiles; do
+    [ -e "$pm" ] || continue
+    c="$(basename "$pm" .pmtiles)"
+    if [ "${#SOLO[@]}" -gt 0 ] && ! printf '%s\n' "${SOLO[@]}" | grep -qxF "$c"; then continue; fi
+    [ -s "${SAL}/entradas/${c}.json" ] || { rojo "Falta la entrada del índice de ${c}."; exit 1; }
+    pms+=("$pm"); entradas+=("${SAL}/entradas/${c}.json")
+  done
+  [ "${#pms[@]}" -gt 0 ] || { rojo "No hay nada que publicar en ${SAL}${SOLO[*]:+ con --solo ${SOLO[*]}}."; exit 1; }
+  for pm in "${pms[@]}"; do
+    aws s3 cp "$pm" "s3://${BUCKET}/biblioteca/teselas/$(basename "$pm")" --only-show-errors \
+      --content-type application/octet-stream
+    echo "  ↑ $(basename "$pm")"
+  done
+
+  # El índice se fusiona, no se pisa: lo que ya estaba (JICA, Sentinel-2, el mapa base) se queda, y
+  # una capa de este lote que ya estaba se reemplaza por la nueva. Antes, copia del anterior.
+  SELLO=$(date -u +%Y%m%dT%H%M%SZ)
+  aws s3 cp "s3://${BUCKET}/biblioteca/teselas/indice.json" "${SAL}/indice.antes-${SELLO}.json" --only-show-errors
+  aws s3 cp "${SAL}/indice.antes-${SELLO}.json" "s3://${BUCKET}/biblioteca/teselas/indice.antes-${SELLO}.json" --only-show-errors
+  python3 - "${SAL}/indice.antes-${SELLO}.json" "${SAL}/indice.json" "${entradas[@]}" <<'PY'
+import json, sys
+antes, sal, *entradas = sys.argv[1:]
+ind = json.load(open(antes))
+nuevas = [json.load(open(e)) for e in entradas]
+claves = {n['clave'] for n in nuevas}
+ind['rasters'] = [r for r in ind.get('rasters', []) if r.get('clave') not in claves] + nuevas
+json.dump(ind, open(sal, 'w'), ensure_ascii=False, indent=1)
+print(f"  índice: {len(ind['rasters'])} capas ({len(nuevas)} de este lote)")
+PY
+  aws s3 cp "${SAL}/indice.json" "s3://${BUCKET}/biblioteca/teselas/indice.json" --only-show-errors \
+    --content-type application/json
+
+  verde "
+  Publicado. Dr Electrum relee el índice cada 5 minutos: las capas salen en el control de capas,
+  sección «${GRUPO}». Para volver atrás: copiar indice.antes-${SELLO}.json sobre indice.json en el cubo."
+}
+
 # ── 1 ──────────────────────────────────────────────────────────────────────────────────────────
 paso "1. Rásteres de ${ORIGEN}"
 # Solo los rásteres y lo que los georreferencia (.tfw, .aux.xml, .prj al lado): no hace falta bajar
@@ -81,7 +128,11 @@ aws s3 sync "$ORIGEN" "$ORIG" --only-show-errors --exclude '*' \
   --include '*.aux.xml' --include '*.AUX.XML' --include '*.prj' --include '*.PRJ' --include '*.ovr'
 mapfile -d '' RASTERES < <(find "$ORIG" -type f \( -iname '*.tif' -o -iname '*.tiff' -o -iname '*.jp2' -o -iname '*.img' \) -print0 | sort -z)
 echo "  ${#RASTERES[@]} rásteres"
-[ "${#RASTERES[@]}" -gt 0 ] || { echo "  No hay rásteres en el lote."; exit 0; }
+if [ "${#RASTERES[@]}" -eq 0 ]; then
+  echo "  No hay rásteres en el lote."
+  [ "$PUBLICAR" != 1 ] || publicar
+  exit 0
+fi
 
 # ── 2 ──────────────────────────────────────────────────────────────────────────────────────────
 paso "2. Revisión: georreferencia y tipo"
@@ -107,7 +158,10 @@ if tipos != {"Byte"}:
   fi
 done
 echo "  ${#BUENOS[@]} se convierten; $(grep -c . "${INF}/teselas-apartados.txt" || true) apartados (${INF}/teselas-apartados.txt)"
-[ "${#BUENOS[@]}" -gt 0 ] || exit 0
+if [ "${#BUENOS[@]}" -eq 0 ]; then
+  [ "$PUBLICAR" != 1 ] || publicar
+  exit 0
+fi
 
 # Resolución de ZOOM_MAX en metros de Web Mercator: 156543,03 m por píxel en zoom 0.
 RES_MIN=$(python3 -c "print(156543.03392804097 / 2 ** ${ZOOM_MAX})")
@@ -164,6 +218,12 @@ PY
 # ── 3 ──────────────────────────────────────────────────────────────────────────────────────────
 paso "3. Conversión (zoom máximo ${ZOOM_MAX})"
 PREF="$(slug "$NOMBRE")"
+# El servidor sirve claves de hasta 81 caracteres ([a-z0-9-]): una más larga se recorta y lleva una
+# huella corta de la entera, para que dos largas que empiezan igual no terminen en la misma.
+acotar() {
+  if [ "${#1}" -le 81 ]; then echo "$1"
+  else echo "$(printf '%s' "${1:0:74}" | sed 's/-*$//')-$(printf '%s' "$1" | md5sum | cut -c1-6)"; fi
+}
 # La clave de un ráster suelto: su nombre (lo que se ve en la lista de capas) y, si ese nombre ya lo
 # tiene otro ráster del lote, una huella corta de su ruta para que no se pisen.
 declare -A CLAVES=()
@@ -172,11 +232,12 @@ CLAVE=""
 clave_de() {
   CLAVE="${PREF}-$(slug "$(basename "${1%.*}")")"
   if [ -n "${CLAVES[$CLAVE]:-}" ] && [ "${CLAVES[$CLAVE]}" != "$1" ]; then CLAVE="${CLAVE}-$(printf '%s' "$1" | md5sum | cut -c1-6)"; fi
+  CLAVE="$(acotar "$CLAVE")"
   CLAVES[$CLAVE]="$1"
 }
 declare -A EN_MOSAICO=()
 for carpeta in "${MOSAICOS[@]}"; do
-  clave="${PREF}-$(slug "$carpeta")"
+  clave="$(acotar "${PREF}-$(slug "$carpeta")")"
   piezas=()
   for r in "${BUENOS[@]}"; do
     case "/${r#"$ORIG"/}" in */"$carpeta"/*) piezas+=("$r"); EN_MOSAICO["$r"]=1 ;; esac
@@ -220,32 +281,4 @@ if [ "$PUBLICAR" != 1 ]; then
   echo "No publiqué nada. Para que aparezcan en el mapa:  teselas-lote \"${LOTE}\" ${OPC}--publicar"
   exit 0
 fi
-
-paso "4. Publicando en s3://${BUCKET}/biblioteca/teselas/"
-for pm in "${SAL}"/*.pmtiles; do
-  aws s3 cp "$pm" "s3://${BUCKET}/biblioteca/teselas/$(basename "$pm")" --only-show-errors \
-    --content-type application/octet-stream
-  echo "  ↑ $(basename "$pm")"
-done
-
-# El índice se fusiona, no se pisa: lo que ya estaba (JICA, Sentinel-2, el mapa base) se queda, y
-# una capa de este lote que ya estaba se reemplaza por la nueva. Antes, copia del anterior.
-SELLO=$(date -u +%Y%m%dT%H%M%SZ)
-aws s3 cp "s3://${BUCKET}/biblioteca/teselas/indice.json" "${SAL}/indice.antes-${SELLO}.json" --only-show-errors
-aws s3 cp "${SAL}/indice.antes-${SELLO}.json" "s3://${BUCKET}/biblioteca/teselas/indice.antes-${SELLO}.json" --only-show-errors
-python3 - "${SAL}/indice.antes-${SELLO}.json" "${SAL}/indice.json" "${SAL}"/entradas/*.json <<'PY'
-import json, sys
-antes, sal, *entradas = sys.argv[1:]
-ind = json.load(open(antes))
-nuevas = [json.load(open(e)) for e in entradas]
-claves = {n['clave'] for n in nuevas}
-ind['rasters'] = [r for r in ind.get('rasters', []) if r.get('clave') not in claves] + nuevas
-json.dump(ind, open(sal, 'w'), ensure_ascii=False, indent=1)
-print(f"  índice: {len(ind['rasters'])} capas ({len(nuevas)} de este lote)")
-PY
-aws s3 cp "${SAL}/indice.json" "s3://${BUCKET}/biblioteca/teselas/indice.json" --only-show-errors \
-  --content-type application/json
-
-verde "
-Publicado. Dr Electrum relee el índice cada 5 minutos: las capas salen en el control de capas,
-sección «${GRUPO}». Para volver atrás: copiar indice.antes-${SELLO}.json sobre indice.json en el cubo."
+publicar
