@@ -4,6 +4,14 @@
  *
  *   npx tsx scripts/electrum/ordenar-catastro.ts              propuesta; no cambia nada
  *   npx tsx scripts/electrum/ordenar-catastro.ts --aplicar    aplica la propuesta tal cual
+ *   … --oficial <capa_id>                                     la capa que es el catastro vigente, en vez
+ *                                                             de adivinarla (por defecto: la de más
+ *                                                             concesiones que se llame «catastro» o
+ *                                                             «derechos mineros»). Al recargar el mismo
+ *                                                             catastro con unas pocas más, la nueva
+ *                                                             ganaba y la vigente —con su
+ *                                                             prospectividad, carteras y alertas— se
+ *                                                             proponía para borrar.
  *   … --oficial-huellas huellas.txt                            huellas del archivo oficial (una por
  *                                                             línea): lo que sea del archivo cuenta
  *                                                             como oficial aunque esté en otra capa
@@ -26,7 +34,10 @@ async function main() {
     const [{ n }] = await consulta<{ n: number }>(`SELECT count(DISTINCT huella)::int AS n FROM concesion WHERE huella = ANY($1::text[])`, [huellas]);
     console.log(`[ordenar] huellas del archivo oficial: ${huellas.length}; en la base: ${n}`);
   }
-  const { oficial, filas } = await proponer(null, huellas);
+  const j = process.argv.indexOf('--oficial');
+  const oficialPedida = j > 0 ? Number(process.argv[j + 1]) : null;
+  if (j > 0 && !(Number.isInteger(oficialPedida) && oficialPedida! > 0)) throw new Error('--oficial necesita el id de una capa.');
+  const { oficial, filas } = await proponer(oficialPedida, huellas);
   console.log('[ordenar] propuesta ' + JSON.stringify({ oficial, filas }));
   if (!aplicarlo) return console.log('[ordenar] en seco: no se cambió nada.');
   const r = await aplicar(
