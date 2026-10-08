@@ -104,6 +104,10 @@ const origenDe = new Map<string, string>();
 function expandir(entradas: string[], raiz?: string): string[] {
   const salida: string[] = [];
   for (const r of entradas) {
+    // Lo oculto (`.cache`, `.DS_Store`, `._foto.pdf` de un Mac) no es del lote: es basura de quien
+    // lo copió, y el caché de medios-campo son fotos a medio procesar que entraban dos veces.
+    // Solo dentro de una carpeta: lo que se nombró a mano en la línea de comandos se carga.
+    if (raiz && path.basename(r).startsWith('.')) continue;
     let st;
     try {
       st = fs.statSync(r);
