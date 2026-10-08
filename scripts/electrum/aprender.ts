@@ -29,10 +29,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
-import { aprender, inspeccionar } from '../../server/electrum/aprender';
+import { aprender, huellaDe, inspeccionar } from '../../server/electrum/aprender';
 import { ingerir, resumenCapa } from '../../server/electrum/gis';
 import { cerrarBase, hayBase, recalcularTraslapes, saludBase } from '../../server/electrum/db';
-import { borradosEnPanel } from '../../server/electrum/importar';
+import { borradosEnPanel, huellaBorrada } from '../../server/electrum/importar';
+
+/** Lo que va al mapa y no a la biblioteca. */
+const ES_GEO = /\.(zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
 
 /** Por encima de esto, un shapefile no se lee de una pieza: se queda sin memoria y tumba la carga. */
 const TOPE_SHP = 300 * 1024 ** 2;
@@ -340,7 +343,9 @@ for (const [i, ruta] of archivos.entries()) {
     }
 
     const original = archivoDe(ruta);
-    if (original && borrados.has(original)) {
+    // Lo mismo que hace el importador del panel: lo que se borró fue el CONTENIDO, así que tampoco
+    // vuelve con otro nombre o desde otra carpeta. Solo documentos: las capas no dejan huella.
+    if ((original && borrados.has(original)) || (!ES_GEO.test(nombre) && (await huellaBorrada(huellaDe(datos))))) {
       console.log('se borró a propósito, lo salto');
       repetidos++;
       seguidos = 0;
