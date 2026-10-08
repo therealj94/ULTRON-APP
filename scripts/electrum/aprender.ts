@@ -32,6 +32,7 @@ import JSZip from 'jszip';
 import { aprender, inspeccionar } from '../../server/electrum/aprender';
 import { ingerir, resumenCapa } from '../../server/electrum/gis';
 import { cerrarBase, hayBase, recalcularTraslapes, saludBase } from '../../server/electrum/db';
+import { borradosEnPanel } from '../../server/electrum/importar';
 
 /** Por encima de esto, un shapefile no se lee de una pieza: se queda sin memoria y tumba la carga. */
 const TOPE_SHP = 300 * 1024 ** 2;
@@ -263,6 +264,14 @@ if (!opts.seco) {
   console.log(`Catastro conectado. PostGIS ${s.postgis}, ${s.concesiones} concesiones cargadas.\n`);
 }
 
+/*
+ * Lo que alguien borró a propósito (en el panel, o al ordenar el catastro) no se vuelve a cargar:
+ * la bitácora guarda su original. El importador del panel ya lo respetaba; este cargador no, y
+ * relanzar un lote revivía la copia del catastro que se acababa de borrar.
+ */
+const borrados = !opts.seco && opts.original ? await borradosEnPanel(archivos.map(archivoDe).filter((a): a is string => !!a)) : new Set<string>();
+if (borrados.size) console.log(`${borrados.size} ${borrados.size === 1 ? 'archivo se borró' : 'archivos se borraron'} a propósito antes: no los vuelvo a cargar.\n`);
+
 let bien = 0;
 let mal = 0;
 let repetidos = 0;
@@ -307,6 +316,12 @@ for (const [i, ruta] of archivos.entries()) {
       continue;
     }
 
+    const original = archivoDe(ruta);
+    if (original && borrados.has(original)) {
+      console.log('se borró a propósito, lo salto');
+      repetidos++;
+      continue;
+    }
     const r = await aprender(nombre, datos, {
       subidoPor: opts.quien || 'cargador',
       concesionId: opts.concesion ?? undefined,
