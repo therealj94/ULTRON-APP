@@ -193,6 +193,11 @@ fi
 paso "6. Túneles al cerebro (${CEREBRO})"
 if [ -n "${ELECTRUM_CLAVE_DB:-}" ]; then
   CLAVE="$ELECTRUM_CLAVE_DB"
+elif [ -r /root/.electrum/db-url ]; then
+  # Llegó cifrada con la llave de este nodo (solo él la descifra) y vive aquí, 600, sin pasar en
+  # claro por el historial de SSM. Se usa la clave tal cual va en la URL, con su codificación.
+  CLAVE=$(python3 -c 'from urllib.parse import urlsplit; print(urlsplit(open("/root/.electrum/db-url").read().strip()).password or "")')
+  echo "  clave tomada de /root/.electrum/db-url"
 else
   echo "La clave está en el cerebro, en /root/electrum-db-url. No viaja por aquí a propósito."
   read -rsp "  Clave del usuario electrum: " CLAVE; echo

@@ -69,9 +69,10 @@ Lo que se aparta a propósito, y qué hacer con ello:
   fragmento lleva un vector de 1024 dimensiones (~4 KB más su índice HNSW). Comprobar `df -h` y el tamaño
   de la base antes, y tener una copia.
 - **Los lotes van a su propio cubo**, `electrum-lotes-548380372606` (privado, cifrado, solo TLS). Los
-  conserva: solo limpia subidas multiparte cortadas a los 7 días. El cubo de trasvase
-  (`electrum-expedientes-…`) en cambio borra TODO a los 60 días —su regla `limpiar-trasvase` tiene el prefijo
-  vacío y alcanza también a `biblioteca/`—; `cargar-lote s3://…/entrada/x/` sigue sirviendo para lo de ahí.
+  conserva: solo limpia subidas multiparte cortadas a los 7 días. En el cubo de trasvase
+  (`electrum-expedientes-…`) caducan a los 60 días `entrada/` y `tmp-claude/` (hasta el 8-oct-2026 la regla
+  tenía el prefijo vacío y alcanzaba también a `biblioteca/`); `cargar-lote s3://…/entrada/x/` sigue sirviendo
+  para lo de ahí.
 - **Coste**: m6i.2xlarge ≈ 0,38 USD/h encendido. Apagado solo se paga el disco (200 GB gp3 ≈ 16 USD/mes);
   destruido, nada.
 
@@ -101,5 +102,22 @@ teselas-lote lote-1 --mosaico "HOJAS CARTOGRAFICAS" --publicar
 - Web Mercator, WebP, hasta zoom 15 (`ZOOM_MAX`). Una hoja 1606 de 0,5 GB quedó en 209 MB, zoom 9 a 15.
 - `--publicar` sube a `biblioteca/teselas/` y **fusiona** `indice.json`: lo que ya estaba se queda y antes se guarda
   `indice.antes-<fecha>.json` en el cubo para volver atrás. Dr Electrum relee el índice cada 5 minutos.
-- Ojo: `biblioteca/` está bajo la regla de 60 días del cubo de trasvase (ver arriba). Sin cambiarla, las teselas
-  publicadas, incluidas las de JICA y Sentinel-2 del 28-sep, desaparecen a los 60 días.
+- `biblioteca/` ya no caduca: desde el 8-oct-2026 la regla de 60 días del cubo de trasvase alcanza solo a
+  `entrada/` y `tmp-claude/`.
+
+## Curvas de nivel (`curvas-lote`)
+
+```bash
+curvas-lote lote-1          # el shapefile de curvas del lote → PMTiles vectorial (tippecanoe)
+teselas-lote lote-1 --publicar
+```
+
+Un millón de líneas de 20 m no van a la base: van como teselas vectoriales, con su cota. De lejos solo las
+maestras (cada 100 m), desde el zoom 13 todas, rotuladas. En el mapa salen en la sección «Relieve» del control
+de capas (necesita el soporte de líneas de `Mapa.tsx`, que entra con el mismo cambio).
+
+## La clave de la base, sin que pase en claro
+
+`cargar-lote` la toma de `ELECTRUM_CLAVE_DB`, o de `/root/.electrum/db-url` (600), o la pregunta. Para dejarla
+en el nodo sin teclearla: el nodo genera un par de llaves, el cerebro cifra `/root/electrum-db-url` con la
+pública (RSA-OAEP) y el nodo la descifra. Por SSM solo viajan la llave pública y el texto cifrado.
