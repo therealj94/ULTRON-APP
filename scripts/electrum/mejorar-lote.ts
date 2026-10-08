@@ -28,14 +28,16 @@ const POCO_TEXTO = `
          CASE WHEN coalesce(d.paginas, 0) > 3 AND coalesce(f.car, 0) BETWEEN 7400 AND 8200 THEN 'cortado' ELSE 'poco_texto' END AS estado
     FROM documento d
     LEFT JOIN (SELECT documento_id, sum(length(texto))::int AS car FROM fragmento GROUP BY documento_id) f ON f.documento_id = d.id
-   WHERE d.archivo LIKE $1
+   WHERE d.archivo LIKE $1 ESCAPE '\\'
      AND ((coalesce(d.paginas, 0) > 3 AND coalesce(f.car, 0) BETWEEN 7400 AND 8200)
        OR (coalesce(d.paginas, 0) >= 3 AND coalesce(f.car, 0) < d.paginas * 400))
    ORDER BY d.id`;
 
 async function listar(prefijo: string) {
   const p = prefijo.replace(/\/?$/, '/');
-  const filas = await consulta<{ id: string; archivo: string; estado: string }>(POCO_TEXTO, [`${p}%`]);
+  // El prefijo va literal: «_» y «%» en un nombre de lote no pueden volverse comodines del LIKE.
+  const literal = p.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const filas = await consulta<{ id: string; archivo: string; estado: string }>(POCO_TEXTO, [`${literal}%`]);
   for (const f of filas) console.log(`${f.id}\t${f.estado}\t${f.archivo.slice(p.length)}`);
   console.error(`[mejorar] ${filas.length} con poco texto o cortados bajo ${p}`);
 }
@@ -55,7 +57,8 @@ async function cargarOcr(lista: string, dir: string) {
       falta++;
       continue;
     }
-    const r = await cargarTextoEn(Number(id), path.basename(fuente), fs.readFileSync(fuente), QUIEN);
+    // Solo si mejora: se compara ANTES de reemplazar, así un OCR más corto no pisa una lectura mejor.
+    const r = await cargarTextoEn(Number(id), path.basename(fuente), fs.readFileSync(fuente), QUIEN, false, true);
     if (r.ok && r.ahora > r.antes) mejor++;
     else igual++;
     console.log(`${r.ok && r.ahora > r.antes ? '✓' : '='} ${rel}: ${r.dicho}`);
@@ -68,13 +71,13 @@ async function repetidos(aplicar: boolean) {
   // texto son el mismo documento dos veces (un .docx guardado de nuevo, una copia en otra carpeta).
   const grupos = await consulta<{ ids: string[]; nombre: string; n: number }>(
     `WITH t AS (
-       SELECT d.id, lower(d.nombre) AS ln, d.nombre,
+       SELECT d.id, lower(d.nombre) AS ln, d.nombre, coalesce(d.organizacion, '') AS org, coalesce(d.concesion_id, 0) AS conc,
               md5(string_agg(f.texto, '' ORDER BY f.pagina, f.orden)) AS h
          FROM documento d JOIN fragmento f ON f.documento_id = d.id
         GROUP BY d.id
      )
      SELECT array_agg(id::text ORDER BY id) AS ids, min(nombre) AS nombre, count(*)::int AS n
-       FROM t GROUP BY ln, h HAVING count(*) > 1 ORDER BY 2`
+       FROM t GROUP BY ln, h, org, conc HAVING count(*) > 1 ORDER BY 2`
   );
   const sobran = grupos.flatMap((g) => g.ids.slice(1).map(Number));
   for (const g of grupos) console.log(`${g.n}× ${g.nombre}  (se queda ${g.ids[0]}, sobran ${g.ids.slice(1).join(', ')})`);
