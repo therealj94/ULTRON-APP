@@ -119,7 +119,7 @@ const silencio = async <T>(f: () => Promise<T>): Promise<T> => {
 
 test('ida y vuelta: se sella con AES-256-GCM, cabecera versionada con kid, y abre igual; cada escritura con su llave de datos', () => {
   const ctx = { tipo: 'caras' as const, huella: 'a'.repeat(40) };
-  const dato = { version: 1, personas: [{ id: 'x', nombre: 'Bea', vectores: [vec(128, 1)] }], rev: 3, lapidas: [{ id: 'z', t: 9 }] };
+  const dato = { version: 1, personas: [{ id: 'x', nombre: 'Bea Ñúñez', vectores: [vec(128, 1)] }], rev: 3, lapidas: [{ id: 'z', t: 9 }] };
   const s1 = sobre.sellarBiometria(dato, ctx) as any;
   const s2 = sobre.sellarBiometria(dato, ctx) as any;
   assert.equal(s1.sobre, 'aura-bio');
@@ -131,7 +131,8 @@ test('ida y vuelta: se sella con AES-256-GCM, cabecera versionada con kid, y abr
   assert.ok(!LLAVE_A.includes(s1.kid) && !JSON.stringify(s1).includes(LLAVE_A), 'el kid no es el secreto');
   assert.notEqual(s1.datos, s2.datos, 'IV y llave de datos nuevos en cada escritura');
   assert.notEqual(s1.llave, s2.llave);
-  assert.doesNotMatch(JSON.stringify(s1), /Bea|vectores|consentimiento/);
+  // Marcas que el base64url del cifrado no puede formar por azar («Bea» suelto sí: salía 1 de cada ~200 corridas).
+  assert.doesNotMatch(JSON.stringify(s1), /Ñúñez|vectores|consentimiento/);
   // Por fuera, lo durable (ids y horas) con «nadie», para el código de antes; nada biométrico.
   assert.deepEqual([s1.version, s1.personas, s1.rev, s1.lapidas], [1, [], 3, [{ id: 'z', t: 9 }]]);
   const r = sobre.abrirBiometria(s1, ctx);
@@ -520,7 +521,7 @@ test('nunca al log: ni vectores ni nombres, tampoco cuando S3 falla o el sobre n
   }
   const todo = lineas.join('\n');
   assert.ok(lineas.length > 0, 'hubo avisos');
-  assert.doesNotMatch(todo, /Zoe|Secreta/);
+  assert.doesNotMatch(todo, /Zoe Secreta|Secreta/);
   for (const x of v.slice(0, 16)) if (Math.abs(x) > 0.01) assert.ok(!todo.includes(String(x)), `el número ${x} del vector no sale al log`);
   assert.doesNotMatch(todo, new RegExp(LLAVE_A));
 });
