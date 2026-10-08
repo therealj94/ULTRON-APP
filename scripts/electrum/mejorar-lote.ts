@@ -7,7 +7,8 @@
  *   tsx scripts/electrum/mejorar-lote.ts --listar s3://cubo/lote/ > pendientes.tsv
  *       id <TAB> estado <TAB> ruta del original dentro del lote, de lo que tiene poco texto
  *   tsx scripts/electrum/mejorar-lote.ts --cargar-ocr pendientes.tsv dir-ocr/
- *       pone el texto de dir-ocr/<ruta sin extensión>.txt en cada documento (solo si mejora)
+ *       pone el texto de dir-ocr/<ruta sin extensión>.txt en cada documento (solo si mejora); si no
+ *       hay .txt pero está dir-ocr/<ruta> tal cual, lo relee con su lector (un cortado viejo)
  *   tsx scripts/electrum/mejorar-lote.ts --repetidos [--aplicar]
  *       copias con el mismo nombre y el mismo texto: las lista; con --aplicar borra todas menos una
  *
@@ -45,12 +46,16 @@ async function cargarOcr(lista: string, dir: string) {
   let falta = 0;
   for (const linea of fs.readFileSync(lista, 'utf8').split('\n').filter(Boolean)) {
     const [id, , rel] = linea.split('\t');
+    // El .txt del OCR si lo hay; si no, el archivo mismo (con su lector): así se relee entero un
+    // documento que quedó cortado con el tope viejo y cuyo original volvió a llegar en un lote.
     const txt = path.join(dir, rel.replace(/\.[^./]+$/, '') + '.txt');
-    if (!fs.existsSync(txt) || !fs.statSync(txt).size) {
+    const crudo = path.join(dir, rel);
+    const fuente = [txt, crudo].find((f) => fs.existsSync(f) && fs.statSync(f).isFile() && fs.statSync(f).size);
+    if (!fuente) {
       falta++;
       continue;
     }
-    const r = await cargarTextoEn(Number(id), path.basename(txt), fs.readFileSync(txt), QUIEN);
+    const r = await cargarTextoEn(Number(id), path.basename(fuente), fs.readFileSync(fuente), QUIEN);
     if (r.ok && r.ahora > r.antes) mejor++;
     else igual++;
     console.log(`${r.ok && r.ahora > r.antes ? '✓' : '='} ${rel}: ${r.dicho}`);
