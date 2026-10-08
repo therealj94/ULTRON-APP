@@ -35,9 +35,15 @@ export type PeticionVozPcm = {
   privado: boolean;
   previo?: string;
   siguiente?: string;
+  /** Dr Electrum (/api/electrum/voz/pcm): su plataforma, la voz del personaje que habla y si es la primera frase. */
+  plataforma?: 'ultron' | 'electrum';
+  vozPropia?: string;
+  primera?: boolean;
 };
 
 export type DepsVozPcm = {
+  /** Dónde se monta: por omisión /api/tts/pcm (AU-RA); Dr Electrum, /api/electrum/voz/pcm. GET y POST, siempre. */
+  ruta?: string;
   exigir: express.RequestHandler;
   limitar: (max: number, ventanaMs?: number, grupo?: string) => express.RequestHandler;
   leer: (req: express.Request) => PeticionVozPcm;
@@ -107,7 +113,7 @@ export async function primerAudio(cuerpo: ReadableStream<Uint8Array>, senal?: Ab
 export const RUTA_VOZ_PCM = '/api/tts/pcm';
 
 export function montarVozPcm(app: express.Express, d: DepsVozPcm) {
-  app.all(RUTA_VOZ_PCM, d.exigir, d.limitar(60, 60_000, 'voz'), async (req, res) => {
+  app.all(d.ruta || RUTA_VOZ_PCM, d.exigir, d.limitar(60, 60_000, 'voz'), async (req, res) => {
     const p = d.leer(req);
     if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
     // Sin sesión (server/seguridad.ts exigirMesaOClip): solo lo ya guardado; lo privado nunca lo está.

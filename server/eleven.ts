@@ -64,11 +64,17 @@ export function modeloPrimera(): string | null {
   return !v || v === 'no' ? null : v;
 }
 
-/** El modelo para esta locución: el rápido si es la primera frase de AU-RA, corta y sin etiquetas; si no, el de siempre. */
-export function modeloDeLocucion(o: { texto: string; previo?: string; plataforma: 'ultron' | 'electrum' }): string {
+/**
+ * El modelo para esta locución: el rápido si es la primera frase de AU-RA, corta y sin etiquetas; si no, el de siempre.
+ * Dr Electrum, solo cuando su cliente la marca como la primera (`primera`, /api/electrum/voz y su PCM): su pantalla
+ * habla también trozos sin `previo` que no son el comienzo de la respuesta (el dictado, la mesa), y esos siguen con el
+ * modelo expresivo.
+ */
+export function modeloDeLocucion(o: { texto: string; previo?: string; plataforma: 'ultron' | 'electrum'; primera?: boolean }): string {
   const rapido = modeloPrimera();
   const texto = String(o.texto || '');
-  if (rapido && o.plataforma === 'ultron' && !String(o.previo || '').trim() && texto.length <= PRIMERA_MAX_CARACTERES && !/\[[^\]\n]{1,80}\]/.test(texto)) return rapido;
+  const esPrimera = o.plataforma === 'ultron' || o.primera === true;
+  if (rapido && esPrimera && !String(o.previo || '').trim() && texto.length <= PRIMERA_MAX_CARACTERES && !/\[[^\]\n]{1,80}\]/.test(texto)) return rapido;
   return modeloEleven();
 }
 /* ── fin de la primera frase rápida ── */

@@ -32,8 +32,11 @@ export type MedidaTurno = {
   tope?: { dicho: number; total: number };
   /** Turno dictado por voz (con los topes de la voz). */
   hablado?: boolean;
-  /** `llamada`: el turno vino de la conversación de voz (server/voz-agente.ts, que ya deja su `[voz] turno`). */
-  camino?: 'mesa' | 'llamada';
+  /**
+   * `llamada`: el turno vino de la conversación de voz (server/voz-agente.ts, que ya deja su `[voz] turno`).
+   * `electrum`: un turno de Dr Electrum (server/electrum/turno.ts).
+   */
+  camino?: 'mesa' | 'llamada' | 'electrum';
   /**
    * El tamaño de lo que se le mandó al modelo que contestó (José, 6-oct: «primera ficha» 905 → 2023 ms de un día a
    * otro y no se sabía si era el prompt o el proveedor): caracteres del system y los mensajes, y de las herramientas.

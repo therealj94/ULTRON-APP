@@ -63,6 +63,11 @@ export type TurnoGuardado = {
   tareas?: { id: string; title: string; state: string; version: number; updatedAt: string }[];
   /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): el reintento lo devuelve igual. */
   propuestaTaller?: unknown;
+  /**
+   * El turno de Dr Electrum entero (server/electrum/turno-idempotente.ts), con su forma propia: texto, voces, panel,
+   * traza, órdenes del mapa. Sus claves van en otro espacio (`electrum:<quién>`): nunca chocan con las de AU-RA.
+   */
+  electrum?: Record<string, unknown>;
 };
 
 /** El registro durable de un turno (lib/durable.ts). */

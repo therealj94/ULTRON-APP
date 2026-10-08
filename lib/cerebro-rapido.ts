@@ -21,8 +21,9 @@
  *
  * Usa las credenciales de AWS que el servidor ya tiene (las de S3, con permiso solo para estos modelos).
  */
-import { BedrockRuntimeClient, ConverseStreamCommand, type Message, type SystemContentBlock, type Tool } from '@aws-sdk/client-bedrock-runtime';
-import { anotarExito, anotarFallo, disponible } from './cognitivo/interruptor';
+import { BedrockRuntimeClient, ConverseStreamCommand, type ContentBlock, type Message, type SystemContentBlock, type Tool } from '@aws-sdk/client-bedrock-runtime';
+import type { DocumentType } from '@smithy/types';
+import { anotarExito, anotarFallo, disponible, type Servicio } from './cognitivo/interruptor';
 import { analizarRespuesta } from './afirmacion';
 
 /**
@@ -65,7 +66,7 @@ export function modeloRapido(): string {
  * una identidad web (la cadena normal del SDK; revisión de Codex en #135); sin ninguna de esas pistas
  * (las pruebas, un servidor local sin AWS) no se intenta.
  */
-export function cerebroRapidoActivo(env: NodeJS.ProcessEnv = process.env): boolean {
+export function cerebroRapidoActivo(env: NodeJS.ProcessEnv = process.env, servicio: ServicioRapido = 'cerebro_rapido'): boolean {
   if (String(env.CEREBRO_VOZ || 'nova').toLowerCase() === 'qwen') return false;
   const hayCredenciales =
     !!(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) ||
@@ -74,25 +75,37 @@ export function cerebroRapidoActivo(env: NodeJS.ProcessEnv = process.env): boole
     !!env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
     !!env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
     String(env.CEREBRO_VOZ || '').toLowerCase() === 'nova';
-  return hayCredenciales && disponible('cerebro_rapido');
+  return hayCredenciales && disponible(servicio);
+}
+
+/**
+ * DE QUIÉN ES LA SALUD. AU-RA y Dr Electrum pueden correr en el mismo proceso y usan los mismos modelos de Bedrock, pero
+ * piden cosas muy distintas: un turno de Electrum lleva el cerebro de minas entero y el catastro, y tarda o falla por
+ * razones que no son de la voz de AU-RA. Con `espacio: 'electrum'` (hablarConManos) sus fallos van a su propio
+ * cortacircuitos y a su propia salud por modelo: no apagan ni reordenan el cerebro de AU-RA, ni al revés.
+ */
+export type EspacioCerebro = 'aura' | 'electrum';
+export type ServicioRapido = Extract<Servicio, 'cerebro_rapido' | 'cerebro_rapido_electrum'>;
+export function servicioDe(espacio: EspacioCerebro = 'aura'): ServicioRapido {
+  return espacio === 'electrum' ? 'cerebro_rapido_electrum' : 'cerebro_rapido';
 }
 
 /**
  * Fallos seguidos de Bedrock: el cortacircuitos se abre al tercero, no al primero (un tropiezo de red
- * no apaga la voz rápida para todos; revisión de Codex en #135). Un éxito lo pone en cero.
+ * no apaga la voz rápida para todos; revisión de Codex en #135). Un éxito lo pone en cero. Cada servicio cuenta los suyos.
  */
 export const FALLOS_PARA_APAGAR = 3;
-let fallosSeguidos = 0;
-export function anotarFalloRapido(): void {
-  fallosSeguidos++;
-  if (fallosSeguidos >= FALLOS_PARA_APAGAR) {
-    fallosSeguidos = 0;
-    anotarFallo('cerebro_rapido');
-  }
+const fallosSeguidos = new Map<ServicioRapido, number>();
+export function anotarFalloRapido(servicio: ServicioRapido = 'cerebro_rapido'): void {
+  const n = (fallosSeguidos.get(servicio) || 0) + 1;
+  if (n >= FALLOS_PARA_APAGAR) {
+    fallosSeguidos.set(servicio, 0);
+    anotarFallo(servicio);
+  } else fallosSeguidos.set(servicio, n);
 }
-export function anotarExitoRapido(): void {
-  fallosSeguidos = 0;
-  anotarExito('cerebro_rapido');
+export function anotarExitoRapido(servicio: ServicioRapido = 'cerebro_rapido'): void {
+  fallosSeguidos.set(servicio, 0);
+  anotarExito(servicio);
 }
 
 let cliente: BedrockRuntimeClient | null = null;
@@ -126,6 +139,129 @@ export function aBedrock(mensajes: MensajeChat[]): { system: SystemContentBlock[
       ultimo.content = [{ text: `${prev}\n\n${texto}` }];
     } else messages.push({ role, content: [{ text: texto }] });
   }
+  while (messages.length && messages[messages.length - 1].role !== 'user') messages.pop();
+  return { system, messages };
+}
+
+/**
+ * UN HILO CON VUELTAS DE HERRAMIENTAS (el harness de lib/agente/bucle.ts, que usa Dr Electrum): el asistente pidió
+ * herramientas (`tool_calls`, formato OpenAI/Ollama) y cada resultado volvió como `role: 'tool'`. `aBedrock` no sabe de
+ * eso (AU-RA traduce cada herramienta a su línea de siempre y no le devuelve resultados al modelo): sigue intacto, y esto
+ * es aparte.
+ *
+ * Con `nativas` (el pedido lleva toolConfig): cada llamada pasa a un bloque `toolUse` y su resultado a un `toolResult`
+ * en el mensaje de la persona que sigue, como exige Bedrock. Un `toolUse` sin resultado (el bucle cortó, una llamada
+ * repetida que no se volvió a correr) se cierra con un resultado que lo dice: sin eso, Bedrock rechaza el pedido entero.
+ * Un resultado sin su llamada va como texto. Sin `nativas` (la vuelta de cierre, sin herramientas: Bedrock no acepta
+ * `toolUse` sin toolConfig), las llamadas y sus resultados van como texto.
+ */
+export type MensajeConManos = MensajeChat & { tool_calls?: unknown[]; tool_call_id?: string; tool_name?: string };
+
+/** El id de una llamada como lo acepta Bedrock (`[a-zA-Z0-9_-]{1,64}`). */
+function idBedrock(crudo: unknown, numerar: () => number): string {
+  const s = String(crudo ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  return s || `llamada_${numerar()}`;
+}
+
+/**
+ * Las llamadas de un mensaje del asistente: nombre, argumentos (objeto) e id. Sin id (el nodo no los pone), uno nuevo de
+ * `numerar`, único en todo el hilo.
+ */
+function llamadasDe(m: MensajeConManos, numerar: () => number): Array<{ id: string; crudo: string; nombre: string; input: Record<string, unknown> }> {
+  if (!Array.isArray(m.tool_calls)) return [];
+  const out: Array<{ id: string; crudo: string; nombre: string; input: Record<string, unknown> }> = [];
+  m.tool_calls.forEach((t: any) => {
+    const f = t?.function || t;
+    const nombre = String(f?.name || '').trim();
+    if (!nombre) return;
+    let input: unknown = f?.arguments ?? f?.parameters ?? {};
+    if (typeof input === 'string') {
+      try {
+        input = JSON.parse(input);
+      } catch {
+        input = {};
+      }
+    }
+    const crudo = String(t?.id ?? '');
+    out.push({ id: idBedrock(crudo, numerar), crudo, nombre, input: input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {} });
+  });
+  return out;
+}
+
+export function aBedrockConManos(mensajes: MensajeConManos[], o: { nativas: boolean }): { system: SystemContentBlock[]; messages: Message[] } {
+  const system: SystemContentBlock[] = [];
+  const messages: Message[] = [];
+  let n = 0;
+  const numerar = () => n++;
+  const usados = new Set<string>();
+  /** Las llamadas del último mensaje del asistente que todavía no tienen su resultado. */
+  let pendientes: Array<{ id: string; crudo: string; nombre: string }> = [];
+  const poner = (role: 'user' | 'assistant', bloques: ContentBlock[]) => {
+    if (!bloques.length) return;
+    if (!messages.length && role === 'assistant') return;
+    const ultimo = messages[messages.length - 1];
+    if (ultimo && ultimo.role === role) ultimo.content = [...(ultimo.content || []), ...bloques];
+    else messages.push({ role, content: bloques });
+  };
+  const cerrarPendientes = () => {
+    if (!pendientes.length) return;
+    poner(
+      'user',
+      pendientes.map((p) => ({ toolResult: { toolUseId: p.id, status: 'error' as const, content: [{ text: `«${p.nombre}» no se ejecutó en este turno: no hay resultado.` }] } }))
+    );
+    pendientes = [];
+  };
+  for (const m of mensajes) {
+    const texto = String(m.content ?? '').trim();
+    if (m.role === 'system') {
+      if (texto) system.push({ text: texto });
+      continue;
+    }
+    if (m.role === 'tool') {
+      const resultado = texto || '(sin resultado)';
+      if (!o.nativas) {
+        poner('user', [{ text: `(Resultado de «${m.tool_name || 'la herramienta'}») ${resultado}` }]);
+        continue;
+      }
+      // Su llamada: por id; si no trae, la primera pendiente con ese nombre; si no, la primera pendiente.
+      const id = m.tool_call_id ? String(m.tool_call_id) : '';
+      let i = id ? pendientes.findIndex((p) => p.crudo === id || p.id === id) : -1;
+      if (i < 0 && m.tool_name) i = pendientes.findIndex((p) => p.nombre === m.tool_name);
+      if (i < 0 && pendientes.length && !id) i = 0;
+      if (i < 0) {
+        poner('user', [{ text: `(Resultado de «${m.tool_name || 'la herramienta'}») ${resultado}` }]);
+        continue;
+      }
+      const [p] = pendientes.splice(i, 1);
+      poner('user', [{ toolResult: { toolUseId: p.id, content: [{ text: resultado }] } }]);
+      continue;
+    }
+    if (m.role === 'assistant') {
+      cerrarPendientes();
+      const llamadas = llamadasDe(m, numerar);
+      if (!messages.length) continue;
+      if (!o.nativas || !llamadas.length) {
+        const pedidas = llamadas.map((l) => `(Pedí «${l.nombre}» con ${JSON.stringify(l.input)})`).join('\n');
+        const todo = [texto, pedidas].filter(Boolean).join('\n');
+        if (todo) poner('assistant', [{ text: todo }]);
+        continue;
+      }
+      // Ids repetidos rompen el pedido: se desempatan (en todo el hilo).
+      for (const l of llamadas) {
+        let id = l.id;
+        for (let k = 2; usados.has(id); k++) id = `${l.id.slice(0, 58)}_${k}`;
+        usados.add(id);
+        l.id = id;
+      }
+      poner('assistant', [...(texto ? [{ text: texto }] : []), ...llamadas.map((l) => ({ toolUse: { toolUseId: l.id, name: l.nombre, input: l.input as DocumentType } }))]);
+      pendientes = llamadas.map((l) => ({ id: l.id, crudo: l.crudo, nombre: l.nombre }));
+      continue;
+    }
+    // La persona (o el sistema hablándole al modelo en su lugar): primero se cierran las llamadas sin resultado.
+    cerrarPendientes();
+    if (texto) poner('user', [{ text: texto }]);
+  }
+  cerrarPendientes();
   while (messages.length && messages[messages.length - 1].role !== 'user') messages.pop();
   return { system, messages };
 }
@@ -266,20 +402,23 @@ export const FALLOS_PARA_DEGRADAR = 3;
 export const VENTANA_SALUD_MS = 5 * 60_000;
 type Salud = { fallosSeguidos: number; ultimoFallo: number };
 const salud = new Map<string, Salud>();
+/** La llave de la salud de un modelo: la de AU-RA es el modelo solo (como siempre); la de otro espacio va aparte. */
+const llaveSalud = (modelo: string, espacio: EspacioCerebro = 'aura') => (espacio === 'aura' ? modelo : `${espacio}|${modelo}`);
 
 /** Contestó a tiempo: vuelve a contar desde cero. */
-function saludExito(modelo: string): void {
-  salud.delete(modelo);
+function saludExito(modelo: string, espacio?: EspacioCerebro): void {
+  salud.delete(llaveSalud(modelo, espacio));
 }
 /** No dio su primera señal dentro de su espera o falló antes de decir algo (una vez por turno). */
-function saludFallo(modelo: string, ahora = Date.now()): void {
-  const s = salud.get(modelo);
+function saludFallo(modelo: string, ahora = Date.now(), espacio?: EspacioCerebro): void {
+  const k = llaveSalud(modelo, espacio);
+  const s = salud.get(k);
   const vigente = s && ahora - s.ultimoFallo < VENTANA_SALUD_MS;
-  salud.set(modelo, { fallosSeguidos: (vigente ? s.fallosSeguidos : 0) + 1, ultimoFallo: ahora });
+  salud.set(k, { fallosSeguidos: (vigente ? s.fallosSeguidos : 0) + 1, ultimoFallo: ahora });
 }
 /** ¿Va detrás de los sanos? */
-export function modeloDegradado(modelo: string, ahora = Date.now()): boolean {
-  const s = salud.get(modelo);
+export function modeloDegradado(modelo: string, ahora = Date.now(), espacio?: EspacioCerebro): boolean {
+  const s = salud.get(llaveSalud(modelo, espacio));
   return !!s && s.fallosSeguidos >= FALLOS_PARA_DEGRADAR && ahora - s.ultimoFallo < VENTANA_SALUD_MS;
 }
 /**
@@ -312,14 +451,14 @@ export function reiniciarSaludModelos(): void {
  * extra) y los degradados detrás de los sanos. Las esperas van por PUESTO (el primero espera lo del primero), así que un
  * principal degradado no le deja su espera corta al de respaldo ni se la quita.
  */
-export function planDeModelos(ruta: RutaCerebro = 'manos', ahora = Date.now()): { modelo: string; primeraMs: number }[] {
+export function planDeModelos(ruta: RutaCerebro = 'manos', ahora = Date.now(), espacio?: EspacioCerebro): { modelo: string; primeraMs: number }[] {
   const c = conf();
   const respaldoMs = c.respaldoPrimeraMs > 0 ? c.respaldoPrimeraMs : Math.round(c.primeraMs * 1.5);
   const charla = ruta === 'charla' ? modeloCharla() : null;
   const orden = [...(charla ? [charla] : []), c.modelo, ...(modeloRespaldo() ? [modeloRespaldo() as string] : []), ...modelosExtra()].filter((m, i, a) => !!m && a.indexOf(m) === i);
   const esperas = [...(charla ? [Number(process.env.CEREBRO_VOZ_CHARLA_PRIMERA_MS || CHARLA_PRIMERA_MS_OMISION)] : []), c.primeraMs];
   const espera = (i: number) => esperas[i] ?? respaldoMs;
-  const adaptado = [...orden.filter((m) => !modeloDegradado(m, ahora)), ...orden.filter((m) => modeloDegradado(m, ahora))];
+  const adaptado = [...orden.filter((m) => !modeloDegradado(m, ahora, espacio)), ...orden.filter((m) => modeloDegradado(m, ahora, espacio))];
   return adaptado.map((modelo, i) => ({ modelo, primeraMs: espera(i) }));
 }
 
@@ -419,11 +558,24 @@ const reloj = () => Math.round(performance.now());
  * otro modelo (se oiría dos veces): lanza. Lanza también si ninguno dio señal en el plazo total, o si todos fallaron
  * con error (quien llama sigue con el Qwen del nodo), con `intentos` en el error.
  */
-export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Tool[], senal?: AbortSignal, o: { maxTokens?: number; ruta?: RutaCerebro } = {}): AsyncGenerator<PiezaManos> {
-  const { system, messages } = aBedrock(mensajes);
+export async function* hablarConManos(
+  mensajes: MensajeChat[],
+  herramientas: Tool[],
+  senal?: AbortSignal,
+  o: {
+    maxTokens?: number;
+    ruta?: RutaCerebro;
+    /** De quién son la salud y el cortacircuitos (ver EspacioCerebro). Sin él, los de AU-RA, como siempre. */
+    espacio?: EspacioCerebro;
+    /** El hilo trae vueltas de herramientas (`tool_calls` y `role: 'tool'`): aBedrockConManos en vez de aBedrock. */
+    conVueltas?: boolean;
+  } = {}
+): AsyncGenerator<PiezaManos> {
+  const { system, messages } = o.conVueltas ? aBedrockConManos(mensajes as MensajeConManos[], { nativas: herramientas.length > 0 }) : aBedrock(mensajes);
   if (!messages.length) throw new Error('sin mensaje de la persona');
+  const servicio = servicioDe(o.espacio);
   const t0 = reloj();
-  const plan = planDeModelos(o.ruta);
+  const plan = planDeModelos(o.ruta, Date.now(), o.espacio);
   const totalMs = Number(process.env.CEREBRO_VOZ_TOTAL_MS || TOTAL_PRIMERA_MS_OMISION);
   const maxLanzamientos = Math.max(1, Math.round(Number(process.env.CEREBRO_VOZ_LANZAMIENTOS || LANZAMIENTOS_OMISION)) || 1);
   const intentos: IntentoManos[] = [];
@@ -468,8 +620,8 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
   const anotarSalud = (modelo: string, bien: boolean) => {
     if (anotadosSalud.has(modelo)) return;
     anotadosSalud.add(modelo);
-    if (bien) saludExito(modelo);
-    else saludFallo(modelo);
+    if (bien) saludExito(modelo, o.espacio);
+    else saludFallo(modelo, Date.now(), o.espacio);
   };
   const cancelar = (c: Corrida, causa: string) => {
     if (c.cancelada || c.terminada) return;
@@ -649,7 +801,7 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
         }
         if (s.fin) {
           if (c !== ganador) continue;
-          anotarExitoRapido();
+          anotarExitoRapido(servicio);
           anotarLog();
           yield { fin: { ...s.fin, ...(intentos.length > 1 ? { intentos } : {}) } };
           return;
@@ -661,7 +813,7 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
         if (c === ganador) {
           // Ya dijo algo: no se repite con otro (se oiría dos veces). Quien llama se queda con lo dicho.
           cancelarTodas((x) => `cancelado (${c.modelo} ya contestaba)`);
-          anotarFalloRapido();
+          anotarFalloRapido(servicio);
           anotarLog();
           throw conIntentos(e);
         }
@@ -703,7 +855,7 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
         // Lento de verdad (agotó su espera sin decir nada): cuenta para la salud.
         for (const c of corridas) if (!c.intento.primeraMs && reloj() - c.desde >= c.esperaMs) anotarSalud(c.modelo, false);
         for (const p of plan.slice(lanzados)) intentos.push({ modelo: p.modelo, causa: `sin probar (plazo total de ${totalMs} ms)` });
-        anotarFalloRapido();
+        anotarFalloRapido(servicio);
         anotarLog();
         throw conIntentos(ultimoError instanceof Error && !vivas.length ? ultimoError : new Error(`el cerebro con manos no dio su primera señal útil en ${reloj() - t0} ms`));
       }

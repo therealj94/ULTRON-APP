@@ -104,6 +104,11 @@ const NOMBRE_AVATAR: Record<string, { es: string; en: string }> = {
   ojos: { es: 'Soy el Guardián, una inteligencia artificial que te cuida el espacio.', en: "I'm the Guardian, an AI that looks after your space." },
   claudio: { es: 'Soy Claudio, una inteligencia artificial, tu anfitrión de ideas.', en: "I'm Claudio, an AI, your ideas guy." },
   antonio: { es: 'Soy ANT-ONIO, una inteligencia artificial, tu aliado para organizarte.', en: "I'm ANT-ONIO, an AI, your sidekick for getting organized." },
+  // Dr Electrum (server/electrum/voz-frases.ts): el pulidor de su voz también dice la verdad con su nombre.
+  electrum: {
+    es: 'Soy Dr Electrum, una inteligencia artificial: un geólogo virtual que trabaja con el catastro y los expedientes.',
+    en: "I'm Dr Electrum, an AI: a virtual geologist working with the mining cadastre and the files.",
+  },
 };
 
 /** La verdad, en el personaje del avatar: lo que sustituye a una frase que decía que era humana. */
