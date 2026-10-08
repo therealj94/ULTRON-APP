@@ -20,7 +20,7 @@ import { pulirParaVoz } from '../lib/habla-natural';
 import { FrasesDelTurno, huellaFrase } from '../src-electrum/panel/frasesTurno';
 import { frasesGuardadas, guardadoDeElectrum, electrumDeGuardado, MAX_FRASES_GUARDADAS } from '../server/electrum/turno-idempotente';
 import { ColaVoz, PREVIO_MAX, type PedidoVoz } from '../mobile/src/electrum/colaVoz';
-import type { Reproducible, EstadoSonido } from '../mobile/src/lib/sonidoVivo';
+import type { Reproducible, EstadoSonido } from '../mobile/src/lib/sonidoTipos';
 import { ELECTRUM_LANZAMIENTOS_OMISION, ELECTRUM_PRIMERA_MS_OMISION, ELECTRUM_TOTAL_MS_OMISION, pensarElectrum, tiemposCerebroElectrum } from '../server/electrum/cerebro';
 import { anotarVozElectrum, cuentaVozDe, restanteVozElectrum } from '../server/electrum/cuenta-voz';
 import { quienDelHilo } from '../server/electrum/hilo';

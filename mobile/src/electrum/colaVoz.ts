@@ -10,9 +10,9 @@
  *  · cada frase que suena se anota en el registro de la voz (lib/interrupcion.ts `RegistroVoz`): con eso el oído
  *    reconoce su eco y, si la persona la corta, se sabe qué alcanzó a oír (`fraccion()` de la que sonaba).
  *
- * Un sonido es cualquier `Reproducible` (lib/sonidoVivo.ts): un `Audio.Sound` de expo-av o un `SonidoVivo`.
+ * Un sonido es cualquier `Reproducible` (lib/sonidoTipos.ts): un `Audio.Sound` de expo-av o un `SonidoVivo`.
  */
-import type { EstadoSonido, Reproducible } from '../lib/sonidoVivo';
+import type { EstadoSonido, Reproducible } from '../lib/sonidoTipos';
 import { letras, tienePalabras } from '../lib/cortesVoz';
 import type { FraseVoz } from './turnoVivo';
 

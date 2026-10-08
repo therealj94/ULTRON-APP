@@ -19,16 +19,8 @@
 import { VOZ_VIVO, eventoVozValido, nivelDeRms, type CodigoFallo, type EventoVoz } from './vozNativa';
 import type { ModuloVoz } from './auraVoz';
 
-/** Lo que playPrepared lee de cada aviso (expo-av AVPlaybackStatus lo cumple). */
-export type EstadoSonido = { isLoaded: boolean; isPlaying?: boolean; positionMillis?: number; durationMillis?: number; didJustFinish?: boolean; error?: string };
-
-/** Lo que la mesa usa de un sonido: Audio.Sound de expo-av o SonidoVivo. */
-export type Reproducible = {
-  setOnPlaybackStatusUpdate(cb: ((st: EstadoSonido) => void) | null): void;
-  playAsync(): Promise<unknown>;
-  stopAsync(): Promise<unknown>;
-  unloadAsync(): Promise<unknown>;
-};
+import type { EstadoSonido, Reproducible } from './sonidoTipos';
+export type { EstadoSonido, Reproducible } from './sonidoTipos';
 
 export type FalloVoz = { codigo: CodigoFallo; status?: number; motivo: string };
 

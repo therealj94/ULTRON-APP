@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { RegistroVoz } from '../mobile/src/lib/interrupcion';
 import { MotorTurbo, type TrozoAudio, type WsTurbo } from '../mobile/src/lib/turboMotor';
-import type { EstadoSonido, Reproducible } from '../mobile/src/lib/sonidoVivo';
+import type { EstadoSonido, Reproducible } from '../mobile/src/lib/sonidoTipos';
 import { ColaVoz, GUARDIA_VOZ_CAMPO, guardiaVozAlAbrir, guardiaVozCampoValida, type PedidoVoz } from '../mobile/src/electrum/colaVoz';
 import { ErrorHttp } from '../mobile/src/electrum/frases';
 import {
