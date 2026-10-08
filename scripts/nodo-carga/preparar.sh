@@ -22,7 +22,8 @@ apt-get update -q
 # hace las teselas vectoriales de las curvas de nivel (curvas-lote).
 apt-get install -y -q --no-install-recommends \
   ca-certificates curl unzip xz-utils jq tmux git python3 \
-  gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip unar tippecanoe python3-xlrd python3-openpyxl postgresql-client
+  gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip unar tippecanoe python3-xlrd python3-openpyxl postgresql-client \
+  libreoffice-impress-nogui libreoffice-writer-nogui
 
 # Node 22 del sitio oficial, comprobado contra su suma: el de Ubuntu es viejo y el código pide >=22.
 cd /tmp
@@ -87,6 +88,7 @@ ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/cargar-lote.sh /usr/local/b
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/teselas-lote.sh /usr/local/bin/teselas-lote
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/curvas-lote.sh /usr/local/bin/curvas-lote
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/con-cerebro.sh /usr/local/bin/con-cerebro
+ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/ocr-pendientes.sh /usr/local/bin/ocr-pendientes
 echo "código al día"
 CODIGO
 chmod +x /usr/local/bin/electrum-carga-codigo
