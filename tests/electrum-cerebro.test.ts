@@ -207,6 +207,14 @@ test('troceado de documentos: las citas tienen que poder comprobarse', async (t)
   });
 });
 
+test('troceado: el carácter nulo de algunos PDF de formulario no llega a la base', () => {
+  // PostgreSQL rechaza \u0000 en un texto y el documento entero no entraba (fichas de trámites de INHGEOMIN).
+  const t = trocear([{ pagina: 1, texto: 'Ficha\u0000 Descripción del Trámite\u0000\n\nConcesión minera de explotación' }]);
+  assert.ok(t.length > 0);
+  for (const x of t) assert.ok(!x.texto.includes('\u0000'), JSON.stringify(x.texto));
+  assert.match(t.map((x) => x.texto).join(' '), /Ficha Descripción del Trámite/);
+});
+
 test('búsqueda web: palabras clave sin vacías y relevancia al principio de palabra', async () => {
   const { palabrasClave, relevancia } = await import('../src/06-manos/web');
   assert.deepEqual(palabrasClave('¿Cuál es el precio del oro hoy?'), ['precio', 'oro']);
