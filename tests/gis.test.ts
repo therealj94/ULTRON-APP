@@ -18,6 +18,7 @@ import path from 'node:path';
 import {
   areaHectareas,
   centro,
+  declararPrefijosKml,
   distanciaKm,
   encuadre,
   ingerir,
@@ -128,6 +129,25 @@ test('KML: entra y se mide igual', async () => {
   // 0,01° de lado: ~1,111 km en latitud y ~1,078 km en longitud a 14° → ~119,8 ha.
   cerca(areaHectareas(capa!.geojson.features[0]), 119.8, 1.5);
   assert.match(capa!.origenCrs, /WGS84/);
+});
+
+test('KML de Google Earth con gx: sin declarar: entra igual', async () => {
+  // Así exporta Google Earth a menudo: usa <gx:…> y no pone xmlns:gx en la raíz. Antes el lector de
+  // XML se negaba («prefix is non-null and namespace is null») y la capa entera no entraba.
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Vetas</name>
+<Placemark><name>Veta El Peñón</name><gx:balloonVisibility>1</gx:balloonVisibility>
+<LineString><gx:altitudeMode>clampToGround</gx:altitudeMode><coordinates>-86.5,14.2,0 -86.49,14.21,0</coordinates></LineString></Placemark>
+<Placemark><name>Trinchera 1</name><Point><coordinates>-86.495,14.205,0</coordinates></Point></Placemark>
+</Document></kml>`;
+  const { capa, avisos } = await ingerir('Vetas el Peñon.kml', Buffer.from(kml, 'utf8'));
+  assert.ok(capa, avisos.map((a) => a.texto).join(' '));
+  assert.equal(capa.entidades, 2);
+  assert.deepEqual(capa.geojson.features.map((f: any) => f.properties.name).sort(), ['Trinchera 1', 'Veta El Peñón']);
+  // Lo que ya estaba declarado no se toca.
+  const bien = '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2"><gx:Tour/></kml>';
+  assert.equal(declararPrefijosKml(bien), bien);
+  assert.match(declararPrefijosKml('<kml><gx:Tour/></kml>'), /^<kml xmlns:gx="http:\/\/www\.google\.com\/kml\/ext\/2\.2">/);
 });
 
 test('GeoJSON proyectado: lo reproyecta si declara su EPSG', async () => {

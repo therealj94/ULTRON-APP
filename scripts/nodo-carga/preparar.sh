@@ -17,11 +17,12 @@ LOTES="__LOTES__"
 REGION="__REGION__"
 
 apt-get update -q
-# 7zip (`7z`) abre .rar y .7z, que el cargador rechaza y en los expedientes aparecen; tippecanoe
+# 7zip (`7z`) y unar abren .rar y .7z, que el cargador rechaza y en los expedientes aparecen;
+# xlrd + openpyxl pasan los .xls viejos a .xlsx; tippecanoe
 # hace las teselas vectoriales de las curvas de nivel (curvas-lote).
 apt-get install -y -q --no-install-recommends \
   ca-certificates curl unzip xz-utils jq tmux git python3 \
-  gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip tippecanoe
+  gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip unar tippecanoe python3-xlrd python3-openpyxl
 
 # Node 22 del sitio oficial, comprobado contra su suma: el de Ubuntu es viejo y el código pide >=22.
 cd /tmp

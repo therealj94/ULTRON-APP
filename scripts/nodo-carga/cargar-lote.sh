@@ -104,12 +104,32 @@ for vuelta in 1 2 3; do
     else apartar "$z" "zip roto o cifrado"; fi
   done < <(find "$LISTO" -type f -iname '*.zip' -print0)
   while IFS= read -r -d '' z; do
+    # El 7z de Ubuntu no trae el códec de RAR: los .rar de Windows (RAR4/RAR5) los abre unar.
     if 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
+    elif rm -rf "${z%.*}" && unar -q -f -D -o "${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
     else apartar "$z" "rar/7z roto o cifrado"; fi
   done < <(find "$LISTO" -type f \( -iname '*.rar' -o -iname '*.7z' \) -print0)
   [ "$abiertos" -gt 0 ] || break
   echo "  vuelta ${vuelta}: ${abiertos} comprimidos abiertos"
 done
+
+# Excel viejo (.xls, binario de Office 97): el lector entiende .xlsx, así que se convierte hoja por
+# hoja, con sus valores. Sin esto, las planillas de ensayos y presupuestos de los proyectos no entraban.
+while IFS= read -r -d '' x; do
+  if python3 - "$x" "${x%.*}.xlsx" <<'PY' >/dev/null 2>&1
+import sys, xlrd, openpyxl
+src, dst = sys.argv[1:]
+lib = xlrd.open_workbook(src)
+nuevo = openpyxl.Workbook()
+nuevo.remove(nuevo.active)
+for h in lib.sheets():
+    hoja = nuevo.create_sheet(title=(h.name or 'Hoja')[:31])
+    for r in range(h.nrows):
+        hoja.append(h.row_values(r))
+nuevo.save(dst)
+PY
+  then rm -f "$x"; else apartar "$x" "Excel .xls que no se pudo convertir"; fi
+done < <(find "$LISTO" -type f -iname '*.xls' -print0)
 
 # El cargador lee un shapefile entero en memoria; por encima de 300 MB tumba la carga (fueron las
 # curvas de nivel de todo el país). Eso es relieve, no catastro: se sirve como teselas.
