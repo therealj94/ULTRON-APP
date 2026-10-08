@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { AppAura } from './src/app/AppAura';
 import { ES_ELECTRUM } from './src/variante';
@@ -36,7 +36,12 @@ export default function App() {
   // Recargando (src/lib/recarga.ts): nada montado. Así todo <Video> de expo-av suelta su reproductor en el hilo
   // principal antes de que la recarga destruya la instancia desde otro (el cierre del 8-oct).
   const vacia = useRaizVacia();
-  if (vacia) return <View style={{ flex: 1, backgroundColor: '#000' }} />;
+  if (vacia)
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: '#8a8a8a', fontSize: 15 }}>Actualizando…</Text>
+      </View>
+    );
   // Cada toque, en cualquier pantalla, cuenta como actividad: la OTA no recarga en plena mano.
   // onTouchStart burbujea desde el hijo tocado sin quitarle el toque a nadie.
   return (

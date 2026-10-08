@@ -210,9 +210,14 @@ export function useActualizacionAlVolver() {
     const primera = setTimeout(() => buscar(0), PRIMERA_BUSQUEDA_MS);
     const tic = setInterval(() => {
       if (AppState.currentState !== 'active') return;
+      // Con una ya bajada no se busca en el mismo tic: la recarga quedaría en cola detrás de esa búsqueda (pantalla de
+      // «Actualizando…» más larga con mala red).
+      if (pendiente.current) {
+        // Pospuesta al abrir (estaba entrando): en cuanto termina, todavía «recién abierta», se aplica.
+        intentar(recienAbierta() ? 'arranque' : 'quieto');
+        return;
+      }
       buscar(ENTRE_BUSQUEDAS_MS);
-      // Pospuesta al abrir (estaba entrando): en cuanto termina, todavía «recién abierta», se aplica.
-      intentar(recienAbierta() ? 'arranque' : 'quieto');
     }, TIC_MS);
 
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {

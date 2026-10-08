@@ -65,6 +65,8 @@ export function instalarRegistroAv(Sound: { prototype: Sonido } | undefined = Au
       () => {
         // Terminó de cargar con la recarga ya en marcha: se suelta ya.
         if (cerrado) return descargar(this);
+        // Un unloadAsync a media carga lo sacó del registro y expo-av lo ignoró: quedó cargado, se vuelve a anotar.
+        vivos.add(this);
       },
       () => {
         if (!yaEstaba) vivos.delete(this);
