@@ -2,7 +2,7 @@
 """
 ELECTRUM — fotos y videos de campo de un lote, vueltos texto que el cerebro puede buscar y citar.
 
-    python3 medios-campo.py <dir con los medios> <dir de salida> [--whisper medium] [--hilos 4]
+    python3 medios-campo.py <dir con los medios> <dir de salida> [--whisper medium] [--hilos 4] [--cache <dir>]
 
 El cargador no lee imágenes sueltas ni videos: una foto de un afloramiento no trae texto y un video
 de WhatsApp es audio. Aquí:
@@ -18,7 +18,9 @@ Salida, con la misma estructura de carpetas que la entrada:
     Fotos y videos de campo con GPS.geojson                            solo si alguna trae ubicación
 Eso se carga con el cargador de siempre:  con-cerebro tsx scripts/electrum/aprender.ts --carpetas <salida>
 
-Se puede cortar y relanzar: lo ya visto o transcrito queda en <salida>/.cache/ y no se repite.
+Se puede cortar y relanzar: lo ya visto o transcrito queda en <salida>.cache/ (al lado de la salida,
+no dentro: en la salida solo queda lo que se carga) y no se repite. Un video que falla se dice y se
+sigue con los demás.
 Necesita: credenciales de AWS con Bedrock, ffmpeg, Pillow, boto3 y faster-whisper.
 """
 import argparse
@@ -105,6 +107,15 @@ def sondear(ruta: str) -> dict:
     return json.loads(out or '{}').get('format', {})
 
 
+def duracion(fmt: dict) -> float:
+    """ffprobe dice «N/A» (o nada) cuando el contenedor no declara la duración: un video de WhatsApp
+    cortado, un .3gp viejo. Eso no es un número, y float('N/A') tumbaba la corrida entera."""
+    try:
+        return max(0.0, float(fmt.get('duration') or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def gps_de_video(fmt: dict):
     # QuickTime/DJI: «+13.2972-086.9259+689.000/»
     loc = next((v for k, v in (fmt.get('tags') or {}).items() if 'location' in k.lower()), '')
@@ -119,7 +130,7 @@ def gps_valido(g):
 
 class Cache:
     def __init__(self, dir_):
-        self.dir = os.path.join(dir_, '.cache')
+        self.dir = dir_
         os.makedirs(self.dir, exist_ok=True)
 
     def _p(self, clave):
@@ -141,8 +152,15 @@ def main():
     ap.add_argument('salida')
     ap.add_argument('--whisper', default='medium')
     ap.add_argument('--hilos', type=int, default=4)
+    ap.add_argument('--cache', help='dónde guardar lo ya visto (por defecto, <salida>.cache al lado de la salida)')
     a = ap.parse_args()
-    cache = Cache(a.salida)
+    # El caché vivía en <salida>/.cache y el cargador, al recorrer la salida, se lo encontraba: la
+    # salida tiene que tener solo lo que se carga. Uno de una corrida anterior se muda, no se pierde.
+    dir_cache = a.cache or os.path.normpath(a.salida) + '.cache'
+    viejo = os.path.join(a.salida, '.cache')
+    if not a.cache and os.path.isdir(viejo) and not os.path.exists(dir_cache):
+        os.rename(viejo, dir_cache)
+    cache = Cache(dir_cache)
 
     fotos, videos = [], []
     for raiz, _, archivos in os.walk(a.entrada):
@@ -177,15 +195,12 @@ def main():
 
     # Videos: el audio entero por whisper, tres cuadros por el modelo de visión.
     modelo = None
-    oidos = {}
-    for rel in videos:
-        hecho = cache.get('video:' + rel)
-        if hecho:
-            oidos[rel] = hecho
-            continue
+
+    def oir_video(rel):
+        nonlocal modelo
         ruta = os.path.join(a.entrada, rel)
         fmt = sondear(ruta)
-        dur = float(fmt.get('duration') or 0)
+        dur = duracion(fmt)
         with tempfile.TemporaryDirectory() as t:
             wav = os.path.join(t, 'a.wav')
             habla = ''
@@ -200,7 +215,8 @@ def main():
                 segs, _ = modelo.transcribe(muestras, language='es', vad_filter=True, beam_size=5)
                 habla = ' '.join(s.text.strip() for s in segs).strip()
             cuadros = []
-            for frac in (0.15, 0.5, 0.85):
+            # Sin duración conocida los tres cuadros serían el mismo (el primero): se describe uno.
+            for frac in (0.15, 0.5, 0.85) if dur > 0 else (0,):
                 jpg = os.path.join(t, f'{frac}.jpg')
                 subprocess.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{dur * frac:.2f}', '-i', ruta, '-frames:v', '1', jpg])
                 if os.path.exists(jpg):
@@ -208,11 +224,25 @@ def main():
                         cuadros.append(f'Al {int(frac * 100)} %: ' + ver(jpeg_para_ver(open(jpg, 'rb').read())))
                     except Exception as e:
                         print(f'  ✗ cuadro {rel}: {str(e)[:100]}', flush=True)
-        d = {'habla': habla, 'cuadros': cuadros, 'duracion': round(dur), 'gps': gps_de_video(fmt),
-             'fecha': (fmt.get('tags') or {}).get('creation_time', '')[:10]}
+        return {'habla': habla, 'cuadros': cuadros, 'duracion': round(dur), 'gps': gps_de_video(fmt),
+                'fecha': (fmt.get('tags') or {}).get('creation_time', '')[:10]}
+
+    oidos = {}
+    for rel in videos:
+        hecho = cache.get('video:' + rel)
+        if hecho:
+            oidos[rel] = hecho
+            continue
+        # Igual que con las fotos: un video roto (sin audio, un códec raro, whisper que se queda sin
+        # memoria) se dice y se sigue. Antes uno solo tumbaba la corrida y los demás no se escribían.
+        try:
+            d = oir_video(rel)
+        except Exception as e:
+            print(f'  ✗ {rel}: {str(e)[:120]}', flush=True)
+            continue
         cache.put('video:' + rel, d)
         oidos[rel] = d
-        print(f'  ✓ {rel} ({round(dur)} s, {len(habla)} car de habla)', flush=True)
+        print(f'  ✓ {rel} ({d["duracion"]} s, {len(d["habla"])} car de habla)', flush=True)
 
     # Una «libreta» por carpeta: una página por foto o video, citable por página.
     def escribir(items, titulo, pagina):
