@@ -149,7 +149,12 @@ export function trocear(paginas: Array<{ pagina: number; texto: string }>): Arra
       // una tabla de 200 filas quedaba en un solo trozo de 7 000 caracteres.
       if (parrafo.startsWith('[TABLA]') && parrafo.length > OBJETIVO) {
         // Lo que venía antes se suelta si ya es un trozo; si es corto (un título), sigue esperando.
-        if (buffer.trim().length >= 40) soltar();
+        // Y sin su cola de solape: la tabla queda en medio, no hay frase partida que unir, y si la
+        // tabla cierra la página esa cola salía al final como un trozo repetido.
+        if (buffer.trim().length >= 40) {
+          soltar();
+          buffer = '';
+        }
         const [, encabezado = '', ...filas] = parrafo.split('\n');
         let trozo = '';
         for (const fila of filas) {
