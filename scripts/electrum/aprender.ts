@@ -287,6 +287,14 @@ if (borrados.size) console.log(`${borrados.size} ${borrados.size === 1 ? 'archiv
 let bien = 0;
 let mal = 0;
 let repetidos = 0;
+/*
+ * Fallos seguidos. Uno suelto es un archivo malo; cinco seguidos suelen ser la base que se fue (el
+ * túnel de SSM se cae a las horas) y entonces cada uno de los miles que quedan falla igual,
+ * diciendo «falló» uno por uno hasta el final. Se pregunta a la base y, si no está, se para.
+ */
+const SEGUIDOS_PARA_MIRAR = 5;
+let seguidos = 0;
+let sinBase = false;
 const arranque = Date.now();
 
 // El ensayo no cuenta archivos: cuenta lo que de verdad va a quedar en el cerebro. Un montón de
@@ -335,6 +343,7 @@ for (const [i, ruta] of archivos.entries()) {
     if (original && borrados.has(original)) {
       console.log('se borró a propósito, lo salto');
       repetidos++;
+      seguidos = 0;
       continue;
     }
     const r = await aprender(nombre, datos, {
@@ -355,10 +364,23 @@ for (const [i, ruta] of archivos.entries()) {
     if (r.clase === 'nada') mal++;
     else if (repetido) repetidos++;
     else bien++;
+    seguidos = 0;
   } catch (e: any) {
     console.log('falló');
     console.log(`   ${String(e?.message || e).slice(0, 200)}`);
     mal++;
+    if (!opts.seco && ++seguidos >= SEGUIDOS_PARA_MIRAR) {
+      const s = await saludBase();
+      if (!s.viva) {
+        sinBase = true;
+        console.error(
+          `\n${seguidos} fallos seguidos y la base no responde (${s.motivo}). Paro aquí: el resto fallaría igual. ` +
+            `Cuando vuelva la conexión, relanzá la misma orden: lo ya cargado se salta solo.`
+        );
+        break;
+      }
+      seguidos = 0;
+    }
   }
 }
 
@@ -399,15 +421,21 @@ if (opts.seco) {
   const partes = [`${bien} ${bien === 1 ? 'archivo nuevo' : 'archivos nuevos'} en el cerebro`];
   if (repetidos) partes.push(`${repetidos} ya estaban y se saltaron`);
   if (mal) partes.push(`${mal} sin cargar`);
+  if (sinBase) partes.push(`${archivos.length - bien - repetidos - mal} sin intentar`);
   console.log(`\n${partes.join(', ')}. ${minutos.toFixed(1)} min.`);
-  if (bien) {
+  // Sin base no se puede cruzar el padrón; lo que sí entró queda sin traslapes hasta el próximo
+  // recálculo (la siguiente carga con algo nuevo, o el ordenado del catastro).
+  if (bien && sinBase) console.log('Los traslapes de lo que entró quedan sin recalcular: la base no responde.');
+  if (bien && !sinBase) {
     process.stdout.write('\nCruzando el padrón entero para buscar traslapes… ');
     const t = await recalcularTraslapes();
     console.log(t === 1 ? '1 traslape.' : `${t} traslapes.`);
   }
-  const s = await saludBase();
-  console.log(`El catastro tiene ahora ${s.concesiones} concesiones.`);
-  await cerrarBase();
+  if (!sinBase) {
+    const s = await saludBase();
+    console.log(`El catastro tiene ahora ${s.concesiones} concesiones.`);
+  }
+  await cerrarBase().catch(() => {});
 }
 // Los zip que se armaron para juntar las piezas de los shapefiles son de usar y tirar.
 for (const t of temporales) {
@@ -418,4 +446,6 @@ for (const t of temporales) {
   }
 }
 
-process.exit(mal && !bien && !repetidos ? 1 : 0);
+// Un solo archivo sin cargar ya es un error: quien llama (cargar-lote.sh, un cron) tiene que
+// enterarse de que el lote no entró entero, no solo cuando no entró nada.
+process.exit(mal ? 1 : 0);

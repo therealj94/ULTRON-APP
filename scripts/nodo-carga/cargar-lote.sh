@@ -309,9 +309,12 @@ FUENTES=("$LISTO")
 [ -n "$(find "$OCR" -name '*.txt' -print -quit)" ] && FUENTES+=("$OCR")
 # Cada archivo a su carpeta del panel (la misma estructura que en el disco de quien lo subió) y
 # con su original anotado en el cubo de lotes.
-"$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --quien "$QUIEN" --carpetas --original "$ORIG" --origen "$ORIGEN" "${FUENTES[@]}" 2>&1 | tee "${INF}/carga.log" | { grep -E '^(▸|[0-9]|Cruzando|El catastro|Catastro)' || true; }
-# El filtro de la pantalla no puede tapar al cargador: si él falló, la carga falló.
-if [ "${PIPESTATUS[0]}" != 0 ]; then
+# El filtro de la pantalla no puede tapar al cargador: si él falló, la carga falló. El estado se
+# recoge con «|| rc=$?»: con set -e y pipefail, una tubería que falla corta el script ANTES de llegar
+# a mirar PIPESTATUS, y el aviso de abajo no salía nunca.
+rc=0
+"$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --quien "$QUIEN" --carpetas --original "$ORIG" --origen "$ORIGEN" "${FUENTES[@]}" 2>&1 | tee "${INF}/carga.log" | { grep -E '^(▸|[0-9]|Cruzando|El catastro|Catastro|Los traslapes)|fallos seguidos' || true; } || rc=$?
+if [ "$rc" != 0 ]; then
   rojo "El cargador terminó con error: no se cargó todo. Detalle en ${INF}/carga.log"
   exit 1
 fi
