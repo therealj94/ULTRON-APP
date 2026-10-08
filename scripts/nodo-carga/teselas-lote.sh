@@ -133,11 +133,13 @@ aws s3 sync "$ORIGEN" "$ORIG" --only-show-errors --exclude '*' \
 declare -A SID_VISTO=()
 while IFS= read -r -d '' sid; do
   tif="${sid%.*}.tif"
+  # La huella primero: si la copia ya se decodificó en otra corrida, esta no se decodifica (sería
+  # la misma capa dos veces) y su .tif de una corrida vieja se quita.
+  h=$(md5sum "$sid" | cut -c1-32)
+  if [ -n "${SID_VISTO[$h]:-}" ]; then echo "  = ${sid#"$ORIG"/}: copia de ${SID_VISTO[$h]#"$ORIG"/}"; rm -f "$tif"; continue; fi
+  SID_VISTO[$h]="$sid"
   [ -s "$tif" ] && continue
   if ! command -v mrsiddecode >/dev/null; then echo "  ✗ ${sid#"$ORIG"/}: falta mrsiddecode (preparar.sh)"; continue; fi
-  h=$(md5sum "$sid" | cut -c1-32)
-  [ -z "${SID_VISTO[$h]:-}" ] || { echo "  = ${sid#"$ORIG"/}: copia de ${SID_VISTO[$h]#"$ORIG"/}"; continue; }
-  SID_VISTO[$h]="$sid"
   mrsiddecode -quiet -i "$sid" -o "$tif" -of tifg >/dev/null 2>&1 || { rm -f "$tif"; echo "  ✗ ${sid#"$ORIG"/}: mrsiddecode no pudo"; }
 done < <(find "$ORIG" -type f -iname '*.sid' -print0 | sort -z)
 mapfile -d '' RASTERES < <(find "$ORIG" -type f \( -iname '*.tif' -o -iname '*.tiff' -o -iname '*.jp2' -o -iname '*.img' \) -print0 | sort -z)
