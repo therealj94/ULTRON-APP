@@ -24,6 +24,10 @@
  * oficio del servidor; cifras y montos se confirman con Scribe v2. Sin ese micrófono (una APK anterior,
  * iOS) o si no abre, sigue el reconocedor del teléfono de siempre. El texto sigue cayendo en la caja
  * sin mandarse.
+ *
+ * DESDE EL 8-OCT hay además «MANOS LIBRES» (oido.ts, manosLibres.ts), apagado por omisión: el oído continuo de
+ * AU-RA para quien lo encienda. Este dictado sigue igual con él encendido: al tocar el botón, manos libres suelta
+ * el micrófono (un solo dueño) y lo retoma al terminar.
  */
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { PermissionsAndroid, Platform } from 'react-native';
