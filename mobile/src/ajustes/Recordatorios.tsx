@@ -6,7 +6,7 @@
  *   · Cada recordatorio: lo que hay que recordar, la PRÓXIMA vez («Mañana 7:00 a. m.»), cada cuánto se repite («todos los
  *     días») y si AURA llama.
  *   · Deslizar a la izquierda (o «Borrar») lo borra; «Hecho» lo marca hecho (uno de una vez sale de la lista; uno que se
- *     repite salta a la vez siguiente, salvo que acabe de sonar).
+ *     repite salta a la vez siguiente, salvo que acabe de sonar). La alarma de esa vez se quita del teléfono en el acto.
  *   · Se crean hablando: «recuérdame cada lunes a las 8 la junta».
  *
  * Una hoja de toda la app (app/hojas.ts → app/HojasCerebro.tsx): se abre desde «Más» y con «¿qué recordatorios tengo?».
@@ -22,7 +22,7 @@ import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Hoja, Texto, vibrar } from '../ui';
 import { Tocable } from '../pulse/ui/Tocable';
 import { lineaDeRecordatorio, listaDelServidor, sinRecordatorio, type RecordatorioDelServidor } from '../compa/recordatoriosServidor';
-import { reconciliarRecordatorios } from '../compa/recordatoriosSync';
+import { alCambiarEnHoja, reconciliarRecordatorios } from '../compa/recordatoriosSync';
 
 type Props = { visible: boolean; onCerrar: () => void };
 
@@ -50,6 +50,9 @@ export function HojaRecordatorios({ visible, onCerrar }: Props) {
   /** Un cambio: se ve ya, va al servidor y las alarmas del teléfono se ponen al día. Si falla, se dice y se relee. */
   const cambiar = async (r: RecordatorioDelServidor, que: 'borrar' | 'hecho') => {
     if (que === 'borrar' || r.repetir.tipo === 'nunca') setLista((l) => sinRecordatorio(l || [], r.id));
+    // Tanda F1: la alarma de esta vez se quita YA de este teléfono (antes, uno de una vez marcado hecho entre el push del
+    // servidor y la alarma sonaba igual). Si el servidor no lo toma, reconciliar la vuelve a poner si sigue en pie.
+    const alarmas = alCambiarEnHoja(r, que).catch(() => undefined);
     try {
       if (que === 'borrar') await api(`/api/recordatorios/${encodeURIComponent(r.id)}`, { method: 'DELETE' }, 15_000);
       else await api(`/api/recordatorios/${encodeURIComponent(r.id)}/hecho`, { method: 'POST', body: '{}' }, 15_000);
@@ -59,6 +62,7 @@ export function HojaRecordatorios({ visible, onCerrar }: Props) {
       setError(e?.message || tr('No se pudo guardar.', 'It couldn’t be saved.'));
     }
     void leer();
+    await alarmas;
     void reconciliarRecordatorios('hoja');
   };
 

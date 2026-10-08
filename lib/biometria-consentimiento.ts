@@ -8,8 +8,10 @@
  *  · `presentadoPor`: quién la presentó (la dueña de la cuenta) cuando el permiso lo dio otra persona;
  *  · `menor`: posible menor de edad, porque la app lo dijo (`menor: true`) o por el parentesco (hijo/a, nieto/a, sobrino/a).
  *    El micrófono no sabe quién dijo el «sí»: para un menor, además, la dueña lo re-confirma tocando su pantalla
- *    (`confirmadoEnPantalla`, la hora; ausente = todavía no). Hoy se REGISTRA (no se exige): el teléfono todavía no tiene esa
- *    pantalla; `pendienteDeConfirmar` lo dice para que la app lo pida.
+ *    (`confirmadoEnPantalla`, la hora; ausente = todavía no). Tanda F1: se EXIGE. Mientras falte (`pendienteDeConfirmar`),
+ *    su cara y su voz no se usan para reconocer (`reconocible`: el listado de caras no le da sus vectores al teléfono,
+ *    lib/voces-miembro.ts identificarVoz no la compara) ni su nombre llega a la escena del turno (lib/caras-turno.ts
+ *    escenaSinPorConfirmar). La app lo pide con su hoja «Por confirmar» (mobile/src/caras/HojaConsentimiento.tsx).
  */
 export type ConsentimientoBio = {
   como: 'dueño' | 'voz';
@@ -84,4 +86,18 @@ export function unirConsentimiento(previo: ConsentimientoBio | undefined, nuevo:
 /** Es posible menor y la dueña todavía no lo confirmó en pantalla. */
 export function pendienteDeConfirmar(c: ConsentimientoBio | undefined): boolean {
   return !!c?.menor && !c.confirmadoEnPantalla;
+}
+
+/** Tanda F1: ¿se puede usar para reconocer? Todo, salvo un posible menor que la dueña todavía no confirmó en pantalla. */
+export function reconocible(c: ConsentimientoBio | undefined): boolean {
+  return !pendienteDeConfirmar(c);
+}
+
+/**
+ * Lo que el listado de la app (GET /api/caras, GET /api/voces) dice del permiso de alguien POR CONFIRMAR, para la hoja de
+ * la dueña: quién la presentó, cuándo y que es posible menor. Vacío si no falta nada (no cambia el listado de siempre).
+ */
+export function vistaPorConfirmar(c: ConsentimientoBio | undefined): { porConfirmar?: true; menor?: true; presentadoPor?: string; presentadoEn?: number } {
+  if (!pendienteDeConfirmar(c)) return {};
+  return { porConfirmar: true, menor: true, ...(c?.presentadoPor ? { presentadoPor: c.presentadoPor } : {}), ...(c?.t ? { presentadoEn: c.t } : {}) };
 }

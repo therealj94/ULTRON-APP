@@ -32,7 +32,7 @@ import { s3GetJson, s3GetJsonConEtag, s3ListarClaves, s3Listo, s3PutJson, s3PutJ
 import { Generaciones } from './fila-por-cuenta';
 import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, horaDeAlta, sanearDurable, siguiente, type Durable } from './biometria-durable';
 import { abrirBiometria, esSobre, hayLlaveBiometria, migrarAlSobre, resellarS3, sellarBiometria, SobreIlegible, type ResultadoMigracion } from './biometria-sobre';
-import { consentimientoDeAlta, consentimientoValido, unirConsentimiento, type ConsentimientoBio } from './biometria-consentimiento';
+import { consentimientoDeAlta, consentimientoValido, reconocible, unirConsentimiento, type ConsentimientoBio } from './biometria-consentimiento';
 
 export const LARGO_VECTOR = 128;
 export const MAX_PERSONAS = 30;
@@ -519,6 +519,31 @@ export async function olvidarTodasLasCaras(correo: string): Promise<number> {
     if (estado === 'copia_local') throw new BorradoDegradado(n);
     return n;
   });
+}
+
+/**
+ * Tanda F1: los vectores con que el teléfono reconoce a esta persona (GET /api/caras). Un posible menor que la dueña todavía
+ * no confirmó en su pantalla va SIN vectores: el teléfono la lista (con «Por confirmar») pero no puede reconocerla.
+ */
+export function vectoresParaReconocer(p: Pick<PersonaCara, 'vectores' | 'consentimiento'>): number[][] {
+  return reconocible(p.consentimiento) ? p.vectores : [];
+}
+
+/**
+ * Tanda F1: los nombres de las caras que todavía no se pueden usar para reconocer (un posible menor por confirmar), para
+ * quitarlos de la escena del turno (server/modo-invitado.ts). Con tope: si el cajón tarda o falla, [] (el turno no espera).
+ */
+export async function nombresCarasPorConfirmar(correo: string, topeMs = 300): Promise<string[]> {
+  if (!correoNormal(correo)) return [];
+  let reloj: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const cajon = await Promise.race([cargarCaras(correo), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), topeMs)), reloj.unref?.()))]);
+    return cajon ? cajon.personas.filter((p) => !reconocible(p.consentimiento)).map((p) => p.nombre) : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(reloj);
+  }
 }
 
 /**

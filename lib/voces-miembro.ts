@@ -25,7 +25,7 @@ import { MODELO_VOZ, similitud } from './voces-motor';
 import { filaPorCuenta, Generaciones } from './fila-por-cuenta';
 import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, horaDeAlta, sanearDurable, siguiente, type Durable } from './biometria-durable';
 import { abrirBiometria, esSobre, hayLlaveBiometria, migrarAlSobre, resellarS3, sellarBiometria, SobreIlegible, type ResultadoMigracion } from './biometria-sobre';
-import { consentimientoDeAlta, consentimientoValido, unirConsentimiento, type ConsentimientoBio } from './biometria-consentimiento';
+import { consentimientoDeAlta, consentimientoValido, reconocible, unirConsentimiento, type ConsentimientoBio } from './biometria-consentimiento';
 
 export const LARGO_HUELLA = MODELO_VOZ.dim;
 export const MAX_PERSONAS = 20;
@@ -479,9 +479,13 @@ export function parecidoA(v: number[], p: PersonaVoz): number {
 /**
  * ¿De quién es esta huella? null si nadie llega al umbral o si dos personas quedan demasiado parejas:
  * mejor «no sé» que llamar a alguien por otro nombre.
+ *
+ * Tanda F1: la voz de un posible menor que la dueña todavía no confirmó en su pantalla NO se usa para reconocer (ni se
+ * compara): hasta entonces es como si no estuviera guardada (lib/biometria-consentimiento.ts reconocible).
  */
-export function identificarVoz(v: number[], personas: PersonaVoz[], umbral = UMBRAL_VOZ, margen = MARGEN_VOZ): ResultadoVoz {
+export function identificarVoz(v: number[], todas: PersonaVoz[], umbral = UMBRAL_VOZ, margen = MARGEN_VOZ): ResultadoVoz {
   const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  const personas = todas.filter((p) => reconocible(p.consentimiento));
   if (!personas.length) return { persona: null, similitud: 0, segunda: 0, motivo: 'sin_voces' };
   const filas = personas.map((p) => ({ p, s: parecidoA(v, p) })).sort((a, b) => b.s - a.s);
   const [primera, segunda] = filas;
@@ -542,7 +546,8 @@ export async function vozDelTurno(o: { quienHabla?: unknown; origen?: unknown; s
     if (!cajon) return { tipo: 'sin_verificar', reciente };
     const p = cajon.personas.find((x) => x.id === id);
     if (p?.relacion === 'yo') return { tipo: 'duena' };
-    if (!p) return { tipo: 'sin_verificar', reciente };
+    // Tanda F1: un posible menor por confirmar no se nombra (ni por su id): el teléfono dijo que no es la dueña y nada más.
+    if (!p || !reconocible(p.consentimiento)) return { tipo: 'sin_verificar', reciente };
     return { tipo: 'otra', voz: { quien: p.nombre, duena: limpiar(o.sesion?.nombre, MAX_NOMBRE) || 'la persona dueña de la cuenta', reciente } };
   } catch {
     return { tipo: 'sin_verificar', reciente };
@@ -569,6 +574,23 @@ function reglaPara(quien: string, duena: string): string {
 /** Revisión 7.5 (M1′): de esta frase no se supo la voz y hace un momento hablaba otra persona. */
 function reglaPrecaucion(quien: string, duena: string): string {
   return `QUIEN HABLA (precaución): esta frase fue muy corta para saber por la voz quién la dijo, y hace un momento hablaba ${quien}, no ${duena} (la persona dueña de esta cuenta). En este turno no leas ni cuentes lo privado de ${duena} (correos, mensajes, dinero, memoria personal) ni actúes en su nombre. Si es ${duena}, que lo diga con una frase un poco más larga o lo toque en su pantalla.`;
+}
+
+/**
+ * Tanda F1: los nombres de las voces que todavía no se pueden usar para reconocer (un posible menor por confirmar), para
+ * quitarlos de la escena del turno (server/modo-invitado.ts). Con tope: si el cajón tarda o falla, [] (el turno no espera).
+ */
+export async function nombresVocesPorConfirmar(correo: string, topeMs = 300): Promise<string[]> {
+  if (!String(correo || '').trim()) return [];
+  let reloj: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const cajon = await Promise.race([cargarVoces(correo), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), topeMs)), reloj.unref?.()))]);
+    return cajon ? cajon.personas.filter((p) => !reconocible(p.consentimiento)).map((p) => p.nombre) : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(reloj);
+  }
 }
 
 /**

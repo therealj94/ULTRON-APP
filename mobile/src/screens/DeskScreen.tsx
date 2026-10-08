@@ -124,6 +124,7 @@ import { reproductorAmbiente } from '../compa/ambienteSonido';
 import { ControlCamara, conPreferencia, pedidoDeCamara, pideMirar, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
+import { ConsentimientoBiometria } from '../caras/HojaConsentimiento';
 import { useVoces, type ApiVoces } from '../voces/useVoces';
 import { escenaDelTurno, type QuienHablaTurno } from '../voces/voces';
 import { decidirPrivadoLocal, fraseNegarLocal, intencionPrivada, negadoVaAlCerebro, pedidoLocalPrivado } from '../lib/privadoLocal';
@@ -3668,6 +3669,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
 
       <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
+      <ConsentimientoBiometria correo={user.correo} />
 
       <PanelTrabajos
         visible={panelTrabajos}

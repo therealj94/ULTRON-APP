@@ -31,7 +31,9 @@
  * Lo que NO lleva identidad de voz (y por eso es la dueña, por su sesión): la conversación de voz en vivo (ElevenLabs,
  * /api/voz/llm), Windows, la web y Telegram. Ver docs/voz/VOCES-CONOCIDAS.md.
  */
-import { vozDelTurno } from '../lib/voces-miembro';
+import { nombresVocesPorConfirmar, vozDelTurno } from '../lib/voces-miembro';
+import { nombresCarasPorConfirmar } from '../lib/caras-miembro';
+import { escenaSinPorConfirmar } from '../lib/caras-turno';
 import { otraVozDe } from './decision-turno';
 import type { ManosDelTurno } from '../lib/cerebro-manos';
 
@@ -98,12 +100,32 @@ export function escenaSinNombres(escena: string): string {
     .trim();
 }
 
-/** El corte, en un solo lugar: el cuerpo tal cual (sin marca ajena) o el de invitado. */
+/** La escena nombra a alguien (una cara reconocida o una voz): solo entonces se mira quién espera su confirmación. */
+const RE_ESCENA_CON_NOMBRES = /\b(reconozco a|I recognize|Por la voz,|By voice,)/i;
+
+/**
+ * Tanda F1: los nombres guardados que todavía no se pueden reconocer (un posible menor que la dueña no confirmó en su
+ * pantalla), de las caras y de las voces de la cuenta del turno. Solo con la sesión de la app y una escena que nombra a
+ * alguien; con tope (el cajón suele estar en caché). Nunca lanza.
+ */
+async function nombresPorConfirmarDelTurno(body: Record<string, unknown>): Promise<string[]> {
+  const escena = typeof body.escena === 'string' ? body.escena : '';
+  const correo = String((body.sesion as { correo?: unknown } | undefined)?.correo || '').trim();
+  if (!escena || !correo || body.origen !== 'app' || !RE_ESCENA_CON_NOMBRES.test(escena)) return [];
+  const [caras, voces] = await Promise.all([nombresCarasPorConfirmar(correo).catch(() => []), nombresVocesPorConfirmar(correo).catch(() => [])]);
+  return [...caras, ...voces];
+}
+
+/**
+ * El corte, en un solo lugar: el cuerpo tal cual (sin marca ajena) o el de invitado. Tanda F1: en los dos, la escena sin
+ * el nombre de quien espera la confirmación de la dueña en su pantalla (lib/caras-turno.ts escenaSinPorConfirmar).
+ */
 export async function conModoInvitado<T>(body: T): Promise<T> {
   if (!body || typeof body !== 'object') return body;
   const b = { ...(body as Record<string, unknown>) };
   delete b.modoInvitado;
-  const m = await modoInvitadoDelTurno(b);
+  const [m, porConfirmar] = await Promise.all([modoInvitadoDelTurno(b), nombresPorConfirmarDelTurno(b)]);
+  if (porConfirmar.length && typeof b.escena === 'string') b.escena = escenaSinPorConfirmar(b.escena, porConfirmar);
   return (m ? cuerpoDeInvitado(b, m) : b) as T;
 }
 

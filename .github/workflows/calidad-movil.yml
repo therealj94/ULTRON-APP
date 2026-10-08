@@ -96,7 +96,8 @@ jobs:
       # lote de teclado por los manejadores reales del componente). También la voz en streaming y su guardia contra
       # cierres (pruebas/voz; el reproductor en la JVM, pruebas/voz/jvm, necesita kotlinc y se corre aparte) y la
       # ventana de decisiones (pruebas/decisiones). Las pestañas de los chats también van MONTADAS
-      # (pruebas/chats: la pestaña marcada y la página del deslizador son siempre la misma).
+      # (pruebas/chats: la pestaña marcada y la página del deslizador son siempre la misma). La hoja «Por confirmar» de las
+      # caras y las voces también (pruebas/consentimiento: la insignia, «Sí, guardar» / «Borrar» y el aviso de una vez).
       - name: Arneses de la app
         working-directory: mobile
         run: |
@@ -107,6 +108,7 @@ jobs:
           sh pruebas/veta/todas.sh
           sh pruebas/visor/todas.sh
           sh pruebas/chats/todas.sh
+          sh pruebas/consentimiento/todas.sh
           node pruebas/llamadas/pruebas.js
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/compa/pruebas/iniciativa.prueba.mjs
