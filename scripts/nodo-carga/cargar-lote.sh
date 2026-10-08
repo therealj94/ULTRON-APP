@@ -139,9 +139,12 @@ done < <(find "$LISTO" -type f -iname '*.exe' -print0)
 for vuelta in 1 2 3; do
   abiertos=0
   while IFS= read -r -d '' z; do
-    # Un zip con un .shp dentro es un shapefile y el cargador lo lee así. Cualquier otro zip es una
-    # carpeta empaquetada: el cargador lo tomaría por un shapefile y fallaría.
-    if unzip -Z1 "$z" 2>/dev/null | grep -qi '\.shp$'; then continue; fi
+    # Un zip que es SOLO un shapefile (sus piezas, nada más) el cargador lo lee así. Cualquier otro
+    # zip es una carpeta empaquetada y se abre, aunque traiga un .shp: antes bastaba un .shp dentro
+    # para no abrirlo, y los PDF, Word y Excel que venían con él no entraban nunca. Las piezas que
+    # quedan sueltas al abrirlo las vuelve a juntar el cargador (juntarShapefiles).
+    contenido="$(unzip -Z1 "$z" 2>/dev/null || true)"
+    if grep -qi '\.shp$' <<< "$contenido" && ! grep -qviE '(/|\.(shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|xml))$' <<< "$contenido"; then continue; fi
     if abrir "$z" sacar_zip; then rm -f "$z"; abiertos=$((abiertos + 1))
     else apartar "$z" "zip roto o cifrado"; fi
   done < <(find "$LISTO" -type f -iname '*.zip' -print0)
