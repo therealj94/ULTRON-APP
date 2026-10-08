@@ -675,7 +675,6 @@ const NO_SON_ORDENES = [
   'mándale a Carlos que ya no me llames más',
   // otro resumen, o sin decir cuál
   'Mándame el resumen de la reunión a las 9',
-  'Mándame el resumen a las 7',
   'hazme un resumen de este documento',
   'no me mandes el resumen del contrato',
   'cancela el resumen de la junta',
@@ -730,6 +729,8 @@ test('B1: la voz NO toma como orden de la iniciativa lo que no lo es (dictados, 
 test('B1: las órdenes de verdad siguen siéndolo', () => {
   const SI: Array<[string, unknown]> = [
     ['Mándame el resumen de la mañana a las 7', { tipo: 'hora_resumen', hora: '07:00', encender: false }],
+    // La frase entera es solo eso: «el resumen» a secas basta para la hora (no para apagarlo).
+    ['Mándame el resumen a las 7', { tipo: 'hora_resumen', hora: '07:00', encender: false }],
     ['mándame el resumen del día a las siete y media', { tipo: 'hora_resumen', hora: '07:30', encender: false }],
     ['cambia mi resumen diario a las 6:45 de la mañana', { tipo: 'hora_resumen', hora: '06:45', encender: false }],
     ['quiero el resumen de la mañana a las 8 y cuarto', { tipo: 'hora_resumen', hora: '08:15', encender: false }],

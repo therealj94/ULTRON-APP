@@ -812,7 +812,10 @@ const ORDENES: Array<{ re: RegExp; tipo: 'hoy_no' | 'no_llames' | 'sin_resumen' 
   { tipo: 'encender_resumen', re: new RegExp(`^(?:enciende|enciendeme|activa|activame|prende|prendeme|reactiva|vuelve a activar|vuelve a encender) ${RES}(?: otra vez)?$`) },
 ];
 /** «[verbo] el resumen de la mañana a las 7» (grupos: verbo, hora) y «a las 7 [verbo] mi resumen» (grupos: hora, verbo). */
-const HORA_RESUMEN_DESPUES = new RegExp(`^(?:(${VERBO_HORA}) )?(?:que me llegue |la hora de )?${RES} (?:a|para) las? ${TIEMPO}$`);
+/** Para la hora basta «el resumen» a secas si la frase entera es solo eso («mándame el resumen a las 7»): sin otro objeto
+ * («del informe»), sin dictado ni recordatorio y con verbo dirigido a ella. */
+const RES_HORA = `(?:${RES}|el resumen)`;
+const HORA_RESUMEN_DESPUES = new RegExp(`^(?:(${VERBO_HORA}) )?(?:que me llegue |la hora de )?${RES_HORA} (?:a|para) las? ${TIEMPO}$`);
 const HORA_RESUMEN_ANTES = new RegExp(`^a las? ${TIEMPO} (?:(${VERBO_HORA}) )?${RES}$`);
 
 /** La frase plegada (sin tildes ni signos, sin muletillas a los lados), con la hora entera: «6:45» → «6h45», «a. m.» → «am». */
