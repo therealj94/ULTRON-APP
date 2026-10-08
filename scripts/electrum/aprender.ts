@@ -289,6 +289,8 @@ if (borrados.size) console.log(`${borrados.size} ${borrados.size === 1 ? 'archiv
 
 let bien = 0;
 let mal = 0;
+/** De `mal`, los que fallaron (una excepción: base caída, archivo roto), no los que no entraron con su motivo. */
+let fallos = 0;
 let repetidos = 0;
 /*
  * Fallos seguidos. Uno suelto es un archivo malo; cinco seguidos suelen ser la base que se fue (el
@@ -374,6 +376,7 @@ for (const [i, ruta] of archivos.entries()) {
     console.log('falló');
     console.log(`   ${String(e?.message || e).slice(0, 200)}`);
     mal++;
+    fallos++;
     if (!opts.seco && ++seguidos >= SEGUIDOS_PARA_MIRAR) {
       const s = await saludBase();
       if (!s.viva) {
@@ -451,6 +454,7 @@ for (const t of temporales) {
   }
 }
 
-// Un solo archivo sin cargar ya es un error: quien llama (cargar-lote.sh, un cron) tiene que
-// enterarse de que el lote no entró entero, no solo cuando no entró nada.
-process.exit(mal ? 1 : 0);
+// Error es que algo FALLÓ (una excepción, la base caída), o que no entró nada. Lo que no entró con
+// su motivo —un escaneo sin texto, un archivo demasiado corto— es un resultado de la carga, no un
+// fallo: en lote-1 fueron unos 60, y con ellos cada lote «fallaba» y cargar-lote se saltaba los vectores.
+process.exit(fallos || sinBase || (mal && !bien && !repetidos) ? 1 : 0);

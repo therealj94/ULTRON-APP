@@ -277,8 +277,12 @@ test('panel: estados, carpetas, mover, renombrar, borrar y bitácora, con permis
   const sano = await aprender('prueba-bib-sano.txt', Buffer.from(texto), { carpeta: 'INDEXSA/Minas de Oro', archivo: 's3://cubo/entrada/x/prueba-bib-sano.txt' });
   assert.equal(sano.clase, 'documento', sano.dicho);
   const idSano = Number((sano.ui as any).documento_id);
-  const [c] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, carpeta) VALUES ('prueba-bib-cortado.pdf', 'otro', 12, 'INDEXSA/Leyes') RETURNING id`);
+  // «Cortado» es la firma del tope viejo de 8 000 caracteres: solo en lo subido antes de quitarlo.
+  const [c] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, carpeta, subido) VALUES ('prueba-bib-cortado.pdf', 'otro', 12, 'INDEXSA/Leyes', '2026-09-20') RETURNING id`);
   await consulta(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ($1, 1, 0, $2)`, [c.id, 'x'.repeat(7990)]);
+  // El mismo largo subido hoy es así de largo de verdad: no es una alarma.
+  const [cn] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, carpeta) VALUES ('prueba-bib-largo-justo.pdf', 'otro', 12, 'Otros/Largo') RETURNING id`);
+  await consulta(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ($1, 1, 0, $2)`, [cn.id, 'y'.repeat(7990)]);
   const [v] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas) VALUES ('prueba-bib-escaneo.pdf', 'otro', 5) RETURNING id`);
   const [r1] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas) VALUES ('prueba-bib-doble.pdf', 'otro', 1) RETURNING id`);
   const [r2] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas) VALUES ('Prueba-Bib-Doble.pdf', 'otro', 1) RETURNING id`);
@@ -300,6 +304,7 @@ test('panel: estados, carpetas, mover, renombrar, borrar y bitácora, con permis
     const estadoDe = async (nombre: string) => (await lista(`q=${encodeURIComponent(nombre)}`)).find((i) => i.nombre === nombre)?.estado;
     assert.equal(await estadoDe('prueba-bib-sano.txt'), 'ok');
     assert.equal(await estadoDe('prueba-bib-cortado.pdf'), 'cortado');
+    assert.equal(await estadoDe('prueba-bib-largo-justo.pdf'), 'ok');
     assert.equal(await estadoDe('prueba-bib-escaneo.pdf'), 'sin_texto');
     assert.equal(await estadoDe('prueba-bib-doble.pdf'), 'repetido');
 

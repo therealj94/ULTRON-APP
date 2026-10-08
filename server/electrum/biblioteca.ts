@@ -223,7 +223,11 @@ async function itemsCte(): Promise<string> {
            coalesce(f.n, 0) AS fragmentos, coalesce(f.car, 0) AS caracteres, coalesce(f.sinv, 0) AS sin_vector,
            (d.archivo IS NOT NULL) AS original, lower(substring(d.archivo from '\.([A-Za-z0-9]+)$')) AS ext_original, d.releido,
            CASE WHEN coalesce(f.n, 0) = 0 THEN 'sin_texto'
-                WHEN coalesce(d.paginas, 0) > 3 AND f.car BETWEEN 7400 AND 8200 THEN 'cortado'
+                -- La firma del tope viejo solo vale para lo leído CON ese tope: se quitó el 1-oct-2026
+                -- (#106). Lo subido o releído después que mide ~8 000 caracteres es así de largo de
+                -- verdad, y marcarlo «cortado» llenaba el panel de falsas alarmas.
+                WHEN coalesce(d.paginas, 0) > 3 AND f.car BETWEEN 7400 AND 8200
+                     AND d.subido < DATE '2026-10-02' AND d.releido IS NULL THEN 'cortado'
                 WHEN coalesce(d.paginas, 0) >= 3 AND f.car < d.paginas * 400 THEN 'poco_texto'
                 WHEN rep.ln IS NOT NULL THEN 'repetido'
                 ELSE 'ok' END AS estado
