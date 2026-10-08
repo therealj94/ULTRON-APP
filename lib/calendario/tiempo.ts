@@ -129,6 +129,8 @@ export type EventoCal = {
   todoElDia: boolean;
   lugar?: string;
   enlace?: string;
+  /** El enlace para entrar a la llamada (Teams, Meet, Zoom…), si el calendario lo da. */
+  reunion?: string;
   cancelado?: boolean;
 };
 

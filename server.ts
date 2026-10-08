@@ -141,8 +141,10 @@ import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe,
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, esDuenoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, CADA_MS_INICIATIVA, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
+import { correosDuenos, fuentesProductivas, montarRutasIniciativaDia, ordenIniciativaDia, redactorProductivo, RelojIniciativaDia } from './server/iniciativa-dia';
+import { cuentasConIniciativa, fijarDuenoDia } from './lib/iniciativa-dia';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
 import type { VistaTexto } from './lib/conocer-persona';
@@ -297,7 +299,7 @@ import { memoriaSinLeer,
   type CanalMem,
 } from './lib/memoria';
 import { anotarRespuestaSinMemoria, avatarQuedoAtras, esOrdenDeAvatar, esSaludoCorto, fusionarHilo, pedidoRed, resolverReferencia, respuestasSinMemoria, urlsParaLeer, type MsgHilo } from './lib/conversacion';
-import { nombreDe, puedeCambiarSistema, quienesMandan } from './lib/junta';
+import { miembrosUltron, nombreDe, puedeCambiarSistema, quienesMandan } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
   ayudaTelegram,
@@ -1645,6 +1647,10 @@ montarRutasAlertas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) 
 // el reloj: lo que se ve al pensar una propuesta y al revalidarla antes de mostrarla o avisarla sale de lo mismo.
 const iniciativa = componerIniciativa({ contadores: contadoresProductivos() });
 iniciativa.montarRutas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), nivelDe: (c) => nivelDeCorreo(c) });
+// La iniciativa del día (tanda F2, server/iniciativa-dia.ts): el resumen de la mañana, los empujones a tiempo y «llámame».
+// Encendida por omisión solo para la cuenta dueña (WHATSAPP_DUENOS); las demás la encienden en Ajustes → Iniciativa.
+fijarDuenoDia((c) => esDuenoWhatsapp(c));
+montarRutasIniciativaDia(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Su cerebro continuo: lo que hablamos antes, lo que quedó a medias, lo que sé de ti, su círculo y sus mensajes ordenados.
 montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Las tareas durables y el panel de tareas (server/trabajos.ts, AUR08): adapta la tarea en curso de cada
@@ -4516,6 +4522,25 @@ function hayDecisionEsperando(body: any, opciones: OpcionesTurno = {}): boolean 
   return !!dueno && decisionEsperando(dueno, ambitoDelTurno(body, opciones), ambitoApp(dueno, body?.aparato));
 }
 
+/**
+ * Una orden de la iniciativa del día dicha por la persona de la SESIÓN (server/iniciativa-dia.ts ordenIniciativaDia): se
+ * guarda y se contesta al instante, sin cerebro. Solo con sesión de la app o la web (no Telegram) y sin invitado ni otra voz.
+ * El turno queda en su hilo como cualquier otro. Un «para» a secas no se contesta aquí (sigue callando la voz).
+ */
+async function ordenDelDia(body: any): Promise<{ decir: string; via: string } | null> {
+  const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
+  const message = String(body?.message || body?.text || '').trim();
+  if (!correo || !message || body?.image || body?.visto || body?.documento || body?.pdf || modoInvitadoDe(body)) return null;
+  if (otraVozDe(body?.escena) || typeof body?.quienHabla?.id === 'string') return null;
+  const r = await ordenIniciativaDia(correo, message).catch(() => null);
+  if (!r) return null;
+  const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
+  void recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false })
+    .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: r.decir, canal: 'mesa', esperar: false }))
+    .catch(() => undefined);
+  return r;
+}
+
 async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; acciones: EventoAccion[]; via: string } | null> {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   const message = String(body?.message || body?.text || '').trim();
@@ -4991,6 +5016,10 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   // Un solo reloj para el turno entero (EXEC04): cada llamada y cada herramienta mira lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   empezarTurnoDeCuenta(body, opciones);
+  const delDia = await ordenDelDia(body);
+  if (delDia) {
+    return { reply: delDia.decir, voz: delDia.decir, emocion: 'neutral', via: delDia.via, mode: String(body?.mode || 'GUARDIAN'), ms: Date.now() - t00, herramientas: [], foto: null, acciones: [], honesto: true };
+  }
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {
     return { reply: rapida.decir, voz: rapida.decir, emocion: 'neutral', via: rapida.via, mode: String(body?.mode || 'GUARDIAN'), ms: Date.now() - t00, herramientas: ['app'], foto: null, acciones: rapida.acciones, honesto: true };
@@ -5541,6 +5570,16 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   };
 
   empezarTurnoDeCuenta(body, opciones);
+  // «No me molestes hoy», «mándame el resumen a las 7», «ya no me llames» (la iniciativa del día): al instante.
+  const delDia = await ordenDelDia(body);
+  if (delDia) {
+    send('tools', { tools: [] });
+    send('emocion', { emocion: 'neutral' });
+    soltar('delta', delDia.decir);
+    reg.cerrar({ respuesta: delDia.decir, emocion: 'neutral', via: delDia.via });
+    send('done', { reply: delDia.decir, voz: delDia.decir, emocion: 'neutral', ms: 0, via: delDia.via, acciones: [], trazaId: reg.id });
+    return salida.fin();
+  }
   // Una orden simple para la app no espera al cerebro.
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {
@@ -6777,12 +6816,30 @@ async function startServer() {
       });
       // A-6: los correos importantes también avisan (a la misma gente y con la misma cadencia de 30 minutos).
       arrancarAlertasCorreo({ personas: () => personasRecientes(), cadaMs: CADA_MS_INICIATIVA });
+      // La iniciativa del día (tanda F2): cada minuto, a las cuentas dueñas y a las que la encendieron, el resumen de la
+      // mañana a su hora y, cada 5 minutos por cuenta, un empujón si lo hay y los límites lo dejan (3 al día, 45 min entre
+      // uno y otro, fuera de sus horas quietas, nada el día de «no me molestes»). Cada envío se reclama antes: sale una vez.
+      const redaccion = redactorProductivo();
+      relojIniciativaDia = new RelojIniciativaDia({
+        personas: async () => [...correosDuenos(clave('whatsapp_duenos'), miembrosUltron()), ...(await cuentasConIniciativa())],
+        fuentes: fuentesProductivas(),
+        salidas: {
+          avisar: async (correo, a) => (await avisarPush(correo, { titulo: a.titulo, texto: a.texto, id: a.id, abrir: 'mesa' }).catch(() => ({ enviados: 0 }))).enviados,
+          llamar: async (correo, a) => (await llamarPorPush(correo, { motivo: a.motivo, id: a.id }).catch(() => ({ enviados: 0 }))).enviados,
+          unaVez: (fuente, correo, id) => primeraVezEvento(fuente, correo, id),
+          redactor: redaccion.redactor,
+          redactorActivo: redaccion.activo,
+        },
+      });
+      relojIniciativaDia.arrancar();
     }
   });
 }
 
 /** El reloj de los recordatorios del servidor (lo arranca startServer). */
 let relojRecordatorios: RelojRecordatorios | null = null;
+/** El reloj de la iniciativa del día (lo arranca startServer). */
+let relojIniciativaDia: RelojIniciativaDia | null = null;
 
 startServer();
 
