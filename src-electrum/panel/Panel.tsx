@@ -335,6 +335,8 @@ const CAJON_HILO = 'electrum.hilo';
 const MOTIVO_PARADO = new Error('parado por quien pregunta');
 const MOTIVO_TARDE = new Error('tardó demasiado');
 const MOTIVO_IRSE = new Error('se cerró la pantalla');
+/** Le hablaron encima con otra pregunta mientras esta respuesta todavía llegaba: se deja y va la nueva. */
+const MOTIVO_INTERRUMPIDO = new Error('interrumpido con otra pregunta');
 
 function hiloGuardado(): Turno[] {
   try {
@@ -862,7 +864,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         cerrado = true;
         const motivo = abortar.signal.reason;
         // Irse de la pantalla no es un fallo que contarle a nadie: ya no hay nadie mirando.
-        if (motivo !== MOTIVO_IRSE) {
+        if (motivo !== MOTIVO_IRSE && motivo !== MOTIVO_INTERRUMPIDO) {
           onFace('CONCERNED');
           const parado = motivo === MOTIVO_PARADO;
           const tarde = motivo === MOTIVO_TARDE;
@@ -1134,6 +1136,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    */
   const preguntarRef = useRef(preguntar);
   preguntarRef.current = preguntar;
+  /** Cuándo la interrumpieron hablándole encima por última vez (0: no). */
+  const interrumpidoEn = useRef(0);
   const pensandoRef = useRef(pensando);
   pensandoRef.current = pensando;
   useEffect(() => {
@@ -1150,6 +1154,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     };
     // Le hablaron encima: la voz se calló, el botón deja de decir «Callar».
     const alInterrumpido = () => {
+      interrumpidoEn.current = Date.now();
       setHablando(false);
       alTerminar();
     };
@@ -1164,6 +1169,16 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     if (!pedido || pedido.n === ultimoPedido.current) return;
     ultimoPedido.current = pedido.n;
     if (pensando) {
+      if (pedido.tipo === 'pregunta' && Date.now() - interrumpidoEn.current < 4000 && abortoRef.current) {
+        /*
+         * Le hablaron encima con otra pregunta mientras esta respuesta todavía llegaba (como en AU-RA): la de
+         * ahora gana. Se corta la que venía, sin aviso de fallo, y la nueva sale en cuanto se suelta.
+         */
+        interrumpidoEn.current = 0;
+        enCola.current = pedido.texto;
+        abortoRef.current.abort(MOTIVO_INTERRUMPIDO);
+        return;
+      }
       if (pedido.tipo === 'pregunta') {
         enCola.current = pedido.texto;
         avisoSuelto(`Anotado: «${pedido.texto.slice(0, 80)}». Se lo contesto apenas termine esta respuesta.`);
