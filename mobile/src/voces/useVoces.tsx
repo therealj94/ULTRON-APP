@@ -38,6 +38,7 @@ import {
   type QuienHablaTurno,
 } from './voces';
 import { aprenderVoz, listarVoces, olvidarTodasLasVoces, olvidarVoz, quienHabla, type VozGuardada } from './api';
+import { abrirHojaBio, escucharCambiosBio, fraseGuardadoPorConfirmar } from '../caras/porConfirmar';
 
 const sinTildes = (t: string) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const mensaje = (e: unknown) => String((e as any)?.data?.error || (e as Error)?.message || tr('sin conexión', 'offline'));
@@ -124,6 +125,8 @@ export function useVoces(o: Opciones): ApiVoces {
   useEffect(() => {
     if (activas && conocidas === null) void refrescar();
   }, [activas, conocidas, refrescar]);
+  // Tanda F1: confirmó o borró a alguien en la hoja «Por confirmar»: la lista (y sus vectores) al día.
+  useEffect(() => escucharCambiosBio((t) => void (t === 'voz' && refrescar())), [refrescar]);
 
   /**
    * ¿Quién dijo la frase `id`? Se consulta ya (o queda en fila); lo que no se reconoce (aprendiendo una voz,
@@ -238,13 +241,26 @@ export function useVoces(o: Opciones): ApiVoces {
     ]);
   }, [borrarTodas]);
 
-  const quienes = (l: VozGuardada[], en = idiomaActual() === 'en') => l.map((c) => (c.relacion === 'yo' ? (en ? `${c.nombre} (you)` : `${c.nombre} (tú)`) : nombreCon(c, en))).join('; ');
+  const quienes = (l: VozGuardada[], en = idiomaActual() === 'en') =>
+    l.map((c) => (c.relacion === 'yo' ? (en ? `${c.nombre} (you)` : `${c.nombre} (tú)`) : nombreCon(c, en)) + (c.porConfirmar ? (en ? ' — to confirm' : ' — por confirmar') : '')).join('; ');
 
   const abrirOpciones = useCallback(() => {
     if (!activasRef.current) {
       void activar();
       return;
     }
+    // Tanda F1: la hoja de la mesa (caras/HojaConsentimiento.tsx), con la insignia «Por confirmar»; sin mesa, el aviso.
+    const sinTurbo = op.current.oidoTurbo() ? '' : tr('Ahora no estás con el oído Turbo: con este oído no puedo oír las voces (Ajustes → Oído).', 'You’re not on the Turbo ear right now: with this ear I can’t hear voices (Settings → Ear).');
+    const enHoja = abrirHojaBio({
+      tipo: 'voz',
+      titulo: tr('Reconocer voces · activado', 'Recognize voices · on'),
+      texto: [tr('Di «aprende mi voz» para que aprenda la tuya, o «aprende la voz de …» para presentarme a alguien de tu círculo.', 'Say “learn my voice” to learn yours, or “learn the voice of …” to introduce someone from your circle.'), sinTurbo].filter(Boolean).join('\n\n'),
+      mandos: [
+        { titulo: tr('Olvidar todas', 'Forget all'), peligro: true, alTocar: confirmarBorrarTodas },
+        { titulo: tr('Desactivar', 'Turn off'), alTocar: () => void desactivar() },
+      ],
+    });
+    if (enHoja) return;
     const l = conocidasRef.current;
     Alert.alert(
       tr('Reconocer voces · activado', 'Recognize voices · on'),
@@ -273,7 +289,7 @@ export function useVoces(o: Opciones): ApiVoces {
     inscripcion.terminar();
     if (!p) return;
     try {
-      await aprenderVoz({
+      const guardada = await aprenderVoz({
         nombre: p.nombre,
         relacion: p.tipo,
         ...(p.parentesco ? { parentesco: p.parentesco } : {}),
@@ -284,7 +300,10 @@ export function useVoces(o: Opciones): ApiVoces {
       await a.decir(
         p.tipo === 'yo'
           ? tr(`Listo, ${a.nombre}: ya conozco tu voz. Guardé números, no la grabación; di «olvida mi voz» para borrarla.`, `Done, ${a.nombre}: I know your voice now. I kept numbers, not the recording; say “forget my voice” to erase it.`)
-          : tr(`¡Gracias, ${p.nombre}! Ya reconozco tu voz. Solo guardé números, no la grabación.`, `Thank you, ${p.nombre}! I’ll recognize your voice now. I only kept numbers, not the recording.`),
+          : guardada?.porConfirmar
+            ? // Tanda F1: un posible menor queda por confirmar en la pantalla de la dueña: todavía no se reconoce.
+              fraseGuardadoPorConfirmar(p.nombre, 'voz', a.nombre, idiomaActual() === 'en')
+            : tr(`¡Gracias, ${p.nombre}! Ya reconozco tu voz. Solo guardé números, no la grabación.`, `Thank you, ${p.nombre}! I’ll recognize your voice now. I only kept numbers, not the recording.`),
         'feliz'
       );
     } catch (e) {

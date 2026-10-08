@@ -39,7 +39,7 @@
  */
 import { tr } from '../i18n';
 import type { RecordatorioPuesto } from '../nucleo/contrato';
-import { baseServidor, RE_ID_SERVIDOR } from './recordatoriosServidor';
+import { alarmasAlCambiar, baseServidor, RE_ID_SERVIDOR, type RecordatorioDelServidor } from './recordatoriosServidor';
 
 /** Lo que se usa de notifee (el de verdad o uno falso). */
 export type NotifeeMin = {
@@ -317,6 +317,23 @@ export async function cancelarRecordatorio(id: string, d: DepsRecordatorio): Pro
     return { ok: true, detalle: tr('Recordatorio cancelado.', 'Reminder cancelled.') };
   } catch {
     return { ok: false, detalle: tr('No pude quitar el recordatorio.', "I couldn't remove the reminder.") };
+  }
+}
+
+/**
+ * Tanda F1: al marcar hecho (o borrar) un recordatorio del servidor en su hoja, sus alarmas de ESTE teléfono que ya no
+ * deben sonar se quitan YA (recordatoriosServidor.ts alarmasAlCambiar), sin esperar a reconciliar: uno de una vez marcado
+ * «hecho» después del push del servidor y antes de que la alarma sonara ya no suena. Devuelve las bases quitadas; nunca lanza.
+ */
+export async function quitarAlarmasAlCambiar(r: Pick<RecordatorioDelServidor, 'id' | 'proxima' | 'repetir' | 'ultimaEntrega'>, que: 'hecho' | 'borrar', d: DepsRecordatorio): Promise<string[]> {
+  const n = d.notifee();
+  if (!n?.m.cancelTriggerNotifications || !RE_ID_SERVIDOR.test(r.id)) return [];
+  try {
+    const bases = alarmasAlCambiar(r, que, await listarRecordatorios(d), d.ahora?.() ?? Date.now());
+    if (bases.length) await n.m.cancelTriggerNotifications(bases.flatMap(idsDe));
+    return bases;
+  } catch {
+    return [];
   }
 }
 

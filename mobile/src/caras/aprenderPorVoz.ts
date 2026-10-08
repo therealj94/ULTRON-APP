@@ -48,6 +48,7 @@ import {
   type Relacion,
 } from './caras';
 import type { Consentimiento } from './api';
+import { fraseGuardadoPorConfirmar } from './porConfirmar';
 
 type Quien = Pick<Reconocida, 'nombre' | 'relacion' | 'parentesco'>;
 type Emocion = 'feliz' | 'preocupado' | 'curioso' | 'neutral';
@@ -66,8 +67,11 @@ export type IoAprender = {
   conocidas: () => CaraConocida[];
   /** Las tomas de las poses (dichas en voz alta), con la cara que dice `elegir` de cada foto. */
   tomarPoses: (elegir: (caras: CaraVista[]) => CaraVista | null) => Promise<CaraVista[]>;
-  /** Al servidor (api.ts guardarCara) y la lista de conocidas al día. */
-  guardar: (o: { nombre: string; relacion: Relacion; vectores: number[][]; consentimiento: Consentimiento; parentesco?: string }) => Promise<void>;
+  /**
+   * Al servidor (api.ts guardarCara) y la lista de conocidas al día. Tanda F1: `porConfirmar` si quedó esperando la
+   * confirmación de la dueña en su pantalla (un posible menor: todavía no se reconoce).
+   */
+  guardar: (o: { nombre: string; relacion: Relacion; vectores: number[][]; consentimiento: Consentimiento; parentesco?: string }) => Promise<{ porConfirmar?: boolean } | void>;
   /** Ya se le saludó (al conocerla): que no se le salude otra vez en la sesión. */
   saludado?: (nombre: string) => void;
   /** La dueña dijo su propio nombre y su cara no está guardada: «conóceme». */
@@ -280,9 +284,11 @@ export class AprenderPorVoz {
       return;
     }
     try {
-      await io.guardar({ nombre, relacion: 'conocido', vectores: caras.slice(0, MUESTRAS_APRENDER).map((c) => c.vector), consentimiento: { como: 'voz', frase }, ...(parentesco ? { parentesco } : {}) });
+      const guardada = await io.guardar({ nombre, relacion: 'conocido', vectores: caras.slice(0, MUESTRAS_APRENDER).map((c) => c.vector), consentimiento: { como: 'voz', frase }, ...(parentesco ? { parentesco } : {}) });
       io.saludado?.(nombre);
-      await io.decir(tr(`¡Mucho gusto, ${nombre}! Ya te recuerdo. Solo guardé números, no fotos.`, `Nice to meet you, ${nombre}! I’ll remember you. I only kept numbers, no photos.`), 'feliz');
+      // Tanda F1: un posible menor queda por confirmar: «ya te recuerdo» no sería verdad hasta que la dueña lo toque.
+      if (guardada && guardada.porConfirmar) await io.decir(fraseGuardadoPorConfirmar(nombre, 'cara', io.nombreDuena(), io.en()), 'feliz');
+      else await io.decir(tr(`¡Mucho gusto, ${nombre}! Ya te recuerdo. Solo guardé números, no fotos.`, `Nice to meet you, ${nombre}! I’ll remember you. I only kept numbers, no photos.`), 'feliz');
     } catch (e) {
       await io.decir(tr(`No pude guardarte ahora, ${nombre}: ${String((e as Error)?.message || 'sin conexión')}`, `I couldn’t save you now, ${nombre}.`), 'preocupado');
     }

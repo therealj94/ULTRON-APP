@@ -6,6 +6,7 @@
  *   GET    /api/voces            → { personas, motor }
  *   POST   /api/voces/aprender   { nombre, relacion, parentesco?, audios: wav[], consentimiento } → { persona }
  *   POST   /api/voces/quien      { audio: wav } → { persona | null, similitud, motivo }
+ *   POST   /api/voces/:id/confirmar → { ok } (tanda F1: la dueña confirma en su pantalla a un posible menor)
  *   DELETE /api/voces/:id        → { ok, nombre }
  *   DELETE /api/voces            → { ok, borradas }
  */
@@ -14,7 +15,8 @@ import { TOPE_CONSULTA_VOZ_MS, type PersonaVoz } from './voces';
 
 export const RUTA_VOCES = '/api/voces';
 
-export type VozGuardada = PersonaVoz & { muestras: number };
+/** Tanda F1: `porConfirmar` (un posible menor que la dueña todavía no confirmó en su pantalla: no se reconoce), con la constancia. */
+export type VozGuardada = PersonaVoz & { muestras: number; creado?: number; porConfirmar?: boolean; menor?: boolean; presentadoPor?: string; presentadoEn?: number };
 export type Consentimiento = { como: 'dueño' | 'voz'; frase?: string };
 
 export async function listarVoces(): Promise<VozGuardada[]> {
@@ -46,4 +48,9 @@ export async function olvidarVoz(id: string): Promise<string> {
 export async function olvidarTodasLasVoces(): Promise<number> {
   const r = await api<{ ok: boolean; borradas: number }>(RUTA_VOCES, { method: 'DELETE' }, 12_000);
   return r.borradas;
+}
+
+/** Tanda F1: la dueña confirma EN SU PANTALLA a alguien que quedó por confirmar (un posible menor). */
+export async function confirmarVoz(id: string): Promise<void> {
+  await api<{ ok: boolean }>(`${RUTA_VOCES}/${encodeURIComponent(id)}/confirmar`, { method: 'POST', body: '{}' }, 12_000);
 }

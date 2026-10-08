@@ -40,6 +40,8 @@ export async function levantarServidor(o: {
   nodo?: (cuerpo: any) => string;
   /** Lo que contesta el nodo a un pedido SIN stream (el turno JSON: preguntarQwen). Sin esto, `{}` como siempre. */
   nodoJson?: (cuerpo: any) => string;
+  /** Cuánto tarda el nodo en contestar ese pedido sin stream (para cortar un turno JSON a medias). 0 por omisión. */
+  nodoJsonDemoraMs?: () => number;
 }) {
   const RAIZ = process.cwd();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aura-servidor-falso-'));
@@ -85,9 +87,13 @@ export async function levantarServidor(o: {
   const nodo = http.createServer((req, res) => {
     let c = '';
     req.on('data', (d) => (c += d));
-    req.on('end', () => {
+    req.on('end', async () => {
       if (req.url === '/api/precalentar') return res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
-      if (!JSON.parse(c || '{}').stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: o.nodoJson ? o.nodoJson(JSON.parse(c || '{}')) : '{}' } }));
+      if (!JSON.parse(c || '{}').stream) {
+        const demora = o.nodoJsonDemoraMs?.() || 0;
+        if (demora) await new Promise((ok) => setTimeout(ok, demora));
+        return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: o.nodoJson ? o.nodoJson(JSON.parse(c || '{}')) : '{}' } }));
+      }
       alNodo++;
       res.writeHead(200, { 'content-type': 'application/x-ndjson' });
       const dicho = o.nodo ? o.nodo(JSON.parse(c || '{}')) : '[EMO: neutral] Hola desde el nodo.';
