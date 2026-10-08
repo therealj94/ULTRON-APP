@@ -126,7 +126,11 @@ export function trocear(paginas: Array<{ pagina: number; texto: string }>): Arra
   let orden = 0;
 
   for (const p of paginas) {
+    // Sin el carácter nulo: PostgreSQL no lo acepta en un texto («invalid byte sequence for
+    // encoding UTF8: 0x00») y el documento entero no entraba. Lo dejan algunos PDF hechos con
+    // formularios: así se perdían las fichas de trámites de INHGEOMIN y el Decreto 135-2020.
     const parrafos = String(p.texto || '')
+      .replace(/\u0000/g, '')
       .split(/\n\s*\n+/)
       .map((x) => x.replace(/[ \t]+/g, ' ').trim())
       .filter(Boolean);

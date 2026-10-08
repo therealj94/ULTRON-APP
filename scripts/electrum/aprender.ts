@@ -32,11 +32,14 @@ import JSZip from 'jszip';
 import { aprender, inspeccionar } from '../../server/electrum/aprender';
 import { ingerir, resumenCapa } from '../../server/electrum/gis';
 import { cerrarBase, hayBase, recalcularTraslapes, saludBase } from '../../server/electrum/db';
+import { borradosEnPanel } from '../../server/electrum/importar';
 
 /** Por encima de esto, un shapefile no se lee de una pieza: se queda sin memoria y tumba la carga. */
 const TOPE_SHP = 300 * 1024 ** 2;
 
-const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|docx|txt|md|markdown)$/i;
+// Los documentos son los mismos que lee el motor (ES_DOC en server/electrum/aprender.ts): sin el
+// .doc, .rtf, .pptx y .xlsx aquí, un lote de expedientes perdía todo lo que venía de Office viejo.
+const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|docx|doc|rtf|pptx|xlsx|xlsm|txt|md|markdown)$/i;
 
 const AYUDA = `Cargador de Electrum.
 
@@ -47,14 +50,26 @@ const AYUDA = `Cargador de Electrum.
   --concesion <id>    ata el documento a una concesión del catastro
   --tipo <texto>      fuerza el tipo del documento en vez de deducirlo
   --seco              lee y dice qué haría, sin escribir nada
+  --carpetas          cada archivo va a la carpeta del panel que le toca por su ruta dentro de la
+                      carpeta que se pasó (la estructura del disco se conserva en el panel)
+  --original <dir>    dónde están los originales tal cual se subieron (para anotar de dónde vino)
+  --origen <s3://…/>  el prefijo del cubo que corresponde a <dir>
 
 Se puede cortar y relanzar: lo ya cargado se salta por la huella de su contenido.
 
-Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, Word, texto y Markdown.`;
+Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, Word (.docx/.doc), RTF, PowerPoint,
+Excel, texto y Markdown.`;
 
 const args = process.argv.slice(2);
-const opts: { quien: string | null; concesion: number | null; tipo: string | null; seco: boolean } =
-  { quien: null, concesion: null, tipo: null, seco: false };
+const opts: {
+  quien: string | null;
+  concesion: number | null;
+  tipo: string | null;
+  seco: boolean;
+  carpetas: boolean;
+  original: string | null;
+  origen: string | null;
+} = { quien: null, concesion: null, tipo: null, seco: false, carpetas: false, original: null, origen: null };
 const rutas: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -62,6 +77,9 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--concesion') opts.concesion = Number(args[++i]);
   else if (a === '--tipo') opts.tipo = args[++i];
   else if (a === '--seco') opts.seco = true;
+  else if (a === '--carpetas') opts.carpetas = true;
+  else if (a === '--original') opts.original = args[++i];
+  else if (a === '--origen') opts.origen = String(args[++i] || '').replace(/\/?$/, '/');
   else if (a === '--ayuda' || a === '-h') {
     console.log(AYUDA);
     process.exit(0);
@@ -73,8 +91,17 @@ if (!rutas.length) {
   process.exit(1);
 }
 
+/**
+ * De qué carpeta de las que se pasaron viene cada archivo. Con `--carpetas`, la ruta relativa a esa
+ * raíz es la carpeta del panel: un lote de miles de expedientes llega ordenado como estaba en el
+ * disco de quien lo subió, en vez de todo suelto en un solo montón.
+ */
+const raizDe = new Map<string, string>();
+/** Los zip armados con las piezas de un shapefile, y el .shp del que salió cada uno. */
+const origenDe = new Map<string, string>();
+
 /** Aplana carpetas y descarta lo que no reconocemos, diciéndolo. */
-function expandir(entradas: string[]): string[] {
+function expandir(entradas: string[], raiz?: string): string[] {
   const salida: string[] = [];
   for (const r of entradas) {
     let st;
@@ -85,8 +112,9 @@ function expandir(entradas: string[]): string[] {
       continue;
     }
     if (st.isDirectory()) {
-      for (const f of fs.readdirSync(r).sort()) salida.push(...expandir([path.join(r, f)]));
+      for (const f of fs.readdirSync(r).sort()) salida.push(...expandir([path.join(r, f)], raiz ?? r));
     } else if (RECONOCIDO.test(r)) {
+      raizDe.set(r, raiz ?? path.dirname(r));
       salida.push(r);
     } else {
       console.error(`  – ${path.basename(r)}: formato que no cargo, lo salto`);
@@ -180,9 +208,12 @@ async function juntarShapefiles(lista: string[]): Promise<string[]> {
       }
     }
     // El nombre del zip lleva el del shapefile: es lo que se va a ver luego en la lista de capas.
-    const destino = path.join(os.tmpdir(), `${path.basename(base)}.zip`);
+    // Cada uno en su propio directorio: dos «1620c_wgs84» de carpetas distintas compartían el mismo
+    // zip temporal, el segundo pisaba al primero y se cargaba dos veces mientras el otro se perdía.
+    const destino = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'electrum-shp-')), `${path.basename(base)}.zip`);
     fs.writeFileSync(destino, await zip.generateAsync({ type: 'nodebuffer' }));
     temporales.push(destino);
+    origenDe.set(destino, shp);
     salida.push(destino);
   }
   return salida.sort();
@@ -190,6 +221,31 @@ async function juntarShapefiles(lista: string[]): Promise<string[]> {
 
 const temporales: string[] = [];
 const archivos = await juntarShapefiles(expandir(rutas));
+
+/** La carpeta del panel de un archivo: su ruta dentro de la raíz que se pasó, sin el nombre. */
+function carpetaDe(ruta: string): string | null {
+  if (!opts.carpetas) return null;
+  const real = origenDe.get(ruta) ?? ruta;
+  const raiz = raizDe.get(real);
+  if (!raiz) return null;
+  const rel = path.relative(raiz, path.dirname(real)).split(path.sep).filter(Boolean).join('/');
+  return rel || null;
+}
+
+/**
+ * De dónde vino, como `s3://cubo/clave`, si el original está tal cual en `--original`. Un .txt de
+ * OCR apunta al PDF que se leyó; lo que salió de dentro de un zip no tiene original propio.
+ */
+function archivoDe(ruta: string): string | null {
+  if (!opts.original || !opts.origen) return null;
+  const real = origenDe.get(ruta) ?? ruta;
+  const raiz = raizDe.get(real);
+  if (!raiz) return null;
+  const rel = path.relative(raiz, real).split(path.sep).join('/');
+  const candidatos = [rel, ...(/\.txt$/i.test(rel) ? ['.pdf', '.PDF'].map((e) => rel.replace(/\.txt$/i, e)) : [])];
+  const hallado = candidatos.find((c) => fs.existsSync(path.join(opts.original!, c)));
+  return hallado ? opts.origen + hallado : null;
+}
 if (!archivos.length) {
   console.error('No hay nada que cargar.');
   process.exit(1);
@@ -207,6 +263,14 @@ if (!opts.seco) {
   }
   console.log(`Catastro conectado. PostGIS ${s.postgis}, ${s.concesiones} concesiones cargadas.\n`);
 }
+
+/*
+ * Lo que alguien borró a propósito (en el panel, o al ordenar el catastro) no se vuelve a cargar:
+ * la bitácora guarda su original. El importador del panel ya lo respetaba; este cargador no, y
+ * relanzar un lote revivía la copia del catastro que se acababa de borrar.
+ */
+const borrados = !opts.seco && opts.original ? await borradosEnPanel(archivos.map(archivoDe).filter((a): a is string => !!a)) : new Set<string>();
+if (borrados.size) console.log(`${borrados.size} ${borrados.size === 1 ? 'archivo se borró' : 'archivos se borraron'} a propósito antes: no los vuelvo a cargar.\n`);
 
 let bien = 0;
 let mal = 0;
@@ -227,6 +291,8 @@ for (const [i, ruta] of archivos.entries()) {
     censo.bytes += datos.length;
 
     if (opts.seco) {
+      const destino = carpetaDe(ruta);
+      if (destino) process.stdout.write(`→ ${destino} `);
       if (/\.(zip|shp|kml|kmz|geojson|json|csv)$/i.test(nombre)) {
         const { capa, avisos } = await ingerir(nombre, datos);
         console.log(capa ? `\n   ${resumenCapa(capa, avisos)}` : `\n   ${avisos.map((a) => a.texto).join(' ')}`);
@@ -250,10 +316,18 @@ for (const [i, ruta] of archivos.entries()) {
       continue;
     }
 
+    const original = archivoDe(ruta);
+    if (original && borrados.has(original)) {
+      console.log('se borró a propósito, lo salto');
+      repetidos++;
+      continue;
+    }
     const r = await aprender(nombre, datos, {
       subidoPor: opts.quien || 'cargador',
       concesionId: opts.concesion ?? undefined,
       tipoDoc: opts.tipo ?? undefined,
+      carpeta: carpetaDe(ruta),
+      archivo: archivoDe(ruta),
       // Una sola vez al final, no después de cada archivo: cruzar todas las concesiones contra
       // todas cien veces seguidas no termina nunca, y el resultado es el mismo.
       sinTraslapes: true,
@@ -323,7 +397,7 @@ if (opts.seco) {
 // Los zip que se armaron para juntar las piezas de los shapefiles son de usar y tirar.
 for (const t of temporales) {
   try {
-    fs.unlinkSync(t);
+    fs.rmSync(path.dirname(t), { recursive: true, force: true });
   } catch {
     /* ya no estaba */
   }

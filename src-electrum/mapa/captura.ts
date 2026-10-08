@@ -76,6 +76,8 @@ export type RasterEscaneado = {
   grupo?: string;
   /** Qué quiere decir cada color, para las capas calculadas (Sentinel-2). */
   leyenda?: Array<{ color: string; texto: string }>;
+  /** Teselas vectoriales de líneas (curvas de nivel): capa, color, rótulo y marca de maestras. */
+  vector?: { capa: string; color?: string; etiqueta?: string; maestra?: string };
 };
 /** Un mapa escaneado encendido, con la transparencia que se le dio. */
 export type RasterEncendido = RasterEscaneado & { opacidad: number };

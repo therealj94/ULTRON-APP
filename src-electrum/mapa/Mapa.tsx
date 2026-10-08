@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import { duracion, sinMovimiento } from '../movimiento';
-import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Margen, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './captura';
+import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Margen, type Motor, type OrdenMapa, type RasterEncendido, type RasterEscaneado, type Tocado } from './captura';
 import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, colorEstado, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
@@ -160,7 +160,7 @@ const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: nul
 const pintadoExtra = new Map<string, { rol: string; geojson: unknown }>();
 const fuenteExtra = (id: number) => `extra-${id}`;
 /** Los mapas escaneados encendidos, clave → transparencia. Fuera de React por lo mismo que `pintado`. */
-const pintadoRaster = new Map<string, { opacidad: number; zoomMax?: number }>();
+const pintadoRaster = new Map<string, { opacidad: number; zoomMax?: number; vector?: RasterEscaneado['vector'] }>();
 const fuenteRaster = (clave: string) => `raster-${clave}`;
 /** Las muestras geoquímicas encendidas: el elemento que colorea y sus puntos. Fuera de React por lo mismo. */
 let pintadoMuestras: { elemento: ElementoMuestra; geojson: unknown } | null = null;
@@ -230,8 +230,12 @@ function asegurarCapas(m: maplibregl.Map) {
    * Los mapas escaneados, DEBAJO de todo lo vectorial: un mapa geológico de 1980 es papel, y encima
    * tienen que seguir leyéndose las capas encendidas y el catastro de hoy.
    */
-  for (const [clave, { opacidad, zoomMax }] of pintadoRaster) {
+  for (const [clave, { opacidad, zoomMax, vector }] of pintadoRaster) {
     const f = fuenteRaster(clave);
+    if (vector) {
+      pintarVectorIndice(m, f, clave, vector, opacidad, zoomMax);
+      continue;
+    }
     if (!m.getSource(f)) {
       if (m.getLayer(f)) m.removeLayer(f);
       m.addSource(f, { type: 'raster', url: urlTeselas(clave), tileSize: 256, ...(zoomMax ? { maxzoom: zoomMax } : {}) } as any);
@@ -301,13 +305,82 @@ function quitarMuestras(m: maplibregl.Map) {
 }
 
 /**
+ * Una capa de LÍNEAS del índice de teselas (las curvas de nivel oficiales): finas y del color de la
+ * entrada, las maestras más gruesas, y la cota rotulada sobre la línea cuando hay zoom para leerla.
+ * Van con los mapas escaneados, debajo del catastro: son el terreno, no una capa más.
+ */
+function pintarVectorIndice(
+  m: maplibregl.Map,
+  f: string,
+  clave: string,
+  v: NonNullable<RasterEscaneado['vector']>,
+  opacidad: number,
+  zoomMax?: number
+) {
+  const color = v.color || '#E8C38A';
+  const maestra = v.maestra ? ['==', ['to-number', ['get', v.maestra], 0], 1] : false;
+  if (!m.getSource(f)) {
+    for (const id of [f, `${f}-cota`]) if (m.getLayer(id)) m.removeLayer(id);
+    m.addSource(f, { type: 'vector', url: urlTeselas(clave), ...(zoomMax ? { maxzoom: zoomMax } : {}) } as any);
+  }
+  const debajo = m.getStyle().layers.find((l) => l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id;
+  if (!m.getLayer(f)) {
+    m.addLayer(
+      {
+        id: f,
+        type: 'line',
+        source: f,
+        'source-layer': v.capa,
+        paint: {
+          'line-color': color,
+          'line-width': ['case', maestra, ['interpolate', ['linear'], ['zoom'], 10, 0.9, 15, 1.8], ['interpolate', ['linear'], ['zoom'], 12, 0.35, 15, 0.9]],
+          'line-opacity': opacidad,
+        },
+      } as any,
+      debajo
+    );
+  } else {
+    m.setPaintProperty(f, 'line-opacity', opacidad);
+    if (m.getLayoutProperty(f, 'visibility') === 'none') m.setLayoutProperty(f, 'visibility', 'visible');
+  }
+  if (v.etiqueta) {
+    const id = `${f}-cota`;
+    if (!m.getLayer(id)) {
+      m.addLayer(
+        {
+          id,
+          type: 'symbol',
+          source: f,
+          'source-layer': v.capa,
+          // De cerca todas; antes, solo las maestras, para que no se amontonen los números.
+          minzoom: 12,
+          filter: maestra ? ['any', ['>=', ['zoom'], 14], maestra] : true,
+          layout: {
+            'symbol-placement': 'line',
+            'text-field': ['concat', ['to-string', ['get', v.etiqueta]], ' m'],
+            'text-size': 10,
+            'text-font': ['Noto Sans Medium'],
+            'symbol-spacing': 320,
+          },
+          paint: { 'text-color': color, 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.2, 'text-opacity': opacidad },
+        } as any,
+        debajo
+      );
+    } else {
+      m.setPaintProperty(id, 'text-opacity', opacidad);
+      if (m.getLayoutProperty(id, 'visibility') === 'none') m.setLayoutProperty(id, 'visibility', 'visible');
+    }
+  }
+}
+
+/**
  * Esconde un mapa escaneado que se apagó, sin borrarlo: volver a encenderlo (el recorrido los va
  * alternando) no descarga todo de nuevo ni deja el terreno pelado mientras llega. Borrar y crear la
  * fuente en cada cambio era otro parpadeo.
  */
 function quitarRaster(m: maplibregl.Map, clave: string) {
   const f = fuenteRaster(clave);
-  if (m.getLayer(f)) m.setLayoutProperty(f, 'visibility', 'none');
+  for (const id of [f, `${f}-cota`]) if (m.getLayer(id)) m.setLayoutProperty(id, 'visibility', 'none');
 }
 
 /*
@@ -979,7 +1052,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         if (m && listo) quitarRaster(m, clave);
       }
     }
-    for (const [clave, r] of quedan) pintadoRaster.set(clave, { opacidad: Math.max(0.1, Math.min(1, r.opacidad)), zoomMax: r.zoomMax });
+    for (const [clave, r] of quedan) pintadoRaster.set(clave, { opacidad: Math.max(0.1, Math.min(1, r.opacidad)), zoomMax: r.zoomMax, vector: r.vector });
     if (m && listo) asegurarCapas(m);
   }, [rasters, listo]);
 

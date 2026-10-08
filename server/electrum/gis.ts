@@ -544,8 +544,37 @@ async function ingerirKmz(nombre: string, datos: Buffer, avisos: Aviso[]): Promi
   return ingerirKml(nombre, await zip.files[archivo].async('text'), avisos, 'kmz');
 }
 
+/** Los espacios de nombres que Google Earth y compañía usan en un KML, por su prefijo habitual. */
+const PREFIJOS_KML: Record<string, string> = {
+  gx: 'http://www.google.com/kml/ext/2.2',
+  atom: 'http://www.w3.org/2005/Atom',
+  xal: 'urn:oasis:names:tc:ciq:xsdschema:xAL:2.0',
+  kml: 'http://www.opengis.net/kml/2.2',
+};
+
+/**
+ * Declara en la raíz los prefijos que el KML usa sin declarar.
+ *
+ * Google Earth exporta `<gx:Track>`, `<gx:altitudeMode>`… y a menudo se olvida del `xmlns:gx` en la
+ * raíz. El lector de XML entonces no arma el documento («prefix is non-null and namespace is
+ * null») y la capa entera se pierde: así no entraban las vetas, trincheras y linderos de Buena
+ * Vista-Monarka y La Campana. Agregar la declaración no cambia nada de lo que dice el archivo.
+ */
+export function declararPrefijosKml(texto: string): string {
+  const usados = new Set<string>();
+  for (const m of texto.matchAll(/<\/?([A-Za-z_][\w.-]*):[A-Za-z_]/g)) usados.add(m[1]);
+  for (const m of texto.matchAll(/\s([A-Za-z_][\w.-]*):[A-Za-z_][\w.-]*\s*=\s*["']/g)) usados.add(m[1]);
+  const faltan = [...usados].filter((p) => p !== 'xml' && p !== 'xmlns' && !new RegExp(`xmlns:${p.replace(/[.-]/g, '\\$&')}\\s*=`).test(texto));
+  if (!faltan.length) return texto;
+  const raiz = /<(?![?!])([A-Za-z_][\w.:-]*)/.exec(texto);
+  if (!raiz) return texto;
+  const fin = raiz.index + raiz[0].length;
+  const decl = faltan.map((p) => ` xmlns:${p}="${PREFIJOS_KML[p] || `urn:electrum:sin-declarar:${p}`}"`).join('');
+  return texto.slice(0, fin) + decl + texto.slice(fin);
+}
+
 function ingerirKml(nombre: string, texto: string, avisos: Aviso[], formato: string): Ingesta {
-  const doc = new DOMParser().parseFromString(texto, 'text/xml');
+  const doc = new DOMParser().parseFromString(declararPrefijosKml(texto), 'text/xml');
   const crudo = kmlAGeojson(doc as any) as FeatureCollection;
   const { fc, descartadas } = limpiar(crudo);
   // KML es WGS84 por definición del formato; no hay nada que reproyectar.
