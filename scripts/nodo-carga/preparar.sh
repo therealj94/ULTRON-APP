@@ -16,6 +16,9 @@ BUCKET="__BUCKET__"
 LOTES="__LOTES__"
 REGION="__REGION__"
 
+# unrar está en multiverse: es el único que abre todos los RAR (un .exe autoextraíble de lote-1 no
+# lo abrían ni 7z ni unar).
+add-apt-repository -y multiverse >/dev/null 2>&1 || true
 apt-get update -q
 # 7zip (`7z`) y unar abren .rar y .7z, que el cargador rechaza y en los expedientes aparecen;
 # xlrd + openpyxl pasan los .xls viejos a .xlsx; tippecanoe
@@ -23,7 +26,7 @@ apt-get update -q
 apt-get install -y -q --no-install-recommends \
   ca-certificates curl unzip xz-utils jq tmux git python3 \
   gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip unar tippecanoe python3-xlrd python3-openpyxl postgresql-client \
-  libreoffice-impress-nogui libreoffice-writer-nogui
+  libreoffice-impress-nogui libreoffice-writer-nogui libreoffice-calc-nogui unrar
 
 # Node 22 del sitio oficial, comprobado contra su suma: el de Ubuntu es viejo y el código pide >=22.
 cd /tmp

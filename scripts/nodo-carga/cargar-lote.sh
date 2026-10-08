@@ -96,12 +96,19 @@ apartar() {  # apartar <archivo> <razón>
 # Un .exe autoextraíble (WinRAR/7-Zip SFX) es un comprimido con un arranque de Windows delante. A veces
 # es la única copia sana: en lote-1 el .rar de los planes de explotación de El Chaparro venía roto y
 # el .exe con el mismo nombre traía los diez .docx enteros. Si abre, manda sobre el .rar gemelo.
+# 7z lo reconoce pero no descomprime ese RAR («Unsupported Method») ni unar lo abre: el que puede es
+# unrar (multiverse, preparar.sh). Se prueba unrar y, si no está o no puede, 7z.
+sfx() {  # sfx <exe> <destino>: 0 si sacó algo sano
+  mkdir -p "$2"
+  if command -v unrar >/dev/null && (cd "$2" && unrar x -o+ -idq "$1" ./ >/dev/null 2>&1); then return 0; fi
+  rm -rf "$2"; 7z x -y -bso0 -bsp0 -o"$2" "$1" >/dev/null 2>&1
+}
 while IFS= read -r -d '' z; do
   7z l "$z" >/dev/null 2>&1 || continue
-  if 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then
+  if sfx "$z" "${z%.*}"; then
     rm -f "$z"
     for gemelo in "${z%.*}".rar "${z%.*}".RAR; do [ -f "$gemelo" ] && rm -f "$gemelo"; done
-  fi
+  else rm -rf "${z%.*}"; fi
 done < <(find "$LISTO" -type f -iname '*.exe' -print0)
 
 # Comprimidos dentro de comprimidos: hasta tres vueltas.
@@ -115,8 +122,9 @@ for vuelta in 1 2 3; do
     else apartar "$z" "zip roto o cifrado"; fi
   done < <(find "$LISTO" -type f -iname '*.zip' -print0)
   while IFS= read -r -d '' z; do
-    # El 7z de Ubuntu no trae el códec de RAR: los .rar de Windows (RAR4/RAR5) los abre unar.
-    if 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
+    # El 7z de Ubuntu no trae el códec de RAR: unrar primero (el único que abre todo RAR), luego 7z y unar.
+    if command -v unrar >/dev/null && mkdir -p "${z%.*}" && (cd "${z%.*}" && unrar x -o+ -idq "$z" ./ >/dev/null 2>&1); then rm -f "$z"; abiertos=$((abiertos + 1))
+    elif rm -rf "${z%.*}" && 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
     elif rm -rf "${z%.*}" && unar -q -f -D -o "${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
     else apartar "$z" "rar/7z roto o cifrado"; fi
   done < <(find "$LISTO" -type f \( -iname '*.rar' -o -iname '*.7z' \) -print0)
