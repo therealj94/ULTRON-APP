@@ -186,6 +186,24 @@ test('CSV de puntos', async () => {
   cerca(distanciaKm(p1, p2), 1.52, 0.1);
 });
 
+test('CSV de libreta de campo: prefiere grados a x/y, y si solo hay UTM usa la columna de zona', async () => {
+  // Así exporta Field Move: x, y en UTM y además latitude, longitude, con espacios tras las comas.
+  const ambos = 'localityId, x, y, latitude, longitude, zone, dip\na,508021.6654,1470011.539,13.297273,-86.925939, 16P,49\n';
+  const r1 = await ingerir('plane.csv', Buffer.from(ambos, 'utf8'));
+  const c1 = (r1.capa!.geojson.features[0].geometry as any).coordinates;
+  cerca(c1[0], -86.925939, 1e-6);
+  cerca(c1[1], 13.297273, 1e-6);
+  assert.equal((r1.capa!.geojson.features[0].properties as any).dip, '49');
+
+  const soloUtm = 'id,x,y,zona\na,508021.6654,1470011.539,16P\n';
+  const r2 = await ingerir('utm.csv', Buffer.from(soloUtm, 'utf8'));
+  const c2 = (r2.capa!.geojson.features[0].geometry as any).coordinates;
+  cerca(c2[0], -86.925939, 1e-4);
+  cerca(c2[1], 13.297273, 1e-4);
+  assert.match(r2.capa!.origenCrs, /32616/);
+  assert.ok(r2.avisos.some((a) => /reproyect/i.test(a.texto)));
+});
+
 test('formatos que todavía no entran lo dicen claro, no fallan en silencio', async (t) => {
   await t.test('gpkg', async () => {
     const { capa, avisos } = await ingerir('catastro.gpkg', Buffer.from('x'));

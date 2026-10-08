@@ -16,13 +16,17 @@ BUCKET="__BUCKET__"
 LOTES="__LOTES__"
 REGION="__REGION__"
 
+# unrar está en multiverse: es el único que abre todos los RAR (un .exe autoextraíble de lote-1 no
+# lo abrían ni 7z ni unar).
+add-apt-repository -y multiverse >/dev/null 2>&1 || true
 apt-get update -q
 # 7zip (`7z`) y unar abren .rar y .7z, que el cargador rechaza y en los expedientes aparecen;
 # xlrd + openpyxl pasan los .xls viejos a .xlsx; tippecanoe
 # hace las teselas vectoriales de las curvas de nivel (curvas-lote).
 apt-get install -y -q --no-install-recommends \
   ca-certificates curl unzip xz-utils jq tmux git python3 \
-  gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip unar tippecanoe python3-xlrd python3-openpyxl postgresql-client
+  gdal-bin poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng 7zip unar tippecanoe python3-xlrd python3-openpyxl postgresql-client \
+  libreoffice-impress-nogui libreoffice-writer-nogui libreoffice-calc-nogui unrar
 
 # Node 22 del sitio oficial, comprobado contra su suma: el de Ubuntu es viejo y el código pide >=22.
 cd /tmp
@@ -61,6 +65,21 @@ PMT
 chmod +x /usr/local/bin/electrum-carga-pmtiles
 /usr/local/bin/electrum-carga-pmtiles
 
+# Decodificador de MrSID (.sid): el GDAL de Ubuntu, y el de las imágenes oficiales de GDAL, no lo
+# trae (es un formato con licencia). El SDK de Extensis es de descarga libre y trae `mrsiddecode`,
+# que lo pasa a GeoTIFF con su georreferencia. teselas-lote lo usa si está; sin él, aparta el .sid.
+MRSID_URL=https://bin.extensis.com/download/developer/MrSID_DSDK-9.5.4.4709-rhel6.x86-64.gcc531.tar.gz
+MRSID_SUMA=ea3866aaaf518426a3a423072540f89a337d6a423feaa8e6cc9ac16906273b84
+if curl -fsSL "$MRSID_URL" -o /tmp/mrsid.tgz && echo "${MRSID_SUMA}  /tmp/mrsid.tgz" | sha256sum -c -; then
+  mkdir -p /opt/mrsid && tar -xzf /tmp/mrsid.tgz -C /opt/mrsid
+  D=$(dirname "$(find /opt/mrsid -path '*Raster_DSDK/bin/mrsiddecode' | head -1)")/..
+  printf '#!/bin/sh\nLD_LIBRARY_PATH=%s/lib exec %s/bin/mrsiddecode "$@"\n' "$(cd "$D" && pwd)" "$(cd "$D" && pwd)" > /usr/local/bin/mrsiddecode
+  chmod +x /usr/local/bin/mrsiddecode
+else
+  echo "Sin decodificador de MrSID: los .sid quedarán apartados."
+fi
+rm -f /tmp/mrsid.tgz
+
 mkdir -p /opt/electrum-carga /datos
 cat > /etc/profile.d/electrum-carga.sh <<PERFIL
 export AWS_DEFAULT_REGION=${REGION}
@@ -87,6 +106,7 @@ ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/cargar-lote.sh /usr/local/b
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/teselas-lote.sh /usr/local/bin/teselas-lote
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/curvas-lote.sh /usr/local/bin/curvas-lote
 ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/con-cerebro.sh /usr/local/bin/con-cerebro
+ln -sf /opt/electrum-carga/codigo/scripts/nodo-carga/ocr-pendientes.sh /usr/local/bin/ocr-pendientes
 echo "código al día"
 CODIGO
 chmod +x /usr/local/bin/electrum-carga-codigo

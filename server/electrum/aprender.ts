@@ -291,7 +291,7 @@ export async function cargarTexto(
   id: number,
   nombre: string,
   datos: Buffer,
-  opts: { forzar?: boolean; por?: string | null } = {}
+  opts: { forzar?: boolean; por?: string | null; soloSiMejora?: boolean } = {}
 ): Promise<{ ok: boolean; dicho: string; antes: number; ahora: number; paginas?: number; fragmentos?: number }> {
   const [d] = await consulta<{ nombre: string; car: number }>(
     `SELECT d.nombre, coalesce((SELECT sum(length(f.texto)) FROM fragmento f WHERE f.documento_id = d.id), 0)::int AS car FROM documento d WHERE d.id = $1`,
@@ -310,6 +310,11 @@ export async function cargarTexto(
       antes,
       ahora,
     };
+  }
+  // Para un OCR por lotes: solo si trae MÁS texto que el que ya hay. Se mira antes de tocar nada; con
+  // la regla de «la mitad» de arriba, un OCR peor pero no tanto reemplazaba una lectura mejor.
+  if (opts.soloSiMejora && ahora <= antes) {
+    return { ok: false, dicho: `Sin cambio: la lectura nueva trae ${ahora.toLocaleString('es-ES')} caracteres y ya tiene ${antes.toLocaleString('es-ES')}.`, antes, ahora };
   }
   await reemplazarFragmentos(id, leido.paginas.length, leido.trozos, d.nombre);
   // Deja de estar pendiente de OCR, y queda dicho de dónde salió el texto.

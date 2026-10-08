@@ -125,7 +125,23 @@ paso "1. Rásteres de ${ORIGEN}"
 aws s3 sync "$ORIGEN" "$ORIG" --only-show-errors --exclude '*' \
   --include '*.tif' --include '*.TIF' --include '*.tiff' --include '*.TIFF' --include '*.jp2' --include '*.JP2' \
   --include '*.img' --include '*.IMG' --include '*.tfw' --include '*.TFW' --include '*.tifw' --include '*.j2w' \
-  --include '*.aux.xml' --include '*.AUX.XML' --include '*.prj' --include '*.PRJ' --include '*.ovr'
+  --include '*.aux.xml' --include '*.AUX.XML' --include '*.prj' --include '*.PRJ' --include '*.ovr' \
+  --include '*.sid' --include '*.SID' --include '*.sdw' --include '*.SDW'
+# MrSID: GDAL no lo abre sin un driver con licencia; mrsiddecode (preparar.sh) lo pasa a un GeoTIFF
+# al lado, con el mismo nombre, y desde ahí sigue como cualquier .tif. Dos copias idénticas del
+# mismo .sid en carpetas distintas (pasa: «shp_Minas de Oro» estaba dos veces) se decodifican una.
+declare -A SID_VISTO=()
+while IFS= read -r -d '' sid; do
+  tif="${sid%.*}.tif"
+  # La huella primero: si la copia ya se decodificó en otra corrida, esta no se decodifica (sería
+  # la misma capa dos veces) y su .tif de una corrida vieja se quita.
+  h=$(md5sum "$sid" | cut -c1-32)
+  if [ -n "${SID_VISTO[$h]:-}" ]; then echo "  = ${sid#"$ORIG"/}: copia de ${SID_VISTO[$h]#"$ORIG"/}"; rm -f "$tif"; continue; fi
+  SID_VISTO[$h]="$sid"
+  [ -s "$tif" ] && continue
+  if ! command -v mrsiddecode >/dev/null; then echo "  ✗ ${sid#"$ORIG"/}: falta mrsiddecode (preparar.sh)"; continue; fi
+  mrsiddecode -quiet -i "$sid" -o "$tif" -of tifg >/dev/null 2>&1 || { rm -f "$tif"; echo "  ✗ ${sid#"$ORIG"/}: mrsiddecode no pudo"; }
+done < <(find "$ORIG" -type f -iname '*.sid' -print0 | sort -z)
 mapfile -d '' RASTERES < <(find "$ORIG" -type f \( -iname '*.tif' -o -iname '*.tiff' -o -iname '*.jp2' -o -iname '*.img' \) -print0 | sort -z)
 echo "  ${#RASTERES[@]} rásteres"
 if [ "${#RASTERES[@]}" -eq 0 ]; then
@@ -235,9 +251,13 @@ clave_de() {
   CLAVE="$(acotar "$CLAVE")"
   CLAVES[$CLAVE]="$1"
 }
+# Con --solo no se convierte nada más: publicar una capa no puede ponerse a convertir 37 hojas sueltas
+# porque se olvidó repetir --mosaico (pasó publicando el mapa de Minas de Oro).
+solo_otra() { [ "${#SOLO[@]}" -gt 0 ] && ! printf '%s\n' "${SOLO[@]}" | grep -qxF "$1"; }
 declare -A EN_MOSAICO=()
 for carpeta in "${MOSAICOS[@]}"; do
   clave="$(acotar "${PREF}-$(slug "$carpeta")")"
+  solo_otra "$clave" && { echo "  – ${clave}: fuera de --solo"; for r in "${BUENOS[@]}"; do case "/${r#"$ORIG"/}" in */"$carpeta"/*) EN_MOSAICO["$r"]=1 ;; esac; done; continue; }
   piezas=()
   for r in "${BUENOS[@]}"; do
     case "/${r#"$ORIG"/}" in */"$carpeta"/*) piezas+=("$r"); EN_MOSAICO["$r"]=1 ;; esac
@@ -265,6 +285,7 @@ for r in "${BUENOS[@]}"; do
   [ -z "${EN_MOSAICO[$r]:-}" ] || continue
   rel="${r#"$ORIG"/}"
   clave_de "$rel"; clave="$CLAVE"
+  solo_otra "$clave" && continue
   if [ -s "${SAL}/${clave}.pmtiles" ] && [ -s "${SAL}/entradas/${clave}.json" ]; then echo "  = ${clave} ya estaba"; continue; fi
   m="${TRAB}/${clave}.tif"
   a_mercator "$r" "$m"

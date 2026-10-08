@@ -242,7 +242,15 @@ function archivoDe(ruta: string): string | null {
   const raiz = raizDe.get(real);
   if (!raiz) return null;
   const rel = path.relative(raiz, real).split(path.sep).join('/');
-  const candidatos = [rel, ...(/\.txt$/i.test(rel) ? ['.pdf', '.PDF'].map((e) => rel.replace(/\.txt$/i, e)) : [])];
+  // Lo convertido apunta a lo que se convirtió: el .txt de un OCR a su PDF, el PDF de una página web
+  // o de un Visio a su .html/.vsdx, el .xlsx de un Excel viejo o de una hoja SYLK a su original.
+  const otros: Record<string, string[]> = {
+    txt: ['pdf', 'PDF'],
+    pdf: ['html', 'htm', 'vsdx', 'vsd', 'odt', 'odp', 'wpd'],
+    xlsx: ['xls', 'XLS', 'slk', 'ods'],
+  };
+  const ext = (/\.([^./]+)$/.exec(rel)?.[1] || '').toLowerCase();
+  const candidatos = [rel, ...(otros[ext] || []).map((e) => rel.replace(/\.[^./]+$/, `.${e}`))];
   const hallado = candidatos.find((c) => fs.existsSync(path.join(opts.original!, c)));
   return hallado ? opts.origen + hallado : null;
 }
@@ -310,6 +318,9 @@ for (const [i, ruta] of archivos.entries()) {
           paraOcr.push(ruta);
         } else {
           censo.cortos++;
+          // Un PDF «corto» suele ser un escaneo con un sello o un pie de página como única capa de
+          // texto (cartas poder, DECA, TGR): el OCR saca el resto. Si no hay más, su .txt tampoco entra.
+          if (/\.pdf$/i.test(nombre)) paraOcr.push(ruta);
         }
       }
       bien++;

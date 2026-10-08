@@ -565,10 +565,10 @@ export async function releer(id: number, quien?: string | null) {
 }
 
 /** Cargar el texto de otra lectura (un OCR) en un documento que ya está. Ver `cargarTexto`. */
-export async function cargarTextoEn(id: number, nombre: string, datos: Buffer, quien?: string | null, forzar = false) {
+export async function cargarTextoEn(id: number, nombre: string, datos: Buffer, quien?: string | null, forzar = false, soloSiMejora = false) {
   await asegurarBiblioteca();
   if (!(await propios([{ clase: 'documento', id }])).length) return { ok: false as const, dicho: 'Ese documento ya no existe.' };
-  const r = await cargarTexto(id, nombre, datos, { forzar, por: quien });
+  const r = await cargarTexto(id, nombre, datos, { forzar, por: quien, soloSiMejora });
   if (r.ok) await consulta(`UPDATE documento SET releido = now() WHERE id = $1`, [id]);
   await anotar(quien, 'texto', `documento ${id}`, { archivo: nombre, ok: r.ok, antes: r.antes, ahora: r.ahora, forzar });
   return r;
