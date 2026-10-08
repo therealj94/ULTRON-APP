@@ -106,9 +106,11 @@ abrir() {  # abrir <comprimido> <sacador>...: 0 si alguno lo abrió y quedó en 
   for s in "$@"; do
     tmp="$(mktemp -d "${DIR}/abriendo.XXXXXX")"
     if "$s" "$z" "$tmp" >/dev/null 2>&1 && [ -n "$(ls -A "$tmp")" ]; then
-      # Si ya había una carpeta con ese nombre, lo sacado se suma sin pisar nada de lo suyo.
-      if [ -e "$dest" ]; then cp -aln "$tmp"/. "$dest"/ 2>/dev/null || true; rm -rf "$tmp"
-      else mv "$tmp" "$dest"; fi
+      # Si ya hay algo con ese nombre (una carpeta del lote, o un archivo sin extensión), lo sacado va
+      # a una carpeta hermana propia en vez de mezclarse: mezclar podía fallar a medias (un archivo
+      # contra una carpeta) y, con el comprimido ya borrado, lo que no se copió se perdía.
+      if [ -e "$dest" ]; then dest="${dest} (de $(basename "$z"))"; fi
+      if [ -e "$dest" ] || ! mv "$tmp" "$dest"; then rm -rf "$tmp"; return 1; fi
       return 0
     fi
     rm -rf "$tmp"

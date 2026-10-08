@@ -61,3 +61,17 @@ test('filtro de documento por palabras enteras: «Fase II» no es «Fase III» y
   assert.deepEqual(filtroDocumento('a.b (c)', 1).args, []);
   assert.deepEqual(filtroDocumento('x+y', 1).args, ['x\\+y']);
 });
+
+test('sin tildes: la palabra con y sin tilde da el mismo lexema en el índice y en la consulta', { skip: !hayBase() }, async () => {
+  const { asegurarBiblioteca } = await import('../server/electrum/biblioteca');
+  await asegurarBiblioteca();
+  // `ts_debug` enseña solo el primer diccionario de la cadena; lo que cuenta es lo que guarda el índice.
+  const [r] = await consulta<{ a: string; b: string; c: boolean; d: boolean }>(
+    `SELECT to_tsvector('es_sin_tilde', 'geología aurífera mineralización')::text AS a,
+            to_tsvector('es_sin_tilde', 'geologia aurifera mineralizacion')::text AS b,
+            to_tsvector('es_sin_tilde', 'geología') @@ to_tsquery('es_sin_tilde', 'geologia') AS c,
+            to_tsvector('es_sin_tilde', 'geologia') @@ to_tsquery('es_sin_tilde', 'geología') AS d`
+  );
+  assert.equal(r.a, r.b);
+  assert.ok(r.c && r.d);
+});
