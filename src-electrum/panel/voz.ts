@@ -14,11 +14,21 @@
  *    después del toque) se queda mudo sin error.
  *  · Si la voz falla se dice una vez, con el motivo del servidor.
  *  · `callar()` corta lo que suena e invalida lo que viene en camino.
+ *  · EN VIVO (como AU-RA): `crearLocucion` dice cada frase de la respuesta en cuanto el turno la manda,
+ *    sin esperar al final. La primera va con `primera: true` (el servidor la sintetiza con el modelo
+ *    rápido) y mientras suena una ya se pide la siguiente.
+ *  · Lleva la cuenta de lo que va diciendo (RegistroVoz, el mismo de AU-RA): el oído no toma su eco por
+ *    la persona y, si lo interrumpen, se sabe qué alcanzó a oír (`interrumpido.oido` del turno siguiente).
+ *  · Interrumpirlo lo calla bajando la voz en 160 ms, no a cuchillo; mientras se confirma si de verdad le
+ *    hablan, la voz se PAUSA (o baja) y, si era su eco o un «ajá», sigue donde estaba.
  */
 
 import { guardarPreferencia, leerPreferencia } from '../preferencias';
 import { idiomaActual } from './idioma';
 import { detectarIdioma } from '../../lib/idioma-detectar';
+import { cortarFrases } from '../../src/03-voz/frases';
+import { RegistroVoz } from '../../mobile/src/lib/interrupcion';
+import { juntarFrases } from './frasesTurno';
 
 /** Medio segundo de silencio en WAV: lo que suena al desbloquear el reproductor. */
 const SILENCIO =
@@ -157,13 +167,48 @@ export function escucharMudo(f: (m: boolean) => void): () => void {
 /** Lo que tarda en leerse un texto (unas 3 palabras por segundo), entre 1,5 y 12 s. */
 export const msDeLectura = (t: string) => Math.max(1500, Math.min(12_000, String(t || '').split(/\s+/).length * 330));
 
-/** Corta lo que suena e invalida lo que venía. Se puede llamar siempre. */
-export function callar() {
-  generacion++;
-  relleno = null;
-  terminarEscena();
-  cortePendiente?.abort();
-  cortePendiente = null;
+/* ------------------------------------------------------------ lo que va diciendo */
+
+/**
+ * Lo que la voz va diciendo, trozo a trozo (el mismo registro que AU-RA): para que el oído reconozca su
+ * eco y para saber qué alcanzó a oír la persona si lo interrumpe.
+ */
+const registro = new RegistroVoz();
+/** Lo que suena es un «estoy revisando…»: es eco, pero no es parte de la respuesta. */
+let rellenoSonando = false;
+
+function empezoTrozo(texto: string, esRelleno = false) {
+  rellenoSonando = esRelleno;
+  registro.empezo(texto);
+}
+function terminoTrozo() {
+  // Un relleno que termina queda como eco reciente, no como algo oído de la respuesta.
+  if (rellenoSonando) registro.callo();
+  else registro.termino();
+  rellenoSonando = false;
+}
+
+/** Lo que la voz dice ahora y lo de hace un momento: lo que el oído tiene que reconocer como eco. */
+export const dichosVoz = (): string[] => registro.dichos();
+
+/** Empieza la respuesta a una pregunta nueva: lo oído de la anterior ya no cuenta. */
+export function nuevoTurnoVoz() {
+  registro.nuevoTurno();
+}
+
+/** Lo que la persona alcanzó a oír la última vez que interrumpió, una sola vez (va con la pregunta siguiente). */
+export function tomarCortada(): string | null {
+  return registro.tomarCortada();
+}
+
+/* ------------------------------------------------------------ callar */
+
+/** Volumen de la voz: 1, o bajado mientras se confirma si le están hablando encima (`bajarParaOir`). */
+let volumen = 1;
+/** La voz quedó en pausa para oír a quien le habla encima (`pausarParaOir`); `seguirTrasOir` la retoma. */
+let pausaOir: { gen: number; reloj: ReturnType<typeof setTimeout> } | null = null;
+
+function soltarReproductor() {
   // El silencio del desbloqueo no se corta: cortarlo a la mitad le quita el permiso en Safari.
   if (reproductor && !String(reproductor.src).startsWith('data:')) {
     try {
@@ -176,12 +221,112 @@ export function callar() {
   }
 }
 
+/** Invalida lo que suena y lo que venía (sin tocar el reproductor todavía). */
+function invalidar() {
+  generacion++;
+  relleno = null;
+  terminarEscena();
+  cortePendiente?.abort();
+  cortePendiente = null;
+  if (pausaOir) clearTimeout(pausaOir.reloj);
+  pausaOir = null;
+  volumen = 1;
+  if (registro.hablando()) registro.callo();
+  rellenoSonando = false;
+}
+
+/** Corta lo que suena e invalida lo que venía. Se puede llamar siempre. */
+export function callar() {
+  invalidar();
+  soltarReproductor();
+  if (reproductor) reproductor.volume = 1;
+}
+
 /**
- * Lo que se lee en voz alta: sin marcas de formato, enlaces ni listas, partido en trozos que
- * terminan en fin de frase. El primero es corto para que empiece a sonar enseguida.
+ * Como `callar`, pero lo que suena BAJA en `ms` antes de cortarse (como AU-RA al interrumpirla): un corte
+ * a cuchillo suena a error. Lo que venía en camino se invalida en el acto.
  */
-export function trocearParaVoz(texto: string, primero = 180, resto = 420): string[] {
-  const limpio = String(texto || '')
+export function callarSuave(ms = 160) {
+  const a = reproductor;
+  if (!a || a.paused || !a.src || String(a.src).startsWith('data:')) return callar();
+  invalidar();
+  const mia = generacion;
+  const desde = a.volume || 1;
+  const t0 = Date.now();
+  const reloj = setInterval(() => {
+    // Mientras bajaba empezó otra voz: esa suena entera.
+    if (mia !== generacion) {
+      clearInterval(reloj);
+      a.volume = volumen;
+      return;
+    }
+    const p = Math.min(1, (Date.now() - t0) / ms);
+    a.volume = Math.max(0, desde * (1 - p));
+    if (p >= 1) {
+      clearInterval(reloj);
+      soltarReproductor();
+      a.volume = 1;
+    }
+  }, 16);
+}
+
+/**
+ * Le hablan encima DE VERDAD (el oído lo confirmó con el texto): se calla bajando y se anota lo que la
+ * persona alcanzó a oír de la respuesta (la frase que sonaba, hasta donde iba). Devuelve eso.
+ */
+export function interrumpirVoz(): string {
+  let fraccion: number | undefined;
+  if (rellenoSonando) registro.callo();
+  else if (reproductor && Number.isFinite(reproductor.duration) && reproductor.duration > 0) fraccion = reproductor.currentTime / reproductor.duration;
+  const oido = registro.cortar(fraccion);
+  callarSuave();
+  return oido;
+}
+
+/**
+ * Algo suena encima de la voz y todavía no se sabe si es la persona: la voz se PAUSA (no se pierde nada)
+ * hasta que el oído decida. Si en 12 s nadie decide, sigue sola. Devuelve si había algo que pausar.
+ */
+export function pausarParaOir(): boolean {
+  if (!suena() || !reproductor) return false;
+  try {
+    reproductor.pause();
+  } catch {
+    return false;
+  }
+  if (pausaOir) clearTimeout(pausaOir.reloj);
+  const gen = generacion;
+  pausaOir = { gen, reloj: setTimeout(() => pausaOir?.gen === gen && seguirTrasOir(), 12_000) };
+  return true;
+}
+
+/** Como `pausarParaOir`, pero la voz sigue, más bajo (el oído en vivo decide en décimas de segundo). */
+export function bajarParaOir() {
+  if (!suena() || !reproductor) return;
+  volumen = 0.3;
+  reproductor.volume = volumen;
+}
+
+/** Era su eco o un «ajá»: la voz vuelve a su volumen y sigue donde estaba. */
+export function seguirTrasOir() {
+  const p = pausaOir;
+  pausaOir = null;
+  if (p) clearTimeout(p.reloj);
+  volumen = 1;
+  const a = reproductor;
+  if (!a) return;
+  a.volume = 1;
+  if (p && p.gen === generacion && a.paused && a.src && !String(a.src).startsWith('data:')) a.play()?.catch?.(() => {});
+}
+
+/** ¿La voz está hablando, o en pausa esperando si la interrumpieron? (para el oído: «¿esto es encima?»). */
+export function hablandoVoz(): boolean {
+  return suena() || (!!pausaOir && pausaOir.gen === generacion);
+}
+
+/** Sin marcas de formato, enlaces ni listas: lo que se puede leer en voz alta. */
+export function limpiarParaVoz(texto: string): string {
+  return String(texto || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, ' ')
@@ -189,9 +334,21 @@ export function trocearParaVoz(texto: string, primero = 180, resto = 420): strin
     .replace(/^\s*[-•·]\s+/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Lo que se lee en voz alta: sin marcas de formato, enlaces ni listas, partido en trozos que
+ * terminan en fin de frase. El primero es corto para que empiece a sonar enseguida.
+ */
+export function trocearParaVoz(texto: string, primero = 180, resto = 420): string[] {
+  const limpio = limpiarParaVoz(texto);
   if (!limpio) return [];
-  // Frases: hasta el punto, signo o punto y coma, sin partir «3,4 g/t» ni «S.A.».
-  const frases = limpio.match(/[^.!?¡¿;:]+(?:[.!?;:]+(?=\s|$)|$)/g)?.map((f) => f.trim()).filter(Boolean) || [limpio];
+  /*
+   * Frases con el MISMO cortador que AU-RA, el servidor y el teléfono (src/03-voz/frases.ts): no parte
+   * «3,4 g/t», «1.500», «Dr. Gómez» ni «S.A.». Aquí el texto llegó entero: solo fines de frase.
+   */
+  const frases = cortarFrases(limpio, true, { comas: false }).listas;
+  if (!frases.length) frases.push(limpio);
   const trozos: string[] = [];
   let actual = '';
   for (const f of frases) {
@@ -224,14 +381,16 @@ async function sintetizar(
   previo: string | undefined,
   siguiente: string | undefined,
   senal: AbortSignal,
-  idioma: 'es' | 'en' = idiomaActual()
+  idioma: 'es' | 'en' = idiomaActual(),
+  primera = false
 ): Promise<Response> {
   const r = await fetch('/api/electrum/voz', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     // Los vecinos van para que la voz enlace la entonación entre trozos (ElevenLabs los usa).
     // El idioma de la respuesta que se lee: el servidor elige cómo pronunciarla.
-    body: JSON.stringify({ texto, emocion, previo, siguiente, idioma }),
+    // `primera`: la primera frase de una respuesta en vivo; el servidor la hace con el modelo rápido.
+    body: JSON.stringify({ texto, emocion, previo, siguiente, idioma, ...(primera ? { primera: true } : {}) }),
     signal: senal,
   });
   if (!r.ok) {
@@ -283,6 +442,7 @@ function sonarLector(a: HTMLAudioElement, lector: Lector, mia: number): Promise<
     if (mia !== generacion) return fin();
     a.onended = () => fin();
     a.onerror = () => fin(new Error('el navegador no pudo reproducir el audio'));
+    a.volume = volumen;
     ms.addEventListener(
       'sourceopen',
       async () => {
@@ -327,6 +487,7 @@ function sonarBlob(a: HTMLAudioElement, blob: Blob, mia: number): Promise<void> 
     if (mia !== generacion) return fin();
     a.onended = () => fin();
     a.onerror = () => fin(new Error('el navegador no pudo reproducir el audio'));
+    a.volume = volumen;
     a.src = url;
     a.play().catch((e) => fin(e?.name === 'NotAllowedError' ? new Error(BLOQUEADO) : e));
   });
@@ -384,14 +545,140 @@ export async function hablar(texto: string, emocion: string | undefined, headers
         empezo = true;
         avisos.alEmpezar?.();
       }
+      empezoTrozo(trozos[i]);
       await sonar(a, respuesta, mia);
       if (mia !== generacion) return;
+      terminoTrozo();
     }
   } catch (e: any) {
     if (mia === generacion && e?.name !== 'AbortError') avisos.alFallar?.(String(e?.message || e));
   } finally {
     if (mia === generacion && empezo) avisos.alTerminar?.();
   }
+}
+
+/* ------------------------------------------------------------ la respuesta en vivo */
+
+export type Locucion = {
+  /** Una frase más de la respuesta (texto para decir, con sus etiquetas de expresión si las trae). */
+  agregar(texto: string): void;
+  /** No llegan más frases: lo que queda en cola se dice y termina. */
+  cerrar(): void;
+  /**
+   * ¿La cortaron antes de terminar? (`callar()`, una interrupción, otra voz): lo que llegue después ya no se
+   * dice y no va a avisar `alTerminar`. Terminar bien (o fallar, que avisa `alFallar`) no es cortarla.
+   */
+  cortada(): boolean;
+};
+
+/**
+ * Dice una respuesta A MEDIDA QUE LLEGA, frase a frase (evento `frase` del turno en stream). La primera
+ * va sola y con `primera: true`; las que se acumulan mientras suena una se juntan (hasta ~420 letras) en
+ * un solo pedido, que se hace mientras suena la anterior. Si está sonando el «estoy revisando…», se le
+ * deja terminar su frase mientras ya se pide la primera, como en `hablar`.
+ * Nunca lanza: los problemas llegan por `alFallar`. `alTerminar` llega cuando se cerró y se dijo todo.
+ */
+export function crearLocucion(headers: Record<string, string>, emocion: string | undefined, avisos: Avisos = {}): Locucion {
+  const cola: string[] = [];
+  let cerrada = false;
+  /** Ya no dice nada más: terminó, falló o la cortaron. */
+  let muerta = false;
+  /** La cortaron antes de terminar. */
+  let cortadaAntes = false;
+  let arranco = false;
+  /** La generación de esta locución una vez que empezó a sonar (-1: todavía no). */
+  let mia = -1;
+  let pedidos = 0;
+  let previo: string | undefined;
+  const corte = new AbortController();
+  let siguiente: { texto: string; r: Promise<Response> } | null = null;
+
+  const pedirSiguiente = () => {
+    if (siguiente || !cola.length || muerta) return;
+    const { texto, usadas } = juntarFrases(cola, pedidos === 0 ? 0 : 420);
+    cola.splice(0, usadas);
+    if (!texto) return;
+    const primera = pedidos === 0;
+    pedidos++;
+    const r = sintetizar(texto, emocion, headers, previo, undefined, corte.signal, idiomaActual(), primera);
+    r.catch(() => {});
+    previo = texto;
+    siguiente = { texto, r };
+  };
+  const dormir = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
+
+  async function correr() {
+    pedirSiguiente();
+    const rel = relleno;
+    if (rel && rel.gen === generacion) {
+      await Promise.race([rel.fin, dormir(7000)]);
+      // Mientras tanto alguien calló (una interrupción, otra pregunta): esta respuesta ya no suena.
+      if (generacion !== rel.gen) {
+        muerta = cortadaAntes = true;
+        corte.abort();
+        return;
+      }
+    }
+    callar();
+    mia = ++generacion;
+    cortePendiente = corte;
+    reanudarVoz();
+    const a = elReproductor();
+    let empezo = false;
+    try {
+      for (;;) {
+        // Sin pedido en camino: se espera a que llegue otra frase (o a que se cierre).
+        while (!siguiente) {
+          if (mia !== generacion) return;
+          if (cerrada && !cola.length) return;
+          pedirSiguiente();
+          if (!siguiente) await dormir(60);
+        }
+        const actual: { texto: string; r: Promise<Response> } = siguiente;
+        const respuesta = await actual.r;
+        if (mia !== generacion) return;
+        siguiente = null;
+        // Mientras suena esta, ya se pide la que sigue (si llegó).
+        pedirSiguiente();
+        if (!empezo) {
+          empezo = true;
+          avisos.alEmpezar?.();
+        }
+        empezoTrozo(actual.texto);
+        await sonar(a, respuesta, mia);
+        if (mia !== generacion) return;
+        terminoTrozo();
+      }
+    } catch (e: any) {
+      if (mia === generacion && e?.name !== 'AbortError') avisos.alFallar?.(String(e?.message || e));
+    } finally {
+      muerta = true;
+      if (mia !== generacion) cortadaAntes = true;
+      else {
+        if (cortePendiente === corte) cortePendiente = null;
+        if (empezo) avisos.alTerminar?.();
+      }
+    }
+  }
+
+  return {
+    agregar(texto: string) {
+      const t = limpiarParaVoz(texto);
+      if (!t || muerta || cerrada || mudo) return;
+      cola.push(t);
+      if (!arranco) {
+        arranco = true;
+        void correr();
+      } else if (mia === generacion) pedirSiguiente();
+    },
+    cerrar() {
+      cerrada = true;
+    },
+    cortada() {
+      // Sigue en marcha pero otra voz ya tomó el reproductor: también está cortada (su bucle lo verá enseguida).
+      return cortadaAntes || (!muerta && mia !== -1 && mia !== generacion);
+    },
+  };
 }
 
 /** ¿Está sonando algo ahora? */
@@ -437,7 +724,10 @@ export function rellenar(texto: string, headers: Record<string, string>, avisos:
       const blob = await blobDeRelleno(texto, headers, corte.signal);
       if (mia !== generacion) return;
       avisos.alEmpezar?.();
+      // Su eco tampoco es la persona hablando, pero no es parte de la respuesta.
+      empezoTrozo(texto, true);
       await sonarBlob(elReproductor(), blob, mia);
+      if (mia === generacion) terminoTrozo();
     } catch {
       /* sin voz para el relleno: no pasa nada */
     } finally {
@@ -646,6 +936,8 @@ export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<stri
         const linea = s && typeof s.i === 'number' ? lineasTrozo[s.i]?.texto ?? null : hablante ? escena.linea ?? null : null;
         publicarEscena({ hablante, participantes, linea });
       }, 60);
+      // Lo que dice la mesa también es eco para el oído (sin las etiquetas [laughs], que no se oyen como palabras).
+      empezoTrozo(lineasTrozo.map((l) => l.texto.replace(/\[[^\]\n]{1,40}\]/g, ' ')).join(' '));
       if (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg')) {
         await sonarLector(a, lector, mia);
       } else {
@@ -659,6 +951,7 @@ export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<stri
         await sonarBlob(a, new Blob(partes as BlobPart[], { type: 'audio/mpeg' }), mia);
       }
       if (mia !== generacion) return;
+      terminoTrozo();
     }
   } catch (e: any) {
     if (mia === generacion && e?.name !== 'AbortError') avisos.alFallar?.(String(e?.message || e));

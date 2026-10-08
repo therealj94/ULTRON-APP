@@ -9,7 +9,7 @@
  * Antes la web oía con el reconocimiento del navegador (Google en Chrome; nada en Firefox). Ese queda
  * de respaldo en useOido.ts si este micrófono no abre.
  */
-import { MotorTurbo, type CallbacksTurbo, type TrozoAudio, type WsTurbo } from '../../mobile/src/lib/turboMotor';
+import { MotorTurbo, type CallbacksTurbo, type DepsTurbo, type TrozoAudio, type WsTurbo } from '../../mobile/src/lib/turboMotor';
 import { aBase64 } from '../../mobile/src/lib/turboLogica';
 import { headersMesa } from '../10-infra/sesionCliente';
 
@@ -167,8 +167,14 @@ async function transcribirWavWeb(wav: string, confirmar: boolean): Promise<strin
   return String(j?.text || '').trim();
 }
 
+/**
+ * De dónde saca el oído su permiso y su respaldo. Por omisión, los de AU-RA (/api/stt/turbo/permiso y /api/stt);
+ * Dr Electrum pasa los suyos (src-electrum/panel/oidoTurbo.ts), con sus pistas del oficio y su puerta.
+ */
+export type RutasOidoTurbo = Pick<DepsTurbo, 'permiso' | 'transcribirWav' | 'crearWs'>;
+
 /** Un oído Turbo para la web. `alSinPermiso`: el navegador negó el micrófono (no hay respaldo que valga). */
-export function crearOidoTurboWeb(cb: CallbacksTurbo & { alSinPermiso?: () => void }) {
+export function crearOidoTurboWeb(cb: CallbacksTurbo & { alSinPermiso?: () => void }, rutas: Partial<RutasOidoTurbo> = {}) {
   const motor = new MotorTurbo({
     abrirMic: async (alTrozo, alFallo) => {
       try {
@@ -181,9 +187,9 @@ export function crearOidoTurboWeb(cb: CallbacksTurbo & { alSinPermiso?: () => vo
         return null;
       }
     },
-    permiso: permisoWeb,
-    transcribirWav: transcribirWavWeb,
-    crearWs: (url) => new WebSocket(url) as unknown as WsTurbo,
+    permiso: rutas.permiso || permisoWeb,
+    transcribirWav: rutas.transcribirWav || transcribirWavWeb,
+    crearWs: rutas.crearWs || ((url) => new WebSocket(url) as unknown as WsTurbo),
   });
   motor.setCallbacks(cb);
   return motor;

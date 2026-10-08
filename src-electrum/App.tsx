@@ -27,9 +27,10 @@ import { Recorrido, prepararRecorrido, salirPantallaCompleta, entrarPantallaComp
 import { Preguntas } from './demo/Preguntas';
 import { BotonOido, type ModoOido } from './panel/BotonOido';
 import { AirTouch, BotonManos, type EstadoManos } from './manos/AirTouch';
-import { crearOido, capturaActiva, type EstadoOido } from './panel/oido';
+import { capturaActiva, type EstadoOido } from './panel/oido';
+import { crearOidoElectrum } from './panel/oidoTurbo';
 import { comandoDe, comandoDeLaya, nombreDeComando, type Comando } from './panel/comandos';
-import { callar, escucharEscena, hablanteActual, hablar, nivelVoz, reanudarVoz, silenciar, suena } from './panel/voz';
+import { bajarParaOir, callar, dichosVoz, escucharEscena, hablandoVoz, hablanteActual, hablar, interrumpirVoz, nivelVoz, pausarParaOir, reanudarVoz, seguirTrasOir, silenciar, suena } from './panel/voz';
 import { Retratos } from './personajes/Retratos';
 import { BotonInterrumpir, BotonMesa, BotonVoces } from './panel/BotonesVoz';
 import { abrirMesa } from './personajes/mesa';
@@ -625,9 +626,15 @@ export default function App() {
   const enrutarRef = useRef(enrutarDicho);
   enrutarRef.current = enrutarDicho;
 
+  /*
+   * EL OÍDO, COMO EL DE AU-RA (panel/oidoTurbo.ts): en vivo con Turbo si se puede, y si no el de siempre
+   * (una frase en WAV por vez). Hablarle encima ya no lo corta por la energía sola: la voz se pausa (o baja)
+   * enseguida y lo que se oyó decide. Su eco o un «ajá» → sigue donde estaba; la persona → se calla,
+   * anota lo que ella alcanzó a oír (va con la pregunta siguiente) y lo dicho entra como siempre.
+   */
   const oido = useMemo(
     () =>
-      crearOido({
+      crearOidoElectrum({
         alTexto: (t) => {
           if (unaFrase.current) {
             unaFrase.current = false;
@@ -636,14 +643,23 @@ export default function App() {
           void enrutarRef.current(t);
         },
         alEstado: setEstadoOido,
-        hablandoAhora: suena,
+        suena,
+        hablando: hablandoVoz,
+        dichos: dichosVoz,
         nivelSalida: nivelVoz,
         interrumpible: () => interrumpibleRef.current,
-        // Hablarle encima lo calla y lo pone a escuchar, como en una conversación de verdad.
+        alDudar: (como) => {
+          if (como === 'pausa') pausarParaOir();
+          else bajarParaOir();
+        },
+        alSeguir: seguirTrasOir,
+        // Hablarle encima lo calla (bajando) y lo pone a escuchar, como en una conversación de verdad.
         alInterrumpir: () => {
-          callar();
+          interrumpirVoz();
           window.dispatchEvent(new Event('electrum:interrumpido'));
         },
+        // Una orden de pantalla dicha encima («siguiente», «para») corta aunque sea una sola palabra.
+        esOrden: (t) => !!comandoDe(t),
       }),
     []
   );
