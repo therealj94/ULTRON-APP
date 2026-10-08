@@ -13,7 +13,7 @@ import * as Updates from 'expo-updates';
 import { tr, useIdioma } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Texto } from '../ui';
-import { URL_APK, aplicarAhora, useApkNueva } from '../lib/ota';
+import { URL_APK, aplicarAhora, useApkNueva, useOtaPendiente } from '../lib/ota';
 
 /** El primer motivo, dicho como persona. */
 function porQueNo(motivos: string[]): string {
@@ -31,7 +31,8 @@ export function AvisoActualizacion() {
   useIdioma();
   const tema = useTema();
   const bordes = useSafeAreaInsets();
-  const { isUpdatePending } = Updates.useUpdates();
+  // Lo descargado que ya corre (tras recargar) no se ofrece otra vez.
+  const isUpdatePending = useOtaPendiente();
   const apkNueva = useApkNueva();
   const [ahoraNo, setAhoraNo] = useState('');
 

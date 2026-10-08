@@ -6,6 +6,7 @@ import { ES_ELECTRUM } from './src/variante';
 import ElectrumApp from './src/electrum/ElectrumApp';
 import { useActualizacionAlVolver } from './src/lib/ota';
 import { marcarActividad } from './src/lib/barreraOta';
+import { useRaizVacia } from './src/lib/recarga';
 
 /**
  * El splash nativo (negro con el ícono) se queda hasta que la intro está pintada encima: negro sobre
@@ -32,6 +33,10 @@ export default function App() {
   // Antes de bifurcar: las actualizaciones por aire. Solo AU-RA las tiene encendidas; en Dr Electrum
   // `Updates.isEnabled` es falso y el hook no hace nada.
   useActualizacionAlVolver();
+  // Recargando (src/lib/recarga.ts): nada montado. Así todo <Video> de expo-av suelta su reproductor en el hilo
+  // principal antes de que la recarga destruya la instancia desde otro (el cierre del 8-oct).
+  const vacia = useRaizVacia();
+  if (vacia) return <View style={{ flex: 1, backgroundColor: '#000' }} />;
   // Cada toque, en cualquier pantalla, cuenta como actividad: la OTA no recarga en plena mano.
   // onTouchStart burbujea desde el hijo tocado sin quitarle el toque a nadie.
   return (
