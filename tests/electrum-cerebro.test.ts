@@ -201,6 +201,18 @@ test('troceado de documentos: las citas tienen que poder comprobarse', async (t)
     for (const x of t2) assert.doesNotMatch(x.texto, /\d,$/, `cortó un número: …${x.texto.slice(-30)}`);
   });
 
+  await t.test('la cola de solape antes de una tabla no vuelve a salir como trozo suelto', () => {
+    // Texto, luego una tabla grande y nada más: la cola de 120 caracteres que dejaba el texto se
+    // soltaba al final como un trozo repetido, que en la búsqueda aparecía dos veces.
+    const texto = 'Resultados de los sondajes del bloque norte, campaña de perforación de 2019. '.repeat(14);
+    const filas = Array.from({ length: 60 }, (_, i) => `DDH-${i} | 1,5 | 2,${i}`).join('\n');
+    const t2 = trocear([{ pagina: 1, texto: `${texto}\n\n[TABLA]\nSondaje | Metros | Ley\n${filas}` }]);
+    const textos = t2.map((x) => x.texto);
+    assert.equal(new Set(textos).size, textos.length, 'hay trozos repetidos');
+    assert.ok(textos.at(-1)!.startsWith('[TABLA]'), `el último trozo debió ser de la tabla: ${textos.at(-1)!.slice(0, 80)}`);
+    assert.equal(textos.filter((x) => !x.startsWith('[TABLA]')).length, 1, 'el texto de antes de la tabla sale una sola vez');
+  });
+
   await t.test('texto vacío no produce basura', () => {
     assert.deepEqual(trocear([{ pagina: 1, texto: '   ' }]), []);
     assert.deepEqual(trocear([]), []);

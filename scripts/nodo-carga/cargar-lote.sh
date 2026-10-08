@@ -93,39 +93,64 @@ apartar() {  # apartar <archivo> <razón>
   printf '%s\t%s\n' "$rel" "$2" >> "${INF}/aparte.txt"
 }
 
+# Abrir un comprimido nunca toca lo que ya estaba: cada intento saca en un directorio NUEVO (fuera
+# de la copia de trabajo, para que el find que la recorre no lo vea a medias) y solo si sacó algo se
+# pone en su sitio. Antes se sacaba directo en «x/» y, si fallaba, se hacía rm -rf «x/»: una carpeta
+# «x/» que venía en el lote junto a un «x.rar» roto desaparecía entera.
+sacar_unrar() { command -v unrar >/dev/null && (cd "$2" && unrar x -o+ -idq "$1" ./); }
+sacar_7z()    { 7z x -y -bso0 -bsp0 -o"$2" "$1"; }
+sacar_unar()  { unar -q -f -D -o "$2" "$1"; }
+sacar_zip()   { unzip -q -n "$1" -d "$2"; }
+abrir() {  # abrir <comprimido> <sacador>...: 0 si alguno lo abrió y quedó en «<comprimido sin extensión>/»
+  local z="$1" dest="${1%.*}" tmp s; shift
+  for s in "$@"; do
+    tmp="$(mktemp -d "${DIR}/abriendo.XXXXXX")"
+    if "$s" "$z" "$tmp" >/dev/null 2>&1 && [ -n "$(ls -A "$tmp")" ]; then
+      # Si ya había una carpeta con ese nombre, lo sacado se suma sin pisar nada de lo suyo.
+      if [ -e "$dest" ]; then cp -aln "$tmp"/. "$dest"/ 2>/dev/null || true; rm -rf "$tmp"
+      else mv "$tmp" "$dest"; fi
+      return 0
+    fi
+    rm -rf "$tmp"
+  done
+  return 1
+}
+rm -rf "${DIR}"/abriendo.*   # restos de una corrida que se cortó a mitad de abrir algo
+
 # Un .exe autoextraíble (WinRAR/7-Zip SFX) es un comprimido con un arranque de Windows delante. A veces
 # es la única copia sana: en lote-1 el .rar de los planes de explotación de El Chaparro venía roto y
 # el .exe con el mismo nombre traía los diez .docx enteros. Si abre, manda sobre el .rar gemelo.
 # 7z lo reconoce pero no descomprime ese RAR («Unsupported Method») ni unar lo abre: el que puede es
 # unrar (multiverse, preparar.sh). Se prueba unrar y, si no está o no puede, 7z.
-sfx() {  # sfx <exe> <destino>: 0 si sacó algo sano
-  mkdir -p "$2"
-  if command -v unrar >/dev/null && (cd "$2" && unrar x -o+ -idq "$1" ./ >/dev/null 2>&1); then return 0; fi
-  rm -rf "$2"; 7z x -y -bso0 -bsp0 -o"$2" "$1" >/dev/null 2>&1
-}
+# Solo si 7z dice que ES un comprimido: «7z l» lista también un ejecutable normal (lo abre como PE),
+# y un Setup.exe cualquiera se «descomprimía» en sus recursos y se llevaba por delante su .rar gemelo.
+# (La lista se guarda antes de mirarla: con pipefail, el grep -q que corta pronto dejaba a 7z con
+# SIGPIPE y la tubería entera «fallaba» justo cuando sí era un comprimido.)
 while IFS= read -r -d '' z; do
-  7z l "$z" >/dev/null 2>&1 || continue
-  if sfx "$z" "${z%.*}"; then
+  tipo="$(7z l -slt "$z" 2>/dev/null || true)"
+  grep -qE '^Type = (Rar|Rar5|7z|Zip)$' <<< "$tipo" || continue
+  if abrir "$z" sacar_unrar sacar_7z; then
     rm -f "$z"
     for gemelo in "${z%.*}".rar "${z%.*}".RAR; do [ -f "$gemelo" ] && rm -f "$gemelo"; done
-  else rm -rf "${z%.*}"; fi
+  fi
 done < <(find "$LISTO" -type f -iname '*.exe' -print0)
 
 # Comprimidos dentro de comprimidos: hasta tres vueltas.
 for vuelta in 1 2 3; do
   abiertos=0
   while IFS= read -r -d '' z; do
-    # Un zip con un .shp dentro es un shapefile y el cargador lo lee así. Cualquier otro zip es una
-    # carpeta empaquetada: el cargador lo tomaría por un shapefile y fallaría.
-    if unzip -Z1 "$z" 2>/dev/null | grep -qi '\.shp$'; then continue; fi
-    if unzip -q -n "$z" -d "${z%.*}" 2>/dev/null; then rm -f "$z"; abiertos=$((abiertos + 1))
+    # Un zip que es SOLO un shapefile (sus piezas, nada más) el cargador lo lee así. Cualquier otro
+    # zip es una carpeta empaquetada y se abre, aunque traiga un .shp: antes bastaba un .shp dentro
+    # para no abrirlo, y los PDF, Word y Excel que venían con él no entraban nunca. Las piezas que
+    # quedan sueltas al abrirlo las vuelve a juntar el cargador (juntarShapefiles).
+    contenido="$(unzip -Z1 "$z" 2>/dev/null || true)"
+    if grep -qi '\.shp$' <<< "$contenido" && ! grep -qviE '(/|\.(shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|xml))$' <<< "$contenido"; then continue; fi
+    if abrir "$z" sacar_zip; then rm -f "$z"; abiertos=$((abiertos + 1))
     else apartar "$z" "zip roto o cifrado"; fi
   done < <(find "$LISTO" -type f -iname '*.zip' -print0)
   while IFS= read -r -d '' z; do
     # El 7z de Ubuntu no trae el códec de RAR: unrar primero (el único que abre todo RAR), luego 7z y unar.
-    if command -v unrar >/dev/null && mkdir -p "${z%.*}" && (cd "${z%.*}" && unrar x -o+ -idq "$z" ./ >/dev/null 2>&1); then rm -f "$z"; abiertos=$((abiertos + 1))
-    elif rm -rf "${z%.*}" && 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
-    elif rm -rf "${z%.*}" && unar -q -f -D -o "${z%.*}" "$z" >/dev/null 2>&1; then rm -f "$z"; abiertos=$((abiertos + 1))
+    if abrir "$z" sacar_unrar sacar_7z sacar_unar; then rm -f "$z"; abiertos=$((abiertos + 1))
     else apartar "$z" "rar/7z roto o cifrado"; fi
   done < <(find "$LISTO" -type f \( -iname '*.rar' -o -iname '*.7z' \) -print0)
   [ "$abiertos" -gt 0 ] || break
@@ -309,9 +334,12 @@ FUENTES=("$LISTO")
 [ -n "$(find "$OCR" -name '*.txt' -print -quit)" ] && FUENTES+=("$OCR")
 # Cada archivo a su carpeta del panel (la misma estructura que en el disco de quien lo subió) y
 # con su original anotado en el cubo de lotes.
-"$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --quien "$QUIEN" --carpetas --original "$ORIG" --origen "$ORIGEN" "${FUENTES[@]}" 2>&1 | tee "${INF}/carga.log" | { grep -E '^(▸|[0-9]|Cruzando|El catastro|Catastro)' || true; }
-# El filtro de la pantalla no puede tapar al cargador: si él falló, la carga falló.
-if [ "${PIPESTATUS[0]}" != 0 ]; then
+# El filtro de la pantalla no puede tapar al cargador: si él falló, la carga falló. El estado se
+# recoge con «|| rc=$?»: con set -e y pipefail, una tubería que falla corta el script ANTES de llegar
+# a mirar PIPESTATUS, y el aviso de abajo no salía nunca.
+rc=0
+"$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --quien "$QUIEN" --carpetas --original "$ORIG" --origen "$ORIGEN" "${FUENTES[@]}" 2>&1 | tee "${INF}/carga.log" | { grep -E '^(▸|[0-9]|Cruzando|El catastro|Catastro|Los traslapes)|fallos seguidos' || true; } || rc=$?
+if [ "$rc" != 0 ]; then
   rojo "El cargador terminó con error: no se cargó todo. Detalle en ${INF}/carga.log"
   exit 1
 fi
