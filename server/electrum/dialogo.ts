@@ -37,6 +37,14 @@ export function esPersonaje(x: unknown): x is Personaje {
   return typeof x === 'string' && x in PERSONAJES;
 }
 
+/**
+ * La voz propia de quien habla en la mesa (`personaje` en /api/electrum/voz y /api/electrum/voz/pcm): Don Chema o la
+ * Ing. Tatiana con la suya. El doctor (o cualquier otra cosa que llegue) no lleva voz propia: la de la plataforma.
+ */
+export function vozDeLaMesa(personaje: unknown): string | undefined {
+  return personaje === 'chema' || personaje === 'tatiana' ? PERSONAJES[personaje].voz : undefined;
+}
+
 /** Valida y limpia lo que llega (del modelo o del navegador). */
 export function lineasValidas(crudo: unknown): Linea[] {
   if (!Array.isArray(crudo)) return [];

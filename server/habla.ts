@@ -104,6 +104,16 @@ export function cifrasAVoz(text: string): string {
   });
 }
 
+/**
+ * LOS CÓDIGOS, CIFRA POR CIFRA, TAMBIÉN CON ELEVENLABS. Con `cifras: false` (la voz de ElevenLabs lee los números por su
+ * cuenta) un expediente «0442» o «PL-0087-2019» sonaba «cuatrocientos cuarenta y dos»: el cero de delante dice que es un
+ * código, no una cantidad. Solo eso: un grupo de 3 o más cifras que empieza en cero, suelto (no dentro de 3,05 ni de
+ * 1.050), pasa a sus cifras separadas. Lo usa la voz de Dr Electrum (server/voz.ts).
+ */
+export function codigosAVoz(text: string): string {
+  return String(text || '').replace(/(?<![\d.,])0\d{2,}(?![\d]|[.,]\d)/g, (c) => c.split('').join(' '));
+}
+
 export const RELLENOS = [
   'Mmm.',
   'Déjame ver.',

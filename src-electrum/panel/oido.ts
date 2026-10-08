@@ -24,9 +24,12 @@ import { fijarIdioma } from './idioma';
 
 export type EstadoOido = 'apagado' | 'pidiendo' | 'escuchando' | 'oyendo' | 'pasando' | 'sin-permiso' | 'sin-soporte';
 
-type Opciones = {
-  /** Se llama con cada frase oída, ya en texto, en el orden en que se dijeron. */
-  alTexto: (texto: string) => void;
+export type Opciones = {
+  /**
+   * Se llama con cada frase oída, ya en texto, en el orden en que se dijeron. `encima`: la frase empezó
+   * mientras sonaba una voz de la mesa (hay que confirmar que no es su eco ni un «ajá», interrumpir.ts).
+   */
+  alTexto: (texto: string, encima?: boolean) => void;
   alEstado: (e: EstadoOido) => void;
   /** ¿Está sonando una voz de la mesa ahora? Mientras sí, no se graba (salvo que la interrumpan). */
   hablandoAhora: () => boolean;
@@ -39,6 +42,14 @@ type Opciones = {
   nivelSalida?: () => number;
   /** ¿Se le puede hablar encima? (el botón «Interrumpir»; por omisión, sí). */
   interrumpible?: () => boolean;
+  /**
+   * En lugar de `alInterrumpir`: la energía solo DICE que puede ser la persona (la voz se pausa) y la frase
+   * se graba igual; quien recibe el texto (`alTexto` con `encima`) confirma si lo era. Así un «ajá» o el eco
+   * de la sala no cortan al doctor (oidoTurbo.ts).
+   */
+  alDudar?: () => void;
+  /** Una frase que empezó encima de la voz se tiró sin texto (muy corta, o el oído no entendió nada). */
+  alDescartar?: () => void;
 };
 
 const PREVIO_MS = 450;
@@ -151,6 +162,8 @@ export function crearOido(op: Opciones) {
   let ruido = 0.008;
   let nivelActual = 0;
   let pendientes = 0;
+  /** La frase que se graba empezó encima de una voz de la mesa (con `alDudar`). */
+  let fraseEncima = false;
   // Los textos salen en el orden en que se dijeron, aunque el servidor conteste desordenado.
   let cadena: Promise<void> = Promise.resolve();
   let estado: EstadoOido = 'apagado';
@@ -191,14 +204,15 @@ export function crearOido(op: Opciones) {
     return '';
   }
 
-  function mandar(trozos: Float32Array[]) {
+  function mandar(trozos: Float32Array[], encima: boolean) {
     pendientes++;
     reposo();
     const texto = transcribir(aWav(trozos, tasa));
     cadena = cadena.then(async () => {
       try {
         const t = await texto;
-        if (t && activo) op.alTexto(t);
+        if (t && activo) op.alTexto(t, encima);
+        else if (encima) op.alDescartar?.();
       } finally {
         pendientes--;
         if (activo) reposo();
@@ -218,14 +232,16 @@ export function crearOido(op: Opciones) {
 
   function terminarFrase(tirar: boolean) {
     const trozos = frase;
+    const encima = fraseEncima;
     frase = null;
+    fraseEncima = false;
     if (!trozos) return;
     if (!tirar && vozMs >= MIN_VOZ_MS) {
       // El silencio del final no se sube (menos bytes, menos espera), salvo una colita.
       let sobra = Math.max(0, ((desdeVozMs - COLA_SILENCIO_MS) * tasa) / 1000);
       while (sobra > 0 && trozos.length > 1 && trozos[trozos.length - 1].length <= sobra) sobra -= trozos.pop()!.length;
-      mandar(trozos);
-    }
+      mandar(trozos, encima);
+    } else if (encima) op.alDescartar?.();
     reposo();
   }
 
@@ -252,8 +268,12 @@ export function crearOido(op: Opciones) {
        * mitad de su frase): tiene prioridad, como en una conversación. La voz se calla y su frase
        * se sigue grabando; antes se tiraba entera.
        */
-      if (frase && vozMs >= 250 && op.alInterrumpir && (op.interrumpible?.() ?? true)) {
-        op.alInterrumpir();
+      if (frase && vozMs >= 250 && (op.alDudar || op.alInterrumpir) && (op.interrumpible?.() ?? true)) {
+        if (op.alDudar) {
+          // Pausa y que el texto decida: la frase se sigue grabando entera.
+          fraseEncima = true;
+          op.alDudar();
+        } else op.alInterrumpir!();
         frase.push(t);
         fraseMs += ms;
         return;
@@ -271,15 +291,17 @@ export function crearOido(op: Opciones) {
       }
       const esperado = acople * salida * 1.35 + ruido * 2;
       const sobra = rms - esperado;
-      const puede = !!op.alInterrumpir && (op.interrumpible?.() ?? true) && sonandoMs > APRENDER_MS;
+      const puede = !!(op.alDudar || op.alInterrumpir) && (op.interrumpible?.() ?? true) && sonandoMs > APRENDER_MS;
       encimaMs = puede && sobra > Math.max(SOBRA_MINIMA, ruido * 4) ? encimaMs + ms : Math.max(0, encimaMs - ms * 0.5);
       guardarPrevio(t, ms);
       if (encimaMs >= INTERRUMPIR_MS) {
         encimaMs = 0;
         ecoMs = 0;
-        op.alInterrumpir!();
+        if (op.alDudar) op.alDudar();
+        else op.alInterrumpir!();
         sobreMs = INTERRUMPIR_MS;
         empezarFrase();
+        fraseEncima = !!op.alDudar;
       }
       return;
     }
@@ -341,6 +363,7 @@ export function crearOido(op: Opciones) {
   function soltar() {
     activo = false;
     frase = null;
+    fraseEncima = false;
     previo = [];
     previoMs = 0;
     try {

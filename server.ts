@@ -90,7 +90,7 @@ import { conRidServidor, contextoConRecordatorios, datosPushRecordatorio, efecto
 import { montarRutasRecordatorios } from './server/recordatorios-rutas';
 import { resolverMarcar } from './server/marcar';
 import { dichoSinContacto, preguntaCualMarcar, type ResolucionMarcar } from './lib/marcar';
-import { detectarIdioma } from './lib/idioma-detectar';
+import { detectarIdioma, idiomaDelTurno } from './lib/idioma-detectar';
 import { mismoTextoBorrador, propuestaDeEnvio } from './lib/borrador-propuesto';
 import { anotarEfectosNoVistos, avisoEfectosNoVistos, conAvisoDeAntes, confirmarEfectosNoVistos, efectosDelTurno, turnoVisto, type EfectoNoVisto } from './lib/efectos-no-vistos';
 import { anotarEfectoReal, efectosRecientes, guardaDeHonestidad, motivosDeHonestidad, promesaSinCumplir, recibosDeAcciones, recibosDePasos, sinLoRespaldado, trozoAfirmaHecho, trozoPrometeAccion, type ContextoHonestidad, type ReciboEfecto } from './lib/honestidad';
@@ -218,7 +218,11 @@ import { anotarVoz, fraseTopeVoz, msDeHabla, restanteVozMs } from './server/tope
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
-import { turnoElectrum } from './server/electrum/turno';
+import { turnoElectrum, type RespuestaTurno as RespuestaElectrum } from './server/electrum/turno';
+import { CortadorFrases, type Frase } from './server/electrum/voz-frases';
+import { anotarVozElectrum, cuentaVozDe, restanteVozElectrum } from './server/electrum/cuenta-voz';
+import { claveTurnoElectrum, electrumDeGuardado, fraseDesconocido, fraseEnCurso, frasesGuardadas, guardadoDeElectrum, type RespuestaGuardable } from './server/electrum/turno-idempotente';
+import type { PeticionVozPcm } from './server/voz-pcm';
 import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import { manifiestoEntrega, sondearAlmacen } from './lib/build';
@@ -284,7 +288,7 @@ import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa }
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { interpretarComando } from './server/electrum/comando-voz';
-import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES, segmentosDe } from './server/electrum/dialogo';
+import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES, segmentosDe, vozDeLaMesa } from './server/electrum/dialogo';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import { memoriaSinLeer,
   cargarMemoria,
@@ -687,6 +691,23 @@ function fijaElectrum(mensaje: string, idiomaPedido: unknown, id: ReturnType<typ
   return f ? { texto: f.texto, voz: f.voz, emocion: f.emocion, panel: '', traza: [], ui: [], fin: 'respuesta-fija', idioma } : null;
 }
 
+/**
+ * La respuesta fija tras una interrupción (`interrumpido: { oido }`, lib/interrumpida.ts): con el mismo acuse corto
+ * delante que pondría el modelo.
+ */
+function fijaTrasCorte<T extends { texto: string; voz?: string; idioma: 'es' | 'en' }>(fija: T, oido: string | null): T {
+  if (oido === null) return fija;
+  return { ...fija, texto: conAcuse(fija.texto, fija.idioma), ...(fija.voz ? { voz: conAcuse(fija.voz, fija.idioma) } : {}) };
+}
+
+/**
+ * Lo que va en el `fin` del stream de Electrum (y lo que repite un reintento): todo menos las órdenes del mapa, que
+ * ya salieron en vivo (eventos `ui`).
+ */
+function finElectrum(r: RespuestaGuardable | RespuestaElectrum) {
+  return { texto: r.texto, voz: r.voz, voces: r.voces, emocion: r.emocion, panel: r.panel, traza: r.traza, fin: r.fin, trazaId: r.trazaId, idioma: r.idioma };
+}
+
 /** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
 app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   const inicio = Date.now();
@@ -703,32 +724,60 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
+    // Le habló encima a la respuesta anterior: lo que alcanzó a oír (lib/interrumpida.ts); null si no.
+    const oido = oidoAlInterrumpir(req.body);
     // «Buen día», «¿me escucha?», «¿quién es usted?», «¿qué puede hacer?», «gracias»: al instante, sin
     // panel ni modelo (lib/respuestas-fijas.ts, con el trato de usted y la voz sobria del doctor).
     const fija = fijaElectrum(mensaje, req.body?.idioma, id);
     if (fija) {
-      recordarHilo(clave, mensaje, fija.texto);
-      return res.json({ ...fija, ms: Date.now() - inicio, honesto: true });
+      const f = fijaTrasCorte(fija, oido);
+      recordarHilo(clave, mensaje, f.texto);
+      return res.json({ ...f, ms: Date.now() - inicio, honesto: true });
     }
-    const historial = fusionarHiloElectrum({
-      servidor: await cargarHiloElectrum(clave),
-      cliente: hiloDelCliente(req.body?.hilo),
-      mensaje,
-    });
-    const salida = await turnoElectrum(
-      mensaje,
-      {
-        quien: id?.persona.id || null,
-        nivel: nivelDe(id, 'electrum'),
-        plataforma: 'electrum',
-        canal: 'mesa',
+    // Un reintento con el mismo `idTurno` (server/electrum/turno-idempotente.ts): espera al turno en curso o recibe
+    // la misma respuesta; no se corre el agente dos veces por una pregunta.
+    const unico = await reclamarTurno(claveTurnoElectrum(quienDelHilo(id?.persona.id, req), req.body?.idTurno));
+    if ('previo' in unico) {
+      // Las frases del stream (si el turno corrió por ahí) no van en el JSON: el texto entero ya las contiene.
+      const { frasesDichas: _frases, ...g } = electrumDeGuardado(unico.previo);
+      return res.json({ ...g, repetido: true, honesto: true });
+    }
+    if ('enCurso' in unico) return res.status(409).json({ error: fraseEnCurso(req.body?.idioma), codigo: 'en-curso', enCurso: true, honesto: true });
+    if ('desconocido' in unico) {
+      return res.json({ texto: fraseDesconocido(req.body?.idioma), emocion: 'preocupado', panel: '', traza: [], ui: [], fin: 'desconocido', repetido: true, honesto: true });
+    }
+    let salida: RespuestaElectrum;
+    try {
+      const historial = fusionarHiloElectrum({
+        servidor: await cargarHiloElectrum(clave),
+        cliente: hiloDelCliente(req.body?.hilo),
         mensaje,
-        prueba: id ? 'sesion' : null,
-        duenio: quienDelHilo(id?.persona.id, req),
-      },
-      { historial, idioma: req.body?.idioma, senal: corte.signal, inicio }
-    );
-    if (corte.signal.aborted) return;
+      });
+      salida = await enTurnoUnico(unico.terminar, () =>
+        turnoElectrum(
+          mensaje,
+          {
+            quien: id?.persona.id || null,
+            nivel: nivelDe(id, 'electrum'),
+            plataforma: 'electrum',
+            canal: 'mesa',
+            mensaje,
+            prueba: id ? 'sesion' : null,
+            duenio: quienDelHilo(id?.persona.id, req),
+          },
+          { historial, idioma: req.body?.idioma, senal: corte.signal, inicio, interrumpido: oido }
+        )
+      );
+    } catch (e) {
+      void unico.terminar(null);
+      throw e;
+    }
+    // Quien preguntaba se fue: no hay respuesta que repetir (un reintento corre el turno otra vez).
+    if (corte.signal.aborted) {
+      void unico.terminar(null);
+      return;
+    }
+    void unico.terminar(guardadoDeElectrum(salida));
     recordarHilo(clave, mensaje, salida.texto);
     res.json({ ...salida, honesto: true });
   } catch (e: any) {
@@ -1167,39 +1216,122 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
   try {
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
+    // Le habló encima a la respuesta anterior: lo que alcanzó a oír (lib/interrumpida.ts); null si no.
+    const oido = oidoAlInterrumpir(req.body);
     // Lo de siempre («buen día», «¿me escucha?», «gracias»), al instante; la mesa abierta sí contesta entera.
     const fija = req.body?.mesa === true ? null : fijaElectrum(mensaje, req.body?.idioma, id);
     if (fija) {
-      recordarHilo(clave, mensaje, fija.texto);
-      enviar('fin', fija);
+      const f = fijaTrasCorte(fija, oido);
+      recordarHilo(clave, mensaje, f.texto);
+      enviar('fin', { ...f, frases: 0 });
       return res.end();
     }
-    const historial = fusionarHiloElectrum({
-      servidor: await cargarHiloElectrum(clave),
-      cliente: hiloDelCliente(req.body?.hilo),
-      mensaje,
-    });
-    const salida = await turnoElectrum(
-      mensaje,
-      { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje, prueba: id ? 'sesion' : null, duenio: quienDelHilo(id?.persona.id, req) },
-      {
-        historial,
-        abandonado: () => seFue,
-        senal: corte.signal,
-        inicio,
-        internet: req.body?.internet === true,
-        // La mesa técnica abierta en pantalla: contestan los tres, discutiendo, hasta que se cierre.
-        mesa: req.body?.mesa === true,
-        idioma: req.body?.idioma,
-        enVivo: (e) => {
-          if (e.panel) enviar('panel', { panel: e.panel });
-          if (e.herramienta) enviar('herramienta', e.herramienta);
-          if (e.ui) enviar('ui', e.ui);
+    /*
+     * LA RESPUESTA FRASE POR FRASE (server/electrum/voz-frases.ts): evento `frase` {i, texto, voz} en cuanto el modelo
+     * cierra cada frase, y al final las que falten del texto de autoridad. `fin.frases` dice cuántas salieron: quien
+     * las dijo no repite el `fin`. La mesa (varias voces) no sale por frases: se reparte en el `fin`, como siempre.
+     */
+    // Las frases que salieron, tal cual: se guardan con la respuesta para que un reintento mande LAS MISMAS.
+    const salidas: Frase[] = [];
+    const frasesDe = (o: { mensaje?: string; previas?: readonly string[]; idioma?: 'es' | 'en' }) =>
+      new CortadorFrases({
+        emitir: (f) => {
+          salidas.push(f);
+          enviar('frase', f);
         },
+        idioma: o.idioma ?? idiomaDelTurno(mensaje, req.body?.idioma, null),
+        mensaje: o.mensaje ?? mensaje,
+        previas: o.previas,
+      });
+    // Un reintento con el mismo `idTurno` (server/electrum/turno-idempotente.ts): no se corre el agente dos veces.
+    const unico = await reclamarTurno(claveTurnoElectrum(quienDelHilo(id?.persona.id, req), req.body?.idTurno));
+    if ('previo' in unico) {
+      const g = electrumDeGuardado(unico.previo);
+      // Lo que vio la primera vez, otra vez: quién contestó, el mapa y las frases.
+      if (typeof g.panel === 'string' && g.panel) enviar('panel', { panel: g.panel });
+      for (const u of g.ui || []) enviar('ui', u);
+      /*
+       * Las MISMAS frases que salieron en vivo (mismo número, mismo texto): quien ya oyó las primeras no las oye otra
+       * vez, ni oye otras partidas de otro modo. Un turno guardado sin ellas (de antes, o del JSON) se vuelve a cortar
+       * desde el texto de autoridad (nunca desde la voz pulida: lo que el pulidor quitó descuadraría la cuenta).
+       */
+      const guardadas = frasesGuardadas(g);
+      let cuantas = 0;
+      if (guardadas) {
+        for (const f of guardadas) enviar('frase', f);
+        cuantas = guardadas.length;
+      } else if (!(Array.isArray(g.voces) && g.voces.length)) {
+        const cortador = frasesDe({ idioma: g.idioma === 'en' ? 'en' : 'es' });
+        cortador.finalizar(String(g.texto));
+        cuantas = cortador.cuantas;
       }
-    );
-    if (!seFue) recordarHilo(clave, mensaje, salida.texto);
-    enviar('fin', { texto: salida.texto, voz: salida.voz, voces: salida.voces, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId, idioma: salida.idioma });
+      enviar('fin', { ...finElectrum(g), frases: cuantas, repetido: true });
+      return res.end();
+    }
+    if ('enCurso' in unico) {
+      enviar('error', { error: fraseEnCurso(req.body?.idioma), codigo: 'en-curso', enCurso: true });
+      return res.end();
+    }
+    if ('desconocido' in unico) {
+      enviar('fin', { texto: fraseDesconocido(req.body?.idioma), emocion: 'preocupado', panel: '', traza: [], fin: 'desconocido', frases: 0, repetido: true });
+      return res.end();
+    }
+    let salida: RespuestaElectrum;
+    let cortador: CortadorFrases;
+    try {
+      const historial = fusionarHiloElectrum({
+        servidor: await cargarHiloElectrum(clave),
+        cliente: hiloDelCliente(req.body?.hilo),
+        mensaje,
+      });
+      const corta = frasesDe({ previas: previasDe(historial) });
+      cortador = corta;
+      salida = await enTurnoUnico(unico.terminar, () =>
+        turnoElectrum(
+          mensaje,
+          { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje, prueba: id ? 'sesion' : null, duenio: quienDelHilo(id?.persona.id, req) },
+          {
+            historial,
+            abandonado: () => seFue,
+            senal: corte.signal,
+            inicio,
+            internet: req.body?.internet === true,
+            // La mesa técnica abierta en pantalla: contestan los tres, discutiendo, hasta que se cierre.
+            mesa: req.body?.mesa === true,
+            idioma: req.body?.idioma,
+            interrumpido: oido,
+            enVivo: (e) => {
+              if (e.panel) enviar('panel', { panel: e.panel });
+              if (e.herramienta) enviar('herramienta', e.herramienta);
+              if (e.ui) enviar('ui', e.ui);
+            },
+            alTexto: (t) => {
+              if (!seFue) corta.empujar(t);
+            },
+            alFinDeRonda: () => {
+              if (!seFue) corta.finDeRonda();
+            },
+          }
+        )
+      );
+    } catch (e) {
+      void unico.terminar(null);
+      throw e;
+    }
+    if (seFue) {
+      // No vio la respuesta: ni se guarda en el hilo ni queda para repetirla (un reintento corre el turno otra vez).
+      void unico.terminar(null);
+    } else {
+      recordarHilo(clave, mensaje, salida.texto);
+      /*
+       * Lo que falte de la respuesta final, como frases (las que ya sonaron no se repiten). Con el TEXTO de autoridad, no
+       * con la voz pulida: lo que sonó se cuenta desde las frases crudas, y si el pulidor quitó un «1.» o un «¡Excelente
+       * pregunta!» la cuenta no calzaba y la respuesta se decía otra vez desde ahí. Cada frase ya sale pulida.
+       */
+      if (!salida.voces?.length) cortador.finalizar(salida.texto);
+      void unico.terminar(guardadoDeElectrum({ ...salida, ...(salidas.length ? { frasesDichas: salidas } : {}) }));
+      enviar('fin', { ...finElectrum(salida), frases: cortador.cuantas });
+    }
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
     enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });
@@ -1399,7 +1531,15 @@ app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (
     // Español o inglés, lo que se hable: el transcriptor lo detecta y la respuesta sigue ese idioma.
     // `confirmar`: lo que el teléfono ya oyó en vivo con Turbo y trae cifras o dinero; directo con Scribe v2.
     const confirmar = req.body?.confirmar === true;
-    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'auto', plataforma: 'electrum', ...(confirmar ? { proveedores: PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR() } : {}) });
+    // Con el mismo reloj que el oído de AU-RA (/api/stt): pasado eso, cada proveedor más es una factura sin oyente.
+    const oido = await transcribirAudio({
+      audio,
+      mime: String(req.body?.mime || 'audio/webm'),
+      language: 'auto',
+      plataforma: 'electrum',
+      presupuesto: presupuesto(PRESUPUESTO_OIDO_MS),
+      ...(confirmar ? { proveedores: PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR() } : {}),
+    });
     if (!oido.texto) return res.status(200).json({ texto: '', detalle: oido.detalle, via: oido.via, honesto: true });
     return res.json({ texto: oido.texto, via: oido.via, idioma: oido.idioma || 'es', honesto: true });
   } catch (e: any) {
@@ -1497,6 +1637,46 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
  * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es la GPU de
  * Voicebox trabajando para cualquiera. Devuelve WAV (audio/wav) con la voz de Alex.
  */
+/**
+ * El tope diario de voz de ElevenLabs (server/tope-voz.ts, el mismo VOZ_MIEMBRO_MIN_DIA de los miembros de AU-RA), en
+ * Dr Electrum: quien entró con un código de prueba `DE-` (a nombre de su persona) y quien no tiene sesión (a nombre de
+ * su visitante Y de su IP: rotar el visitante no da minutos nuevos). El padrón, como la junta de AU-RA, sin tope.
+ * server/electrum/cuenta-voz.ts. Sin minutos, sigue oyendo al doctor con la voz del servidor (Voicebox).
+ */
+function cuentaVozElectrum(req: express.Request): string | null {
+  const id = identidadDe(req);
+  return cuentaVozDe({ persona: id?.persona, correo: sesionDe(req)?.correo, visitante: quienDelHilo(null, req), ip: String(req.ip || req.socket?.remoteAddress || '') });
+}
+const restanteVozDeElectrum = (cuenta: string) => restanteVozElectrum(cuenta, restanteVozMs);
+const anotarVozDeElectrum = (cuenta: string, ms: number) => anotarVozElectrum(cuenta, ms, anotarVoz);
+
+/**
+ * Lo que /api/electrum/voz/pcm lee del pedido: el texto, el personaje que lo dice y si es la primera frase. Como
+ * /api/tts/pcm (leerPeticionVoz): por GET de la query (el reproductor nativo de la APK solo hace GET, con la sesión en
+ * las cabeceras de siempre) y por POST del cuerpo, con el mismo largo máximo.
+ */
+function leerVozElectrum(req: express.Request): PeticionVozPcm {
+  const b: any = req.method === 'GET' ? req.query || {} : { ...(req.query || {}), ...(req.body || {}) };
+  const crudo = String(b.texto || b.text || '').slice(0, 2400).trim();
+  // Solo marcas ([risa], [suspiro]) y nada que decir: no hay texto (la ruta contesta 400).
+  const texto = /[\p{L}\p{N}]/u.test(sinEtiquetas(quitarExpresiones(crudo))) ? crudo : '';
+  // La mesa: Don Chema y la Ing. Tatiana con su voz (server/electrum/dialogo.ts PERSONAJES); si no, el doctor.
+  const vozPropia = vozDeLaMesa(b.personaje);
+  return {
+    texto,
+    emocion: normalizarEmocion(b.emocion),
+    performance: 'speak',
+    avatar: normalizarAvatar(undefined),
+    idioma: normalizarIdioma(b.idioma),
+    privado: false,
+    previo: vecinoDeVoz(b.previo, 'final'),
+    siguiente: vecinoDeVoz(b.siguiente, 'comienzo'),
+    plataforma: 'electrum',
+    ...(vozPropia ? { vozPropia } : {}),
+    primera: b.primera === true || b.primera === '1' || b.primera === 'true',
+  };
+}
+
 app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (req, res) => {
   const texto = String(req.body?.texto || '').slice(0, 1200).trim();
   if (!texto) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
@@ -1508,13 +1688,31 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
     // La pantalla habla por trozos: lo de antes y lo de después hacen que la entonación no se corte.
     const vecino = (v: unknown) => (typeof v === 'string' ? v.slice(0, 400) : undefined);
     // idioma: el de la respuesta que se lee (el turno lo devuelve); español si no llega.
-    const pedido = { texto, emocion: req.body?.emocion, plataforma: 'electrum' as const, previo: vecino(req.body?.previo), siguiente: vecino(req.body?.siguiente), idioma: normalizarIdioma(req.body?.idioma) };
+    // `primera`: la primera frase de la respuesta va con el modelo rápido de ElevenLabs (server/eleven.ts).
+    // La mesa en la APK sin el reproductor en streaming (iOS, o la frase que cayó al respaldo): Don Chema y la Ing.
+    // Tatiana con SU voz, como en /api/electrum/voz/pcm; si no, el doctor.
+    const vozPropia = vozDeLaMesa(req.body?.personaje);
+    const pedido = {
+      texto,
+      emocion: req.body?.emocion,
+      plataforma: 'electrum' as const,
+      previo: vecino(req.body?.previo),
+      siguiente: vecino(req.body?.siguiente),
+      idioma: normalizarIdioma(req.body?.idioma),
+      primera: req.body?.primera === true,
+      ...(vozPropia ? { vozPropia } : {}),
+    };
+    // Sin minutos de ElevenLabs hoy (quien entró con el código de prueba): directo a la voz del servidor.
+    const cuenta = cuentaVozElectrum(req);
+    const sinEleven = !!cuenta && restanteVozDeElectrum(cuenta) <= 0;
+    if (sinEleven) res.setHeader('X-Ultron-Tope-Voz', '1');
     /*
      * EN VIVO: el audio de ElevenLabs se le pasa al navegador a medida que se genera (el primer
      * pedazo sale a los ≈0,3 s) y al final queda en la caché. Si ElevenLabs no abre, Voicebox.
      */
-    const vivo = await abrirVozEnVivo(pedido);
+    const vivo = sinEleven ? null : await abrirVozEnVivo(pedido);
     if (vivo?.tipo === 'vivo') {
+      if (cuenta) anotarVozDeElectrum(cuenta, msDeHabla(texto));
       res.setHeader('Content-Type', vivo.contentType);
       res.setHeader('Cache-Control', 'private, max-age=600');
       res.setHeader('X-Motor', vivo.motor);
@@ -1522,7 +1720,8 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
       await pasarVozEnVivo(vivo, res, '[electrum]');
       return;
     }
-    const out = vivo?.tipo === 'cache' ? vivo.habla : await hablar({ ...pedido, sinEleven: true });
+    const { primera: _primera, ...sinPrimera } = pedido;
+    const out = vivo?.tipo === 'cache' ? vivo.habla : await hablar({ ...sinPrimera, sinEleven: true });
     if (!out) return res.status(503).json({ error: 'No tengo voz ahora mismo.', honesto: true });
     res.setHeader('Content-Type', out.contentType);
     res.setHeader('Cache-Control', 'private, max-age=600');
@@ -1532,6 +1731,25 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
     console.warn('[electrum] voz', String(e?.message || e).slice(0, 160));
     return res.status(502).json({ error: 'Se me trabó la voz.', honesto: true });
   }
+});
+
+/**
+ * La voz de Dr Electrum en streaming para el reproductor nativo de la APK (PCM16 mono, sonando con el primer trozo): la
+ * misma ruta de AU-RA (server/voz-pcm.ts, /api/tts/pcm, con `X-Ultron-Pcm-Hz`), con su puerta, su voz y la de su mesa
+ * (`personaje`: electrum, chema, tatiana), la primera frase rápida (`primera`) y el tope diario del código de prueba.
+ * GET con `?texto&idioma&personaje&primera&emocion` o POST con el mismo cuerpo.
+ */
+montarVozPcm(app, {
+  // GET (el reproductor nativo, con la query) y POST (el cuerpo), como /api/tts/pcm.
+  ruta: '/api/electrum/voz/pcm',
+  exigir: exigirPlataforma('electrum'),
+  limitar,
+  leer: leerVozElectrum,
+  cuentaMiembro: cuentaVozElectrum,
+  restanteMs: restanteVozDeElectrum,
+  anotar: anotarVozDeElectrum,
+  msDeHabla,
+  devolver: (res) => devolverLimite(res, 'voz'),
 });
 
 /** Recoger un informe ya armado. Vive media hora: describe el catastro de este momento. */

@@ -26,7 +26,8 @@ import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
-import { callar, desbloquear, escucharMudo, estaMudo, hablar, hablarDialogo, prepararRelleno, rellenar, silenciar, suena, type LineaDialogo } from './voz';
+import { callar, crearLocucion, desbloquear, escucharMudo, estaMudo, hablar, hablarDialogo, nuevoTurnoVoz, prepararRelleno, rellenar, silenciar, suena, tomarCortada, type LineaDialogo, type Locucion } from './voz';
+import { FrasesDelTurno, fraseDeEvento, interrumpidoDelTurno, nuevoIdTurno } from './frasesTurno';
 import { FRASES_GENERALES, FRASES_GENERALES_EN, fraseDeEspera, fraseDeTrabajo } from './trabajando';
 import { RETRATOS } from '../personajes/Retratos';
 import { EMOCION_DE, expresionDeLinea } from '../personajes/expresion';
@@ -334,6 +335,8 @@ const CAJON_HILO = 'electrum.hilo';
 const MOTIVO_PARADO = new Error('parado por quien pregunta');
 const MOTIVO_TARDE = new Error('tardó demasiado');
 const MOTIVO_IRSE = new Error('se cerró la pantalla');
+/** Le hablaron encima con otra pregunta mientras esta respuesta todavía llegaba: se deja y va la nueva. */
+const MOTIVO_INTERRUMPIDO = new Error('interrumpido con otra pregunta');
 
 function hiloGuardado(): Turno[] {
   try {
@@ -454,7 +457,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   const [oyendo, setOyendo] = useState<'grabando' | 'oyendo' | ''>('');
   const pararGrabacion = useRef<(() => void) | null>(null);
   /** Lo que está pasando AHORA. Se vacía al terminar, cuando pasa a ser parte del turno. */
-  const [enVivo, setEnVivo] = useState<{ panel: string; traza: Array<{ herramienta: string; ok: boolean; resumen: string }> }>({ panel: '', traza: [] });
+  /** Lo que está pasando AHORA (y el texto de la respuesta que va llegando, frase a frase). */
+  const [enVivo, setEnVivo] = useState<{ panel: string; traza: Array<{ herramienta: string; ok: boolean; resumen: string }>; texto?: string }>({ panel: '', traza: [] });
   const hilo = useRef<HTMLDivElement>(null);
 
   /**
@@ -543,10 +547,13 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       // Una pregunta nueva corta la respuesta anterior que todavía suena.
       callar();
       setHablando(false);
+      // Si cortó la respuesta anterior hablándole encima: lo que alcanzó a oír (va con esta pregunta, una vez).
+      const interrumpido = interrumpidoDelTurno(tomarCortada());
+      nuevoTurnoVoz();
       if (vozActivaRef.current) desbloquear();
       setTexto('');
       setTurnos((t) => [...t, { de: 'persona', texto: q }]);
-      setEnVivo({ panel: '', traza: [] });
+      setEnVivo({ panel: '', traza: [], texto: '' });
       // Lo que es para el mapa no espera al cerebro: «solo las de oro», «llévame a Juticalpa».
       const filtro = pedidoDeFiltro(q);
       if (filtro) onUi([{ accion: 'filtrar', mineral: filtro === 'quitar' ? null : filtro }]);
@@ -611,6 +618,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       const reloj = setTimeout(() => abortar.abort(MOTIVO_TARDE), 75_000);
       /** ¿Llegó a cerrar el servidor? Si no, esto NO se puede presentar como una respuesta. */
       let cerrado = false;
+      /** ¿Llegó el `fin`? (un `error` también cierra, pero no es una respuesta). */
+      let finRecibido = false;
       /** ¿Llegamos a leer algo del flujo? Separa «no conecté» de «conecté y se cayó a la mitad». */
       let empezado = false;
       /*
@@ -623,8 +632,62 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       let vozEnCamino = false;
       const imagenesDelTurno: NonNullable<Turno['imagenes']> = [];
       let opcionesDelTurno: Turno['opciones'];
+      /*
+       * EN VIVO, COMO AU-RA. El servidor manda cada frase de la respuesta en cuanto la escribe (`frase`):
+       * se enseña creciendo en la burbuja y se dice enseguida, sin esperar al `fin`. En el `fin` el texto
+       * entero reemplaza al que se fue armando y lo ya dicho no se repite. Un servidor de antes o la mesa
+       * (a varias voces) no mandan frases: entonces se dice el `fin` entero, como siempre.
+       */
+      const frasesDelTurno = new FrasesDelTurno();
+      let locucion = null as Locucion | null;
+      // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.
+      const avisosVoz: Parameters<typeof hablar>[3] = {
+        alEmpezar: () => {
+          setHablando(true);
+          onFace('SPEAKING');
+        },
+        alTerminar: () => {
+          setHablando(false);
+          onFace('IDLE');
+          avisarRespondido();
+        },
+        alFallar: (motivo) => {
+          setHablando(false);
+          onFace('IDLE');
+          avisarRespondido();
+          if (!vozAvisada.current) {
+            vozAvisada.current = true;
+            avisoSuelto(`No pude decírtelo en voz alta: ${motivo}. La respuesta está escrita arriba.`);
+          }
+        },
+      };
+      /*
+       * La pregunta lleva su id (`idTurno`): si la red se cae, se reintenta UNA vez con el mismo id y el
+       * servidor sabe que es la misma pregunta. Y si la persona cortó la respuesta anterior hablándole
+       * encima, lo que alcanzó a oír (`interrumpido.oido`): el doctor retoma de ahí en vez de repetirse.
+       */
+      const idTurno = nuevoIdTurno();
+      const cuerpo = JSON.stringify({
+        mensaje: q,
+        idTurno,
+        ...(interrumpido ? { interrumpido } : {}),
+        internet: internetRef.current,
+        // Con la mesa abierta, contestan los tres discutiendo.
+        mesa: mesaAbierta(),
+        // Pista por si la pregunta sola no dice el idioma («Olancho», «ok»).
+        idioma: idiomaActual(),
+        /*
+         * El hilo viaja con la pregunta. El servidor guarda el suyo y prefiere ése, pero Render
+         * reinicia el proceso cuando quiere y ahí la única copia que queda es la de esta pantalla.
+         */
+        hilo: turnosRef.current
+          .filter((t) => !t.local)
+          .slice(-24)
+          .map((t) => ({ rol: t.de, texto: t.texto })),
+      });
 
-      try {
+      /** Una vuelta: pedir el turno y leer su flujo hasta el final. */
+      const leerTurno = async () => {
         /*
          * Se lee el flujo a mano en vez de usar EventSource porque EventSource solo hace GET, y la
          * pregunta va en el cuerpo de un POST — meterla en la URL la dejaría en los registros del
@@ -634,22 +697,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headersElectrum() },
           signal: abortar.signal,
-          /*
-           * El hilo viaja con la pregunta. El servidor guarda el suyo y prefiere ése, pero Render
-           * reinicia el proceso cuando quiere y ahí la única copia que queda es la de esta pantalla.
-           */
-          body: JSON.stringify({
-            mensaje: q,
-            internet: internetRef.current,
-            // Con la mesa abierta, contestan los tres discutiendo.
-            mesa: mesaAbierta(),
-            // Pista por si la pregunta sola no dice el idioma («Olancho», «ok»).
-            idioma: idiomaActual(),
-            hilo: turnosRef.current
-              .filter((t) => !t.local)
-              .slice(-24)
-              .map((t) => ({ rol: t.de, texto: t.texto })),
-          }),
+          body: cuerpo,
         });
         if (r.status === 401) {
           cerrado = true;
@@ -709,6 +757,34 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   ultimaHerramienta = String(d?.herramienta || '') || null;
                   setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
                 }
+                else if (evento === 'frase') {
+                  // Una frase de la respuesta, ya escrita: a la burbuja y a la voz (una sola vez, aunque se reintente).
+                  const f = fraseDeEvento(d);
+                  if (!f) continue;
+                  // Un reintento se compara por TEXTO con lo que ya sonó (frasesTurno.ts): ni dos veces lo mismo ni
+                  // media respuesta de cada intento.
+                  const llegada = frasesDelTurno.llega(f);
+                  if (llegada === 'repetida') continue;
+                  const armado = frasesDelTurno.texto();
+                  setEnVivo((v) => ({ ...v, texto: armado }));
+                  if (vozActivaRef.current && llegada !== 'dicha') {
+                    if (llegada === 'reiniciar' && locucion) {
+                      // El reintento trajo otra respuesta: lo que sonaba de la primera se calla y esta empieza de cero.
+                      locucion.cerrar();
+                      callar();
+                      locucion = null;
+                    }
+                    if (!locucion) {
+                      // Desde aquí habla la respuesta: ni un «estoy revisando…» más.
+                      respondiendo = true;
+                      vozEnCamino = true;
+                      // La voz lee en el idioma de la pregunta (el mismo criterio que el servidor); el `fin` lo confirma.
+                      fijarIdioma(idiomaPregunta);
+                      locucion = crearLocucion(headersElectrum(), undefined, avisosVoz);
+                    }
+                    for (const v of llegada === 'reiniciar' ? frasesDelTurno.paraDecir() : [f.voz]) locucion.agregar(v);
+                  }
+                }
                 else if (evento === 'ui') {
                   onUi([d]); // el mapa se mueve YA, no al final
                   if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
@@ -736,6 +812,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   terminado = true;
                 } else if (evento === 'fin') {
                   cerrado = true;
+                  finRecibido = true;
                   respondiendo = true;
                   // La voz lee en el idioma en que contestó (español si no lo dice).
                   fijarIdioma(d.idioma);
@@ -750,46 +827,60 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                         .filter((v: any) => v && RETRATOS[v.quien] && typeof v.texto === 'string' && v.texto.trim())
                         .map((v: any) => ({ quien: String(v.quien), texto: String(v.texto), nombre: RETRATOS[v.quien].nombre }))
                     : [];
+                  // Lo que ya se dijo frase a frase no se repite: la locución termina lo que tiene en cola.
+                  locucion?.cerrar();
                   // En silencio la mesa igual se «dice»: hablarDialogo la lee al ritmo de lectura con
                   // sus caras y subtítulos (voz.ts), sin sonido. Una respuesta de uno solo, no.
-                  if ((vozActivaRef.current || voces.length) && d.texto) {
-                    vozEnCamino = true;
-                    // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.
-                    const avisosVoz: Parameters<typeof hablar>[3] = {
-                      alEmpezar: () => {
-                        setHablando(true);
-                        onFace('SPEAKING');
-                      },
-                      alTerminar: () => {
-                        setHablando(false);
-                        onFace('IDLE');
-                        avisarRespondido();
-                      },
-                      alFallar: (motivo) => {
-                        setHablando(false);
-                        onFace('IDLE');
-                        avisarRespondido();
-                        if (!vozAvisada.current) {
-                          vozAvisada.current = true;
-                          avisoSuelto(`No pude decírtelo en voz alta: ${motivo}. La respuesta está escrita arriba.`);
-                        }
-                      },
-                    };
-                    if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
-                    else void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), avisosVoz);
+                  if (frasesDelTurno.decirFinEntero() && (vozActivaRef.current || voces.length) && d.texto) {
+                    // Un reintento sin frases después de que ya sonaron algunas: de un turno repetido, solo lo que falta.
+                    const falta = frasesDelTurno.dijoAntes && d.repetido === true && !voces.length ? frasesDelTurno.faltaDelFin(String(d.texto)) : null;
+                    if (falta === null || falta) {
+                      vozEnCamino = true;
+                      if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
+                      else void hablar(falta ?? (typeof d.voz === 'string' && d.voz ? d.voz : d.texto), d.emocion, headersElectrum(), avisosVoz);
+                    }
                   }
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined, trazaId: typeof d.trazaId === 'string' ? d.trazaId : undefined }]);
+                  // El texto entero manda sobre el que se fue armando con las frases.
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || frasesDelTurno.texto() || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined, trazaId: typeof d.trazaId === 'string' ? d.trazaId : undefined }]);
                   terminado = true;
                 }
               }
             }
           }
         }
+      };
+
+      try {
+        for (let intento = 0; ; intento++) {
+          let fallo: unknown = null;
+          try {
+            await leerTurno();
+          } catch (e) {
+            fallo = e;
+          }
+          /*
+           * UN reintento, con el MISMO idTurno, si se cayó la red (no conectó, o el flujo se cortó antes del
+           * `fin`). No si lo paró la persona, si pasó el tiempo, si se fue de la pantalla o si el servidor
+           * contestó algo (un 401, un 503, un `error`): eso ya tiene su aviso. Las frases que ya llegaron no
+           * se vuelven a decir, y si el reintento trae otra respuesta, se calla la primera (frasesTurno.ts).
+           */
+          const reintentable = !cerrado && !abortar.signal.aborted && intento === 0 && (fallo === null || (fallo as any)?.name !== 'SyntaxError');
+          if (!reintentable) {
+            if (fallo !== null) throw fallo;
+            break;
+          }
+          await new Promise((ok) => setTimeout(ok, 600));
+          if (abortar.signal.aborted) throw new Error('cortado');
+          // La traza se vuelve a mandar desde el principio: no se duplica en pantalla.
+          setEnVivo((v) => ({ ...v, panel: '', traza: [] }));
+          // Lo que ya llegó pasa a ser «lo ya dicho»: lo del reintento se compara por texto, no por número.
+          frasesDelTurno.reintento();
+        }
       } catch {
         cerrado = true;
         const motivo = abortar.signal.reason;
         // Irse de la pantalla no es un fallo que contarle a nadie: ya no hay nadie mirando.
-        if (motivo !== MOTIVO_IRSE) {
+        if (motivo !== MOTIVO_IRSE && motivo !== MOTIVO_INTERRUMPIDO) {
           onFace('CONCERNED');
           const parado = motivo === MOTIVO_PARADO;
           const tarde = motivo === MOTIVO_TARDE;
@@ -825,11 +916,33 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             q
           );
         }
+        /*
+         * Lo que se iba diciendo frase a frase: si llegó el `fin`, termina lo que tiene en cola. Si no
+         * (se cortó, un `error`, la persona lo paró), se calla: no se dice un pedazo como si fuera la
+         * respuesta, igual que no se enseña.
+         */
+        let cortarRelleno = true;
+        if (locucion) {
+          locucion.cerrar();
+          if (!finRecibido) {
+            callar();
+            setHablando(false);
+            vozEnCamino = false;
+          } else if (locucion.cortada()) {
+            /*
+             * La interrumpieron hablándole encima: ya no va a terminar (ni a avisar que terminó). Lo que
+             * se anotó mientras tanto se pregunta ya. Y no se calla nada: lo que suene ahora es de otro.
+             */
+            setHablando(false);
+            vozEnCamino = false;
+            cortarRelleno = false;
+          }
+        }
         setPensando(false);
-        setEnVivo({ panel: '', traza: [] });
+        setEnVivo({ panel: '', traza: [], texto: '' });
         if (!vozEnCamino) {
           // Sin respuesta hablada, lo que quedara del «estoy revisando…» se corta: ya no hay nada que esperar.
-          if (vozActivaRef.current) callar();
+          if (vozActivaRef.current && cortarRelleno) callar();
           setTimeout(() => onFace('IDLE'), 1200);
           avisarRespondido();
         }
@@ -1039,6 +1152,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    */
   const preguntarRef = useRef(preguntar);
   preguntarRef.current = preguntar;
+  /** Cuándo la interrumpieron hablándole encima por última vez (0: no). */
+  const interrumpidoEn = useRef(0);
   const pensandoRef = useRef(pensando);
   pensandoRef.current = pensando;
   useEffect(() => {
@@ -1053,17 +1168,33 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         void preguntarRef.current(q);
       }, 120);
     };
+    // Le hablaron encima: la voz se calló, el botón deja de decir «Callar».
+    const alInterrumpido = () => {
+      interrumpidoEn.current = Date.now();
+      setHablando(false);
+      alTerminar();
+    };
     window.addEventListener('electrum:respondido', alTerminar);
-    window.addEventListener('electrum:interrumpido', alTerminar);
+    window.addEventListener('electrum:interrumpido', alInterrumpido);
     return () => {
       window.removeEventListener('electrum:respondido', alTerminar);
-      window.removeEventListener('electrum:interrumpido', alTerminar);
+      window.removeEventListener('electrum:interrumpido', alInterrumpido);
     };
   }, []);
   useEffect(() => {
     if (!pedido || pedido.n === ultimoPedido.current) return;
     ultimoPedido.current = pedido.n;
     if (pensando) {
+      if (pedido.tipo === 'pregunta' && Date.now() - interrumpidoEn.current < 4000 && abortoRef.current) {
+        /*
+         * Le hablaron encima con otra pregunta mientras esta respuesta todavía llegaba (como en AU-RA): la de
+         * ahora gana. Se corta la que venía, sin aviso de fallo, y la nueva sale en cuanto se suelta.
+         */
+        interrumpidoEn.current = 0;
+        enCola.current = pedido.texto;
+        abortoRef.current.abort(MOTIVO_INTERRUMPIDO);
+        return;
+      }
       if (pedido.tipo === 'pregunta') {
         enCola.current = pedido.texto;
         avisoSuelto(`Anotado: «${pedido.texto.slice(0, 80)}». Se lo contesto apenas termine esta respuesta.`);
@@ -1364,9 +1495,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     </span>
                   </div>
                 ))}
+                {/* La respuesta mientras llega, frase a frase (la misma que se va oyendo). En el `fin` la reemplaza el texto entero. */}
+                {enVivo.texto ? (
+                  <div>
+                    <div className="inline-block max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed text-left whitespace-pre-line break-words bg-white/[0.045] text-[#DDE7EC]">
+                      {enVivo.texto}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-[11px] text-[#6C7F89]">
-                    {enVivo.traza.length ? 'redactando…' : 'pensando…'}
+                    {enVivo.texto ? 'sigue…' : enVivo.traza.length ? 'redactando…' : 'pensando…'}
                   </span>
                   {/*
                     * Poder pararlo. Un turno con tres rondas de herramientas puede tardar cincuenta

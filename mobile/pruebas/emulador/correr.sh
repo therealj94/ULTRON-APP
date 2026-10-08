@@ -187,7 +187,9 @@ grabar_fin() {
 terminar() {
   grabar_fin
   [ -n "${SEGUIR_PIDS:-}" ] && kill "$SEGUIR_PIDS" 2> /dev/null
+  [ -n "${CERRAR_ANR_PID:-}" ] && kill "$CERRAR_ANR_PID" 2> /dev/null
   sleep 1
+  cp "$TMP/anr-ajenos.txt" "$EVID/datos/" 2> /dev/null || true
   [ -n "${LOGCAT_PID:-}" ] && kill "$LOGCAT_PID" 2> /dev/null
   # Solo la app: las líneas de sus procesos, más los cierres y las actualizaciones por aire.
   local pids
@@ -206,6 +208,26 @@ adb logcat -v threadtime > "$LOGCAT" 2>&1 &
 LOGCAT_PID=$!
 ( while true; do anotar_pid; sleep 5; done ) &
 SEGUIR_PIDS=$!
+
+# El emulador en CI va justo y su propio launcher se cuelga («Pixel Launcher isn't responding») encima de la app;
+# tocar «Wait» no basta, vuelve a salir. Se piden sin diálogos de error y, si aun así sale uno que NO es de AU-RA,
+# se cierra ese proceso. Un ANR o cierre de AU-RA sigue contando: lo cuenta `cierres` en el logcat, no el diálogo.
+adb shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
+(
+  while true; do
+    FOCO=$(adb shell dumpsys window 2>/dev/null | grep -m1 "mCurrentFocus" | tr -d '\r')
+    case "$FOCO" in
+      *"Not Responding"*"$PKG"*) ;;
+      *"Not Responding: "*)
+        AJENO=$(echo "$FOCO" | sed -E 's/.*Not Responding: ([A-Za-z0-9_.]+).*/\1/')
+        echo "ANR del sistema tapando la app ($AJENO): se cierra" >> "$TMP/anr-ajenos.txt"
+        adb shell am force-stop "$AJENO" > /dev/null 2>&1 || adb shell input keyevent 4 > /dev/null 2>&1 || true
+        ;;
+    esac
+    sleep 3
+  done
+) &
+CERRAR_ANR_PID=$!
 
 ABIS=$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')
 echo "ABIs del emulador: $ABIS"

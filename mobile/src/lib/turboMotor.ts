@@ -76,6 +76,13 @@ export type DepsTurbo = {
   crearWs(url: string): WsTurbo;
   ahora?: () => number;
   tiempos?: Partial<typeof TIEMPOS>;
+  /**
+   * Qué frases se vuelven a oír con Scribe v2 antes de entregarlas y cómo sale una que la segunda escucha no
+   * corroboró. Sin esto (AU-RA, lo de siempre): las de dinero (`esFraseDeDinero`) y, sin corroborar, `fraseSinVerificar`
+   * si llevan un monto o un destinatario. Dr Electrum (electrum/oido.ts) confirma las CIFRAS de campo (coordenadas,
+   * números de concesión) y, sin corroborar, la deja como la oyó Turbo: «veta» ahí es geología, no la wallet.
+   */
+  segundaEscucha?: { confirmar(texto: string): boolean; sinCorroborar?(texto: string): string };
 };
 
 /**
@@ -1267,7 +1274,8 @@ export class MotorTurbo {
         let texto = limpiarFinal(textoTurbo);
         if (!texto || g !== this.gen) return;
         let via: ViaFrase = 'vivo';
-        if (esFraseDeDinero(texto) && trozos.length) {
+        const segunda = this.deps.segundaEscucha;
+        if ((segunda ? segunda.confirmar(texto) : esFraseDeDinero(texto)) && trozos.length) {
           // null: no contestó a tiempo o falló. '' (o basura): contestó sin la frase. Ninguno corrobora lo
           // que oyó Turbo (VOICE04): un monto o un destinatario dudosos salen pidiendo confirmación.
           const confirmado = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), true), this.t.confirmarMs);
@@ -1277,7 +1285,8 @@ export class MotorTurbo {
             via = 'corroborada';
           } else {
             via = confirmado === null ? 'timeout' : 'no_corroborada';
-            if (datoSensibleDeDinero(texto)) texto = fraseSinVerificar(texto);
+            if (segunda) texto = segunda.sinCorroborar ? segunda.sinCorroborar(texto) : texto;
+            else if (datoSensibleDeDinero(texto)) texto = fraseSinVerificar(texto);
           }
         }
         if (g === this.gen && this.quiere && !this.pausado) {

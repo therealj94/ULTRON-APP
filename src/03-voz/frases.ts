@@ -17,13 +17,17 @@ import { avanzarEstado, estadoInicial, siguienteCorte } from '../../mobile/src/l
  */
 export const MIN_CORTE_COMA = COMA_PRIMERA;
 
-export function cortarFrases(pendiente: string, final = false): { listas: string[]; resto: string } {
+/**
+ * `o.comas: false`: solo fines de frase (para partir un texto que ya llegó entero, como la voz de Dr Electrum,
+ * src-electrum/panel/voz.ts). Por omisión, como siempre: también las comas seguras.
+ */
+export function cortarFrases(pendiente: string, final = false, o: { comas?: boolean } = {}): { listas: string[]; resto: string } {
   // El mismo contrato que el servidor y la app (mobile/src/lib/cortesVoz.ts): lo que el servidor soltó
   // hasta un corte se corta aquí en el mismo sitio, sin esperar al trozo siguiente. «Dr. Gómez» no se parte.
   const listas: string[] = [];
   let estado = estadoInicial();
   let desde = 0;
-  for (let c = siguienteCorte(pendiente, 0, estado); c && c.fin > desde; c = siguienteCorte(pendiente, desde, estado)) {
+  for (let c = siguienteCorte(pendiente, 0, estado, o); c && c.fin > desde; c = siguienteCorte(pendiente, desde, estado, o)) {
     const p = pendiente.slice(desde, c.fin).trim();
     if (p) listas.push(p);
     estado = avanzarEstado(estado, c);

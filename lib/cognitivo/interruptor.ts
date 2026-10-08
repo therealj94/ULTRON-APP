@@ -10,7 +10,11 @@
  * Un 4xx NO abre el circuito: es un problema de ESA petición (texto raro, argumento mal), no del
  * servicio.
  */
-export type Servicio = 'laya' | 'embeddings' | 'modelo_chico' | 'docling' | 'cerebro_rapido';
+/**
+ * `cerebro_rapido_electrum`: el mismo Bedrock, pero con el cortacircuitos de Dr Electrum (lib/cerebro-rapido.ts
+ * `espacio`). Sus turnos largos, con el catastro y los expedientes, no apagan la voz rápida de AU-RA si fallan.
+ */
+export type Servicio = 'laya' | 'embeddings' | 'modelo_chico' | 'docling' | 'cerebro_rapido' | 'cerebro_rapido_electrum';
 
 const abiertoHasta = new Map<Servicio, number>();
 

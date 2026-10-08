@@ -18,7 +18,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { clave } from '../lib/boveda';
-import { afinarParaBoca, afinarParaBocaIngles } from './habla';
+import { afinarParaBoca, afinarParaBocaIngles, codigosAVoz } from './habla';
 import { normalizarEmocion, type Emocion } from '../lib/emocion';
 import { CANCIONES, VOZ_OFICIAL } from '../lib/capacidades';
 import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
@@ -449,18 +449,23 @@ function pedidoEleven(o: {
   idioma?: Idioma;
   previo?: string;
   siguiente?: string;
+  /** Otra voz de ElevenLabs para esta plataforma (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). */
+  vozPropia?: string;
+  /** El cliente dice que es la primera frase de la respuesta (Dr Electrum): va con el modelo rápido si cabe. */
+  primera?: boolean;
 }): { voz: string; guion: string; clave: string; motor: string; estabilidad: number; modelo: string } | null {
   const idioma = o.idioma === 'en' ? 'en' : 'es';
-  const voz = o.performance === 'speak' ? vozEleven(o.plataforma, o.avatar, idioma) : null;
+  const voz = o.performance === 'speak' ? String(o.vozPropia || '').trim() || vozEleven(o.plataforma, o.avatar, idioma) : null;
   if (!voz || !elevenListo()) return null;
-  // Dr Electrum habla como persona: alguna muletilla («bueno,», «este») en vez de dicción de locutor.
+  // Dr Electrum habla como persona: alguna muletilla («bueno,», «este») en vez de dicción de locutor. Y sus códigos
+  // de expediente («0442») cifra por cifra (server/habla.ts codigosAVoz).
   const base = String(o.texto || '').slice(0, MAX_GUION);
-  const humano = o.plataforma === 'electrum' ? conMuletillas(base, { primero: !o.previo, emocion: o.emocion }) : base;
+  const humano = o.plataforma === 'electrum' ? conMuletillas(codigosAVoz(base), { primero: !o.previo, emocion: o.emocion }) : base;
   // En inglés no se pasan cifras ni unidades a palabras en español: ElevenLabs las lee solo.
   const preparar = idioma === 'en' ? (t: string) => afinarParaBocaIngles(t, MAX_GUION) : (t: string) => expresar(t, o.emocion, 'speak', { cifras: false });
   // La primera frase corta y sin etiquetas va con el modelo rápido (server/eleven.ts modeloDeLocucion): sin etiquetas
   // ni tono, que ese modelo leería en voz alta.
-  const modelo = modeloDeLocucion({ texto: base, previo: o.previo, plataforma: o.plataforma });
+  const modelo = modeloDeLocucion({ texto: base, previo: o.previo, plataforma: o.plataforma, primera: o.primera });
   const etiquetas = aceptaEtiquetas(modelo);
   // El tono de la emoción solo en la primera frase de la respuesta (la que no tiene `previo`).
   const conTono = guionEleven(humano, o.emocion, preparar, { tono: !o.previo && etiquetas });
@@ -489,6 +494,10 @@ export async function abrirVozEnVivo(opts: {
   idioma?: Idioma | string;
   /** La voz del avatar de AU-RA (ojos, aura, claudio); Dr Electrum no lo usa. */
   avatar?: AvatarVoz;
+  /** Dr Electrum: es la primera frase de la respuesta (modelo rápido; server/eleven.ts modeloDeLocucion). */
+  primera?: boolean;
+  /** Otra voz de ElevenLabs (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). */
+  vozPropia?: string;
 }): Promise<
   | { tipo: 'cache'; habla: Habla }
   | { tipo: 'vivo'; contentType: string; motor: string; cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }
@@ -627,13 +636,22 @@ export async function abrirVozPcm(opts: {
    * Nunca genera: lo que no está, null.
    */
   soloCache?: boolean;
+  /** Quién habla: AU-RA (por omisión) o Dr Electrum (/api/electrum/voz/pcm), con su voz y su forma de decir. */
+  plataforma?: 'ultron' | 'electrum';
+  /** Otra voz de ElevenLabs (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). */
+  vozPropia?: string;
+  /** Dr Electrum: la primera frase de la respuesta (modelo rápido). */
+  primera?: boolean;
 }): Promise<VozPcm | null> {
   const emocion = normalizarEmocion(opts.emocion);
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const avatar = normalizarAvatar(opts.avatar);
   const idioma = normalizarIdioma(opts.idioma);
+  const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
   const hz = opts.hz && (HZ_PCM_ELEVEN as readonly number[]).includes(opts.hz) ? opts.hz : hzPcm();
-  const p = opts.sinEleven ? null : pedidoEleven({ texto: opts.texto, emocion, performance, plataforma: 'ultron', avatar, idioma, previo: opts.previo, siguiente: opts.siguiente });
+  const p = opts.sinEleven
+    ? null
+    : pedidoEleven({ texto: opts.texto, emocion, performance, plataforma, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, vozPropia: opts.vozPropia, primera: opts.primera });
   if (p) {
     const clave = crypto.createHash('sha1').update(`${p.clave}|pcm_${hz}`).digest('hex');
     const tipo = `${TIPO_PCM};rate=${hz}`;
@@ -666,7 +684,7 @@ export async function abrirVozPcm(opts: {
   }
   if (opts.soloCache) return null;
   // Respaldo: Voicebox (WAV de 16 bits), pasado a PCM. Sin ElevenLabs de por medio (ya se intentó o no toca).
-  const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
+  const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, plataforma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
   if (!out || !/wav/i.test(out.contentType)) return null;
   const crudo = pcmDeWav(out.audio);
   return crudo ? { tipo: 'entero', pcm: crudo.pcm, hz: crudo.hz, motor: out.motor } : null;
@@ -702,6 +720,8 @@ export async function hablar(opts: {
    * sin los tiempos por letra se sirve igual (la boca sigue el volumen).
    */
   soloCache?: boolean;
+  /** Otra voz de ElevenLabs (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). Sin ella, la de la plataforma. */
+  vozPropia?: string;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
