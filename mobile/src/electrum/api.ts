@@ -5,12 +5,13 @@
  * llave de demostración. No reusa el cliente de AU-RA a propósito — son dos cerebros y dos
  * puertas, y un cliente que sirva para los dos acaba mandando la credencial equivocada.
  */
+import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE } from '../config';
 import { LectorSse } from '../compa/sse';
 import type { Traza, TurnoHilo } from './campo';
 import { ErrorHttp, SinPuerta, type Puerta } from './frases';
-import { CorteStream, esFalloDeRed, type CuerpoTurno, type Personaje } from './turnoVivo';
+import { CorteStream, esFalloDeRed, visitaDeBytes, visitaValida, type CuerpoTurno, type Personaje } from './turnoVivo';
 
 // Las clases de error, la puerta y sus frases viven en `frases.ts` (sin React Native, para poder
 // probarlas con node:test). Se reexportan para que las pantallas sigan importando de aquí.
@@ -18,9 +19,12 @@ export { ErrorHttp, SinPuerta, porQueNoAbre, type Puerta } from './frases';
 
 const K_SESION = 'ultron_sesion_token';
 const K_LLAVE = 'electrum_llave';
+/** El visitante de esta instalación (turnoVivo.ts visitaDeBytes): no es una credencial y sobrevive a «Salir». */
+const K_VISITA = 'electrum_visita';
 
 let sesion: string | null = null;
 let llave: string | null = null;
+let visita: string | null = null;
 
 export async function cargarCredenciales() {
   try {
@@ -29,6 +33,28 @@ export async function cargarCredenciales() {
   } catch {
     /* almacén no disponible: se entra a mano */
   }
+  try {
+    const guardada = visitaValida(await SecureStore.getItemAsync(K_VISITA));
+    if (guardada) visita = guardada;
+    else if (visita) await SecureStore.setItemAsync(K_VISITA, visita);
+  } catch {
+    /* sin almacén: vale para esta vez */
+  }
+}
+
+/** El visitante de este teléfono: el guardado o uno nuevo (que se guarda). Siempre con la forma que acepta el servidor. */
+function visitaElectrum(): string {
+  if (visita) return visita;
+  let bytes: Uint8Array;
+  try {
+    bytes = Crypto.getRandomBytes(16);
+  } catch {
+    // Sin el azar del sistema (no debería pasar): uno de Math.random, mejor que la huella de IP compartida.
+    bytes = Uint8Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  }
+  visita = visitaDeBytes(bytes);
+  void SecureStore.setItemAsync(K_VISITA, visita).catch(() => {});
+  return visita;
 }
 
 export async function guardarSesion(token: string | null) {
@@ -87,7 +113,8 @@ export function hayCredencial(): boolean {
 }
 
 function cabeceras(extra: Record<string, string> = {}): Record<string, string> {
-  const h: Record<string, string> = { ...extra };
+  // Siempre, como la web: con sesión manda la persona; sin ella, el turno, el hilo y el tope de voz son de este teléfono.
+  const h: Record<string, string> = { ...extra, 'x-electrum-visita': visitaElectrum() };
   if (sesion) h['x-ultron-sesion'] = sesion;
   if (llave) h['x-electrum-llave'] = llave;
   return h;
@@ -132,7 +159,7 @@ async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA
     if (r.status === 401) throw new SinPuerta();
     const j = (await r.json().catch(() => ({}))) as any;
     // Tipado, no un `Error` con «Error 502» dentro: la pantalla distingue «caído» de «no te deja».
-    if (!r.ok) throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '');
+    if (!r.ok) throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '', typeof j?.codigo === 'string' ? j.codigo : '');
     return j as T;
   } finally {
     tope.soltar();
@@ -364,8 +391,14 @@ export function salud(): Promise<Salud> {
   return pedir<Salud>('/api/electrum/salud', {}, 12_000);
 }
 
-/** Lo que acompaña a una frase para la voz: la primera va con el modelo rápido; en la mesa, quién la dice. */
-export type ExtraVoz = { primera?: boolean; personaje?: Personaje };
+/**
+ * Lo que acompaña a una frase para la voz: la primera va con el modelo rápido; en la mesa, quién la dice; `previo`, el
+ * final de la frase anterior (que no suene cada frase como el comienzo de una respuesta).
+ */
+export type ExtraVoz = { primera?: boolean; personaje?: Personaje; previo?: string };
+
+/** Lo que viaja de la frase anterior: su final, con tope (en el GET va en la dirección). */
+const previoDeVoz = (v: string | undefined): string => String(v || '').replace(/\s+/g, ' ').trim().slice(-300);
 
 /** La voz del doctor (WAV de Voicebox, perfil Alex). Se pide aparte porque no devuelve JSON. */
 export async function voz(texto: string, emocion?: string, idioma?: 'es' | 'en', extra: ExtraVoz = {}): Promise<string | null> {
@@ -380,6 +413,7 @@ export async function voz(texto: string, emocion?: string, idioma?: 'es' | 'en',
         idioma,
         ...(extra.primera ? { primera: true } : {}),
         ...(extra.personaje && extra.personaje !== 'electrum' ? { personaje: extra.personaje } : {}),
+        ...(previoDeVoz(extra.previo) ? { previo: previoDeVoz(extra.previo) } : {}),
       }),
       signal: tope.signal,
     });
@@ -398,15 +432,18 @@ export async function voz(texto: string, emocion?: string, idioma?: 'es' | 'en',
 /**
  * La dirección de una frase en PCM para el reproductor en streaming (modules/aura-voz: AudioTrack, como AU-RA con
  * /api/tts/pcm). El reproductor nativo pide por GET (no sabe mandar un cuerpo), así que todo va en la dirección:
- * `texto`, `idioma`, `personaje` (en la mesa) y `primera`. Contesta PCM16 mono con la cabecera X-Ultron-Pcm-Hz; si el
+ * `texto`, `idioma`, `personaje` (en la mesa), `primera` y `previo` (el final de la frase anterior). Contesta
+ * PCM16 mono con la cabecera X-Ultron-Pcm-Hz; si el
  * servidor no tiene la ruta, el nativo avisa el fallo y la frase va por `voz()` (expo-av).
  */
-export function urlVozPcm(texto: string, o: { idioma?: 'es' | 'en'; personaje?: Personaje; primera?: boolean; emocion?: string } = {}): string {
+export function urlVozPcm(texto: string, o: { idioma?: 'es' | 'en'; personaje?: Personaje; primera?: boolean; emocion?: string; previo?: string } = {}): string {
   const q = new URLSearchParams({ texto: texto.slice(0, 1200) });
   if (o.idioma) q.set('idioma', o.idioma);
   if (o.personaje) q.set('personaje', o.personaje);
   if (o.primera) q.set('primera', '1');
   if (o.emocion) q.set('emocion', o.emocion);
+  const previo = previoDeVoz(o.previo);
+  if (previo) q.set('previo', previo);
   return `${API_BASE}/api/electrum/voz/pcm?${q.toString()}`;
 }
 

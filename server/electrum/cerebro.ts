@@ -80,6 +80,32 @@ export async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[]
   return { texto: String(mensaje.content || ''), mensaje };
 }
 
+/**
+ * LOS TIEMPOS DE LA COBERTURA, LOS DE ELECTRUM (no los de la voz de AU-RA). hablarConManos lanza otro pedido si el
+ * primero no dio su primera señal en `primeraMs`, hasta `lanzamientos`, y se rinde a los `totalMs` (sigue el Qwen del
+ * nodo). Los de AU-RA (2 s, 7 s, 3) están medidos con SU prompt (~8,7 k fichas); el de Electrum lleva el cerebro de
+ * minas entero, el panel y lo leído (varias veces más), y Bedrock tarda más en dar la primera señal: con los de AU-RA
+ * cada vuelta lanzaba hasta tres pedidos en paralelo y caía al Qwen a menudo. Siempre dentro de lo que le queda al turno.
+ *
+ *   ELECTRUM_CEREBRO_PRIMERA_MS (6000) · ELECTRUM_CEREBRO_TOTAL_MS (20000) · ELECTRUM_CEREBRO_LANZAMIENTOS (2)
+ */
+export const ELECTRUM_PRIMERA_MS_OMISION = 6_000;
+export const ELECTRUM_TOTAL_MS_OMISION = 20_000;
+export const ELECTRUM_LANZAMIENTOS_OMISION = 2;
+export function tiemposCerebroElectrum(msRestante: number, env: NodeJS.ProcessEnv = process.env): { primeraMs: number; totalMs: number; lanzamientos: number } {
+  const num = (v: string | undefined, omision: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : omision;
+  };
+  const tope = Math.max(MIN_PARA_PENSAR_MS, Math.min(MAX_LLAMADA_MS, msRestante));
+  const totalMs = Math.min(num(env.ELECTRUM_CEREBRO_TOTAL_MS, ELECTRUM_TOTAL_MS_OMISION), tope);
+  return {
+    primeraMs: Math.min(num(env.ELECTRUM_CEREBRO_PRIMERA_MS, ELECTRUM_PRIMERA_MS_OMISION), totalMs),
+    totalMs,
+    lanzamientos: Math.max(1, Math.round(num(env.ELECTRUM_CEREBRO_LANZAMIENTOS, ELECTRUM_LANZAMIENTOS_OMISION))),
+  };
+}
+
 /** Qué cerebro piensa los turnos de Electrum. Ver la cabecera. */
 export type ModoCerebroElectrum = 'rapido' | 'qwen';
 export function modoCerebroElectrum(env: NodeJS.ProcessEnv = process.env): ModoCerebroElectrum {
@@ -162,7 +188,8 @@ export async function pensarElectrum(o: Parameters<Pensar>[0] & GanchosPensar, d
   };
   try {
     const mensajes = o.mensajes as unknown as MensajeChat[];
-    for await (const p of hablar(mensajes, aHerramientasBedrock(o.herramientas), corte.signal, { maxTokens: MAX_FICHAS, ruta: 'manos', espacio: 'electrum', conVueltas: true })) {
+    const tiempos = tiemposCerebroElectrum(o.msRestante);
+    for await (const p of hablar(mensajes, aHerramientasBedrock(o.herramientas), corte.signal, { maxTokens: MAX_FICHAS, ruta: 'manos', espacio: 'electrum', conVueltas: true, ...tiempos })) {
       if ('modelo' in p) {
         modelo = p.modelo;
         trazaActual()?.modelo(p.modelo);

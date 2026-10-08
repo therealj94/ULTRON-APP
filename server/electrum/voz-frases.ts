@@ -23,6 +23,8 @@
  * cuántas frases salieron (para no volver a decirlas). La mesa (varias voces) no pasa por aquí.
  */
 import { cortesDesde } from '../../lib/trozos';
+import { cortesDe } from '../../mobile/src/lib/cortesVoz';
+import { plano } from '../../lib/promesas';
 import { limpiarTexto } from '../../lib/agente/protocolo';
 import { extraerEmocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
@@ -74,12 +76,31 @@ export function fraseARetener(frase: string, previas: readonly string[] = []): b
   return trozoAfirmaHechoElectrum(t) || DICE_MAPA.test(t) || DICE_MAPAS_GEO.test(t) || (previas.length > 0 && trozoRepite(t, previas));
 }
 
-/** Las frases de un texto entero, por los mismos cortes que el stream. */
+/**
+ * El número de una lista suelto («1.», «2)»): el contrato corta después de su punto, pero solo no es una frase. Va
+ * pegado a la que sigue («1. Clavo Rico vence en diciembre.»): ni se dice «uno» como frase aparte ni cuenta solo.
+ */
+const SOLO_NUMERO = /^\s*\d{1,3}[.)]\s*$/;
+export const esNumeroDeLista = (s: string): boolean => SOLO_NUMERO.test(String(s || ''));
+
+/**
+ * Lo que PUEDE estar empezando a dar algo por hecho («Te dejé…», «Ya generé…», «Listo,…»): con esto en la cláusula,
+ * la primera frase no se suelta en su coma; se espera a que cierre y la guarda la mira entera (fraseARetener). Más
+ * amplio que las guardas a propósito: esperar una frase cuesta poco, soltar media mentira no tiene arreglo.
+ */
+const PUEDE_AFIRMAR =
+  /\b(gener|arm|prepar|redact|adjunt|elabor|hic|dej|pus|marqu|resalt|dibuj|pint|ubiqu|mostr|cargu|mand|envi|program|activ|cre|configur|guard|registr|anot|agregu|sub|archiv|llam|agend|avis|qued)[eéoóií]\b|\b(ya|listo|lista|hecho|i'?ve|i have|done|generated|sent|put|saved)\b/;
+export function puedeAfirmar(texto: string): boolean {
+  return PUEDE_AFIRMAR.test(plano(textoDeFrase(texto)));
+}
+
+/** Las frases de un texto entero, por los mismos cortes que el stream (el número de una lista, con su frase). */
 export function partirEnFrases(texto: string): string[] {
   const t = String(texto || '');
   const out: string[] = [];
   let enviado = 0;
   for (const fin of cortesDesde(t, 0)) {
+    if (esNumeroDeLista(t.slice(enviado, fin))) continue;
     out.push(t.slice(enviado, fin));
     enviado = fin;
   }
@@ -178,16 +199,34 @@ export class CortadorFrases {
     // Hasta un pedido de herramienta escrito en el texto (si lo hay): eso no se dice nunca.
     const p = PEDIDO.exec(this.cuerpo);
     const base = p ? this.cuerpo.slice(0, p.index) : this.cuerpo;
-    const cortes = cortesDesde(base, this.enviado);
+    const cortes = cortesDe(base).filter((c) => c.fin > this.enviado);
     // Al cerrar la vuelta, lo que quedó sin punto también es una frase.
-    if (todo && base.slice(cortes.length ? cortes[cortes.length - 1] : this.enviado).trim()) cortes.push(base.length);
-    for (const hasta of cortes) {
-      const frase = base.slice(this.enviado, hasta);
+    if (todo && base.slice(cortes.length ? cortes[cortes.length - 1].fin : this.enviado).trim()) cortes.push({ fin: base.length, frase: true });
+    for (const c of cortes) {
+      const frase = base.slice(this.enviado, c.fin);
+      // «1.» solo no es una frase: va con la que sigue.
+      if (esNumeroDeLista(frase)) continue;
+      if (!c.frase) {
+        /*
+         * Una cláusula (la primera frase, cortada en su coma): las guardas miran la frase ENTERA, no el pedazo. «Te dejé
+         * las concesiones de Olancho, marcadas en el mapa.» no puede soltar su primera mitad antes de que se vea que
+         * afirma algo. Si la frase ya cerró, se mira entera; si todavía llega y lo dicho puede estar afirmando algo, se
+         * espera a su final.
+         */
+        const fin = cortes.find((x) => x.frase && x.fin >= c.fin)?.fin;
+        const entera = base.slice(this.enviado, fin ?? base.length);
+        if (fraseARetener(entera, this.o.previas)) {
+          this.retenido = true;
+          return;
+        }
+        if (fin === undefined && puedeAfirmar(entera)) return;
+        if (fin !== undefined && puedeAfirmar(entera)) continue;
+      }
       if (fraseARetener(frase, this.o.previas)) {
         this.retenido = true;
         return;
       }
-      this.enviado = hasta;
+      this.enviado = c.fin;
       // Cuenta como dicha aunque el pulidor la callara (una fórmula de asistente): al final no se vuelve a mirar.
       this.emitirFrase(frase);
       this.ronda.push(huella(frase));
@@ -197,7 +236,12 @@ export class CortadorFrases {
   /** Sale una frase si tiene algo que decir. */
   private emitirFrase(crudo: string): boolean {
     const texto = textoDeFrase(crudo);
-    const voz = this.pulidor.trozo(sinCitasParaVoz(crudo)).replace(/\s+/g, ' ').trim();
+    if (esNumeroDeLista(texto)) return false;
+    // El número de la lista se ve en la pantalla pero no se dice (como en la respuesta entera: pulirParaVoz).
+    const voz = this.pulidor
+      .trozo(sinCitasParaVoz(crudo).replace(/^\d{1,3}[.)]\s+/, ''))
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!/[\p{L}\p{N}]/u.test(texto) || !/[\p{L}\p{N}]/u.test(voz)) return false;
     this.o.emitir({ i: this.i++, texto, voz });
     return true;

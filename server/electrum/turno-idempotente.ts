@@ -59,6 +59,27 @@ export function electrumDeGuardado(g: TurnoGuardado): RespuestaGuardable {
   return { texto: g.reply, voz: g.voz, emocion: g.emocion, fin: g.via, traza: [], ui: [] };
 }
 
+/** Una frase que salió por el stream (server/electrum/voz-frases.ts): se guarda para repetir las mismas. */
+export type FraseGuardada = { i: number; texto: string; voz: string };
+/** Tope de frases guardadas con un turno (una respuesta normal tiene decenas, no cientos). */
+export const MAX_FRASES_GUARDADAS = 200;
+
+/**
+ * Las frases que salieron en vivo con este turno (`frasesDichas`, en orden y con su número), o null si no se guardaron
+ * (turno de antes, del JSON, de la mesa) o no tienen forma: entonces el reintento las vuelve a cortar del texto.
+ */
+export function frasesGuardadas(g: RespuestaGuardable): FraseGuardada[] | null {
+  const xs = g.frasesDichas;
+  if (!Array.isArray(xs) || !xs.length || xs.length > MAX_FRASES_GUARDADAS) return null;
+  const out: FraseGuardada[] = [];
+  for (const [k, x] of xs.entries()) {
+    const f = x as Partial<FraseGuardada> | null;
+    if (!f || f.i !== k || typeof f.texto !== 'string' || typeof f.voz !== 'string') return null;
+    out.push({ i: f.i, texto: f.texto, voz: f.voz });
+  }
+  return out;
+}
+
 /** Lo que se le dice a un reintento cuando el mismo turno sigue corriendo en otra petición y no terminó a tiempo. */
 export function fraseEnCurso(idioma: unknown): string {
   return String(idioma || '').toLowerCase().startsWith('en')

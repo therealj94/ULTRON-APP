@@ -119,7 +119,7 @@ function alSonar() {
 
 /** La frase por el camino de siempre: bajada entera (`/api/electrum/voz`) y preparada en expo-av, sin sonar. */
 async function porArchivo(p: PedidoVoz): Promise<Reproducible | null> {
-  const url = await voz(p.voz || p.texto, p.emocion, p.idioma, { primera: p.primera, personaje: p.personaje });
+  const url = await voz(p.voz || p.texto, p.emocion, p.idioma, { primera: p.primera, personaje: p.personaje, previo: p.previo });
   if (!url) return null;
   try {
     const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: false, progressUpdateIntervalMillis: 100 });
@@ -138,7 +138,7 @@ export async function prepararFraseCampo(p: PedidoVoz): Promise<Reproducible | n
   if (!marcaP) marcaP = escribir({ ...guardia, arrancando: Date.now() });
   if (!(await marcaP)) return respaldo();
   const s = c.crear({
-    url: urlVozPcm(p.voz || p.texto, { idioma: p.idioma, personaje: p.personaje, primera: p.primera, emocion: p.emocion }),
+    url: urlVozPcm(p.voz || p.texto, { idioma: p.idioma, personaje: p.personaje, primera: p.primera, emocion: p.emocion, previo: p.previo }),
     cabeceras: cabecerasVoz(cabecerasCampo()),
     respaldo,
     alFallar,

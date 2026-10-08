@@ -569,15 +569,26 @@ export async function* hablarConManos(
     espacio?: EspacioCerebro;
     /** El hilo trae vueltas de herramientas (`tool_calls` y `role: 'tool'`): aBedrockConManos en vez de aBedrock. */
     conVueltas?: boolean;
+    /**
+     * Los tiempos de la cobertura de ESTE pedido, si no son los de la voz de AU-RA (Dr Electrum, con un prompt mucho
+     * más grande: server/electrum/cerebro.ts tiemposCerebroElectrum). Sin ellos, los de siempre (CEREBRO_VOZ_*):
+     *   primeraMs    la espera del primero antes de lanzar la cobertura (la de los siguientes, una vez y media);
+     *   totalMs      el plazo total para la primera señal útil;
+     *   lanzamientos cuántos pedidos como mucho, contando las coberturas.
+     */
+    primeraMs?: number;
+    totalMs?: number;
+    lanzamientos?: number;
   } = {}
 ): AsyncGenerator<PiezaManos> {
   const { system, messages } = o.conVueltas ? aBedrockConManos(mensajes as MensajeConManos[], { nativas: herramientas.length > 0 }) : aBedrock(mensajes);
   if (!messages.length) throw new Error('sin mensaje de la persona');
   const servicio = servicioDe(o.espacio);
   const t0 = reloj();
-  const plan = planDeModelos(o.ruta, Date.now(), o.espacio);
-  const totalMs = Number(process.env.CEREBRO_VOZ_TOTAL_MS || TOTAL_PRIMERA_MS_OMISION);
-  const maxLanzamientos = Math.max(1, Math.round(Number(process.env.CEREBRO_VOZ_LANZAMIENTOS || LANZAMIENTOS_OMISION)) || 1);
+  const primeraPropia = o.primeraMs !== undefined && o.primeraMs > 0 ? o.primeraMs : null;
+  const plan = planDeModelos(o.ruta, Date.now(), o.espacio).map((p, i) => (primeraPropia === null ? p : { ...p, primeraMs: i === 0 ? primeraPropia : Math.round(primeraPropia * 1.5) }));
+  const totalMs = o.totalMs !== undefined && o.totalMs > 0 ? o.totalMs : Number(process.env.CEREBRO_VOZ_TOTAL_MS || TOTAL_PRIMERA_MS_OMISION);
+  const maxLanzamientos = Math.max(1, Math.round(o.lanzamientos !== undefined && o.lanzamientos > 0 ? o.lanzamientos : Number(process.env.CEREBRO_VOZ_LANZAMIENTOS || LANZAMIENTOS_OMISION)) || 1);
   const intentos: IntentoManos[] = [];
   const conIntentos = (e: unknown) => Object.assign(e instanceof Error ? e : new Error(String(e)), { intentos });
   const anotarLog = () => {

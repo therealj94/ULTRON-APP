@@ -16,7 +16,15 @@ import type { EstadoSonido, Reproducible } from '../lib/sonidoVivo';
 import { letras, tienePalabras } from '../lib/cortesVoz';
 import type { FraseVoz } from './turnoVivo';
 
-export type PedidoVoz = FraseVoz & { primera: boolean };
+/**
+ * `previo`: el final de la frase anterior de la MISMA voz (sin él, el servidor trata cada frase como el comienzo de
+ * una respuesta: le pone muletilla de arranque y el tono de la emoción, server/voz.ts). La primera de la respuesta, o
+ * la primera de otro personaje de la mesa, va sin él.
+ */
+export type PedidoVoz = FraseVoz & { primera: boolean; previo?: string };
+
+/** Lo más que viaja de la frase anterior (va en la dirección del GET; el servidor usa 300-400). */
+export const PREVIO_MAX = 300;
 
 export type DepsColaVoz = {
   /** El sonido de una frase, sin sonar todavía (null: no hubo voz; se sigue con la siguiente). */
@@ -56,6 +64,8 @@ export class ColaVoz {
   private terminada = false;
   private empezo = false;
   private pedidas = 0;
+  /** La última frase pedida (para el `previo` de la siguiente). */
+  private ultima: { voz: string; personaje: string } | null = null;
 
   constructor(
     private readonly deps: DepsColaVoz,
@@ -147,8 +157,11 @@ export class ColaVoz {
   private preparar(f: FraseVoz): Promise<Reproducible | null> {
     const primera = this.pedidas === 0;
     this.pedidas += 1;
+    const quien = f.personaje || 'electrum';
+    const previo = this.ultima && this.ultima.personaje === quien ? this.ultima.voz.slice(-PREVIO_MAX).trim() : '';
+    this.ultima = { voz: String(f.voz || f.texto || ''), personaje: quien };
     return Promise.resolve()
-      .then(() => this.deps.preparar({ ...f, primera }))
+      .then(() => this.deps.preparar({ ...f, primera, ...(previo ? { previo } : {}) }))
       .catch(() => null)
       .then((s) => {
         if (s && this.cancelada) {

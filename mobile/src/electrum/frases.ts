@@ -26,13 +26,19 @@ export class SinPuerta extends Error {
 export class ErrorHttp extends Error {
   readonly status: number;
   readonly detalle: string;
-  constructor(status: number, detalle = '') {
+  /** El `codigo` que manda el servidor con el error, si lo trae (`en-curso`: esa pregunta todavía se está pensando). */
+  readonly codigo: string;
+  constructor(status: number, detalle = '', codigo = '') {
     super(detalle || `HTTP ${status}`);
     this.name = 'ErrorHttp';
     this.status = status;
     this.detalle = detalle;
+    this.codigo = codigo;
   }
 }
+
+/** El código de error del turno cuando la MISMA pregunta todavía se está pensando en otra petición (un reintento). */
+export const CODIGO_EN_CURSO = 'en-curso';
 
 /**
  * Lo que puede contestar la puerta. Son cinco cosas y antes eran «entró / no entró».
@@ -141,6 +147,11 @@ export function fraseDeError(e: unknown, intento: Intento = 'contestar'): string
 
   if (e instanceof ErrorHttp) {
     const { status, detalle } = e;
+    // La misma pregunta sigue en camino (un reintento la alcanzó pensándose): no es un fallo, y la frase del servidor
+    // dice qué hacer («dame un momento y volvé a pedírmela»). Sin «No pude contestarte» delante, que la contradice.
+    if (e.codigo === CODIGO_EN_CURSO) {
+      return detalle || 'Todavía estoy con esa misma pregunta; dame un momento y volvé a pedírmela.';
+    }
     if (status === 401 || status === 403) {
       // En la puerta de entrada un 401 es «correo o clave mal», no «tu sesión caducó». Y la frase es
       // de acá, no del servidor: ese rechazo lo reenvía tal cual desde el cerebro remoto.

@@ -18,7 +18,9 @@ import type { AddressInfo } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
-const RESPUESTA = 'Clavo Rico tiene 120 ha [D99-p1]. Está vigente hasta 2027.';
+// Con lo que el pulidor de la voz quita («¡Excelente pregunta!», los números de la lista, «En resumen,»): el final no
+// puede volver a decir lo que ya sonó (antes se terminaba con la voz pulida y la cuenta no calzaba).
+const RESPUESTA = '¡Excelente pregunta! Clavo Rico tiene 120 ha [D99-p1]. Está vigente hasta 2027:\n1. No tiene traslapes.\n2. Paga su canon al día.\nEn resumen, está en regla.';
 let llamadasAlNodo = 0;
 const nodo = http.createServer((req, res) => {
   req.resume();
@@ -110,7 +112,13 @@ test('el turno en vivo de Electrum: frases, fin.frases e idTurno', { skip: fs.ex
     assert.doesNotMatch(f.texto, /\[D\d+/, 'sin códigos de cita sin verificar');
     assert.doesNotMatch(f.voz, /\[|\]/);
   }
-  assert.match(frases.map((f) => f.voz).join(' '), /Clavo Rico tiene 120 ha\. Está vigente hasta 2027\./);
+  const dicho = frases.map((f) => f.voz).join(' ');
+  assert.match(dicho, /Clavo Rico tiene 120 ha\. Está vigente hasta 2027:/);
+  assert.equal(dicho.split('Clavo Rico').length - 1, 1, `nada se dice dos veces: ${dicho}`);
+  assert.equal(dicho.split('canon').length - 1, 1, `nada se dice dos veces: ${dicho}`);
+  assert.doesNotMatch(dicho, /Excelente pregunta/);
+  assert.ok(!frases.some((f) => /^\s*\d+[.)]\s*$/.test(f.texto)), 'el número de la lista va con su frase');
+  assert.ok(frases.some((f) => f.texto === '1. No tiene traslapes.' && f.voz === 'No tiene traslapes.'), JSON.stringify(frases));
   assert.match(fin.texto, /vigente hasta 2027/, 'el texto de autoridad');
   const llamadas = llamadasAlNodo;
   assert.ok(llamadas >= 1);
@@ -122,12 +130,18 @@ test('el turno en vivo de Electrum: frases, fin.frases e idTurno', { skip: fs.ex
   assert.equal(fin2.repetido, true);
   assert.equal(fin2.texto, fin.texto);
   assert.equal(fin2.frases, ev2.filter((e) => e.evento === 'frase').length);
+  // Las MISMAS frases que salieron en vivo (número y texto): quien ya oyó las primeras no oye otras partidas de otro modo.
+  assert.deepEqual(
+    ev2.filter((e) => e.evento === 'frase').map((e) => e.datos),
+    frases
+  );
   assert.equal(llamadasAlNodo, llamadas, 'no se corrió el agente dos veces');
 
   // Y por el JSON (el respaldo de la app cuando el stream se cae), igual.
   const r3: any = await (await fetch(`${base}/api/electrum/turno`, { method: 'POST', headers: h, body: JSON.stringify(pedido) })).json();
   assert.equal(r3.repetido, true);
   assert.equal(r3.texto, fin.texto);
+  assert.equal(r3.frasesDichas, undefined, 'las frases guardadas no van en el JSON');
   assert.equal(llamadasAlNodo, llamadas);
 
   // Otro id: otro turno.

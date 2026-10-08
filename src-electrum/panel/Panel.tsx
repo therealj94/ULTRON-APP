@@ -760,10 +760,20 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 else if (evento === 'frase') {
                   // Una frase de la respuesta, ya escrita: a la burbuja y a la voz (una sola vez, aunque se reintente).
                   const f = fraseDeEvento(d);
-                  if (!f || !frasesDelTurno.recibir(f)) continue;
+                  if (!f) continue;
+                  // Un reintento se compara por TEXTO con lo que ya sonó (frasesTurno.ts): ni dos veces lo mismo ni
+                  // media respuesta de cada intento.
+                  const llegada = frasesDelTurno.llega(f);
+                  if (llegada === 'repetida') continue;
                   const armado = frasesDelTurno.texto();
                   setEnVivo((v) => ({ ...v, texto: armado }));
-                  if (vozActivaRef.current) {
+                  if (vozActivaRef.current && llegada !== 'dicha') {
+                    if (llegada === 'reiniciar' && locucion) {
+                      // El reintento trajo otra respuesta: lo que sonaba de la primera se calla y esta empieza de cero.
+                      locucion.cerrar();
+                      callar();
+                      locucion = null;
+                    }
                     if (!locucion) {
                       // Desde aquí habla la respuesta: ni un «estoy revisando…» más.
                       respondiendo = true;
@@ -772,7 +782,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                       fijarIdioma(idiomaPregunta);
                       locucion = crearLocucion(headersElectrum(), undefined, avisosVoz);
                     }
-                    locucion.agregar(f.voz);
+                    for (const v of llegada === 'reiniciar' ? frasesDelTurno.paraDecir() : [f.voz]) locucion.agregar(v);
                   }
                 }
                 else if (evento === 'ui') {
@@ -822,9 +832,13 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   // En silencio la mesa igual se «dice»: hablarDialogo la lee al ritmo de lectura con
                   // sus caras y subtítulos (voz.ts), sin sonido. Una respuesta de uno solo, no.
                   if (frasesDelTurno.decirFinEntero() && (vozActivaRef.current || voces.length) && d.texto) {
-                    vozEnCamino = true;
-                    if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
-                    else void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), avisosVoz);
+                    // Un reintento sin frases después de que ya sonaron algunas: de un turno repetido, solo lo que falta.
+                    const falta = frasesDelTurno.dijoAntes && d.repetido === true && !voces.length ? frasesDelTurno.faltaDelFin(String(d.texto)) : null;
+                    if (falta === null || falta) {
+                      vozEnCamino = true;
+                      if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
+                      else void hablar(falta ?? (typeof d.voz === 'string' && d.voz ? d.voz : d.texto), d.emocion, headersElectrum(), avisosVoz);
+                    }
                   }
                   // El texto entero manda sobre el que se fue armando con las frases.
                   setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || frasesDelTurno.texto() || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined, trazaId: typeof d.trazaId === 'string' ? d.trazaId : undefined }]);
@@ -848,7 +862,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
            * UN reintento, con el MISMO idTurno, si se cayó la red (no conectó, o el flujo se cortó antes del
            * `fin`). No si lo paró la persona, si pasó el tiempo, si se fue de la pantalla o si el servidor
            * contestó algo (un 401, un 503, un `error`): eso ya tiene su aviso. Las frases que ya llegaron no
-           * se vuelven a decir (van por su número).
+           * se vuelven a decir, y si el reintento trae otra respuesta, se calla la primera (frasesTurno.ts).
            */
           const reintentable = !cerrado && !abortar.signal.aborted && intento === 0 && (fallo === null || (fallo as any)?.name !== 'SyntaxError');
           if (!reintentable) {
@@ -859,6 +873,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
           if (abortar.signal.aborted) throw new Error('cortado');
           // La traza se vuelve a mandar desde el principio: no se duplica en pantalla.
           setEnVivo((v) => ({ ...v, panel: '', traza: [] }));
+          // Lo que ya llegó pasa a ser «lo ya dicho»: lo del reintento se compara por texto, no por número.
+          frasesDelTurno.reintento();
         }
       } catch {
         cerrado = true;

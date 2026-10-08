@@ -496,6 +496,8 @@ export async function abrirVozEnVivo(opts: {
   avatar?: AvatarVoz;
   /** Dr Electrum: es la primera frase de la respuesta (modelo rápido; server/eleven.ts modeloDeLocucion). */
   primera?: boolean;
+  /** Otra voz de ElevenLabs (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). */
+  vozPropia?: string;
 }): Promise<
   | { tipo: 'cache'; habla: Habla }
   | { tipo: 'vivo'; contentType: string; motor: string; cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }
@@ -718,6 +720,8 @@ export async function hablar(opts: {
    * sin los tiempos por letra se sirve igual (la boca sigue el volumen).
    */
   soloCache?: boolean;
+  /** Otra voz de ElevenLabs (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). Sin ella, la de la plataforma. */
+  vozPropia?: string;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';

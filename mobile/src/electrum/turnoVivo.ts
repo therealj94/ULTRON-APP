@@ -20,7 +20,7 @@ import { soloExpresiones } from '../lib/expresiones';
 import { TOPE_CORTADA } from '../lib/interrupcion';
 import { faltaDecir } from '../lib/reemplazoVoz';
 import type { Traza } from './campo';
-import { ErrorHttp } from './frases';
+import { CODIGO_EN_CURSO, ErrorHttp } from './frases';
 
 /** Quién habla en la mesa (server/electrum/personajes.ts `Experto`). */
 export type Personaje = 'electrum' | 'chema' | 'tatiana';
@@ -58,6 +58,26 @@ export function nuevoIdTurno(ahora: number = Date.now(), azar: () => number = Ma
     .toString(36)
     .padStart(8, '0');
   return `cm-${ahora.toString(36)}-${a}`;
+}
+
+/**
+ * EL VISITANTE DE ESTE TELÉFONO (`x-electrum-visita`, como la web: src-electrum/acceso.ts). Sin él, quien no tiene
+ * sesión del padrón era para el servidor una huella de IP y navegador (server/electrum/hilo.ts quienDelHilo): cambiar
+ * de red (wifi → datos) cambiaba de «persona» (el reintento de una pregunta no la encontraba y se pensaba dos veces) y,
+ * detrás del NAT de la operadora, muchos teléfonos eran la misma. Un id al azar por instalación, que se guarda.
+ */
+export const FORMA_VISITA = /^[A-Za-z0-9_-]{22,64}$/;
+
+/** 16 bytes al azar → 22 caracteres base64url (la forma que acepta el servidor). */
+export function visitaDeBytes(bytes: Uint8Array): string {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Lo guardado, si tiene la forma que acepta el servidor; null si no. */
+export function visitaValida(v: unknown): string | null {
+  return typeof v === 'string' && FORMA_VISITA.test(v) ? v : null;
 }
 
 /** Lo que manda `frase`, revisado: basura → null. */
@@ -132,6 +152,8 @@ export class TurnoEnVivo {
   panel = '';
   fin: FinVivo | null = null;
   error: string | null = null;
+  /** El `codigo` del error, si el servidor lo mandó (`en-curso`: la misma pregunta todavía se está pensando). */
+  codigoError: string | null = null;
   /** ¿Llegó algo del servidor? (un reintento ya no es gratis: puede repetir lo dicho). */
   recibio = false;
 
@@ -177,6 +199,7 @@ export class TurnoEnVivo {
       case 'error': {
         this.recibio = true;
         this.error = texto((datos as any)?.error, 300) || 'Se me cayó el turno.';
+        this.codigoError = texto((datos as any)?.codigo, 40) || null;
         return { tipo: 'error' };
       }
       default:
@@ -372,8 +395,9 @@ export function pedirTurno(
     await Promise.race([s.promesa, cancelada]);
     abortarActual = null;
     if (turno.fin) return turno.fin;
-    // El servidor contó que se le cayó el turno: un 500 con su frase (frases.ts `fraseDeError`).
-    if (turno.error) throw new ErrorHttp(500, turno.error);
+    // El servidor contó que se le cayó el turno: un 500 con su frase (frases.ts `fraseDeError`). Si la misma pregunta
+    // sigue pensándose en otra petición (`en-curso`), un 409 con SU frase, como el JSON.
+    if (turno.error) throw turno.codigoError === CODIGO_EN_CURSO ? new ErrorHttp(409, turno.error, CODIGO_EN_CURSO) : new ErrorHttp(500, turno.error, turno.codigoError || '');
     throw new CorteStream('cortado');
   };
 
