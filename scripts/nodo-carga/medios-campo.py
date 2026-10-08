@@ -31,8 +31,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import wave
 
 import boto3
+import numpy as np
 from PIL import Image, ImageOps
 
 MODELO = os.environ.get('ULTRON_VISION_BEDROCK', 'google.gemma-3-12b-it')
@@ -186,7 +188,11 @@ def main():
                 if modelo is None:
                     from faster_whisper import WhisperModel
                     modelo = WhisperModel(a.whisper, device='cpu', compute_type='int8')
-                segs, _ = modelo.transcribe(wav, language='es', vad_filter=True, beam_size=5)
+                # El audio va ya decodificado: faster-whisper lo abriría con PyAV, y hay versiones de
+                # PyAV con las que su `open` falla (`metadata_errors`). ffmpeg ya dejó PCM a 16 kHz.
+                with wave.open(wav) as w:
+                    muestras = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768.0
+                segs, _ = modelo.transcribe(muestras, language='es', vad_filter=True, beam_size=5)
                 habla = ' '.join(s.text.strip() for s in segs).strip()
             cuadros = []
             for frac in (0.15, 0.5, 0.85):
