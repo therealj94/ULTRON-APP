@@ -164,6 +164,16 @@ PY
 # ── 3 ──────────────────────────────────────────────────────────────────────────────────────────
 paso "3. Conversión (zoom máximo ${ZOOM_MAX})"
 PREF="$(slug "$NOMBRE")"
+# La clave de un ráster suelto: su nombre (lo que se ve en la lista de capas) y, si ese nombre ya lo
+# tiene otro ráster del lote, una huella corta de su ruta para que no se pisen.
+declare -A CLAVES=()
+# Deja el resultado en CLAVE (no se llama con $(…): en un subshell se olvidaría de las ya usadas).
+CLAVE=""
+clave_de() {
+  CLAVE="${PREF}-$(slug "$(basename "${1%.*}")")"
+  if [ -n "${CLAVES[$CLAVE]:-}" ] && [ "${CLAVES[$CLAVE]}" != "$1" ]; then CLAVE="${CLAVE}-$(printf '%s' "$1" | md5sum | cut -c1-6)"; fi
+  CLAVES[$CLAVE]="$1"
+}
 declare -A EN_MOSAICO=()
 for carpeta in "${MOSAICOS[@]}"; do
   clave="${PREF}-$(slug "$carpeta")"
@@ -175,9 +185,14 @@ for carpeta in "${MOSAICOS[@]}"; do
   if [ -s "${SAL}/${clave}.pmtiles" ] && [ -s "${SAL}/entradas/${clave}.json" ]; then echo "  = ${clave} ya estaba"; continue; fi
   echo "  ${carpeta}: ${#piezas[@]} piezas en un mosaico"
   hechas=()
+  # Numeradas, no por su ruta: las rutas de un lote comparten decenas de caracteres al principio
+  # («INFORMACION ELECTRUM/1. INFORMACION GIS/HOJAS…») y el nombre recortado salía igual para
+  # todas, así que el mosaico era la misma hoja repetida 37 veces.
+  i=0
   for r in "${piezas[@]}"; do
-    m="${TRAB}/$(slug "${r#"$ORIG"/}").tif"
-    [ -s "$m" ] || a_mercator "$r" "$m"
+    i=$((i + 1))
+    m="${TRAB}/${clave}-pieza-${i}.tif"
+    a_mercator "$r" "$m"
     hechas+=("$m")
   done
   gdalbuildvrt -q -overwrite "${TRAB}/${clave}.vrt" "${hechas[@]}"
@@ -188,7 +203,7 @@ done
 for r in "${BUENOS[@]}"; do
   [ -z "${EN_MOSAICO[$r]:-}" ] || continue
   rel="${r#"$ORIG"/}"
-  clave="${PREF}-$(slug "${rel%.*}")"
+  clave_de "$rel"; clave="$CLAVE"
   if [ -s "${SAL}/${clave}.pmtiles" ] && [ -s "${SAL}/entradas/${clave}.json" ]; then echo "  = ${clave} ya estaba"; continue; fi
   m="${TRAB}/${clave}.tif"
   a_mercator "$r" "$m"
