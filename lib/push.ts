@@ -465,8 +465,12 @@ export function llamarConAura(correo: string, motivo: string, id?: string): Prom
 }
 
 /** Un mensaje de AURA: al tocarlo se abre la mesa y AURA lo lee. `abrir`: 'mesa' | 'chats' | 'computadora' | 'correos'. */
-export function avisarConAura(correo: string, titulo: string, texto: string, o: { id?: string; abrir?: string } = {}): Promise<ResultadoPush> {
-  return enviarPush(correo, { tipo: 'mensaje', titulo: titulo || 'AURA', texto, ...(o.id ? { id: o.id } : {}), ...(o.abrir ? { abrir: o.abrir } : {}) });
+/**
+ * `decir`: lo que AURA dice al tocarlo, ya dentro de la app (más detallado que `texto`, que es lo que se ve en el aviso y
+ * en la pantalla bloqueada). Una app que no lo conoce dice `texto`.
+ */
+export function avisarConAura(correo: string, titulo: string, texto: string, o: { id?: string; abrir?: string; decir?: string } = {}): Promise<ResultadoPush> {
+  return enviarPush(correo, { tipo: 'mensaje', titulo: titulo || 'AURA', texto, ...(o.id ? { id: o.id } : {}), ...(o.abrir ? { abrir: o.abrir } : {}), ...(o.decir ? { decir: o.decir } : {}) });
 }
 
 /** Una propuesta de la iniciativa (lib/iniciativa.ts) con «Sí» / «Luego». */
@@ -494,8 +498,8 @@ export function avisarComputadoraPorPush(correo: string, tareaId: string, texto:
 export function llamarPorPush(correo: string, o: { motivo: string; id?: string }): Promise<ResultadoPush> {
   return llamarConAura(correo, o.motivo, o.id);
 }
-export function avisarPush(correo: string, o: { titulo?: string; texto: string; id?: string; abrir?: string }): Promise<ResultadoPush> {
-  return avisarConAura(correo, o.titulo || 'AURA', o.texto, { id: o.id, abrir: o.abrir });
+export function avisarPush(correo: string, o: { titulo?: string; texto: string; id?: string; abrir?: string; decir?: string }): Promise<ResultadoPush> {
+  return avisarConAura(correo, o.titulo || 'AURA', o.texto, { id: o.id, abrir: o.abrir, decir: o.decir });
 }
 
 /*

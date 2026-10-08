@@ -145,7 +145,7 @@ import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, r
 import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, esDuenoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, CADA_MS_INICIATIVA, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { correosDuenos, fuentesProductivas, montarRutasIniciativaDia, ordenIniciativaDia, redactorProductivo, RelojIniciativaDia } from './server/iniciativa-dia';
-import { cuentasConIniciativa, fijarDuenoDia } from './lib/iniciativa-dia';
+import { comandoIniciativa, cuentasConIniciativa, fijarDuenoDia } from './lib/iniciativa-dia';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
 import type { VistaTexto } from './lib/conocer-persona';
@@ -4540,18 +4540,21 @@ function hayDecisionEsperando(body: any, opciones: OpcionesTurno = {}): boolean 
 /**
  * Una orden de la iniciativa del día dicha por la persona de la SESIÓN (server/iniciativa-dia.ts ordenIniciativaDia): se
  * guarda y se contesta al instante, sin cerebro. Solo con sesión de la app o la web (no Telegram) y sin invitado ni otra voz.
- * El turno queda en su hilo como cualquier otro. Un «para» a secas no se contesta aquí (sigue callando la voz).
+ * El turno queda en su hilo como cualquier otro. Un «para» a secas no es de aquí (calla la voz y nada más).
+ *
+ * Revisión de la tanda F (B2), el contrato del turno especulativo: lo que guarda (pausar el día, la hora del resumen, las
+ * llamadas) y su memoria van por `opciones.retener` (como ordenDeApp): una frase a medias que se descarta no escribe nada.
  */
-async function ordenDelDia(body: any): Promise<{ decir: string; via: string } | null> {
+async function ordenDelDia(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; via: string } | null> {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   const message = String(body?.message || body?.text || '').trim();
   if (!correo || !message || body?.image || body?.visto || body?.documento || body?.pdf || modoInvitadoDe(body)) return null;
   if (otraVozDe(body?.escena) || typeof body?.quienHabla?.id === 'string') return null;
-  const r = await ordenIniciativaDia(correo, message).catch(() => null);
+  const r = await ordenIniciativaDia(correo, message, Date.now(), opciones.retener ? { hacer: opciones.retener.hacer } : {}).catch(() => null);
   if (!r) return null;
   const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
-  void recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false })
-    .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: r.decir, canal: 'mesa', esperar: false }))
+  void recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }, opciones.retener)
+    .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: r.decir, canal: 'mesa', esperar: false }, opciones.retener))
     .catch(() => undefined);
   return r;
 }
@@ -5031,7 +5034,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   // Un solo reloj para el turno entero (EXEC04): cada llamada y cada herramienta mira lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   empezarTurnoDeCuenta(body, opciones);
-  const delDia = await ordenDelDia(body);
+  const delDia = await ordenDelDia(body, opciones);
   if (delDia) {
     return { reply: delDia.decir, voz: delDia.decir, emocion: 'neutral', via: delDia.via, mode: String(body?.mode || 'GUARDIAN'), ms: Date.now() - t00, herramientas: [], foto: null, acciones: [], honesto: true };
   }
@@ -5315,12 +5318,17 @@ app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeM
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
   }
+  // Tanda F1: la conexión se cortó antes de la respuesta (el teléfono calló el turno): nada se entregó.
+  if (cortado) {
+    presentaciones.descartar();
+    efectosTrasEntregar(body, out, false);
+    return void res.end();
+  }
   res.json(jsonDelTurno(g, { foto: out.foto }));
   // Entregada la respuesta (la persona no se fue antes): lo presentado en ella cuenta.
-  const entregado = !res.destroyed && !cortado;
-  if (entregado) presentaciones.entregar();
+  if (!res.destroyed) presentaciones.entregar();
   else presentaciones.descartar();
-  efectosTrasEntregar(body, out, entregado);
+  efectosTrasEntregar(body, out, !res.destroyed);
   return;
 });
 
@@ -5646,8 +5654,11 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   };
 
   empezarTurnoDeCuenta(body, opciones);
-  // «No me molestes hoy», «mándame el resumen a las 7», «ya no me llames» (la iniciativa del día): al instante.
-  const delDia = await ordenDelDia(body);
+  // «No me molestes hoy», «mándame el resumen de la mañana a las 7», «ya no me llames» (la iniciativa del día): al
+  // instante. Revisión de la tanda F (B2): en el turno especulativo de la mesa, una orden así espera el «sí» del teléfono
+  // antes de contestar (como cualquier pedido que no es charla) y lo que guarda va además por `retener`.
+  if (esp && comandoIniciativa(String(body?.message || body?.text || '')) && !(await sigueEspeculativo())) return;
+  const delDia = await ordenDelDia(body, opciones);
   if (delDia) {
     send('tools', { tools: [] });
     send('emocion', { emocion: 'neutral' });
@@ -5765,7 +5776,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   let topeDelTurno = topeDeVoz(message, !!opciones.voz, { confirmacion: p.vozCompleta });
   // Sin tope (un borrador, una confirmación) o con el de lectura: lo que se dice es literal y el pulidor no lo toca.
   vozLiteral = () => esVozLiteral(topeDelTurno);
-  const vozConTope = (texto: string) => (pulido ? pulido.todo(recorteDeVoz(texto, topeDelTurno)) : recorteDeVoz(texto, topeDelTurno)).trim();
+  /** Con tope; `delante` (tanda F1: lo de un turno anterior cortado) va antes y no entra en el tope ni en el pulidor. */
+  const vozConTope = (texto: string, delante = '') => conAvisoDeAntes((pulido ? pulido.todo(recorteDeVoz(texto, topeDelTurno)) : recorteDeVoz(texto, topeDelTurno)).trim(), delante);
   /** Un borrador de correo o de WhatsApp espera su «sí» en esta conversación (de este turno o de uno anterior). */
   const hayBorradorPendiente = () => !!p.dueno && !!(borradorDe(p.dueno, p.ambito) || borradorWhatsappDe(p.dueno, p.ambito));
   /**
@@ -5824,7 +5836,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: fin.motivo || fin.estado } : {}) });
     const datos = {
       reply: leido,
-      voz: conAvisoDeAntes(vozConTope(app.texto.trim()), fraseDeAntes),
+      voz: vozConTope(app.texto.trim(), fraseDeAntes),
       emocion,
       ms: Date.now() - t0,
       via,
@@ -5844,8 +5856,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       const entregar = entregaDelTurno();
       if (opciones.retener) opciones.retener.hacer(entregar);
       else entregar();
-      // Tanda F1: lo de antes ya se le dijo (iba delante de esta respuesta).
-      if (avisoDeAntes) confirmarEfectosNoVistos(avisoDeAntes.quien, avisoDeAntes.ids);
+      // Tanda F1: lo de antes ya se le dijo (iba delante de esta respuesta). En la voz y en el turno especulativo, solo
+      // cuando el turno se confirma: una especulación descartada no se lo llevó (lo dice la respuesta que sí suene).
+      if (avisoDeAntes) {
+        const dicho = () => confirmarEfectosNoVistos(avisoDeAntes.quien, avisoDeAntes.ids);
+        if (opciones.retener) opciones.retener.hacer(dicho);
+        else dicho();
+      }
     }
     // La apertura de esta respuesta: la siguiente no abre con la misma muletilla (lib/habla-natural.ts).
     if (pulido) anotarApertura(claveHabla, pulido.apertura);
@@ -6909,7 +6926,7 @@ async function startServer() {
         personas: async () => [...correosDuenos(clave('whatsapp_duenos'), miembrosUltron()), ...(await cuentasConIniciativa())],
         fuentes: fuentesProductivas(),
         salidas: {
-          avisar: async (correo, a) => (await avisarPush(correo, { titulo: a.titulo, texto: a.texto, id: a.id, abrir: 'mesa' }).catch(() => ({ enviados: 0 }))).enviados,
+          avisar: async (correo, a) => (await avisarPush(correo, { titulo: a.titulo, texto: a.texto, id: a.id, abrir: 'mesa', ...(a.decir ? { decir: a.decir } : {}) }).catch(() => ({ enviados: 0 }))).enviados,
           llamar: async (correo, a) => (await llamarPorPush(correo, { motivo: a.motivo, id: a.id }).catch(() => ({ enviados: 0 }))).enviados,
           unaVez: (fuente, correo, id) => primeraVezEvento(fuente, correo, id),
           redactor: redaccion.redactor,

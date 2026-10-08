@@ -538,7 +538,12 @@ export async function nombresCarasPorConfirmar(correo: string, topeMs = 300): Pr
   let reloj: ReturnType<typeof setTimeout> | undefined;
   try {
     const cajon = await Promise.race([cargarCaras(correo), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), topeMs)), reloj.unref?.()))]);
-    return cajon ? cajon.personas.filter((p) => !reconocible(p.consentimiento)).map((p) => p.nombre) : [];
+    if (!cajon) return [];
+    // Por nombre (la escena no trae ids): un nombre que también es de alguien que SÍ se reconoce (la dueña, un adulto) no se
+    // quita, porque la escena puede estar nombrando a esa persona.
+    const plano = (n: string) => String(n || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const reconocibles = new Set(cajon.personas.filter((p) => reconocible(p.consentimiento)).map((p) => plano(p.nombre)));
+    return cajon.personas.filter((p) => !reconocible(p.consentimiento) && !reconocibles.has(plano(p.nombre))).map((p) => p.nombre);
   } catch {
     return [];
   } finally {

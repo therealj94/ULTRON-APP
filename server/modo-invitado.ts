@@ -125,7 +125,9 @@ export async function conModoInvitado<T>(body: T): Promise<T> {
   const b = { ...(body as Record<string, unknown>) };
   delete b.modoInvitado;
   const [m, porConfirmar] = await Promise.all([modoInvitadoDelTurno(b), nombresPorConfirmarDelTurno(b)]);
-  if (porConfirmar.length && typeof b.escena === 'string') b.escena = escenaSinPorConfirmar(b.escena, porConfirmar);
+  // Nunca se quita a la dueña de la sesión (ni a quien la escena marca como quien habla), aunque alguien por confirmar se llame igual.
+  const duena = String((b.sesion as { nombre?: unknown } | undefined)?.nombre || '').trim();
+  if (porConfirmar.length && typeof b.escena === 'string') b.escena = escenaSinPorConfirmar(b.escena, porConfirmar, { proteger: duena ? [duena] : [] });
   return (m ? cuerpoDeInvitado(b, m) : b) as T;
 }
 

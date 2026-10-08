@@ -5,7 +5,7 @@
 //   · Al abrir la mesa, un posible menor por confirmar trae UN aviso suave (con su parentesco); «Ahora no» lo cierra y al
 //     volver a abrir la mesa no sale otra vez; alguien nuevo por confirmar sí lo trae (solo esa persona).
 //   · «Más → Caras»: la lista con la insignia «Por confirmar» solo en quien la espera; tocarla abre su hoja (a quién se
-//     guardó, quién la presentó, cuándo, «Es menor de edad»); «Sí, guardar» → POST /api/caras/:id/confirmar y la
+//     guardó, quién la presentó, cuándo, «Puede ser menor de edad»); «Sí, guardar» → POST /api/caras/:id/confirmar y la
 //     insignia se va; useCaras se entera (para releer con los vectores).
 //   · «Más → Voces»: «Borrar» → DELETE /api/voces/:id y sale de la lista. Un error del servidor se dice y la hoja sigue.
 //   · Sin la hoja montada, «Más» usa su aviso de siempre (abrirHojaBio → false).
@@ -121,7 +121,7 @@ const almacen = () => globalThis.__as.m;
     assert.equal(d.lineas[0], 'Guardé la cara de Nora (tu hija).');
     assert.equal(d.lineas[1], 'La presentó José.');
     assert.match(d.lineas[2], /^Cuándo: \d{1,2} oct, \d{1,2}:\d\d [ap]\. m\.$/);
-    assert.equal(d.lineas[3], 'Es menor de edad.');
+    assert.equal(d.lineas[3], 'Puede ser menor de edad.');
     const dicho = PC.fraseGuardadoPorConfirmar('Nora', 'cara', 'José');
     assert.match(dicho, /no te reconozco hasta que José lo confirme en su pantalla/);
     assert.doesNotMatch(dicho, /ya te recuerdo|ya te reconozco/i, 'no promete lo que todavía no hace');
@@ -184,7 +184,7 @@ const almacen = () => globalThis.__as.m;
     const c = hoja(m.raiz);
     assert.equal(c.props.titulo, '¿Guardo a Nora?');
     const dice = textoDe(c);
-    for (const t of ['Guardé la cara de Nora (tu hija).', 'La presentó José.', 'Cuándo: ', 'Es menor de edad.', 'no uso esta cara para reconocer a nadie ni digo su nombre']) assert.ok(dice.includes(t), `dice «${t}»`);
+    for (const t of ['Guardé la cara de Nora (tu hija).', 'La presentó José.', 'Cuándo: ', 'Puede ser menor de edad.', 'no uso esta cara para reconocer a nadie ni digo su nombre']) assert.ok(dice.includes(t), `dice «${t}»`);
     assert.ok(boton(m.raiz, 'Sí, guardar') && boton(m.raiz, 'Borrar'));
 
     // «Sí, guardar»: al servidor, y la insignia se va.

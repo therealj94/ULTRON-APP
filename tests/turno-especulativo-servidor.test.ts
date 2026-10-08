@@ -131,6 +131,36 @@ test('sin `especulativo`, el turno de siempre no espera a nadie', { skip: !s.lis
 });
 
 /* La ruta de charla (lib/cerebro-rapido.ts planDeModelos): la charla hablada va primero al cerebro rápido. */
+test('revisión de la tanda F (B2): «no me molestes hoy» especulado y cortado NO pausa el día; la frase final confirmada sí', { skip: !s.listo }, async () => {
+  const hoyNo = async () => ((await (await fetch(`${s.BASE}/api/iniciativa/dia`, { headers: s.h })).json()) as any).hoyNo;
+  assert.equal(await hoyNo(), false);
+  // La frase a medias: el oído la especula y la persona sigue hablando («…con eso, dime la hora»): se corta.
+  const t1 = abrirTurno(s.BASE, s.h, { message: 'No me molestes hoy', hablado: true, idioma: 'es', avatar: 'aura', idTurno: id('hoyno-corta'), especulativo: true });
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(t1.hay('done'), false, 'sin confirmar, no contesta ni termina');
+  t1.cortar();
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(await hoyNo(), false, 'cortada, el día NO quedó en pausa');
+  // La frase final, confirmada: sí.
+  const idTurno = id('hoyno-confirma');
+  const t2 = abrirTurno(s.BASE, s.h, { message: 'No me molestes hoy', hablado: true, idioma: 'es', avatar: 'aura', idTurno, especulativo: true });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await hoyNo(), false, 'antes del «sí» del teléfono, nada escrito');
+  assert.equal((await confirmar(idTurno)).estado, 'confirmado');
+  assert.ok(await esperarQue(() => t2.hay('done')), 'confirmada, contesta');
+  const done = t2.eventos.find((e) => e.ev === 'done')!.data;
+  assert.equal(done.reply, 'Listo, hoy no te busco. Solo te aviso si algo urgente de tus contactos importantes.');
+  await t2.fin;
+  let pausado = false;
+  for (let i = 0; i < 30 && !pausado; i++) {
+    pausado = (await hoyNo()) === true;
+    if (!pausado) await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(pausado, 'confirmada, el día queda en pausa');
+  // Que no estorbe a las demás pruebas.
+  await fetch(`${s.BASE}/api/iniciativa/dia/hoy-no`, { method: 'POST', headers: s.h, body: JSON.stringify({ quitar: true }) });
+});
+
 test('la charla hablada va primero a Kimi; una orden, lo que pide ir a fondo o lo escrito, a GLM-5 (el de las manos)', { skip: !s.listo }, async () => {
   contestar = () => ({ texto: '[EMO: neutral] Claro.' });
   const modeloDe = async (message: string, extra: Record<string, unknown> = {}) => {

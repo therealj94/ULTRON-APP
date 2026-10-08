@@ -19,6 +19,7 @@ process.env.ULTRON_MISIONES_DIR = path.join(dir, 'misiones');
 process.env.ULTRON_PERFILES_DIR = path.join(dir, 'perfiles');
 process.env.ULTRON_MEMORIA_MIEMBROS_DIR = path.join(dir, 'memoria-miembros');
 process.env.ULTRON_AVISOS_DIR = path.join(dir, 'avisos');
+process.env.ULTRON_INICIATIVA_DIA_DIR = path.join(dir, 'iniciativa-dia');
 process.env.ULTRON_MEMORIA_BUCKET = '';
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -340,6 +341,30 @@ test('el reloj: entrega solo lo nuevo a alProponer, nada en horas quietas, y no 
     }
     ahora = Date.parse('2026-10-03T04:00:00Z');
     assert.equal(await r.vuelta(), 0, 'de noche, nada');
+  } finally {
+    r.parar();
+  }
+});
+
+test('revisión de la tanda F (B4): «no me molestes hoy» también calla la iniciativa de siempre (propuestas y llamadas)', async () => {
+  const dia = await import('../lib/iniciativa-dia');
+  const quieta = correo();
+  const otra = correo();
+  const entregas: string[] = [];
+  // Lo dijo por voz hoy (14:00 de Honduras): queda en el registro durable.
+  await dia.pausarHoy(quieta, TARDE);
+  const r = arrancarIniciativa({ personas: () => [{ correo: quieta }, { correo: otra }], alProponer: (c) => (entregas.push(c), 1), modelo: null, reloj: () => TARDE, cadaMs: 10 * 60_000 });
+  try {
+    assert.equal(await r.vuelta(), 1);
+    assert.deepEqual(entregas, [otra], 'a quien pausó el día no le llega nada');
+    // Al día siguiente, vuelve.
+    const manana = arrancarIniciativa({ personas: () => [{ correo: quieta }], alProponer: (c) => (entregas.push(c), 1), modelo: null, reloj: () => TARDE + DIA, cadaMs: 10 * 60_000 });
+    try {
+      assert.equal(await manana.vuelta(), 1);
+      assert.deepEqual(entregas, [otra, quieta]);
+    } finally {
+      manana.parar();
+    }
   } finally {
     r.parar();
   }

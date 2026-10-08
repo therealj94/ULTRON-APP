@@ -115,15 +115,22 @@ const plano = (t: string) =>
  * puede reconocer, sin nombre (y sin «que no conozco», para que no se ofrezca aprenderla otra vez). `nombres`: los de esas
  * personas (lib/caras-miembro.ts nombresCarasPorConfirmar, lib/voces-miembro.ts nombresVocesPorConfirmar).
  */
-export function escenaSinPorConfirmar(escena: string, nombres: readonly string[]): string {
+/** La marca que el teléfono pone a quien le habla (la dueña: mobile/src/caras/caras.ts frasePresentes, relacion «yo»). */
+const RE_QUIEN_HABLA = /\((quien te habla|the person talking to you)\)\s*$/i;
+
+export function escenaSinPorConfirmar(escena: string, nombres: readonly string[], o: { proteger?: readonly string[] } = {}): string {
   const e = String(escena || '');
-  const quitar = new Set(nombres.map(plano).filter(Boolean));
+  // Revisión de la tanda F: la escena no trae ids, solo nombres. Quien se llama igual que la dueña (o que quien habla) NO se
+  // quita: un menor por confirmar que se llama «José» no puede borrar «Reconozco a José (quien te habla)».
+  const protegidos = new Set((o.proteger || []).map(plano).filter(Boolean));
+  const quitar = new Set(nombres.map(plano).filter((n) => n && !protegidos.has(n)));
   if (!e || !quitar.size) return e;
   let quitadas = 0;
   let en = false;
   let out = e.replace(/\b(reconozco a|I recognize)\s+([^;.]*)/gi, (m, intro: string, lista: string) => {
     const partes = lista.split(/,\s*/);
-    const quedan = partes.filter((p) => !quitar.has(plano(p.replace(/\s*\([^)]*\)\s*$/, ''))));
+    // La entrada marcada como quien te habla es la dueña: nunca se quita, aunque otro guardado se llame igual.
+    const quedan = partes.filter((p) => RE_QUIEN_HABLA.test(p) || !quitar.has(plano(p.replace(/\s*\([^)]*\)\s*$/, ''))));
     if (quedan.length === partes.length) return m;
     if (/^I /i.test(intro)) en = true;
     quitadas += partes.length - quedan.length;

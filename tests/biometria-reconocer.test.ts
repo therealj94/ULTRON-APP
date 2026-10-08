@@ -211,3 +211,25 @@ test('el turno: conModoInvitado le quita a la escena el nombre de quien espera l
   await pedir(`/api/caras/${id}/confirmar`, { method: 'POST', body: {} });
   assert.equal(((await invitado.conModoInvitado(body)) as any).escena, body.escena);
 });
+
+test('revisión de la tanda F: un menor por confirmar que se llama como la dueña NO le quita a ella «Reconozco a José (quien te habla)»', async () => {
+  const q = turno.escenaSinPorConfirmar;
+  // Lo puro: la entrada marcada como quien te habla nunca se quita; el resto sí.
+  assert.equal(q('Reconozco a José (quien te habla), Raúl (tu socio)', ['José']), 'Reconozco a José (quien te habla), Raúl (tu socio)');
+  assert.equal(q('I recognize José (the person talking to you)', ['José']), 'I recognize José (the person talking to you)');
+  assert.match(q('Reconozco a José (quien te habla), José (tu hijo)', ['José']), /^Reconozco a José \(quien te habla\); 1 persona\(s\) guardada\(s\) que todavía no puedo reconocer/);
+  // El nombre de la dueña (protegido) tampoco se quita sin marca (la cámara trasera no la marca).
+  assert.equal(q('Con la cámara trasera: reconozco a José', ['José'], { proteger: ['José'] }), 'Con la cámara trasera: reconozco a José');
+  assert.equal(q('Una mesa. Por la voz, habla José (tu hijo), no José.', ['José'], { proteger: ['jose'] }), 'Una mesa. Por la voz, habla José (tu hijo), no José.');
+  // Con el cajón de verdad: un hijo «José» por confirmar, y la dueña José en la escena.
+  const r = await pedir('/api/caras', { method: 'POST', body: { nombre: 'José', relacion: 'conocido', parentesco: 'hijo', vectores: [vec(13)], consentimiento: { como: 'voz', frase: 'sí' } } });
+  assert.equal(r.j.persona.porConfirmar, true);
+  // Su nombre es también el de alguien que SÍ se reconoce (la dueña, guardada como «yo» arriba): no se lista para quitar
+  // (la escena puede estar nombrando a la dueña).
+  assert.ok(!(await caras.nombresCarasPorConfirmar(CORREO)).includes('José'));
+  const body = { message: '¿quién está aquí?', origen: 'app', sesion: { correo: CORREO, nombre: 'José' }, escena: 'Reconozco a José (quien te habla), Raúl (tu socio)' };
+  assert.equal(((await invitado.conModoInvitado(body)) as any).escena, body.escena, 'la dueña sigue reconocida');
+  const trasera = { ...body, escena: 'Con la cámara trasera: reconozco a José, Raúl (tu socio)' };
+  assert.equal(((await invitado.conModoInvitado(trasera)) as any).escena, trasera.escena, 'por su nombre de sesión, tampoco sin marca');
+  await pedir(`/api/caras/${r.j.persona.id}/confirmar`, { method: 'POST', body: {} });
+});

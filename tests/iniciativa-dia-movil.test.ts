@@ -54,6 +54,14 @@ test('el resumen llega como un `mensaje` que abre la mesa; al tocarlo, AURA lo l
   assert.equal(plan.que, 'mostrar');
   assert.equal(plan.aviso.title, 'Tu día');
   assert.equal(Push.textoAlAbrir(datos), 'Tu día. Buenos días. En tu agenda de hoy: 9:00 Reunión con Ana.');
+  // Revisión de la tanda F: el aviso (pantalla bloqueada) trae solo cuántos y quién; lo detallado viene en `decir` y es
+  // lo que AURA dice al tocarlo. `decir` va en los datos del aviso, nunca en lo que se ve.
+  const bloqueado = Push.leerDatos({ aura: 'push', tipo: 'mensaje', id: 'dia-def', titulo: 'Tu día', texto: 'Hoy: 1 evento en tu agenda y 2 pendientes. Tócalo y te lo cuento.', decir: 'Buenos días. En tu agenda de hoy: 9:00 Reunión con Ana. Quedó a medias: revisar el contrato.', abrir: 'mesa', para: dueno, enviado: String(Date.now()) });
+  const plan2 = Push.planear(bloqueado, { dueno, ahora: Date.now(), k });
+  assert.equal(plan2.aviso.body, 'Hoy: 1 evento en tu agenda y 2 pendientes. Tócalo y te lo cuento.');
+  assert.doesNotMatch(JSON.stringify([plan2.aviso.title, plan2.aviso.body]), /Reunión|contrato/);
+  assert.equal(plan2.aviso.data.decir, 'Buenos días. En tu agenda de hoy: 9:00 Reunión con Ana. Quedó a medias: revisar el contrato.');
+  assert.equal(Push.textoAlAbrir(bloqueado), 'Buenos días. En tu agenda de hoy: 9:00 Reunión con Ana. Quedó a medias: revisar el contrato.');
   // Un empujón: el título es AURA y AURA dice la propuesta tal cual.
   const emp = Push.leerDatos({ aura: 'push', tipo: 'mensaje', id: 'emp-abc', titulo: 'AURA', texto: 'En 12 minutos empieza «Junta». ¿Quieres que te deje el enlace a mano?', abrir: 'mesa', para: dueno, enviado: String(Date.now()) });
   assert.equal(Push.textoAlAbrir(emp), 'En 12 minutos empieza «Junta». ¿Quieres que te deje el enlace a mano?');

@@ -53,7 +53,14 @@ function finalDe(r: ResultadoConRecibo): EfectoNoVisto['final'] | null {
   return null;
 }
 
-const canalDeHerramienta = (h: string): CanalEfecto => (h === 'correo' ? 'correo' : h === 'whatsapp' || h === 'circulo' ? 'whatsapp' : h === 'calendario' ? 'calendario' : 'guardado');
+/**
+ * El canal de una herramienta que deja algo AFUERA (correo, WhatsApp, el círculo que escribe por WhatsApp, su calendario).
+ * Las demás solo guardan dentro de AURA (una misión, la memoria, un documento, su perfil): no son «Lo de antes sí salió»
+ * (null: no cuentan, aunque su recibo diga confirmado o incierto).
+ */
+const canalDeHerramienta = (h: string): CanalEfecto | null => (h === 'correo' ? 'correo' : h === 'whatsapp' || h === 'circulo' ? 'whatsapp' : h === 'calendario' ? 'calendario' : null);
+/** Lo que se cuenta como salido afuera (lo guardado en AURA, no). */
+const esDeAfuera = (c: CanalEfecto) => c !== 'guardado';
 
 /**
  * Lo que el turno hizo afuera, con recibo. `decisiones`: el «sí» que resolvió el servidor (server/decision-turno.ts), con su
@@ -67,11 +74,12 @@ export function efectosDelTurno(o: {
   for (const d of o.decisiones || []) {
     const final = finalDe(d.r);
     const destino = soloNombre(d.destino);
-    if (final) out.push({ canal: d.canal, final, ...(destino ? { destino } : {}) });
+    if (final && esDeAfuera(d.canal)) out.push({ canal: d.canal, final, ...(destino ? { destino } : {}) });
   }
   for (const p of o.pasos || []) {
     const final = finalDe(p);
-    if (final) out.push({ canal: canalDeHerramienta(String(p.herramienta || '')), final });
+    const canal = canalDeHerramienta(String(p.herramienta || ''));
+    if (final && canal) out.push({ canal, final });
   }
   return out;
 }

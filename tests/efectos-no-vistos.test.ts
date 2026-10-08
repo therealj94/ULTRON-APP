@@ -39,6 +39,47 @@ test('efectosDelTurno: lo que el proveedor confirmó salió; lo despachado sin f
   ]);
 });
 
+test('revisión de la tanda F: lo que solo se guarda DENTRO de AURA (misión, memoria, documento, perfil) no es «Lo de antes sí salió»', () => {
+  const ef = E.efectosDelTurno({
+    decisiones: [{ canal: 'guardado', r: { estado: 'succeeded', recibo: { efecto: 'confirmado' } } }],
+    pasos: [
+      { herramienta: 'mision', estado: 'succeeded', recibo: { efecto: 'confirmado' } },
+      { herramienta: 'memoria', estado: 'unknown', recibo: { efecto: 'posible' } },
+      { herramienta: 'documento', estado: 'succeeded', recibo: { efecto: 'confirmado' } },
+      { herramienta: 'perfil', estado: 'unknown', recibo: { efecto: 'posible' } },
+      // Lo de afuera sigue contando.
+      { herramienta: 'calendario', estado: 'succeeded', recibo: { efecto: 'confirmado' } },
+      { herramienta: 'correo', estado: 'unknown', recibo: { efecto: 'posible' } },
+    ],
+  });
+  assert.deepEqual(ef, [
+    { canal: 'calendario', final: 'salio' },
+    { canal: 'correo', final: 'incierto' },
+  ]);
+  assert.doesNotMatch(E.fraseEfectosNoVistos(ef), /quedó hecho|lo que pediste/);
+});
+
+test('revisión de la tanda F: en la voz, el aviso de antes se da por dicho solo cuando el turno se confirma (retener.hacer)', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  // Una especulación descartada (la frase a medias de la voz) no se lleva el aviso: lo dice la respuesta que sí suena.
+  assert.match(src, /const dicho = \(\) => confirmarEfectosNoVistos\(avisoDeAntes\.quien, avisoDeAntes\.ids\);\s*if \(opciones\.retener\) opciones\.retener\.hacer\(dicho\);\s*else dicho\(\);/);
+  assert.doesNotMatch(src, /\n\s*if \(avisoDeAntes\) confirmarEfectosNoVistos\(/, 'ya no se borra fuera de retener');
+  // El contrato de `hacer`: lo retenido no corre si se descarta, y corre al confirmar.
+  const { abrirEspeculativo } = await import('../server/turno-especulativo');
+  E._olvidarEfectosNoVistos();
+  E.anotarEfectosNoVistos('voz@x.org', 'turno-voz-1', [{ canal: 'whatsapp', final: 'salio', destino: 'Ana' }]);
+  const a = E.avisoEfectosNoVistos('voz@x.org')!;
+  const e1 = abrirEspeculativo('efectos-voz-1');
+  e1.retener.hacer(() => E.confirmarEfectosNoVistos('voz@x.org', a.ids));
+  (e1 as any).descartar('siguió hablando');
+  assert.ok(E.avisoEfectosNoVistos('voz@x.org'), 'descartada: el aviso sigue para la respuesta que sí suene');
+  const e2 = abrirEspeculativo('efectos-voz-2');
+  e2.retener.hacer(() => E.confirmarEfectosNoVistos('voz@x.org', a.ids));
+  (e2 as any).confirmar();
+  assert.equal(E.avisoEfectosNoVistos('voz@x.org'), null, 'confirmada: dicho');
+});
+
 test('la frase: sale del recibo, honesta con lo incierto, en los dos idiomas', () => {
   assert.equal(E.fraseEfectosNoVistos([{ canal: 'whatsapp', final: 'salio', destino: 'Ana' }]), 'Lo de antes sí salió: le mandé el WhatsApp a Ana.');
   assert.equal(E.fraseEfectosNoVistos([{ canal: 'whatsapp', final: 'incierto', destino: 'Ana' }]), 'Lo de antes: no sé si salió el WhatsApp a Ana; revísalo antes de pedirlo otra vez.');

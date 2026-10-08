@@ -18,6 +18,9 @@
  *   · el mismo mensaje una sola vez (lib/envios.ts primeraVezEvento, también entre réplicas).
  *   · «llámame» (tanda F2, lib/iniciativa-dia.ts): un urgente de un VIP llega como LLAMADA de AU-RA si lo eligió en
  *     Ajustes → Iniciativa, fuera de sus horas quietas y si hoy no dijo «no me molestes»; si la llamada no sale, el aviso.
+ *     Como mucho 2 llamadas así al día (lib/iniciativa-dia.ts TOPE_LLAMADAS_VIP_DIA); después, el aviso.
+ *   · «no me molestes hoy» (lib/iniciativa-dia.ts hoyNoActivo, el registro durable): ese día solo sale lo urgente de un
+ *     VIP (como aviso, sin llamada); lo demás, nada. Es lo que AURA promete al pausar el día.
  *
  * Privacidad: solo se avisa a la persona dueña de ESA cuenta (el puente dice la cuenta; lib/duenos-cuenta-wa.ts dice qué
  * correos la usaron y aquí se vuelve a comprobar que la clave de cada correo es esa); solo si su sesión puede usar su
@@ -215,6 +218,8 @@ export type DepsAlertas = {
    * de sus horas quietas y si hoy no dijo «no me molestes»). Ante la duda, no.
    */
   quiereLlamada: (correo: string, ahora: number) => Promise<boolean>;
+  /** Hoy dijo «no me molestes» (lib/iniciativa-dia.ts hoyNoActivo). Ante la duda, no (los avisos siguen). */
+  hoyNo: (correo: string, ahora: number) => Promise<boolean>;
   /** La llamada de AU-RA de siempre (lib/push.ts llamarPorPush). */
   llamar: (correo: string, o: { motivo: string; id: string }) => Promise<Pick<ResultadoPush, 'enviados' | 'entrega'>>;
   ahora: () => number;
@@ -235,6 +240,7 @@ const DEPS_REALES: DepsAlertas = {
   primeraVez: async (f, c, id) => (await import('./envios')).primeraVezEvento(f, c, id),
   apagado: async (c) => (await (await import('./avisos')).preferenciasDe(c)).apagado === true,
   quiereLlamada: async (c, ahora) => (await import('./iniciativa-dia')).quiereLlamadaVip(c, ahora),
+  hoyNo: async (c, ahora) => (await import('./iniciativa-dia')).hoyNoActivo(c, ahora),
   llamar: async (c, o) => (await import('./push')).llamarPorPush(c, o),
   ahora: () => Date.now(),
 };
@@ -260,6 +266,8 @@ export async function alertarSiImporta(correo: string, ev: EventoMensaje, fuente
     const laya = textoLaya.length >= 8 ? await d.laya(textoLaya).catch(() => null) : null;
     const t = triarMensaje(ev, { vips, circulo, laya, ahora: d.ahora() });
     if (!t.avisar) return { correo, avisado: false, porque: `no importante (${t.importancia}, ${t.puntaje})`, triaje: t };
+    // «No me molestes hoy»: solo pasa lo urgente de un VIP (lo que AURA le prometió al pausar el día).
+    if (!(t.urgente && t.vip) && (await d.hoyNo(correo, d.ahora()).catch(() => false))) return { correo, avisado: false, porque: 'hoy_no', triaje: t };
     // El mismo mensaje una sola vez (el puente reintenta; dos réplicas pueden recibir el mismo correo).
     if (!(await d.primeraVez(fuente, correo, `${ev.canal}:${ev.id}`).catch(() => false))) return { correo, avisado: false, porque: 'repetido', triaje: t };
     const dec = decidirEnvio(correo, `${ev.canal}:${ev.chat}`, { urgente: t.urgente, vip: !!t.vip }, d.ahora());

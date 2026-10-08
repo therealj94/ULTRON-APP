@@ -15,7 +15,11 @@
  *     omisión) y nada el día que dijo «no me molestes hoy». Cada empujón es una PROPUESTA («¿Quieres que…?»): nunca una
  *     acción ni un «ya lo hice».
  *  3. «LLÁMAME» en lugar del aviso, para el resumen o para un mensaje urgente de un VIP: la llamada de AU-RA de siempre
- *     (llamarPorPush). Se elige aparte para cada uno y también respeta las horas quietas (en ellas, aviso normal).
+ *     (llamarPorPush). Se elige aparte para cada uno y también respeta las horas quietas (en ellas, aviso normal). Por
+ *     un VIP, como mucho TOPE_LLAMADAS_VIP_DIA llamadas al día; después, el aviso.
+ *
+ * El borrador que se empuja es el que espera su «sí» en el sistema de decisiones (la tarea en `awaiting_approval`), nunca
+ * uno detectado con reglas en la conversación, y antes de mandarlo se mira que no tenga recibo de envío.
  *
  * Por omisión: ENCENDIDA solo para la cuenta dueña (la de WHATSAPP_DUENOS, server/whatsapp.ts esDuenoWhatsapp); para las
  * demás, apagada hasta que la encienden en Ajustes → Iniciativa. «Llámame» siempre empieza apagado.
@@ -25,15 +29,23 @@
  * CEREBRO_VOZ=qwen), el resumen sale armado a mano con los mismos datos. Los empujones no usan modelo.
  *
  * UNA SOLA VEZ, también tras un reinicio: como el reloj de los recordatorios (lib/recordatorios-servidor.ts), cada envío
- * se reclama en el cajón ANTES de mandarse (`resumenFecha`, la clave de cada empujón) y el resumen además se marca en el
- * registro durable (lib/envios.ts primeraVezEvento). A lo sumo uno se pierde; nunca sale dos veces.
+ * se reclama en el cajón ANTES de mandarse (`resumenFecha`, la clave de cada empujón) y el resumen y cada empujón además
+ * se marcan en el registro durable (lib/envios.ts primeraVezEvento, compartido: dos procesos a la vez durante un despliegue
+ * no mandan el mismo dos veces). A lo sumo uno se pierde; nunca sale dos veces. El «no me molestes hoy» también queda en
+ * el registro durable (`hoyNoActivo`) y lo respetan el reloj, la iniciativa de siempre (server/iniciativa.ts), sus
+ * llamadas y los avisos de mensajes que no son urgentes de un VIP (lib/alertas-mensajes.ts).
+ *
+ * En la pantalla bloqueada el aviso del resumen dice solo cuántos y quién (`avisoResumen`); lo detallado lo dice AURA al
+ * tocarlo (campo `decir` del push).
  *
  * Se guarda como las misiones (lib/misiones.ts cajonPorCorreo): caché, disco y S3 en `ultron/iniciativa-dia/<huella>`.
  */
 import { AlmacenNoDisponible, cajonPorCorreo } from './misiones';
-import { enQuietas, fechaLocal, instanteDeLocal, minutosDe, sumarDias, ZONA_POR_OMISION, zonaValida, type Quietas } from './zona-horaria';
+import { enQuietas, fechaLocal, finDeQuietas, instanteDeLocal, minutosDe, sumarDias, ZONA_POR_OMISION, zonaValida, type Quietas } from './zona-horaria';
 import { afirmacionesDeHecho } from './honestidad';
 import { clasificarPromesas } from './promesas';
+import { claveDe, leerDurable, modificarDurable } from './durable';
+import { vezDelEvento } from './envios';
 
 export { AlmacenNoDisponible as IniciativaDiaNoDisponible };
 
@@ -141,9 +153,15 @@ export type EstadoDia = {
   resumenFecha?: string;
   /** El día local de la última redacción con el modelo (una al día). */
   generadoFecha?: string;
-  /** «No me molestes hoy»: el día local en que no sale nada. */
+  /** «No me molestes hoy»: el día local en que no sale nada. (También en el registro durable: `hoyNoActivo`.) */
   hoyNo?: string;
-  /** Los últimos empujones (para el tope del día, el espaciado y el «para» a secas). */
+  /**
+   * La hora del resumen que la persona eligió A SABIENDAS dentro de sus horas quietas («a las 6», con quietas hasta las
+   * 7): esa sí se respeta. Una hora que quedó dentro de las quietas sin elegirla así (cambió las quietas después) espera
+   * a que terminen.
+   */
+  horaEnQuietas?: string;
+  /** Los últimos empujones (para el tope del día y el espaciado). */
   empujones: EmpujonDado[];
   /** clave → cuándo: lo ya empujado no se repite. */
   claves: Record<string, number>;
@@ -184,6 +202,7 @@ export function sanearEstadoDia(x: unknown): EstadoDia {
   if (fecha(c.resumenFecha)) out.resumenFecha = fecha(c.resumenFecha);
   if (fecha(c.generadoFecha)) out.generadoFecha = fecha(c.generadoFecha);
   if (fecha(c.hoyNo)) out.hoyNo = fecha(c.hoyNo);
+  if (typeof c.horaEnQuietas === 'string' && HHMM.test(c.horaEnQuietas)) out.horaEnQuietas = c.horaEnQuietas;
   return out;
 }
 
@@ -251,27 +270,57 @@ export function momentoResumen(p: Pick<PrefsDia, 'horaResumen' | 'zona'>, fecha:
  * Cambia sus preferencias. Si con el cambio el resumen de HOY ya debió salir (la hora ya pasó), hoy no sale: empieza
  * mañana (que no le llegue a media mañana porque recién lo encendió). Devuelve las efectivas y si empieza mañana.
  */
-export async function cambiarPrefsDia(correo: string, cambios: PrefsGuardadas, ahora = Date.now()): Promise<{ prefs: PrefsDia; durable: boolean; desdeManana: boolean }> {
-  const dueno = esCuentaDuena(correo);
-  const { resultado, durable } = await almacen.modificar(correo, (e) => {
-    e.prefs = { ...e.prefs, ...cambios };
-    const p = prefsEfectivas(e.prefs, { dueno });
-    let desdeManana = false;
-    const tocaResumen = cambios.horaResumen !== undefined || cambios.resumen === true || cambios.activa === true || cambios.zona !== undefined;
-    if (tocaResumen && p.activa && p.resumen) {
-      const hoy = fechaLocal(ahora, p.zona);
-      if (momentoResumen(p, hoy) <= ahora && e.resumenFecha !== hoy) {
-        e.resumenFecha = hoy;
-        desdeManana = true;
-      } else if (momentoResumen(p, hoy) > ahora && e.resumenFecha === hoy && cambios.horaResumen !== undefined) {
-        // Ya había salido (o se había saltado) hoy y la hora nueva es más tarde: hoy ya hubo; mañana sale a la nueva.
-        desdeManana = true;
-      }
+export type CambioAplicado = { p: PrefsDia; desdeManana: boolean; enQuietas: boolean };
+
+/** ¿Esa hora «HH:MM» cae dentro de esas horas quietas? Puro (la ventana puede cruzar medianoche). */
+export function horaCaeEnQuietas(hhmm: string, q: Quietas): boolean {
+  const h = minutosDe(hhmm);
+  const desde = minutosDe(q.desde);
+  const hasta = minutosDe(q.hasta);
+  if (h === null || desde === null || hasta === null || desde === hasta) return false;
+  return desde < hasta ? h >= desde && h < hasta : h >= desde || h < hasta;
+}
+
+/**
+ * Aplica un cambio al estado (en el lugar). Puro: lo usa `cambiarPrefsDia` dentro del candado del cajón, y la voz para
+ * saber de antemano lo que va a quedar sin escribir todavía (el turno especulativo escribe solo al confirmarse).
+ */
+export function aplicarCambiosDia(e: EstadoDia, cambios: PrefsGuardadas, o: { dueno: boolean; ahora: number }): CambioAplicado {
+  const { ahora } = o;
+  e.prefs = { ...e.prefs, ...cambios };
+  const p = prefsEfectivas(e.prefs, { dueno: o.dueno });
+  // Una hora elegida dentro de sus horas quietas es elegida a sabiendas: se respeta (y la voz lo confirma en voz alta).
+  if (cambios.horaResumen !== undefined) {
+    if (horaCaeEnQuietas(p.horaResumen, p.quietas)) e.horaEnQuietas = p.horaResumen;
+    else delete e.horaEnQuietas;
+  }
+  let desdeManana = false;
+  const tocaRes = cambios.horaResumen !== undefined || cambios.resumen === true || cambios.activa === true || cambios.zona !== undefined;
+  if (tocaRes && p.activa && p.resumen) {
+    const hoy = fechaLocal(ahora, p.zona);
+    const t = momentoEfectivoResumen(e, p, hoy);
+    if (t !== null && t <= ahora && e.resumenFecha !== hoy) {
+      e.resumenFecha = hoy;
+      desdeManana = true;
+    } else if (t !== null && t > ahora && e.resumenFecha === hoy && cambios.horaResumen !== undefined) {
+      // Ya había salido (o se había saltado) hoy y la hora nueva es más tarde: hoy ya hubo; mañana sale a la nueva.
+      desdeManana = true;
     }
-    return { p, desdeManana };
-  });
+  }
+  return { p, desdeManana, enQuietas: e.horaEnQuietas === p.horaResumen && horaCaeEnQuietas(p.horaResumen, p.quietas) };
+}
+
+export async function cambiarPrefsDia(correo: string, cambios: PrefsGuardadas, ahora = Date.now()): Promise<{ prefs: PrefsDia; durable: boolean; desdeManana: boolean; enQuietas: boolean }> {
+  const dueno = esCuentaDuena(correo);
+  const { resultado, durable } = await almacen.modificar(correo, (e) => aplicarCambiosDia(e, cambios, { dueno, ahora }));
   await anotarIndice(correo, resultado.p.activa && !dueno);
-  return { prefs: resultado.p, durable, desdeManana: resultado.desdeManana };
+  return { prefs: resultado.p, durable, desdeManana: resultado.desdeManana, enQuietas: resultado.enQuietas };
+}
+
+/** Lo que dejaría un cambio, sin guardarlo (lanza AlmacenNoDisponible si el cajón no se pudo leer). */
+export async function previsualizarCambiosDia(correo: string, cambios: PrefsGuardadas, ahora = Date.now()): Promise<CambioAplicado> {
+  const e = sanearEstadoDia(JSON.parse(JSON.stringify(await leerDia(correo))));
+  return aplicarCambiosDia(e, cambios, { dueno: esCuentaDuena(correo), ahora });
 }
 
 async function anotarIndice(correo: string, dentro: boolean) {
@@ -300,22 +349,76 @@ export async function pausarHoy(correo: string, ahora = Date.now(), o: { quitar?
     const hoy = fechaLocal(ahora, prefsEfectivas(e.prefs, { dueno }).zona);
     if (o.quitar) delete e.hoyNo;
     else e.hoyNo = hoy;
-    return e.hoyNo || null;
+    return { hoyNo: e.hoyNo || null, hoy };
   });
-  return { hoyNo: resultado, durable };
+  // Revisión de la tanda F: el cajón vive en la caché de CADA proceso (dos procesos a la vez durante un despliegue no se
+  // ven). El «hoy no» queda además en el registro durable (lib/durable.ts, compartido), que es lo que miran el reloj, los
+  // avisos de mensajes, la iniciativa de siempre y las llamadas (`hoyNoActivo`).
+  const marca = await modificarDurable<MarcaHoyNo>(claveHoyNo(correo, resultado.hoy), () => ({ activo: !o.quitar, t: ahora })).catch(() => ({ ok: false as const }));
+  MEMO_HOY_NO.delete(`${String(correo || '').trim().toLowerCase()}|${resultado.hoy}`);
+  return { hoyNo: resultado.hoyNo, durable: durable && marca.ok };
+}
+
+type MarcaHoyNo = { activo: boolean; t: number };
+const claveHoyNo = (correo: string, fecha: string) => claveDe('iniciativa-dia/hoy-no', String(correo || '').trim().toLowerCase(), fecha);
+/** Lo leído del registro durable vale este rato en cada proceso (pasado esto, se vuelve a mirar). */
+export const HOY_NO_MEMO_MS = 20_000;
+const MEMO_HOY_NO = new Map<string, { activo: boolean; t: number }>();
+
+/**
+ * ¿Dijo «no me molestes» HOY (en su zona)? Lo dice el registro durable (compartido entre procesos), leído cada
+ * HOY_NO_MEMO_MS como mucho; sin marca durable (o sin poder leerla), lo que diga su cajón. Nunca lanza.
+ */
+export async function hoyNoActivo(correo: string, ahora = Date.now()): Promise<boolean> {
+  const c = String(correo || '').trim().toLowerCase();
+  if (!c.includes('@')) return false;
+  let e: EstadoDia | null = null;
+  try {
+    e = await leerDia(c);
+  } catch {
+    e = null;
+  }
+  const zona = e ? prefsEfectivas(e.prefs, { dueno: esCuentaDuena(c) }).zona : ZONA_POR_OMISION;
+  const fecha = fechaLocal(ahora, zona);
+  const k = `${c}|${fecha}`;
+  const memo = MEMO_HOY_NO.get(k);
+  if (memo && Math.abs(Date.now() - memo.t) < HOY_NO_MEMO_MS) return memo.activo;
+  let activo = e?.hoyNo === fecha;
+  try {
+    const l = await leerDurable<MarcaHoyNo>(claveHoyNo(c, fecha));
+    if (l.ok && l.valor && typeof l.valor.activo === 'boolean') activo = l.valor.activo;
+  } catch {
+    /* sin el registro, lo del cajón */
+  }
+  MEMO_HOY_NO.delete(k);
+  MEMO_HOY_NO.set(k, { activo, t: Date.now() });
+  while (MEMO_HOY_NO.size > 5000) MEMO_HOY_NO.delete(MEMO_HOY_NO.keys().next().value as string);
+  return activo;
 }
 
 /* ------------------------------------------------------------------ el resumen: cuándo */
 
-export type DecisionResumen = { toca: true; fecha: string } | { toca: false; porque: 'apagado' | 'temprano' | 'ya' | 'tarde' | 'hoy_no' };
+export type DecisionResumen = { toca: true; fecha: string } | { toca: false; porque: 'apagado' | 'temprano' | 'ya' | 'tarde' | 'hoy_no' | 'quietas' };
 
-/** ¿Toca el resumen ahora? Puro. */
-export function tocaResumen(e: Pick<EstadoDia, 'resumenFecha' | 'hoyNo'>, p: PrefsDia, ahora: number): DecisionResumen {
+/**
+ * El instante en que sale el resumen de ese día: a su hora; si esa hora cae en sus horas quietas y no la eligió así a
+ * sabiendas (`horaEnQuietas`), al terminar las quietas (el mismo día). null: ese día no queda hueco fuera de las quietas.
+ */
+export function momentoEfectivoResumen(e: Pick<EstadoDia, 'horaEnQuietas'>, p: PrefsDia, fecha: string): number | null {
+  const t = momentoResumen(p, fecha);
+  if (!enQuietas(t, p.zona, p.quietas) || e.horaEnQuietas === p.horaResumen) return t;
+  const fin = finDeQuietas(t, p.zona, p.quietas);
+  return fechaLocal(fin, p.zona) === fecha ? fin : null;
+}
+
+/** ¿Toca el resumen ahora? Puro. Respeta sus horas quietas, salvo que eligiera a sabiendas una hora dentro de ellas. */
+export function tocaResumen(e: Pick<EstadoDia, 'resumenFecha' | 'hoyNo' | 'horaEnQuietas'>, p: PrefsDia, ahora: number): DecisionResumen {
   if (!p.activa || !p.resumen) return { toca: false, porque: 'apagado' };
   const hoy = fechaLocal(ahora, p.zona);
   if (e.resumenFecha === hoy) return { toca: false, porque: 'ya' };
   if (e.hoyNo === hoy) return { toca: false, porque: 'hoy_no' };
-  const t = momentoResumen(p, hoy);
+  const t = momentoEfectivoResumen(e, p, hoy);
+  if (t === null) return { toca: false, porque: 'quietas' };
   if (ahora < t) return { toca: false, porque: 'temprano' };
   if (ahora - t > VENTANA_RESUMEN_MS) return { toca: false, porque: 'tarde' };
   return { toca: true, fecha: hoy };
@@ -384,7 +487,28 @@ export async function reclamarEmpujon(correo: string, c: Pick<Candidato, 'clave'
 export type EventoDia = { id: string; titulo: string; inicio: number; fin?: number; todoElDia?: boolean; lugar?: string; reunion?: string; enlace?: string };
 export type AbiertoDia = { id: string; texto: string; tipo: string; estado: string; creado: number };
 export type PropuestaDia = { id: string; texto: string; entregada?: number; creada: number };
-export type Candidato = { clave: string; tipo: TipoEmpujon; texto: string; prioridad: number };
+/**
+ * Un borrador que espera su «sí» DE VERDAD: la decisión abierta del sistema de decisiones (la tarea durable en
+ * `awaiting_approval` con su vínculo al borrador, server/trabajos.ts abrirDecisionDeBorrador). `id`: el intento del
+ * borrador (con él se busca su recibo de envío, lib/envios.ts operacionDeBorrador). `para`: a quién (solo el nombre o la
+ * dirección: nada del texto).
+ */
+export type BorradorDia = { id: string; canal: 'correo' | 'whatsapp'; para: string; creado: number; caduca?: number };
+export type Candidato = { clave: string; tipo: TipoEmpujon; texto: string; prioridad: number; borrador?: Pick<BorradorDia, 'id' | 'canal'> };
+
+/** «el correo para Ana», «el WhatsApp para Beto» (solo a quién: nada del texto del borrador). */
+export function queBorrador(b: Pick<BorradorDia, 'canal' | 'para'>): string {
+  // Solo el nombre: sin el número ni la dirección (el aviso se ve en la pantalla bloqueada).
+  const nombre = String(b.para || '')
+    .replace(/[+\d][\d\s()-]{5,}/g, ' ')
+    .replace(/\S*@\S+/g, ' ')
+    .replace(/[()[\]{}<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/(\s*,\s*)+/g, ', ')
+    .replace(/^[\s,]+|[\s,]+$/g, '');
+  const para = /^sin destinatario$/i.test(nombre) ? '' : cita(nombre, 60);
+  return `${b.canal === 'correo' ? 'el correo' : 'el WhatsApp'}${para ? ` para ${para}` : ''}`;
+}
 
 const ENLACE_LLAMADA = /https?:\/\/[^\s]*(zoom\.us|meet\.google\.com|teams\.microsoft\.com|teams\.live\.com|webex\.com|whereby\.com|jit\.si|gotomeeting\.com)[^\s]*/i;
 
@@ -400,15 +524,6 @@ const cita = (t: string, max = 110) => {
   return s.length <= max ? s : `${s.slice(0, max - 1).replace(/\s+\S*$/, '')}…`;
 };
 
-function haceCuanto(ms: number): string {
-  const min = Math.max(1, Math.round(ms / 60_000));
-  if (min < 60) return `${min} minutos`;
-  const h = Math.round(min / 60);
-  if (h < 24) return h === 1 ? 'una hora' : `${h} horas`;
-  const d = Math.round(h / 24);
-  return d === 1 ? 'un día' : `${d} días`;
-}
-
 /** Lo que AU-RA prometió avisar, sin el «te aviso» (citado de nuevo sonaría a otra promesa). */
 function loPrometido(texto: string): string {
   return cita(texto.replace(/^\s*(ya\s+)?(te\s+(aviso|digo|cuento|escribo|confirmo|mando)|te\s+lo\s+(busco|reviso|mando|digo)|yo\s+te\s+(aviso|digo))\s*(de\s+)?/i, ''));
@@ -419,7 +534,7 @@ function loPrometido(texto: string): string {
  * Cada texto es una PROPUESTA en pregunta: nunca dice que algo se hizo.
  */
 export function candidatosEmpujon(
-  f: { eventos?: EventoDia[] | null; abiertos?: AbiertoDia[] | null; propuesta?: PropuestaDia | null },
+  f: { eventos?: EventoDia[] | null; abiertos?: AbiertoDia[] | null; propuesta?: PropuestaDia | null; borradores?: BorradorDia[] | null },
   ahora: number,
   ya: Record<string, number> = {}
 ): Candidato[] {
@@ -437,12 +552,17 @@ export function candidatosEmpujon(
     const propuesta = enlace ? '¿Quieres que te deje el enlace a mano?' : '¿Quieres que te diga cómo llegar o lo que tienes que llevar?';
     out.push({ clave: `cal:${e.id}@${e.inicio}`, tipo: 'evento', prioridad: 0, texto: `En ${min} minutos empieza «${cita(e.titulo || 'tu evento', 80)}»${donde}. ${propuesta}` });
   }
+  // Revisión de la tanda F (B3): los borradores salen SOLO de la decisión abierta de verdad (no de lo que la conversación
+  // detectó con reglas en lib/abiertos.ts: eso no se cierra cuando el borrador sale). Nunca se dice «no salió nada»: el
+  // reloj además mira, antes de mandarlo, que no haya recibo de envío (server/iniciativa-dia.ts empujonPara).
+  for (const b of f.borradores || []) {
+    if (ahora - b.creado < ESPERA_DECISION_MS || (b.caduca && b.caduca <= ahora)) continue;
+    out.push({ clave: `bor:${b.id}`, tipo: 'borrador', prioridad: 1, borrador: { id: b.id, canal: b.canal }, texto: `Tienes un borrador esperando tu «sí»: ${queBorrador(b)}. ¿Lo revisamos?` });
+  }
   for (const a of f.abiertos || []) {
     if (a.estado !== 'abierto') continue;
     const espera = ahora - a.creado;
-    if (a.tipo === 'borrador' && espera >= ESPERA_DECISION_MS) {
-      out.push({ clave: `bor:${a.id}`, tipo: 'borrador', prioridad: 1, texto: `Hace ${haceCuanto(espera)} quedó un borrador esperando tu «sí»: «${cita(a.texto)}». No salió nada. ¿Quieres que lo revisemos?` });
-    } else if (a.tipo === 'promesa_aura' && espera >= ESPERA_PROMESA_MS && espera <= PROMESA_VIEJA_MS) {
+    if (a.tipo === 'promesa_aura' && espera >= ESPERA_PROMESA_MS && espera <= PROMESA_VIEJA_MS) {
       out.push({ clave: `prom:${a.id}`, tipo: 'promesa', prioridad: 3, texto: `Quedó pendiente algo que te ofrecí: «${loPrometido(a.texto)}». ¿Quieres que lo veamos ahora?` });
     }
   }
@@ -463,11 +583,36 @@ export type MaterialResumen = {
   mensajes: Array<{ quien: string; canal: 'whatsapp' | 'correo' }>;
   abiertos: Array<{ texto: string; tipo: string }>;
   misiones: Array<{ titulo: string; proximoPaso?: string }>;
+  /** Los borradores que esperan su «sí» de verdad (la decisión abierta; solo canal y a quién). */
+  borradores?: Array<Pick<BorradorDia, 'canal' | 'para'>>;
   zona: string;
 };
 
 export function hayAlgoQueDecir(m: MaterialResumen): boolean {
-  return !!((m.eventos && m.eventos.length) || m.recordatorios.length || m.mensajes.length || m.abiertos.length || m.misiones.length);
+  return !!((m.eventos && m.eventos.length) || m.recordatorios.length || m.mensajes.length || m.abiertos.length || m.misiones.length || m.borradores?.length);
+}
+
+const cuantos = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? uno : varios}`;
+
+/**
+ * Lo que dice el AVISO del resumen (lo que se ve en la pantalla bloqueada): solo cuántos y nombres de quién escribió;
+ * nunca texto libre (lo que quedó a medias, un borrador, el título de una reunión o de una misión). Lo detallado va
+ * aparte y AURA lo dice al tocarlo, ya dentro de la app («2 pendientes, 1 borrador esperando tu sí»).
+ */
+export function avisoResumen(m: MaterialResumen): string {
+  const partes: string[] = [];
+  if (m.eventos && m.eventos.length) partes.push(cuantos(m.eventos.length, 'evento en tu agenda', 'eventos en tu agenda'));
+  if (m.recordatorios.length) partes.push(cuantos(m.recordatorios.length, 'recordatorio', 'recordatorios'));
+  if (m.mensajes.length) {
+    const nombres = [...new Set(m.mensajes.map((x) => cita(x.quien, 30)).filter(Boolean))];
+    partes.push(`mensajes sin contestar de ${enumerar(nombres.slice(0, 3))}${nombres.length > 3 ? ` y ${nombres.length - 3} más` : ''}`);
+  }
+  if (m.abiertos.length) partes.push(cuantos(m.abiertos.length, 'pendiente', 'pendientes'));
+  if (m.borradores?.length) partes.push(cuantos(m.borradores.length, 'borrador esperando tu sí', 'borradores esperando tu sí'));
+  if (m.misiones.length) partes.push(cuantos(m.misiones.length, 'misión abierta', 'misiones abiertas'));
+  if (!partes.length) return '';
+  const t = `Hoy: ${enumerar(partes)}. Tócalo y te lo cuento.`;
+  return t.length <= 300 ? t : `${t.slice(0, 299).replace(/\s+\S*$/, '')}…`;
 }
 
 const hora = (t: number, zona: string) => {
@@ -498,6 +643,11 @@ export function piezasResumen(m: MaterialResumen): string[] {
   }
   if (m.abiertos.length) {
     out.push(`Quedó a medias: ${enumerar(m.abiertos.slice(0, 2).map((a) => cita(a.tipo === 'promesa_aura' ? loPrometido(a.texto) : a.texto, 70)))}.`);
+  }
+  if (m.borradores?.length) {
+    const bs = m.borradores.slice(0, 2).map(queBorrador);
+    const mas = m.borradores.length > 2 ? ` y ${m.borradores.length - 2} más` : '';
+    out.push(`${m.borradores.length === 1 ? 'Tienes un borrador esperando tu «sí»' : 'Tienes borradores esperando tu «sí»'}: ${enumerar(bs)}${mas}.`);
   }
   if (m.misiones.length) {
     const mi = m.misiones[0];
@@ -586,26 +736,22 @@ export function finDeHoy(ahora: number, zona: string): number {
 
 /* ------------------------------------------------------------------ la voz */
 
-export type ComandoIniciativa = { tipo: 'hoy_no' } | { tipo: 'hora_resumen'; hora: string } | { tipo: 'no_llames' } | { tipo: 'sin_resumen' } | { tipo: 'para_suelto' };
-
-const plegar = (s: string) =>
-  String(s || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[¡!¿?.,;:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+/**
+ * `encender`: la frase pide encenderlo («enciende el resumen de la mañana a las 7»); sin eso, cambiar la hora no enciende
+ * la iniciativa de quien la tiene apagada.
+ */
+export type ComandoIniciativa = { tipo: 'hoy_no' } | { tipo: 'hora_resumen'; hora: string; encender: boolean } | { tipo: 'encender_resumen' } | { tipo: 'no_llames' } | { tipo: 'sin_resumen' };
 
 const NUMEROS: Record<string, number> = { una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12 };
 
 /** «a las 7», «a las 6:45», «a las siete y media», «a las 8 y cuarto», «a las 7 pm». null si no hay hora. */
 export function horaDicha(t: string): string | null {
-  // Como plegar, pero sin quitar los dos puntos ni el punto de «6:45» / «6.45».
+  // Plegada (sin tildes, en minúsculas), sin quitar los dos puntos ni el punto de «6:45» / «6.45».
   const s = String(t || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/\b([ap])\s?\.\s?m\b\.?/g, '$1m')
     .replace(/[¡!¿?,;]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -624,36 +770,92 @@ export function horaDicha(t: string): string | null {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
-/**
- * ¿Es una orden para la iniciativa del día? Conservador: solo frases claras. «para» / «basta» a secas vuelven como
- * `para_suelto` (quien llama decide: solo cuenta si hubo un empujón hace poco, y nunca le quita al «para» su efecto de
- * callar la voz).
+/*
+ * LAS ÓRDENES POR VOZ (revisión de la tanda F, B1). Antes bastaba con que la frase TUVIERA «resumen» y una hora, o «no me
+ * molestes» en cualquier parte: «Mándame el resumen del informe a las 3» movía el resumen a las 3:00, «Escríbele a
+ * Pedro: hoy no me llames» pausaba el día y «mándale a Carlos que ya no me llames más» apagaba las llamadas. Ahora la
+ * orden es la FRASE ENTERA (sin muletillas de los lados), con su objeto exacto:
+ *  · el resumen es «el resumen de la mañana / del día / diario», «mi resumen (diario)»: ningún otro («del informe», «de
+ *    la reunión», «del documento», «por correo»…);
+ *  · nada que dicte algo para otra persona (dile, escríbele, mándale, contéstale, avísale, pregúntale, «por WhatsApp /
+ *    correo») ni que pida un recordatorio (recuérdame, un recordatorio, agenda, una alarma) es orden de la iniciativa;
+ *  · una hora sin «de la mañana / tarde / noche» ni «a. m. / p. m.» vale solo entre las 5 y las 11 (la mañana).
+ * «para» / «basta» a secas ya no tocan la iniciativa: callan la voz y nada más.
  */
-export function comandoIniciativa(texto: string): ComandoIniciativa | null {
-  const s = plegar(texto);
-  if (!s || s.length > 160) return null;
-  if (/^(para|basta|ya para|para ya|ya basta)$/.test(s)) return { tipo: 'para_suelto' };
-  if (/\b(ya no me llames|no me llames mas|deja de llamarme|no quiero que me llames|nunca me llames|no me vuelvas a llamar)\b/.test(s)) return { tipo: 'no_llames' };
-  if (/\bresumen\b/.test(s)) {
-    if (/\b(ya no|no) (me )?(mandes|envies|des|quiero)( mas)? (el |ningun )?resumen\b/.test(s) || /\b(quita|apaga|cancela) (el )?resumen\b/.test(s)) return { tipo: 'sin_resumen' };
-    const h = horaDicha(texto);
-    if (h && /\b(manda|mandame|envia|enviame|dame|damelo|quiero|pon|ponme|cambia|cambiame|mueve|programa)\b/.test(s)) return { tipo: 'hora_resumen', hora: h };
-  }
-  const hoy = /\b(hoy|por hoy|por el resto del dia|el resto del dia|en todo el dia)\b/.test(s);
-  const corta = s.split(' ').length <= 6;
-  if (/\bno me molestes\b|\bno me interrumpas\b|\bdejame (tranquil[oa]|en paz)\b|\bno me avises (mas|nada)\b|\bno quiero (mas )?avisos\b/.test(s) && (hoy || corta)) return { tipo: 'hoy_no' };
-  if (/\bhoy no me (molestes|avises|llames)\b/.test(s)) return { tipo: 'hoy_no' };
-  if (/\b(para|basta|deja) (ya )?(de avisarme|con los avisos|de mandarme avisos)\b/.test(s)) return { tipo: 'hoy_no' };
-  return null;
+const RELLENO_INICIO = /^(?:(?:oye|oiga|mira|aura|au ra|ok|okey|okay|bueno|porfa|por favor|este|eh|ey|hey|hola)\s+)+/;
+const RELLENO_FIN = /(?:\s+(?:porfa|por favor|gracias|aura|au ra|ok|okey|vale|eh|please|pues))+$/;
+/** Dictado para otra persona o por un canal: lo que sigue es lo que hay que decirle a alguien, no una orden. */
+const DICTADO =
+  /\b(?:dile|dila|digale|decile|decirle|escribele|escribile|escribirle|mandale|mandarle|enviale|enviarle|contestale|contestarle|respondele|responderle|avisale|avisarle|preguntale|preguntarle|reenviale|comentale|cuentale|textea|textear)\b|\bpor (?:whatsapp|wasap|wasa|wa|correo|mail|email|e mail|mensaje|sms|telegram|chat|texto)\b|\b(?:un|el) (?:mensaje|whatsapp|wasap|correo|mail|email|texto) (?:a|para)\b/;
+/** Un recordatorio, una alarma o algo para la agenda: eso es de los recordatorios, no de la iniciativa. */
+const RECORDATORIO = /\b(?:recuerdame|recordame|recordarme|recordatorio|recordatorios|agenda|agendame|agendar|agendalo|alarma|alarmas|despiertame|apuntame|anotame)\b|\bpon(?:me|le)? (?:un|una) (?:recordatorio|alarma|cita)\b/;
+const HOY = '(?:hoy|por hoy|el resto del dia|por el resto del dia|en todo el dia|todo el dia|lo que queda del dia|por lo que queda del dia|en lo que queda del dia)';
+/** El resumen de la iniciativa, y solo ese. */
+const RES = '(?:(?:el|mi|tu) resumen (?:de la manana|de las mananas|de cada manana|del dia|de cada dia|diario|matutino)|mi resumen(?: diario)?)';
+const NUM_HORA = '(?:\\d{1,2}(?:h\\d{2})?|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)';
+const TIEMPO = `(${NUM_HORA}(?: y (?:media|cuarto|\\d{1,2}))?(?: (?:am|pm|a m|p m|de la manana|de la tarde|de la noche))?)`;
+const VERBO_HORA = '(?:mandame|manda|mandamelo|enviame|envia|dame|damelo|quiero|pon|ponme|ponlo|cambia|cambiame|cambialo|mueve|muevelo|programa|programame|pasa|pasame|ajusta|deja|dejame|enciende|enciendeme|activa|activame|prende|prendeme)';
+const VERBO_ENCENDER = /^(?:enciende|enciendeme|activa|activame|prende|prendeme|reactiva|vuelve a activar|vuelve a encender)\b/;
+
+const ORDENES: Array<{ re: RegExp; tipo: 'hoy_no' | 'no_llames' | 'sin_resumen' | 'encender_resumen' }> = [
+  { tipo: 'hoy_no', re: new RegExp(`^(?:${HOY} )?(?:ya )?no me (?:molestes|interrumpas|busques)(?: mas)?(?: ${HOY})?$`) },
+  { tipo: 'hoy_no', re: new RegExp(`^(?:${HOY} )?dejame (?:tranquil[oa]|en paz)(?: ${HOY})?$`) },
+  { tipo: 'hoy_no', re: /^hoy no me (?:avises|llames|busques|escribas|mandes avisos)(?: (?:de )?nada| mas)?$/ },
+  { tipo: 'hoy_no', re: new RegExp(`^(?:ya )?no me avises (?:mas|nada|de nada)(?: ${HOY})?$|^(?:ya )?no me avises ${HOY}$|^(?:ya )?no me mandes (?:mas )?(?:avisos|nada)(?: ${HOY})?$`) },
+  { tipo: 'hoy_no', re: new RegExp(`^(?:${HOY} )?(?:ya )?no quiero (?:mas )?(?:avisos|notificaciones)(?: ${HOY})?$`) },
+  { tipo: 'hoy_no', re: new RegExp(`^(?:para|basta|deja|ya basta) (?:ya )?(?:de avisarme|con los avisos|de mandarme avisos|de molestarme)(?: ${HOY})?$`) },
+  { tipo: 'no_llames', re: /^ya no me llames(?: mas)?(?: por tu cuenta)?$|^no me llames (?:mas|nunca|nunca mas)(?: por tu cuenta)?$|^(?:ya )?no me llames por tu cuenta$/ },
+  { tipo: 'no_llames', re: /^(?:ya )?no me vuelvas a llamar(?: nunca| mas)?(?: por tu cuenta)?$|^(?:ya )?deja de llamarme(?: por tu cuenta)?$|^nunca me llames(?: por tu cuenta)?$/ },
+  { tipo: 'no_llames', re: /^(?:ya )?no quiero que me llames(?: mas| nunca| por tu cuenta)*$/ },
+  { tipo: 'sin_resumen', re: new RegExp(`^(?:ya )?no (?:me )?(?:mandes|envies|des|hagas|quiero)(?: mas)? ${RES}(?: mas)?$|^(?:ya )?no quiero recibir ${RES}$`) },
+  { tipo: 'sin_resumen', re: new RegExp(`^(?:quita|quitame|apaga|apagame|cancela|cancelame|desactiva|desactivame|elimina) ${RES}$`) },
+  { tipo: 'encender_resumen', re: new RegExp(`^(?:enciende|enciendeme|activa|activame|prende|prendeme|reactiva|vuelve a activar|vuelve a encender) ${RES}(?: otra vez)?$`) },
+];
+/** «[verbo] el resumen de la mañana a las 7» (grupos: verbo, hora) y «a las 7 [verbo] mi resumen» (grupos: hora, verbo). */
+const HORA_RESUMEN_DESPUES = new RegExp(`^(?:(${VERBO_HORA}) )?(?:que me llegue |la hora de )?${RES} (?:a|para) las? ${TIEMPO}$`);
+const HORA_RESUMEN_ANTES = new RegExp(`^a las? ${TIEMPO} (?:(${VERBO_HORA}) )?${RES}$`);
+
+/** La frase plegada (sin tildes ni signos, sin muletillas a los lados), con la hora entera: «6:45» → «6h45», «a. m.» → «am». */
+function plegarOrden(t: string): string {
+  return String(t || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\b([ap])\s?\.\s?m\b\.?/g, '$1m')
+    .replace(/(\d{1,2})[:.](\d{2})\b/g, '$1h$2')
+    .replace(/[¡!¿?.,;:«»"“”()]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(RELLENO_INICIO, '')
+    .replace(RELLENO_FIN, '')
+    .trim();
 }
 
-/** Cuánto vale un «para» a secas tras un empujón (pasado esto, es solo callar la voz). */
-export const PARA_TRAS_EMPUJON_MS = 15 * 60_000;
+/** La hora dicha para el resumen, si vale: con «mañana/tarde/noche» o «am/pm», cualquiera; sin eso, de 5 a 11. */
+function horaDelResumen(tiempo: string): string | null {
+  const h = horaDicha(`a las ${tiempo}`);
+  if (!h) return null;
+  if (/\b(am|pm|a m|p m|manana|tarde|noche)$/.test(tiempo)) return h;
+  const hora = Number(h.slice(0, 2));
+  return hora >= 5 && hora <= 11 ? h : null;
+}
 
-/** ¿Un «para» suelto ahora pausa los empujones? Solo si el último empujón fue hace poco. */
-export function paraSueltoPausa(e: Pick<EstadoDia, 'empujones'>, ahora: number): boolean {
-  const ultimo = e.empujones.reduce((m, x) => Math.max(m, x.t), 0);
-  return !!ultimo && ahora - ultimo >= 0 && ahora - ultimo <= PARA_TRAS_EMPUJON_MS;
+/**
+ * ¿Es una orden para la iniciativa del día? Conservador: solo la frase entera y clara (ver arriba). Lo demás, null: el
+ * turno sigue su camino de siempre.
+ */
+export function comandoIniciativa(texto: string): ComandoIniciativa | null {
+  const crudo = String(texto || '');
+  if (!crudo.trim() || crudo.length > 160) return null;
+  const s = plegarOrden(crudo);
+  if (!s || DICTADO.test(s) || RECORDATORIO.test(s)) return null;
+  for (const o of ORDENES) if (o.re.test(s)) return { tipo: o.tipo };
+  const despues = HORA_RESUMEN_DESPUES.exec(s);
+  const antes = despues ? null : HORA_RESUMEN_ANTES.exec(s);
+  if (!despues && !antes) return null;
+  const [verbo, tiempo] = despues ? [despues[1] || '', despues[2]] : [antes![2] || '', antes![1]];
+  const hora = horaDelResumen(tiempo);
+  return hora ? { tipo: 'hora_resumen', hora, encender: VERBO_ENCENDER.test(verbo) } : null;
 }
 
 /** «7:30» como se dice. */
@@ -665,15 +867,28 @@ export function horaParaDecir(hhmm: string): string {
 
 /* ------------------------------------------------------------------ la llamada por un VIP urgente */
 
+/** Como mucho tantas llamadas por un VIP urgente al día; las demás, el aviso de siempre. */
+export const TOPE_LLAMADAS_VIP_DIA = 2;
+
 /**
  * ¿Llamar (en lugar del aviso) por un mensaje urgente de un VIP? Solo si la iniciativa está encendida, eligió «llámame»
- * para eso, no es hoy «no me molestes» y no está en sus horas quietas. Nunca lanza (ante la duda, no llama).
+ * para eso, no es hoy «no me molestes» (registro durable), no está en sus horas quietas y queda llamada en el tope del
+ * día (TOPE_LLAMADAS_VIP_DIA). Si dice que sí, la llamada ya quedó RECLAMADA en el registro durable (lib/envios.ts,
+ * compartido entre procesos: dos procesos no se pasan del tope). Nunca lanza (ante la duda, no llama: va el aviso).
  */
 export async function quiereLlamadaVip(correo: string, ahora = Date.now()): Promise<boolean> {
   try {
     const e = await leerDia(correo);
     const p = prefsEfectivas(e.prefs, { dueno: esCuentaDuena(correo) });
-    return p.activa && p.llamarVip && e.hoyNo !== fechaLocal(ahora, p.zona) && !enQuietas(ahora, p.zona, p.quietas);
+    if (!p.activa || !p.llamarVip || e.hoyNo === fechaLocal(ahora, p.zona) || enQuietas(ahora, p.zona, p.quietas)) return false;
+    if (await hoyNoActivo(correo, ahora)) return false;
+    const fecha = fechaLocal(ahora, p.zona);
+    for (let i = 1; i <= TOPE_LLAMADAS_VIP_DIA; i++) {
+      const v = await vezDelEvento('iniciativa-vip-llamada', String(correo).trim().toLowerCase(), `${fecha}#${i}`);
+      if (v === 'primera') return true;
+      if (v === 'incierto') return false;
+    }
+    return false;
   } catch {
     return false;
   }

@@ -16,6 +16,7 @@
 import type express from 'express';
 import crypto from 'node:crypto';
 import {
+  avisoResumen,
   candidatosEmpujon,
   cambiarPrefsDia,
   comandoIniciativa,
@@ -29,12 +30,13 @@ import {
   finDeHoy,
   hayAlgoQueDecir,
   horaParaDecir,
+  hoyNoActivo,
   IniciativaDiaNoDisponible,
   leerDia,
-  paraSueltoPausa,
   pausarHoy,
   prefsEfectivas,
   prefsPorOmisionDia,
+  previsualizarCambiosDia,
   reclamarEmpujon,
   reclamarGeneracion,
   reclamarResumen,
@@ -43,9 +45,11 @@ import {
   TOPE_EMPUJONES_DIA,
   validarCambiosDia,
   type AbiertoDia,
+  type BorradorDia,
   type EventoDia,
   type MaterialResumen,
   type PrefsDia,
+  type PrefsGuardadas,
   type PropuestaDia,
   type Redactor,
 } from '../lib/iniciativa-dia';
@@ -64,11 +68,25 @@ export type FuentesDia = {
   misiones: (correo: string) => Promise<Array<{ titulo: string; proximoPaso?: string }>>;
   /** La propuesta de la iniciativa de siempre que espera su respuesta (si la hay). */
   propuesta: (correo: string) => Promise<PropuestaDia | null>;
+  /**
+   * Los borradores que esperan su «sí» DE VERDAD: las decisiones abiertas del sistema de decisiones (las tareas durables
+   * en `awaiting_approval` ligadas a un borrador, server/trabajos.ts). Sin esta fuente no se empuja ningún borrador.
+   */
+  borradores?: (correo: string) => Promise<BorradorDia[]>;
+  /**
+   * ¿Ese borrador ya tiene envío registrado? (lib/envios.ts reciboDeBorrador). Se mira justo antes de empujar: con
+   * recibo (o sin poder saberlo, o sin esta fuente) no se dice que espera.
+   */
+  reciboEnvio?: (correo: string, canal: BorradorDia['canal'], intento: string) => Promise<'hay' | 'ninguno' | 'incierto'>;
 };
 
 /** Por dónde sale. Cada una dice a cuántos aparatos llegó (0: a ninguno) y nunca lanza. */
 export type SalidasDia = {
-  avisar: (correo: string, a: { titulo: string; texto: string; id: string }) => Promise<number>;
+  /**
+   * `texto`: lo que se ve en el aviso (en la pantalla bloqueada: del resumen, solo cuántos y quién); `decir`: lo que AURA
+   * dice al tocarlo, ya en la app (el resumen entero). Sin `decir`, dice `texto`.
+   */
+  avisar: (correo: string, a: { titulo: string; texto: string; id: string; decir?: string }) => Promise<number>;
   llamar: (correo: string, a: { motivo: string; id: string }) => Promise<number>;
   /** Una sola vez en el registro durable (lib/envios.ts primeraVezEvento). */
   unaVez?: (fuente: string, correo: string, id: string) => Promise<boolean>;
@@ -93,21 +111,32 @@ const conTope = <T>(p: Promise<T>, ms: number, siNo: T): Promise<T> =>
 /** Lo que va en el resumen de hoy: cada fuente con su tope (lo que no contesta, no se dice). */
 export async function materialDelDia(correo: string, f: FuentesDia, p: PrefsDia, ahora: number): Promise<MaterialResumen> {
   const fin = finDeHoy(ahora, p.zona);
-  const [eventos, recordatorios, mensajes, abiertos, misiones] = await Promise.all([
+  const [eventos, recordatorios, mensajes, abiertos, misiones, borradores] = await Promise.all([
     conTope(f.eventos(correo, ahora, fin), 15_000, null),
     conTope(f.recordatorios(correo, ahora, fin), 8_000, []),
     conTope(f.mensajes(correo, desdeAnoche(ahora, p.zona)), 20_000, []),
     conTope(f.abiertos(correo), 8_000, []),
     conTope(f.misiones(correo), 8_000, []),
+    f.borradores ? conTope(f.borradores(correo), 8_000, [] as BorradorDia[]) : Promise.resolve([] as BorradorDia[]),
   ]);
   return {
     eventos: eventos ? eventos.filter((e) => (e.fin ?? e.inicio) > ahora).sort((a, b) => a.inicio - b.inicio) : null,
     recordatorios: recordatorios.filter((r) => r.cuando >= ahora && r.cuando <= fin).sort((a, b) => a.cuando - b.cuando),
     mensajes,
-    abiertos: abiertos.filter((a) => a.estado === 'abierto' && a.tipo !== 'mision').map((a) => ({ texto: a.texto, tipo: a.tipo })),
+    // Los borradores detectados con reglas en la conversación (lib/abiertos.ts) no se cierran cuando salen: no cuentan.
+    // Los que esperan de verdad vienen del sistema de decisiones (`borradores`).
+    abiertos: abiertos.filter((a) => a.estado === 'abierto' && a.tipo !== 'mision' && a.tipo !== 'borrador').map((a) => ({ texto: a.texto, tipo: a.tipo })),
     misiones,
+    borradores: (await borradoresSinEnvio(correo, f, borradores.filter((b) => !b.caduca || b.caduca > ahora))).map((b) => ({ canal: b.canal, para: b.para })),
     zona: p.zona,
   };
+}
+
+/** Solo los borradores sin recibo de envío (con recibo, o sin poder saberlo, no se dice que esperan). */
+async function borradoresSinEnvio(correo: string, f: FuentesDia, bs: BorradorDia[]): Promise<BorradorDia[]> {
+  if (!bs.length || !f.reciboEnvio) return [];
+  const r = await Promise.all(bs.slice(0, 6).map((b) => conTope(f.reciboEnvio!(correo, b.canal, b.id), 5_000, 'incierto' as const)));
+  return bs.slice(0, 6).filter((_, i) => r[i] === 'ninguno');
 }
 
 /* ------------------------------------------------------------------ el reloj */
@@ -160,7 +189,7 @@ export class RelojIniciativaDia {
       for (const correo of lista.slice(0, this.d.max ?? 60)) {
         try {
           const r = await this.resumenPara(correo);
-          if (r.porque !== 'temprano' && r.porque !== 'ya' && r.porque !== 'apagado' && r.porque !== 'tarde') out.resumenes.push(r);
+          if (!['temprano', 'ya', 'apagado', 'tarde', 'quietas'].includes(r.porque)) out.resumenes.push(r);
           const ahora = this.ahora();
           if (ahora - (this.revisado.get(correo) || 0) >= EMPUJON_CADA_MS) {
             this.revisado.set(correo, ahora);
@@ -189,6 +218,8 @@ export class RelojIniciativaDia {
     const t = tocaResumen(e, p, ahora);
     if (t.toca === false) return { correo, salio: false, porque: (t as { porque: string }).porque };
     const fecha = (t as { fecha: string }).fecha;
+    // «No me molestes hoy» dicho en OTRO proceso (su caché del cajón no lo ve): el registro durable sí.
+    if (await hoyNoActivo(correo, ahora)) return { correo, salio: false, porque: 'hoy_no' };
     if (!(await reclamarResumen(correo, fecha))) return { correo, salio: false, porque: 'ya' };
     if (this.d.salidas.unaVez && !(await this.d.salidas.unaVez('iniciativa-resumen', correo, fecha).catch(() => true))) return { correo, salio: false, porque: 'ya' };
     const m = await materialDelDia(correo, this.d.fuentes, p, ahora);
@@ -197,11 +228,13 @@ export class RelojIniciativaDia {
     const r = await redactarResumen(m, { redactor, puedeGenerar: () => reclamarGeneracion(correo, fecha) });
     if (!r.texto) return { correo, salio: false, porque: 'vacio' };
     const id = idDe('dia', correo, fecha);
+    // Lo que se ve en la pantalla bloqueada (el aviso, el motivo de la llamada): solo cuántos y quién, nunca texto libre.
+    const visible = avisoResumen(m) || 'Tengo tu resumen de hoy. Tócalo y te lo cuento.';
     if (p.llamarResumen && !enQuietas(this.ahora(), p.zona, p.quietas)) {
-      const n = await this.d.salidas.llamar(correo, { motivo: corto(r.texto), id }).catch(() => 0);
+      const n = await this.d.salidas.llamar(correo, { motivo: corto(visible), id }).catch(() => 0);
       if (n > 0) return { correo, salio: true, porque: 'llamada', texto: r.texto, por: 'llamada', generado: r.generado };
     }
-    const n = await this.d.salidas.avisar(correo, { titulo: 'Tu día', texto: r.texto, id }).catch(() => 0);
+    const n = await this.d.salidas.avisar(correo, { titulo: 'Tu día', texto: visible, decir: r.texto, id }).catch(() => 0);
     return { correo, salio: n > 0, porque: n > 0 ? 'aviso' : 'sin_aparatos', texto: r.texto, por: 'aviso', generado: r.generado };
   }
 
@@ -216,14 +249,27 @@ export class RelojIniciativaDia {
     const p = prefsEfectivas(e.prefs, { dueno: esCuentaDuena(correo) });
     const d = decidirEmpujon(e, p, ahora);
     if (d.ok === false) return { correo, salio: false, porque: (d as { porque: string }).porque };
-    const [eventos, abiertos, propuesta] = await Promise.all([
-      conTope(this.d.fuentes.eventos(correo, ahora, ahora + 16 * 60_000), 15_000, null),
-      conTope(this.d.fuentes.abiertos(correo), 8_000, []),
-      conTope(this.d.fuentes.propuesta(correo), 8_000, null),
+    if (await hoyNoActivo(correo, ahora)) return { correo, salio: false, porque: 'hoy_no' };
+    const f = this.d.fuentes;
+    const [eventos, abiertos, propuesta, borradores] = await Promise.all([
+      conTope(f.eventos(correo, ahora, ahora + 16 * 60_000), 15_000, null),
+      conTope(f.abiertos(correo), 8_000, []),
+      conTope(f.propuesta(correo), 8_000, null),
+      f.borradores ? conTope(f.borradores(correo), 8_000, [] as BorradorDia[]) : Promise.resolve([] as BorradorDia[]),
     ]);
-    const c = candidatosEmpujon({ eventos, abiertos, propuesta }, ahora, e.claves)[0];
+    let c = null as ReturnType<typeof candidatosEmpujon>[number] | null;
+    for (const x of candidatosEmpujon({ eventos, abiertos, propuesta, borradores }, ahora, e.claves)) {
+      // Un borrador: justo antes, que no tenga recibo de envío (pudo salir por el panel o por otro camino). Sin poder
+      // saberlo, tampoco: nunca se dice que espera algo que pudo haber salido.
+      if (x.borrador && (!f.reciboEnvio || (await conTope(f.reciboEnvio(correo, x.borrador.canal, x.borrador.id), 5_000, 'incierto' as const)) !== 'ninguno')) continue;
+      c = x;
+      break;
+    }
     if (!c) return { correo, salio: false, porque: 'nada' };
     if (!(await reclamarEmpujon(correo, c, ahora))) return { correo, salio: false, porque: 'reclamado' };
+    // Además del cajón (la caché de ESTE proceso), el registro durable: dos procesos a la vez (un despliegue) no mandan
+    // el mismo empujón dos veces.
+    if (this.d.salidas.unaVez && !(await this.d.salidas.unaVez('iniciativa-empujon', correo, c.clave).catch(() => true))) return { correo, salio: false, porque: 'reclamado' };
     const n = await this.d.salidas.avisar(correo, { titulo: 'AURA', texto: c.texto, id: idDe('emp', correo, c.clave) }).catch(() => 0);
     return { correo, salio: n > 0, porque: n > 0 ? 'aviso' : 'sin_aparatos', texto: c.texto, clave: c.clave };
   }
@@ -231,37 +277,70 @@ export class RelojIniciativaDia {
 
 /* ------------------------------------------------------------------ la voz */
 
+/** Lo que AURA dice al pausar el día: la verdad de lo que todavía puede llegar (lib/alertas-mensajes.ts). */
+export const DECIR_HOY_NO = 'Listo, hoy no te busco. Solo te aviso si algo urgente de tus contactos importantes.';
+
 /**
- * Una orden de la iniciativa dicha en un turno («no me molestes hoy», «mándame el resumen a las 7», «ya no me llames»).
- * null si no es una. `decir`: lo que AU-RA contesta (la verdad de lo que quedó guardado). Un «para» a secas nunca se
- * contesta aquí (sigue siendo callar la voz); si hubo un empujón hace poco, además pausa los de hoy por detrás.
+ * Una orden de la iniciativa dicha en un turno («no me molestes hoy», «mándame el resumen de la mañana a las 7», «ya no me
+ * llames»). null si no es una. `decir`: lo que AU-RA contesta (la verdad de lo que queda guardado). «para» / «basta» a
+ * secas no son de aquí: callan la voz y nada más.
+ *
+ * EL CONTRATO DEL TURNO ESPECULATIVO (revisión de la tanda F, B2): con `hacer` (el `retener.hacer` del turno: la voz de
+ * ElevenLabs o la mesa especulativa del teléfono), NADA se escribe aquí: se lee lo de ahora para contestar la verdad y la
+ * escritura va a `hacer`, que la corre solo si el turno se confirma. Una frase a medias que se descarta («no me
+ * molestes…» que seguía «…con eso ahora, dime la hora») no pausa el día.
  */
-export async function ordenIniciativaDia(correo: string, texto: string, ahora = Date.now()): Promise<{ decir: string; via: string } | null> {
+export async function ordenIniciativaDia(correo: string, texto: string, ahora = Date.now(), o: { hacer?: (f: () => void) => void } = {}): Promise<{ decir: string; via: string } | null> {
   const c = comandoIniciativa(texto);
   const quien = String(correo || '').trim().toLowerCase();
   if (!c || !quien.includes('@')) return null;
-  if (c.tipo === 'para_suelto') {
-    void leerDia(quien)
-      .then((e) => (paraSueltoPausa(e, ahora) ? pausarHoy(quien, ahora) : null))
-      .catch(() => undefined);
-    return null;
-  }
   const noPude = 'No pude guardarlo en este momento; no cambié nada. Puedes hacerlo en Ajustes → Iniciativa.';
+  /** Escribe ya (sin `hacer`) o al confirmarse el turno (con `hacer`: lo de antes ya se comprobó que se puede leer). */
+  const escribir = async (f: () => Promise<unknown>) => {
+    if (!o.hacer) return void (await f());
+    o.hacer(() => {
+      void f().catch((e) => console.warn('[iniciativa-dia] orden por voz (al confirmar)', String((e as Error)?.message || e).slice(0, 120)));
+    });
+  };
+  const cambio = async (cambios: PrefsGuardadas) => {
+    if (!o.hacer) {
+      const r = await cambiarPrefsDia(quien, cambios, ahora);
+      return { p: r.prefs, desdeManana: r.desdeManana, enQuietas: r.enQuietas };
+    }
+    // Lo que va a quedar, sin escribir todavía (lanza si el cajón no se pudo leer: entonces no se promete nada).
+    const previa = await previsualizarCambiosDia(quien, cambios, ahora);
+    await escribir(() => cambiarPrefsDia(quien, cambios, ahora));
+    return previa;
+  };
   try {
     if (c.tipo === 'hoy_no') {
-      await pausarHoy(quien, ahora);
-      return { decir: 'Entendido: hoy no te busco más. Mañana vuelvo con lo de siempre.', via: 'iniciativa-hoy-no' };
+      await leerDia(quien);
+      await escribir(() => pausarHoy(quien, ahora));
+      return { decir: DECIR_HOY_NO, via: 'iniciativa-hoy-no' };
     }
     if (c.tipo === 'no_llames') {
-      await cambiarPrefsDia(quien, { llamarResumen: false, llamarVip: false }, ahora);
+      await cambio({ llamarResumen: false, llamarVip: false });
       return { decir: 'Entendido: ya no te llamo por mi cuenta. Si hay algo, te llega como notificación.', via: 'iniciativa-no-llames' };
     }
     if (c.tipo === 'sin_resumen') {
-      await cambiarPrefsDia(quien, { resumen: false }, ahora);
+      await cambio({ resumen: false });
       return { decir: 'Entendido: no más resumen de la mañana. Lo vuelves a encender en Ajustes → Iniciativa.', via: 'iniciativa-sin-resumen' };
     }
-    const r = await cambiarPrefsDia(quien, { activa: true, resumen: true, horaResumen: c.hora }, ahora);
-    return { decir: `Listo: el resumen te llega a las ${horaParaDecir(r.prefs.horaResumen)}${r.desdeManana ? ', desde mañana' : ''}.`, via: 'iniciativa-hora-resumen' };
+    if (c.tipo === 'encender_resumen') {
+      const r = await cambio({ activa: true, resumen: true });
+      return { decir: `Listo: tu resumen de la mañana queda encendido; te llega a las ${horaParaDecir(r.p.horaResumen)}${r.desdeManana ? ', desde mañana' : ''}.`, via: 'iniciativa-encender-resumen' };
+    }
+    // La hora del resumen. Cambiarla no enciende la iniciativa de quien la tiene apagada, salvo que lo pida («enciende…»).
+    const r = await cambio({ resumen: true, horaResumen: c.hora, ...(c.encender ? { activa: true } : {}) });
+    const h = horaParaDecir(r.p.horaResumen);
+    if (!r.p.activa) {
+      return {
+        decir: `Guardé las ${h} para tu resumen de la mañana, pero tu iniciativa del día está apagada, así que todavía no te llega. Si lo quieres, dime «enciende mi resumen de la mañana» o actívala en Ajustes → Iniciativa.`,
+        via: 'iniciativa-hora-resumen',
+      };
+    }
+    const quietas = r.enQuietas ? ` Ojo: esa hora cae en tus horas quietas (de ${horaParaDecir(r.p.quietas.desde)} a ${horaParaDecir(r.p.quietas.hasta)}); como la elegiste tú, te lo mando a esa hora.` : '';
+    return { decir: `Listo: el resumen te llega a las ${h}${r.desdeManana ? ', desde mañana' : ''}.${quietas}`, via: 'iniciativa-hora-resumen' };
   } catch (e) {
     if (!(e instanceof IniciativaDiaNoDisponible)) console.warn('[iniciativa-dia] orden por voz', String((e as Error)?.message || e).slice(0, 120));
     return { decir: noPude, via: 'iniciativa-fallo' };
@@ -325,7 +404,7 @@ export function montarRutasIniciativaDia(app: express.Express, d: DepsRutasDia) 
     if (!v.ok) return res.status(400).json({ error: (v as { error: string }).error, honesto: true });
     try {
       const r = await cambiarPrefsDia(c, v.cambios, ahora());
-      return res.json({ ...(await vista(c)), desdeManana: r.desdeManana, durable: r.durable });
+      return res.json({ ...(await vista(c)), desdeManana: r.desdeManana, enQuietas: r.enQuietas, durable: r.durable });
     } catch (e) {
       return fallo(res, e);
     }
@@ -375,7 +454,30 @@ export function fuentesProductivas(): FuentesDia {
       const p = est.ok ? est.estado.pendiente : null;
       return p ? { id: p.id, texto: p.texto, creada: p.creada, ...(p.entregada ? { entregada: p.entregada } : {}) } : null;
     },
+    borradores: async (correo) => borradoresEsperando(await (await import('../lib/tareas-durables')).listarTareas(correo)),
+    reciboEnvio: async (correo, canal, intento) => (await import('../lib/envios')).reciboDeBorrador(canal, correo, intento),
   };
+}
+
+/**
+ * Los borradores que esperan su «sí» en el sistema de decisiones: las tareas durables en `awaiting_approval` cuya decisión
+ * está ligada a un borrador (server/trabajos.ts abrirDecisionDeBorrador), sin pospone ni vencer. Solo canal, a quién y
+ * desde cuándo (nada del texto). Si la lista no se pudo leer, ninguno (nunca se adivina).
+ */
+export function borradoresEsperando(
+  lista: { ok: true; tareas: Array<{ estado: string; decision?: { creada: number; caduca?: number; pospuesta?: boolean; pospuestaHasta?: number | null; propuesta: { destinatario?: string }; vinculo?: { tipo: string; canal?: string; intento?: string } } | null }> } | { ok: false },
+  ahora = Date.now()
+): BorradorDia[] {
+  if (!lista.ok) return [];
+  const out: BorradorDia[] = [];
+  for (const t of lista.tareas) {
+    const d = t.decision;
+    const v = d?.vinculo;
+    if (t.estado !== 'awaiting_approval' || !d || !v || v.tipo !== 'borrador' || !v.intento || (v.canal !== 'correo' && v.canal !== 'whatsapp')) continue;
+    if (d.pospuesta || (d.pospuestaHasta && d.pospuestaHasta > ahora) || (d.caduca && d.caduca <= ahora)) continue;
+    out.push({ id: v.intento, canal: v.canal, para: String(d.propuesta?.destinatario || ''), creado: d.creada, ...(d.caduca ? { caduca: d.caduca } : {}) });
+  }
+  return out;
 }
 
 /**

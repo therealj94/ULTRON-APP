@@ -70,6 +70,11 @@ export type DatosPush = {
   /** A-3: el recordatorio del servidor de esta vez, y cuál vez (ms). Vacío / 0 en los demás avisos. */
   rid: string;
   cuando: number;
+  /**
+   * mensaje: lo que AURA dice al tocarlo, ya en la app (revisión de la tanda F: el resumen de la mañana trae en `texto`
+   * solo cuántos y quién, para la pantalla bloqueada, y lo detallado aquí). Vacío: dice `texto`.
+   */
+  decir: string;
 };
 
 export const CANAL_AVISOS = 'aura-avisos';
@@ -120,6 +125,7 @@ export function leerDatos(d: unknown): DatosPush | null {
     urgente: x.urgente === '1' || x.urgente === true ? '1' : '',
     rid: /^aura-rec-s[a-z0-9]{8,20}$/.test(String(x.rid || '')) ? String(x.rid) : '',
     cuando: Number.isFinite(Number(x.cuando)) ? Number(x.cuando) : 0,
+    decir: tipo === 'mensaje' ? linea(x.decir, 900) : '',
   };
 }
 
@@ -138,6 +144,8 @@ function datosAviso(p: DatosPush): Record<string, string> {
     texto: p.texto,
     pedido: p.pedido,
     abrir: p.abrir,
+    // Lo que AURA dice al tocarlo: en los datos del aviso (no se muestra), nunca en el cuerpo que se ve bloqueado.
+    ...(p.tipo === 'mensaje' && p.decir ? { decir: p.decir } : {}),
     ...(p.tipo === 'mensaje-externo' ? { canal: p.canal, chat: p.chat, nombre: p.nombre, sugerencia: p.sugerencia, urgente: p.urgente } : {}),
   };
 }
@@ -315,6 +323,7 @@ function leerDatosAviso(d: unknown): DatosPush | null {
 export function textoAlAbrir(p: DatosPush): string | null {
   switch (p.tipo) {
     case 'mensaje':
+      if (p.decir) return p.decir;
       return p.texto ? (p.titulo && p.titulo !== 'AURA' ? `${p.titulo}. ${p.texto}` : p.texto) : null;
     case 'recordatorio':
       return p.texto ? tr(`Te recuerdo: ${p.texto}`, `A reminder: ${p.texto}`) : null;

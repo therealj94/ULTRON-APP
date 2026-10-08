@@ -6,7 +6,7 @@
  * nombra en la escena hasta que la dueña lo toca en su pantalla (POST /api/caras/:id/confirmar, /api/voces/:id/confirmar).
  *
  * Lo puro (sin React Native; lo prueba pruebas/consentimiento): las filas de la hoja con su insignia, lo que dice la hoja de
- * confirmar (a quién se guardó, quién la presentó, cuándo y «es menor de edad»), a quién toca avisar UNA vez al abrir la
+ * confirmar (a quién se guardó, quién la presentó, cuándo y «puede ser menor de edad»), a quién toca avisar UNA vez al abrir la
  * mesa, y el aviso entre «Más → Caras / Voces» (useCaras, useVoces) y la hoja (HojaConsentimiento.tsx), que vive una sola
  * vez en la mesa.
  */
@@ -95,7 +95,7 @@ export function fechaCorta(t: number, en = false): string {
   return en ? `${meses[d.getMonth()]} ${d.getDate()}, ${reloj}` : `${d.getDate()} ${meses[d.getMonth()]}, ${reloj}`;
 }
 
-/** La hoja de confirmar: el título, las líneas (a quién, quién la presentó, cuándo, «es menor de edad») y la nota. */
+/** La hoja de confirmar: el título, las líneas (a quién, quién la presentó, cuándo, «puede ser menor de edad») y la nota. */
 export function detalleConfirmar(f: FilaBio, en = false): { titulo: string; lineas: string[]; nota: string } {
   const que = f.tipo === 'cara' ? (en ? 'face' : 'cara') : en ? 'voice' : 'voz';
   const como = f.parentesco ? (en ? `${f.nombre} (your ${f.parentesco})` : `${f.nombre} (tu ${f.parentesco})`) : f.nombre;
@@ -103,7 +103,7 @@ export function detalleConfirmar(f: FilaBio, en = false): { titulo: string; line
   if (f.presentadoPor) lineas.push(en ? `Introduced by ${f.presentadoPor}.` : `La presentó ${f.presentadoPor}.`);
   // «a. m.» / «p. m.» ya cierran con punto.
   if (f.cuando) lineas.push(en ? `When: ${fechaCorta(f.cuando, true)}.` : `Cuándo: ${fechaCorta(f.cuando)}`);
-  if (f.menor) lineas.push(en ? 'This person may be a minor.' : 'Es menor de edad.');
+  if (f.menor) lineas.push(en ? 'This person may be a minor.' : 'Puede ser menor de edad.');
   const nota = en
     ? `Until you confirm here, I don't use this ${que} to recognize anyone and I don't say the name. “Yes, save” keeps it; “Delete” erases it.`
     : `Hasta que lo confirmes aquí, no uso esta ${que} para reconocer a nadie ni digo su nombre. «Sí, guardar» la deja; «Borrar» la borra.`;
