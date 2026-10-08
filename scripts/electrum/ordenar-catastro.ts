@@ -15,6 +15,11 @@
  *   … --decidir 417=borrar,274=dejar                           corrige la propuesta capa por capa (y suma
  *                                                             capas que no propuso, p. ej. una copia
  *                                                             repetida de una referencia)
+ *   … --decidir … --solo-lo-decidido                         aplica SOLO las capas de --decidir (y la
+ *                                                             oficial); el resto de la propuesta queda
+ *                                                             como está. Sin esto, lo demás que proponga
+ *                                                             (p. ej. borrar copias vacías) también se
+ *                                                             aplica.
  *   … --oficial-huellas huellas.txt                            huellas del archivo oficial (una por
  *                                                             línea): lo que sea del archivo cuenta
  *                                                             como oficial aunque esté en otra capa
@@ -51,6 +56,9 @@ async function main() {
       if (fila) Object.assign(fila, { accion, motivo: 'decidido a mano (--decidir)' });
       else filas.push({ capaId, nombre: `capa ${capaId}`, carpeta: null, concesiones: 0, repetidas: 0, rol: null, accion: accion as Accion, motivo: 'decidido a mano (--decidir)' });
     }
+  }
+  if (process.argv.includes('--solo-lo-decidido')) {
+    for (const f of filas) if (f.accion !== 'oficial' && f.motivo !== 'decidido a mano (--decidir)') Object.assign(f, { accion: 'dejar', motivo: 'fuera de --decidir' });
   }
   console.log('[ordenar] propuesta ' + JSON.stringify({ oficial, filas }));
   if (!aplicarlo) return console.log('[ordenar] en seco: no se cambió nada.');
