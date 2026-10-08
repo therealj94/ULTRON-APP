@@ -62,6 +62,21 @@ PMT
 chmod +x /usr/local/bin/electrum-carga-pmtiles
 /usr/local/bin/electrum-carga-pmtiles
 
+# Decodificador de MrSID (.sid): el GDAL de Ubuntu, y el de las imágenes oficiales de GDAL, no lo
+# trae (es un formato con licencia). El SDK de Extensis es de descarga libre y trae `mrsiddecode`,
+# que lo pasa a GeoTIFF con su georreferencia. teselas-lote lo usa si está; sin él, aparta el .sid.
+MRSID_URL=https://bin.extensis.com/download/developer/MrSID_DSDK-9.5.4.4709-rhel6.x86-64.gcc531.tar.gz
+MRSID_SUMA=ea3866aaaf518426a3a423072540f89a337d6a423feaa8e6cc9ac16906273b84
+if curl -fsSL "$MRSID_URL" -o /tmp/mrsid.tgz && echo "${MRSID_SUMA}  /tmp/mrsid.tgz" | sha256sum -c -; then
+  mkdir -p /opt/mrsid && tar -xzf /tmp/mrsid.tgz -C /opt/mrsid
+  D=$(dirname "$(find /opt/mrsid -path '*Raster_DSDK/bin/mrsiddecode' | head -1)")/..
+  printf '#!/bin/sh\nLD_LIBRARY_PATH=%s/lib exec %s/bin/mrsiddecode "$@"\n' "$(cd "$D" && pwd)" "$(cd "$D" && pwd)" > /usr/local/bin/mrsiddecode
+  chmod +x /usr/local/bin/mrsiddecode
+else
+  echo "Sin decodificador de MrSID: los .sid quedarán apartados."
+fi
+rm -f /tmp/mrsid.tgz
+
 mkdir -p /opt/electrum-carga /datos
 cat > /etc/profile.d/electrum-carga.sh <<PERFIL
 export AWS_DEFAULT_REGION=${REGION}

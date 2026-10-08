@@ -620,8 +620,17 @@ function ingerirCsv(nombre: string, texto: string, avisos: Aviso[]): Ingesta {
   }
   const sep = (lineas[0].match(/;/g)?.length || 0) > (lineas[0].match(/,/g)?.length || 0) ? ';' : ',';
   const cab = lineas[0].split(sep).map((c) => c.trim().replace(/^"|"$/g, ''));
-  const iLon = cab.findIndex((c) => /^(lon|lng|longitud|longitude|x|este|easting)$/i.test(c));
-  const iLat = cab.findIndex((c) => /^(lat|latitud|latitude|y|norte|northing)$/i.test(c));
+  // Grados antes que metros: una libreta de campo (Field Move, GPS) trae las dos cosas —x, y en UTM
+  // y latitude, longitude— y tomar la primera que aparece dejaba los puntos en metros.
+  const columna = (...pats: RegExp[]) => pats.map((re) => cab.findIndex((c) => re.test(c))).find((i) => i >= 0) ?? -1;
+  let iLon = columna(/^(lon|lng|longitud|longitude)$/i, /^(x|este|easting)$/i);
+  let iLat = columna(/^(lat|latitud|latitude)$/i, /^(y|norte|northing)$/i);
+  if ((iLon < 0) !== (iLat < 0) || (iLon >= 0 && /^(x|este|easting)$/i.test(cab[iLon]) !== /^(y|norte|northing)$/i.test(cab[iLat]))) {
+    // Un par mezclado (longitud con norte) no es un par: mejor usar x/y juntos.
+    iLon = columna(/^(x|este|easting)$/i);
+    iLat = columna(/^(y|norte|northing)$/i);
+  }
+  const iZona = cab.findIndex((c) => /^(zone|zona|huso|utm[_ ]?zone)$/i.test(c));
   if (iLon < 0 || iLat < 0) {
     avisos.push({ nivel: 'error', texto: `El CSV no trae columnas de coordenadas reconocibles. Encontré: ${cab.join(', ')}. Necesito lon/lat o x/y.` });
     return { capa: null, avisos };
@@ -642,11 +651,24 @@ function ingerirCsv(nombre: string, texto: string, avisos: Aviso[]): Ingesta {
     });
     features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: props });
   }
-  const fc: FeatureCollection = { type: 'FeatureCollection', features };
+  let fc: FeatureCollection = { type: 'FeatureCollection', features };
+  let origenCrs = 'WGS84 (asumido)';
   if (features.length && !pareceGrados(fc)) {
-    avisos.push({ nivel: 'ojo', texto: 'Las coordenadas del CSV no son grados: parecen UTM. Decime la zona y las convierto.' });
+    // Metros con su zona en una columna («16P», «16N», «16»): se sabe de dónde vienen y se convierten.
+    // Banda de latitud N–X (o sin letra) es hemisferio norte; C–M, sur.
+    const zonas = new Set(lineas.slice(1).map((l) => (l.split(sep)[iZona] ?? '').trim().replace(/^"|"$/g, '').toUpperCase()).filter(Boolean));
+    const m = iZona >= 0 && zonas.size === 1 ? /^(\d{1,2})\s*([C-X])?$/.exec([...zonas][0]) : null;
+    if (m && Number(m[1]) >= 1 && Number(m[1]) <= 60) {
+      const epsg = (m[2] && m[2] < 'N' ? 32700 : 32600) + Number(m[1]);
+      definirEpsg(epsg);
+      fc = reproyectar(fc, `EPSG:${epsg}`);
+      origenCrs = `EPSG:${epsg} (zona ${[...zonas][0]} de la columna ${cab[iZona]})`;
+      avisos.push({ nivel: 'info', texto: `El CSV trae UTM zona ${[...zonas][0]}; lo reproyecté a WGS84.` });
+    } else {
+      avisos.push({ nivel: 'ojo', texto: 'Las coordenadas del CSV no son grados: parecen UTM. Decime la zona y las convierto.' });
+    }
   }
-  return { capa: { nombre, geojson: fc, formato: 'csv', origenCrs: 'WGS84 (asumido)', entidades: features.length, descartadas }, avisos: avisar(avisos, fc, descartadas) };
+  return { capa: { nombre, geojson: fc, formato: 'csv', origenCrs, entidades: features.length, descartadas }, avisos: avisar(avisos, fc, descartadas) };
 }
 
 /** Reproyecta una colección entera desde un sistema conocido por proj4 hacia WGS84. */

@@ -93,6 +93,17 @@ apartar() {  # apartar <archivo> <razón>
   printf '%s\t%s\n' "$rel" "$2" >> "${INF}/aparte.txt"
 }
 
+# Un .exe autoextraíble (WinRAR/7-Zip SFX) es un comprimido con un arranque de Windows delante. A veces
+# es la única copia sana: en lote-1 el .rar de los planes de explotación de El Chaparro venía roto y
+# el .exe con el mismo nombre traía los diez .docx enteros. Si abre, manda sobre el .rar gemelo.
+while IFS= read -r -d '' z; do
+  7z l "$z" >/dev/null 2>&1 || continue
+  if 7z x -y -bso0 -bsp0 -o"${z%.*}" "$z" >/dev/null 2>&1; then
+    rm -f "$z"
+    for gemelo in "${z%.*}".rar "${z%.*}".RAR; do [ -f "$gemelo" ] && rm -f "$gemelo"; done
+  fi
+done < <(find "$LISTO" -type f -iname '*.exe' -print0)
+
 # Comprimidos dentro de comprimidos: hasta tres vueltas.
 for vuelta in 1 2 3; do
   abiertos=0
@@ -130,6 +141,32 @@ nuevo.save(dst)
 PY
   then rm -f "$x"; else apartar "$x" "Excel .xls que no se pudo convertir"; fi
 done < <(find "$LISTO" -type f -iname '*.xls' -print0)
+
+# Formatos de oficina que el cargador no lee pero LibreOffice sí: páginas web guardadas (el texto de
+# un artículo o de un chat de WhatsApp Web), diagramas de Visio, hojas SYLK y documentos de
+# OpenOffice. Van a PDF (o a .xlsx las hojas) con su mismo nombre; los «_files/» de una página
+# guardada son su JavaScript y su CSS y no se tocan.
+oficina() {  # oficina <archivo> <formato destino>
+  local f="$1" perfil hecho
+  perfil="$(mktemp -d)"
+  timeout 600 soffice -env:UserInstallation="file://${perfil}" --headless --convert-to "$2" --outdir "${perfil}/sal" "$f" >/dev/null 2>&1 || true
+  hecho="$(find "${perfil}/sal" -maxdepth 1 -type f 2>/dev/null | head -1)"
+  if [ -n "$hecho" ] && [ -s "$hecho" ]; then mv -f "$hecho" "${f%.*}.${2%%:*}"; rm -f "$f"
+  else apartar "$f" "LibreOffice no pudo convertirlo a ${2%%:*}"; fi
+  rm -rf "$perfil"
+}
+while IFS= read -r -d '' f; do
+  case "${f,,}" in */*_files/*) continue ;; esac
+  case "${f,,}" in
+    *.slk|*.ods) oficina "$f" xlsx ;;
+    *) oficina "$f" pdf ;;
+  esac
+done < <(find "$LISTO" -type f \( -iname '*.html' -o -iname '*.htm' -o -iname '*.vsdx' -o -iname '*.vsd' \
+     -o -iname '*.slk' -o -iname '*.ods' -o -iname '*.odt' -o -iname '*.odp' -o -iname '*.wpd' \) -print0)
+
+# Archivos de bloqueo de Office («~$Nota.docx»): quedan cuando alguien tenía el archivo abierto al
+# copiar la carpeta. No son documentos; fallaban como .docx ilegibles.
+find "$LISTO" -type f -name '~$*' -delete
 
 # El cargador lee un shapefile entero en memoria; por encima de 300 MB tumba la carga (fueron las
 # curvas de nivel de todo el país). Eso es relieve, no catastro: se sirve como teselas.
