@@ -135,6 +135,19 @@ async function eventosDe(quien: string, c: Conectados, r: Rango): Promise<{ even
   return { eventos: eventos.sort((a, b) => a.inicio - b.inicio), cuentas, fallos };
 }
 
+/**
+ * Los eventos de un rato, para la iniciativa del día (server/iniciativa-dia.ts: el resumen de la mañana y el empujón de
+ * 15 minutos antes). Solo lectura. null si no tiene calendario conectado, no se pudo leer o ningún proveedor contestó:
+ * entonces no se dice nada de su agenda (nunca «no tienes nada»).
+ */
+export async function eventosParaIniciativa(quien: string, desde: number, hasta: number): Promise<EventoCal[] | null> {
+  const c = await conectados(normal(quien));
+  if (!c.leidas || !c.proveedores.length) return null;
+  const r = await eventosDe(normal(quien), c, { desde, hasta, fechas: [], etiqueta: '' });
+  if (!r.cuentas.some((x) => x.estado === 'consultada')) return null;
+  return r.eventos;
+}
+
 /* ------------------------------------------------------------------ la propuesta (lo que espera su «sí») */
 
 export type PropuestaEvento = {

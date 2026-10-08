@@ -16,6 +16,8 @@
  *   · un aviso por chat cada 10 minutos (una ráfaga no son diez avisos);
  *   · hasta 6 por hora en total (los urgentes tienen su propio tope, 12).
  *   · el mismo mensaje una sola vez (lib/envios.ts primeraVezEvento, también entre réplicas).
+ *   · «llámame» (tanda F2, lib/iniciativa-dia.ts): un urgente de un VIP llega como LLAMADA de AU-RA si lo eligió en
+ *     Ajustes → Iniciativa, fuera de sus horas quietas y si hoy no dijo «no me molestes»; si la llamada no sale, el aviso.
  *
  * Privacidad: solo se avisa a la persona dueña de ESA cuenta (el puente dice la cuenta; lib/duenos-cuenta-wa.ts dice qué
  * correos la usaron y aquí se vuelve a comprobar que la clave de cada correo es esa); solo si su sesión puede usar su
@@ -208,6 +210,13 @@ export type DepsAlertas = {
   primeraVez: (fuente: string, correo: string, id: string) => Promise<boolean>;
   /** Apagó sus avisos en Ajustes (lib/avisos.ts): nada empuja. */
   apagado: (correo: string) => Promise<boolean>;
+  /**
+   * Eligió «llámame» para un urgente de un VIP (lib/iniciativa-dia.ts quiereLlamadaVip: con la iniciativa encendida, fuera
+   * de sus horas quietas y si hoy no dijo «no me molestes»). Ante la duda, no.
+   */
+  quiereLlamada: (correo: string, ahora: number) => Promise<boolean>;
+  /** La llamada de AU-RA de siempre (lib/push.ts llamarPorPush). */
+  llamar: (correo: string, o: { motivo: string; id: string }) => Promise<Pick<ResultadoPush, 'enviados' | 'entrega'>>;
   ahora: () => number;
 };
 
@@ -225,6 +234,8 @@ const DEPS_REALES: DepsAlertas = {
   push: async (c, d) => (await import('./push')).enviarPush(c, d),
   primeraVez: async (f, c, id) => (await import('./envios')).primeraVezEvento(f, c, id),
   apagado: async (c) => (await (await import('./avisos')).preferenciasDe(c)).apagado === true,
+  quiereLlamada: async (c, ahora) => (await import('./iniciativa-dia')).quiereLlamadaVip(c, ahora),
+  llamar: async (c, o) => (await import('./push')).llamarPorPush(c, o),
   ahora: () => Date.now(),
 };
 let depsAlertas: DepsAlertas = DEPS_REALES;
@@ -253,7 +264,13 @@ export async function alertarSiImporta(correo: string, ev: EventoMensaje, fuente
     if (!(await d.primeraVez(fuente, correo, `${ev.canal}:${ev.id}`).catch(() => false))) return { correo, avisado: false, porque: 'repetido', triaje: t };
     const dec = decidirEnvio(correo, `${ev.canal}:${ev.chat}`, { urgente: t.urgente, vip: !!t.vip }, d.ahora());
     if (dec.enviar === false) return { correo, avisado: false, porque: dec.porque, triaje: t };
-    const r = await d.push(correo, datosDelAviso(ev, t));
+    const datos = datosDelAviso(ev, t);
+    // «Llámame» (tanda F2): un urgente de un VIP, si lo eligió y no son sus horas quietas. Si la llamada no sale, el aviso.
+    if (t.urgente && t.vip && (await d.quiereLlamada(correo, d.ahora()).catch(() => false))) {
+      const l = await d.llamar(correo, { motivo: unaLinea(`${t.titulo}. ${t.resumen}`, 280), id: String(datos.id) }).catch(() => ({ enviados: 0, entrega: 'fallido' as const }));
+      if (l.enviados > 0) return { correo, avisado: true, porque: `llamada ${l.entrega}`, triaje: t };
+    }
+    const r = await d.push(correo, datos);
     // Firebase solo dice que lo ACEPTÓ (AUR13): «aceptado», nunca «lo vio».
     return { correo, avisado: r.enviados > 0, porque: r.entrega, triaje: t };
   } catch (e: any) {
