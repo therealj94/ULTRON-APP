@@ -33,3 +33,10 @@ test('una frase enorme se parte sin pasarse del límite del servidor', () => {
   assert.ok(t.every((x) => x.length <= 1200), t.map((x) => x.length).join());
   assert.equal(t.join(' ').replace(/\s+/g, ' '), larga);
 });
+
+test('con el cortador compartido de AU-RA (src/03-voz/frases.ts): no parte títulos ni cifras', () => {
+  const t = trocearParaVoz('El Ing. Pérez midió 1.500 toneladas con 3,4 g/t. El Dr. Gómez lo firmó. Vence el 6 de dic. de 2026.', 30, 30);
+  assert.ok(t.some((x) => x.includes('Ing. Pérez midió 1.500 toneladas con 3,4 g/t.')), JSON.stringify(t));
+  assert.ok(t.some((x) => x.includes('El Dr. Gómez lo firmó.')), JSON.stringify(t));
+  assert.ok(t.some((x) => x.includes('6 de dic. de 2026.')), JSON.stringify(t));
+});
