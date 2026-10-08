@@ -19,7 +19,8 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { AppState, Keyboard, Platform, type AppStateStatus } from 'react-native';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
-import { cierreIntencional, miga } from './reporte';
+import { miga } from './reporte';
+import { recargarLimpio } from './recarga';
 import { escuchar } from '../nucleo/contrato';
 import { ecoMesa, mensajeVoz } from '../compa/canales';
 import { VARIANTE } from '../variante';
@@ -109,12 +110,30 @@ function recargar(por: string) {
   void prepararRecarga()
     .then((r) => {
       if (r.fallaron.length) miga(`ota: no se guardó antes de recargar (${r.fallaron.join(', ')})`);
-      // La recarga es a propósito: el próximo arranque no la cuenta como crash.
-      return cierreIntencional('ota: recarga intencional').then(() => Updates.reloadAsync());
+      // Sin nada de expo-av vivo (el cierre del 8-oct: ExoPlayer soltado desde el hilo equivocado), con la marca de
+      // cierre intencional (el próximo arranque no la cuenta como crash) y una sola vez: lib/recarga.ts.
+      return recargarLimpio('ota: recarga intencional');
     })
     .catch(() => {
       recargando = false;
     });
+}
+
+/**
+ * ¿Hay de verdad una OTA descargada que aplicar? `isUpdatePending` sale del estado del nativo, que sobrevive a la
+ * recarga: en el emulador (8-oct) una búsqueda lanzada justo antes de recargar volvió a bajar la MISMA OTA y el JS
+ * nuevo, al montar, la «aplicó» otra vez (segunda recarga a los 5 s, ya con el avatar en video cargado: el cierre).
+ * Lo descargado que ya es lo que corre no está pendiente.
+ */
+export function otaPendiente(o: { isUpdatePending: boolean; descargada?: string | null; corriendo?: string | null }): boolean {
+  if (!o.isUpdatePending) return false;
+  return !(o.descargada && o.corriendo && o.descargada === o.corriendo);
+}
+
+/** `Updates.useUpdates().isUpdatePending`, sin lo descargado que ya es lo que corre (otaPendiente). */
+export function useOtaPendiente(): boolean {
+  const { isUpdatePending, downloadedUpdate } = Updates.useUpdates();
+  return otaPendiente({ isUpdatePending, descargada: downloadedUpdate?.updateId, corriendo: Updates.updateId });
 }
 
 /** El botón «Reiniciar»: recarga si nada lo impide; si no, devuelve por qué no (vacío = recargando). */
@@ -135,7 +154,7 @@ export function versionInstalada(): { ota: string | null; creada: Date | null; r
 }
 
 export function useActualizacionAlVolver() {
-  const { isUpdatePending } = Updates.useUpdates();
+  const isUpdatePending = useOtaPendiente();
   const pendiente = useRef(isUpdatePending);
   pendiente.current = isUpdatePending;
 
@@ -152,6 +171,7 @@ export function useActualizacionAlVolver() {
     const recienAbierta = () => Date.now() - montadoEn < VENTANA_ARRANQUE_MS;
 
     const intentar = (momento: Momento, fueraMs?: number) => {
+      if (recargando) return;
       const motivos = motivosParaNoRecargar();
       // Recién entró o está en la primera vez: no es momento de `arranque` (revisión 7.5, MENOR 3).
       const contraArranque = momento === 'arranque' ? motivosContraArranque() : [];
@@ -166,14 +186,15 @@ export function useActualizacionAlVolver() {
     };
 
     const buscar = (espacio: number) => {
-      if (buscando || AppState.currentState !== 'active' || Date.now() - ultimaBusqueda < espacio) return;
+      // Recargando: nada de buscar (lo que bajara quedaría «pendiente» para el JS nuevo, que lo aplicaría otra vez).
+      if (recargando || buscando || AppState.currentState !== 'active' || Date.now() - ultimaBusqueda < espacio) return;
       ultimaBusqueda = Date.now();
       buscando = true;
       void revisarApk();
       void Updates.checkForUpdateAsync()
-        .then((r) => (r.isAvailable ? Updates.fetchUpdateAsync() : null))
+        .then((r) => (r.isAvailable && !recargando ? Updates.fetchUpdateAsync() : null))
         .then((f) => {
-          if (!f?.isNew) return;
+          if (!f?.isNew || recargando) return;
           miga('ota: actualización descargada');
           pendiente.current = true;
           intentar(recienAbierta() ? 'arranque' : 'quieto');
@@ -189,9 +210,14 @@ export function useActualizacionAlVolver() {
     const primera = setTimeout(() => buscar(0), PRIMERA_BUSQUEDA_MS);
     const tic = setInterval(() => {
       if (AppState.currentState !== 'active') return;
+      // Con una ya bajada no se busca en el mismo tic: la recarga quedaría en cola detrás de esa búsqueda (pantalla de
+      // «Actualizando…» más larga con mala red).
+      if (pendiente.current) {
+        // Pospuesta al abrir (estaba entrando): en cuanto termina, todavía «recién abierta», se aplica.
+        intentar(recienAbierta() ? 'arranque' : 'quieto');
+        return;
+      }
       buscar(ENTRE_BUSQUEDAS_MS);
-      // Pospuesta al abrir (estaba entrando): en cuanto termina, todavía «recién abierta», se aplica.
-      intentar(recienAbierta() ? 'arranque' : 'quieto');
     }, TIC_MS);
 
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {

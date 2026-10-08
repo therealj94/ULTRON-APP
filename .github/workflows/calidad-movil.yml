@@ -98,6 +98,8 @@ jobs:
       # ventana de decisiones (pruebas/decisiones). Las pestañas de los chats también van MONTADAS
       # (pruebas/chats: la pestaña marcada y la página del deslizador son siempre la misma). La hoja «Por confirmar» de las
       # caras y las voces también (pruebas/consentimiento: la insignia, «Sí, guardar» / «Borrar» y el aviso de una vez).
+      # La recarga por la OTA sin cierre (pruebas/recarga: App.tsx, lib/ota.ts y lib/recarga.ts montados; antes de
+      # reloadAsync no queda ningún sonido de expo-av cargado ni <Video> montado, y se recarga una sola vez).
       - name: Arneses de la app
         working-directory: mobile
         run: |
@@ -130,3 +132,4 @@ jobs:
           sh pruebas/oido/todas.sh
           sh pruebas/muletillas/todas.sh
           sh pruebas/sonidos/todas.sh
+          sh pruebas/recarga/todas.sh

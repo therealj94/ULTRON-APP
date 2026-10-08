@@ -7,6 +7,8 @@
  */
 // Los gestos nativos, primero (como hacía App.tsx al ser la entrada).
 import 'react-native-gesture-handler';
+// El registro de los sonidos de expo-av, antes que nadie cargue uno: al recargar se sueltan todos (src/lib/recarga.ts).
+import './src/lib/avRegistro';
 import './src/push/fondo';
 import { registerRootComponent } from 'expo';
 import App from './App';
