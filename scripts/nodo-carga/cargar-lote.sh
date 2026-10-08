@@ -12,15 +12,16 @@
 #   3. Prepara una copia de trabajo (enlaces duros, no ocupa) en /datos/<lote>/listo: abre los zip
 #      que no son shapefiles y los .rar/.7z, y aparta lo que el cargador no puede o no debe tragar
 #      —shapefiles de más de 300 MB y rásteres— en /datos/<lote>/aparte con la razón.
-#   4. Abre dos túneles al cerebro por SSM: la base (5432) y los embeddings (TEI, 8794).
-#   5. Ensayo (--seco): cuánto entra, cuánto es escaneo sin texto.
-#   6. OCR en paralelo de los escaneos, con todos los núcleos. Cada escaneo leído se carga como su
+#   4. Ensayo (--seco): cuánto entra, cuánto es escaneo sin texto, y a qué carpeta va cada cosa.
+#   5. OCR en paralelo de los escaneos, con todos los núcleos. Cada escaneo leído se carga como su
 #      .txt (con sus páginas) y el PDF sin texto se aparta, para que no entre dos veces.
+#      Con HASTA_OCR=1 termina aquí, sin clave y sin tocar la base.
+#   6. Abre dos túneles al cerebro por SSM: la base (5432) y los embeddings (TEI, 8794).
 #   7. La carga de verdad. Lo ya cargado se salta por la huella de su contenido.
 #   8. Vectores de lo que haya quedado sin vector.
 #
 # Variables: ELECTRUM_CLAVE_DB (si no, la pregunta), QUIEN, SI=1 (no pregunta antes de cargar),
-#            ENSAYO=0 (salta el paso 5 si ya se hizo), CEREBRO, EMBED_HOST, HILOS.
+#            ENSAYO=0 (salta el ensayo si ya se hizo), HASTA_OCR=1, CEREBRO, EMBED_HOST, HILOS.
 set -euo pipefail
 
 LOTE="${1:-}"
@@ -138,8 +139,58 @@ apartar_leidos
 APARTADOS=$(grep -c . "${INF}/aparte.txt" || true)
 echo "  listos $(find "$LISTO" -type f | wc -l) archivos; apartados ${APARTADOS} (razones en ${INF}/aparte.txt)"
 
+cd "$INF"   # el cargador deja aquí para-ocr.txt
+
 # ── 4 ──────────────────────────────────────────────────────────────────────────────────────────
-paso "4. Túneles al cerebro (${CEREBRO})"
+if [ "${ENSAYO:-1}" != 0 ]; then
+  paso "4. Ensayo: qué entraría (no escribe nada)"
+  "$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --seco --carpetas "$LISTO" 2>&1 | tee "${INF}/ensayo.log" | grep -E '^(──|[0-9]|El cerebro|La lista)' || true
+  echo "  detalle en ${INF}/ensayo.log"
+  if [ -s "${INF}/para-ocr.txt" ]; then
+    touch "${INF}/escaneos.txt"
+    sort -u "${INF}/para-ocr.txt" "${INF}/escaneos.txt" > "${INF}/escaneos.nuevo"
+    mv "${INF}/escaneos.nuevo" "${INF}/escaneos.txt"
+    rm -f "${INF}/para-ocr.txt"
+  fi
+fi
+
+# ── 5 ──────────────────────────────────────────────────────────────────────────────────────────
+ocr_uno() {  # ocr_uno <pdf>: lee un escaneo y deja su .txt donde lo busca txt_de
+  local t lista; t="$(txt_de "$1")"; lista="$(mktemp)"
+  mkdir -p "$(dirname "$t")"; printf '%s\n' "$1" > "$lista"
+  OMP_THREAD_LIMIT=1 bash "${CODIGO}/scripts/electrum/ocr.sh" "$lista" "$(dirname "$t")" >/dev/null 2>&1 || true
+  rm -f "$lista"
+  if [ -s "$t" ]; then echo "  ✓ ${1#"$LISTO"/}"; else echo "  ✗ ${1#"$LISTO"/} (el OCR no sacó nada)"; fi
+}
+if [ -s "${INF}/escaneos.txt" ]; then
+  : > "${INF}/ocr-pendiente.txt"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -f "$f" ] && [ ! -s "$(txt_de "$f")" ]; then echo "$f" >> "${INF}/ocr-pendiente.txt"; fi
+  done < "${INF}/escaneos.txt"
+  FALTAN=$(grep -c . "${INF}/ocr-pendiente.txt" || true)
+  if [ "$FALTAN" -gt 0 ]; then
+    paso "5. OCR de ${FALTAN} escaneos con ${HILOS} hilos"
+    # Un tesseract por núcleo y cada uno con un solo hilo: así rinde más que pocos con muchos.
+    export -f ocr_uno txt_de; export LISTO OCR CODIGO
+    tr '\n' '\0' < "${INF}/ocr-pendiente.txt" | xargs -0 -P "$HILOS" -I{} bash -c 'ocr_uno "$1"' _ {} | tee "${INF}/ocr.log"
+  fi
+  # Los escaneos ya leídos salen de la copia de trabajo: entran por su .txt.
+  apartar_leidos
+fi
+
+
+# Con HASTA_OCR=1 se queda aquí: todo bajado, ordenado y leído (lo largo), sin tocar la base.
+# Así el OCR de miles de páginas avanza mientras se consigue la clave; después, relanzar sin la
+# variable (y ENSAYO=0) carga en minutos.
+if [ "${HASTA_OCR:-0}" = 1 ]; then
+  verde "
+Listo hasta el OCR. Lo que entraría: ${INF}/ensayo.log. Para cargar:  ENSAYO=0 cargar-lote ${LOTE}"
+  exit 0
+fi
+
+# ── 6 ──────────────────────────────────────────────────────────────────────────────────────────
+paso "6. Túneles al cerebro (${CEREBRO})"
 if [ -n "${ELECTRUM_CLAVE_DB:-}" ]; then
   CLAVE="$ELECTRUM_CLAVE_DB"
 else
@@ -176,45 +227,6 @@ else
   echo "  embeddings NO responden (¿TEI apagado en el cerebro?). Cargo sin vectores; se rellenan luego."
 fi
 
-cd "$INF"   # el cargador deja aquí para-ocr.txt
-
-# ── 5 ──────────────────────────────────────────────────────────────────────────────────────────
-if [ "${ENSAYO:-1}" != 0 ]; then
-  paso "5. Ensayo: qué entraría (no escribe nada)"
-  "$TSX" "${CODIGO}/scripts/electrum/aprender.ts" --seco --carpetas "$LISTO" 2>&1 | tee "${INF}/ensayo.log" | grep -E '^(──|[0-9]|El cerebro|La lista)' || true
-  echo "  detalle en ${INF}/ensayo.log"
-  if [ -s "${INF}/para-ocr.txt" ]; then
-    touch "${INF}/escaneos.txt"
-    sort -u "${INF}/para-ocr.txt" "${INF}/escaneos.txt" > "${INF}/escaneos.nuevo"
-    mv "${INF}/escaneos.nuevo" "${INF}/escaneos.txt"
-    rm -f "${INF}/para-ocr.txt"
-  fi
-fi
-
-# ── 6 ──────────────────────────────────────────────────────────────────────────────────────────
-ocr_uno() {  # ocr_uno <pdf>: lee un escaneo y deja su .txt donde lo busca txt_de
-  local t lista; t="$(txt_de "$1")"; lista="$(mktemp)"
-  mkdir -p "$(dirname "$t")"; printf '%s\n' "$1" > "$lista"
-  OMP_THREAD_LIMIT=1 bash "${CODIGO}/scripts/electrum/ocr.sh" "$lista" "$(dirname "$t")" >/dev/null 2>&1 || true
-  rm -f "$lista"
-  if [ -s "$t" ]; then echo "  ✓ ${1#"$LISTO"/}"; else echo "  ✗ ${1#"$LISTO"/} (el OCR no sacó nada)"; fi
-}
-if [ -s "${INF}/escaneos.txt" ]; then
-  : > "${INF}/ocr-pendiente.txt"
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    if [ -f "$f" ] && [ ! -s "$(txt_de "$f")" ]; then echo "$f" >> "${INF}/ocr-pendiente.txt"; fi
-  done < "${INF}/escaneos.txt"
-  FALTAN=$(grep -c . "${INF}/ocr-pendiente.txt" || true)
-  if [ "$FALTAN" -gt 0 ]; then
-    paso "6. OCR de ${FALTAN} escaneos con ${HILOS} hilos"
-    # Un tesseract por núcleo y cada uno con un solo hilo: así rinde más que pocos con muchos.
-    export -f ocr_uno txt_de; export LISTO OCR CODIGO
-    tr '\n' '\0' < "${INF}/ocr-pendiente.txt" | xargs -0 -P "$HILOS" -I{} bash -c 'ocr_uno "$1"' _ {} | tee "${INF}/ocr.log"
-  fi
-  # Los escaneos ya leídos salen de la copia de trabajo: entran por su .txt.
-  apartar_leidos
-fi
 
 # ── 7 ──────────────────────────────────────────────────────────────────────────────────────────
 if [ "${SI:-0}" != 1 ]; then
