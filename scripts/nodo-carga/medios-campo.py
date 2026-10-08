@@ -10,12 +10,12 @@ de WhatsApp es audio. Aquí:
     gemma-3-12b, us-west-2), con un pedido de geólogo de exploración, no un pie de foto genérico;
   - cada video se transcribe (faster-whisper, español) y se describen tres cuadros (al 15, 50 y 85 %);
   - la ubicación GPS de cada foto (EXIF) o video (etiqueta «location» de QuickTime/DJI), si la trae,
-    va a fotos-gps.geojson para el mapa. Las de WhatsApp vienen sin GPS: se dice en el resumen.
+    va a Fotos y videos de campo con GPS.geojson para el mapa. Las de WhatsApp vienen sin GPS: se dice en el resumen.
 
 Salida, con la misma estructura de carpetas que la entrada:
-    <carpeta>/Fotos de campo - <carpeta>.txt     una página por foto (\\f entre páginas)
+    <carpeta>/Fotos e imágenes - <carpeta>.txt   una página por foto o imagen (\\f entre páginas)
     <carpeta>/Videos de campo - <carpeta>.txt    una página por video
-    fotos-gps.geojson                            solo si alguna trae ubicación
+    Fotos y videos de campo con GPS.geojson                            solo si alguna trae ubicación
 Eso se carga con el cargador de siempre:  con-cerebro tsx scripts/electrum/aprender.ts --carpetas <salida>
 
 Se puede cortar y relanzar: lo ya visto o transcrito queda en <salida>/.cache/ y no se repite.
@@ -110,6 +110,11 @@ def gps_de_video(fmt: dict):
     loc = next((v for k, v in (fmt.get('tags') or {}).items() if 'location' in k.lower()), '')
     m = re.match(r'([+-]\d+\.\d+)([+-]\d+\.\d+)', loc or '')
     return (float(m.group(2)), float(m.group(1))) if m else None
+
+
+def gps_valido(g):
+    """Un teléfono sin señal de GPS escribe 0,0 (en el golfo de Guinea): eso no es una ubicación."""
+    return bool(g) and (abs(g[0]) > 1e-4 or abs(g[1]) > 1e-4)
 
 
 class Cache:
@@ -225,7 +230,7 @@ def main():
         lin = [f'Foto: {os.path.basename(rel)}', f'Carpeta: {os.path.dirname(rel)}']
         if d.get('fecha'):
             lin.append(f'Fecha de la foto: {d["fecha"]}')
-        if d.get('gps'):
+        if gps_valido(d.get('gps')):
             lin.append(f'Ubicación (GPS de la foto): {d["gps"][1]:.6f}, {d["gps"][0]:.6f}')
         return '\n'.join(lin) + f'\n\nDescripción (modelo de visión, {MODELO}): {d["texto"]}\n'
 
@@ -233,20 +238,20 @@ def main():
         lin = [f'Video: {os.path.basename(rel)} ({d["duracion"]} s)', f'Carpeta: {os.path.dirname(rel)}']
         if d.get('fecha'):
             lin.append(f'Fecha del video: {d["fecha"]}')
-        if d.get('gps'):
+        if gps_valido(d.get('gps')):
             lin.append(f'Ubicación (GPS del video): {d["gps"][1]:.6f}, {d["gps"][0]:.6f}')
         cuerpo = '\n'.join(lin) + '\n\nLo que se ve:\n' + '\n'.join(d['cuadros'] or ['(no se pudo ver ningún cuadro)'])
         cuerpo += '\n\nLo que se dice (transcripción automática, faster-whisper):\n' + (d['habla'] or '(sin habla: solo ruido o música)')
         return cuerpo + '\n'
 
-    escribir(vistas, 'Fotos de campo', pag_foto)
+    escribir(vistas, 'Fotos e imágenes', pag_foto)
     escribir(oidos, 'Videos de campo', pag_video)
 
     puntos = [{'type': 'Feature', 'geometry': {'type': 'Point', 'coordinates': list(d['gps'])},
                'properties': {'nombre': os.path.basename(rel), 'carpeta': os.path.dirname(rel), 'descripcion': (d.get('texto') or ' '.join(d.get('cuadros', [])))[:500]}}
-              for rel, d in list(vistas.items()) + list(oidos.items()) if d.get('gps')]
+              for rel, d in list(vistas.items()) + list(oidos.items()) if gps_valido(d.get('gps'))]
     if puntos:
-        json.dump({'type': 'FeatureCollection', 'features': puntos}, open(os.path.join(a.salida, 'fotos-gps.geojson'), 'w'), ensure_ascii=False)
+        json.dump({'type': 'FeatureCollection', 'features': puntos}, open(os.path.join(a.salida, 'Fotos y videos de campo con GPS.geojson'), 'w'), ensure_ascii=False)
     print(f'Listo: {len(vistas)} fotos y {len(oidos)} videos; {len(puntos)} con ubicación GPS'
           f'{"" if puntos else " (las de WhatsApp vienen sin GPS)"}.', flush=True)
 
