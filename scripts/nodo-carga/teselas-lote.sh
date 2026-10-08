@@ -249,9 +249,13 @@ clave_de() {
   CLAVE="$(acotar "$CLAVE")"
   CLAVES[$CLAVE]="$1"
 }
+# Con --solo no se convierte nada más: publicar una capa no puede ponerse a convertir 37 hojas sueltas
+# porque se olvidó repetir --mosaico (pasó publicando el mapa de Minas de Oro).
+solo_otra() { [ "${#SOLO[@]}" -gt 0 ] && ! printf '%s\n' "${SOLO[@]}" | grep -qxF "$1"; }
 declare -A EN_MOSAICO=()
 for carpeta in "${MOSAICOS[@]}"; do
   clave="$(acotar "${PREF}-$(slug "$carpeta")")"
+  solo_otra "$clave" && { echo "  – ${clave}: fuera de --solo"; for r in "${BUENOS[@]}"; do case "/${r#"$ORIG"/}" in */"$carpeta"/*) EN_MOSAICO["$r"]=1 ;; esac; done; continue; }
   piezas=()
   for r in "${BUENOS[@]}"; do
     case "/${r#"$ORIG"/}" in */"$carpeta"/*) piezas+=("$r"); EN_MOSAICO["$r"]=1 ;; esac
@@ -279,6 +283,7 @@ for r in "${BUENOS[@]}"; do
   [ -z "${EN_MOSAICO[$r]:-}" ] || continue
   rel="${r#"$ORIG"/}"
   clave_de "$rel"; clave="$CLAVE"
+  solo_otra "$clave" && continue
   if [ -s "${SAL}/${clave}.pmtiles" ] && [ -s "${SAL}/entradas/${clave}.json" ]; then echo "  = ${clave} ya estaba"; continue; fi
   m="${TRAB}/${clave}.tif"
   a_mercator "$r" "$m"
