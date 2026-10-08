@@ -15,6 +15,10 @@
  *
  * La lógica que no necesita teléfono (qué se manda, qué dice la barra, qué se ofrece) está en
  * `campo.ts`, con sus pruebas en `tests/electrum-movil-campo.test.ts`.
+ *
+ * LA VOZ Y EL OÍDO, COMO AU-RA (8-oct): la respuesta llega en vivo y se dice frase por frase por el reproductor en
+ * streaming (turnoVivo.ts, colaVoz.ts, vozCampo.ts), y «MANOS LIBRES» (apagado por omisión) oye con el oído Turbo de
+ * AU-RA, manda solo y deja hablarle encima (oido.ts, manosLibres.ts). Sus pruebas: `tests/electrum-movil-voz.test.ts`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -35,11 +39,18 @@ import {
   View,
 } from 'react-native';
 import * as Location from 'expo-location';
-import { Audio, type AVPlaybackStatus } from 'expo-av';
+import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { UltronFace } from '../components/UltronFace';
 import { ACENTO } from '../variante';
-import { preguntar, salud, subirFoto, voz, SinPuerta } from './api';
+import { quitarEco, RegistroVoz } from '../lib/interrupcion';
+import { cuerpoTurno, preguntarCuerpo, preguntarEnVivo, salud, subirFoto, SinPuerta } from './api';
+import { ColaVoz } from './colaVoz';
+import { CLAVE_MANOS_LIBRES, cortaAlPensar, decidirEncima, duenoMic, fraseOida, manosLibresGuardado } from './manosLibres';
+import { manosLibresPosible, oidoCampo, permisoMicrofono } from './oido';
+import { interrumpidoDe, limpiarParaVoz, nuevoIdTurno, pedirTurno, porDecirAlFin, TurnoCancelado, TurnoEnVivo } from './turnoVivo';
+import { encadenarFraseCampo, pararVozNativaCampo, prepararFraseCampo, prepararVozCampo } from './vozCampo';
 import {
   avisosVisibles,
   conPlazo,
@@ -75,6 +86,8 @@ const GUIA_CAMARA =
 const PLAZO_GPS_MS = 25_000;
 /** La última posición conocida vale si no tiene más de esto. Más vieja, en el campo ya es otro sitio. */
 const POSICION_VIEJA_MS = 2 * 60_000;
+/** Lo que la persona oyó al cortar al doctor viaja con su pregunta solo si la hace dentro de este rato. */
+const CORTADA_VIGENTE_MS = 30_000;
 /** Al volver a la app, la barra se refresca si la última comprobación tiene más de esto. */
 const SALUD_VIEJA_MS = 60_000;
 
@@ -123,9 +136,20 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
   /** Si quien lee está al final del hilo; si no, lo nuevo no lo arrastra (auditoría H16). */
   const alFinal = useRef(true);
   const [hayNuevo, setHayNuevo] = useState(false);
-  const sonido = useRef<Audio.Sound | null>(null);
-  /** Cada frase dicha tiene su número; si al llegar el audio ya hay otra más nueva, esta se tira. */
-  const vozTurno = useRef(0);
+  /** La voz de la respuesta de ahora, frase por frase (colaVoz.ts). Una nueva respuesta o «callar» la cortan. */
+  const cola = useRef<ColaVoz | null>(null);
+  /** Lo que va diciendo la voz: con eso el oído reconoce su eco y se sabe qué alcanzó a oír la persona al cortarla. */
+  const [registro] = useState(() => new RegistroVoz());
+  /** El turno que está llegando (el stream): una pregunta nueva o hablarle encima lo cortan. */
+  const turnoEnCurso = useRef<{ abortar: () => void; n: number } | null>(null);
+  /** Cada pregunta tiene su número: lo que termine de una vieja no toca la pantalla de la nueva. */
+  const turnoN = useRef(0);
+  /** El servidor no trae el stream (contestó 404): esta sesión, la ruta de siempre. */
+  const sinStream = useRef(false);
+  /** Lo que la persona alcanzó a oír cuando cortó al doctor: viaja con su pregunta (`interrumpido.oido`). */
+  const cortadaPendiente = useRef<{ oido: string; en: number } | null>(null);
+  /** Lo que el doctor decía cuando lo cortaron: la frase de la persona puede empezar con ese eco. */
+  const ecoAlCortar = useRef<string[] | null>(null);
   const montado = useRef(true);
   const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saliendo = useRef(false);
@@ -155,10 +179,28 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
 
   const [oyendo, setOyendo] = useState(false);
   const escucha = useRef<Escucha | null>(null);
+  /** El dictado de botón tiene el micrófono (desde ANTES de abrirlo: manos libres lo suelta primero). */
+  const dictando = useRef(false);
   // Se pregunta una vez: es una llamada al módulo nativo, no algo que cambie mientras la app vive.
   const [hayMicro] = useState(dictadoDisponible);
+  const textoRef = useRef(texto);
+  textoRef.current = texto;
+
+  /*
+   * MANOS LIBRES (manosLibres.ts): apagado por omisión, guardado en este teléfono. Encendido, el oído Turbo de AU-RA
+   * escucha sin tocar nada y manda cada frase sola; mientras el doctor habla, se le puede hablar encima.
+   */
+  const [hayManos] = useState(manosLibresPosible);
+  const [manosLibres, setManosLibres] = useState(false);
+  const manosRef = useRef(false);
+  const [oyendoManos, setOyendoManos] = useState(false);
+  /** Lo último que el oído de manos libres puso en la caja (lo que la persona escribió a mano no se pisa). */
+  const textoDelOido = useRef('');
+  const appActiva = useRef(AppState.currentState === 'active');
 
   const [camara, setCamara] = useState(false);
+  const camaraRef = useRef(false);
+  camaraRef.current = camara;
   const [lenteLista, setLenteLista] = useState(false);
   const [permisoCamara, pedirPermisoCamara] = useCameraPermissions();
   const lente = useRef<CameraView | null>(null);
@@ -180,6 +222,11 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
 
   const marcarFallo = useCallback((id: number) => {
     setTurnos((ts) => ts.map((t) => (t.id === id ? { ...t, fallo: true } : t)));
+  }, []);
+
+  /** Cambia un renglón (el texto que crece mientras llega la respuesta, y el final que lo reemplaza). */
+  const cambiar = useCallback((id: number, cambio: Partial<TurnoCampo>) => {
+    setTurnos((ts) => ts.map((t) => (t.id === id ? { ...t, ...cambio } : t)));
   }, []);
 
   /** La cara vuelve sola a su sitio. Un reloj a la vez, y ninguno vivo si la pantalla se fue. */
@@ -235,47 +282,61 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
 
   /* --------------------------------------------------------------- la voz */
 
-  /** Calla al doctor: corta lo que suena y tira lo que esté por llegar. */
+  /**
+   * Calla al doctor: corta lo que suena, suelta lo preparado y vacía el reproductor en streaming. Antes se pisaban dos
+   * respuestas seguidas y apagar VOZ no callaba lo que ya sonaba; ahora VOZ, el micrófono, una pregunta nueva y
+   * hablarle encima la cortan.
+   */
   const callar = useCallback(() => {
-    vozTurno.current += 1;
-    const s = sonido.current;
-    sonido.current = null;
-    if (s) void s.unloadAsync().catch(() => {});
+    const c = cola.current;
+    cola.current = null;
+    c?.callar();
+    pararVozNativaCampo();
+  }, []);
+
+  /** Corta el turno que está llegando (el servidor deja de pensarlo). Lo que ya se enseñó se queda. */
+  const cortarTurno = useCallback(() => {
+    const t = turnoEnCurso.current;
+    turnoEnCurso.current = null;
+    t?.abortar();
   }, []);
 
   /**
-   * Leer una respuesta en voz alta.
-   *
-   * Antes se pisaban: dos respuestas seguidas pedían dos audios, los dos sonaban a la vez y el
-   * primero no se descargaba nunca (un WAV de un minuto son megas de memoria). Y apagar VOZ no
-   * callaba lo que ya estaba sonando. Ahora cada frase lleva su número y solo suena la última, el
-   * sonido se descarga al terminar, y VOZ, el micrófono y una pregunta nueva lo cortan.
+   * Una cola de voz nueva para una respuesta (colaVoz.ts): cada frase por el reproductor en streaming si se puede
+   * (vozCampo.ts), si no por expo-av. Mientras suena, el oído de manos libres oye ENCIMA (con cancelación de eco): no
+   * se oye a sí mismo, pero sí a quien lo corta.
    */
-  const decir = useCallback(
-    async (t: string, emocion?: string, idioma?: 'es' | 'en') => {
-      callar();
-      if (!vozActivaRef.current || !t.trim()) return;
-      const mio = vozTurno.current;
-      const url = await voz(t, emocion, idioma);
-      if (!url || mio !== vozTurno.current || !vozActivaRef.current || !montado.current) return;
-      try {
-        const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
-        if (mio !== vozTurno.current || !montado.current) {
-          void sound.unloadAsync().catch(() => {});
-          return;
-        }
-        sonido.current = sound;
-        sound.setOnPlaybackStatusUpdate((st: AVPlaybackStatus) => {
-          if (st.isLoaded && st.didJustFinish && sonido.current === sound) {
-            sonido.current = null;
-            void sound.unloadAsync().catch(() => {});
-          }
-        });
-      } catch {
-        /* sin voz se sigue leyendo */
+  const nuevaCola = useCallback((): ColaVoz => {
+    const c: ColaVoz = new ColaVoz(
+      { preparar: prepararFraseCampo, encadenar: encadenarFraseCampo, registro },
+      {
+        alEmpezar: () => {
+          if (cola.current !== c) return;
+          if (hayManos) oidoCampo().pausar(true);
+          if (montado.current) caraAhora('SPEAKING');
+        },
+        alTerminar: () => {
+          if (cola.current === c) cola.current = null;
+          if (cola.current) return;
+          if (hayManos) oidoCampo().pausar(false);
+          if (montado.current && !enVuelo.current) caraLuego('IDLE');
+        },
       }
+    );
+    cola.current = c;
+    return c;
+  }, [registro, hayManos, caraAhora, caraLuego]);
+
+  /** Leer en voz alta un texto entero (la foto, una respuesta que no vino por frases), frase por frase. */
+  const decir = useCallback(
+    (t: string, emocion?: string, idioma?: 'es' | 'en') => {
+      callar();
+      if (!vozActivaRef.current || !t.trim() || !montado.current) return;
+      const c = nuevaCola();
+      for (const f of porDecirAlFin({ texto: t, ...(emocion ? { emocion } : {}), ...(idioma ? { idioma } : {}) })) c.decir(f);
+      c.cerrar();
     },
-    [callar]
+    [callar, nuevaCola]
   );
 
   const alternarVoz = useCallback(() => {
@@ -283,40 +344,80 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
     setVozActiva((v) => !v);
   }, [callar]);
 
+  /**
+   * UN SOLO DUEÑO DEL MICRÓFONO (manosLibres.ts `duenoMic`): el dictado de botón, manos libres o nadie. El oído de
+   * manos libres se suelta antes de que el dictado abra el micrófono, y vuelve cuando el dictado termina, la cámara
+   * se cierra o la app vuelve al frente.
+   */
+  const aplicarDueno = useCallback(() => {
+    if (!hayManos) return;
+    const m = oidoCampo();
+    const d = duenoMic({ manosLibres: manosRef.current, posible: hayManos, dictando: dictando.current, camara: camaraRef.current, appActiva: appActiva.current });
+    if (d === 'manos') {
+      if (m.quiereOir()) return;
+      // Si el doctor está hablando, el oído arranca oyendo encima (su voz no abre frases).
+      m.pausar(!!cola.current && !cola.current.termino);
+      m.activar();
+    } else if (m.quiereOir()) {
+      m.silenciar();
+      if (montado.current) setOyendoManos(false);
+    }
+  }, [hayManos]);
+
   useEffect(() => {
     montado.current = true;
     void comprobar();
+    void prepararVozCampo();
     // Que el audio suene aunque el teléfono esté en silencio: en el campo el timbre va apagado.
     Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false }).catch(() => {});
-    // Solo al desmontar: `comprobar` y `callar` no cambian (sus dependencias son refs).
+    // Solo al desmontar: `comprobar`, `callar` y `cortarTurno` no cambian (sus dependencias son refs).
     return () => {
       montado.current = false;
       if (reloj.current) clearTimeout(reloj.current);
+      cortarTurno();
       callar();
       // Salir de la pantalla con el micrófono abierto lo dejaría abierto. En el campo eso es la batería.
       escucha.current?.cancelar();
     };
-  }, [comprobar, callar]);
+  }, [comprobar, callar, cortarTurno]);
 
   /*
-   * Al fondo y de vuelta. Con la app al fondo el micrófono no tiene nada que hacer abierto; y al
-   * volver, una barra de hace una hora que dice «catastro conectado» puede estar mintiendo.
+   * Al fondo y de vuelta. Con la app al fondo el micrófono no tiene nada que hacer abierto (ni el del
+   * dictado ni el de manos libres); y al volver, una barra de hace una hora que dice «catastro
+   * conectado» puede estar mintiendo.
    */
   useEffect(() => {
     const sub = AppState.addEventListener('change', (st) => {
+      appActiva.current = st === 'active';
       if (st !== 'active') escucha.current?.parar();
       else if (Date.now() - ultimaSalud.current > SALUD_VIEJA_MS) void comprobar();
+      aplicarDueno();
     });
     return () => sub.remove();
-  }, [comprobar]);
+  }, [comprobar, aplicarDueno]);
+
+  // La cámara abierta suelta el oído de manos libres; al cerrarla, vuelve.
+  useEffect(() => {
+    aplicarDueno();
+  }, [camara, aplicarDueno]);
 
   /* --------------------------------------------------------------- preguntarle */
 
+  /**
+   * Preguntarle. La respuesta llega EN VIVO (turnoVivo.ts): el texto crece frase a frase y la voz empieza con la
+   * primera, mientras el doctor sigue pensando el resto; al final el texto entero reemplaza lo crecido y la voz no
+   * repite lo dicho. Cada pregunta lleva su `idTurno` (si la red se cae al mandarla, se repite una vez con el mismo y el
+   * servidor no la piensa dos veces) y, si la persona cortó al doctor, lo que alcanzó a oír.
+   *
+   * `forzar`: manos libres oyó una pregunta nueva mientras el doctor todavía pensaba la anterior: esa se corta.
+   */
   const mandar = useCallback(
-    async (mensaje: string, desdeCaja = false) => {
+    async (mensaje: string, desdeCaja = false, o: { forzar?: boolean } = {}) => {
       const q = mensaje.trim();
       // Mientras se fija el GPS tampoco: su pregunta llega detrás y se perdería callada.
-      if (!q || enVuelo.current || ubicandoRef.current) return;
+      if (!q || ubicandoRef.current || (enVuelo.current && !o.forzar)) return;
+      cortarTurno();
+      const mio = (turnoN.current += 1);
       enVuelo.current = true;
       // Con el micrófono abierto, lo que entienda después ya no es de esta pregunta.
       escucha.current?.cancelar();
@@ -328,45 +429,102 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
       const idPregunta = agregar({ de: 'persona', texto: q });
       setPensando(true);
       caraAhora('THINKING');
+      // Solo si es de ahora: lo que oyó al cortarlo hace un rato no es de esta pregunta (la frase con que lo cortó
+      // pudo no entenderse, y la siguiente que escribe es otra cosa).
+      const cortada = cortadaPendiente.current;
+      cortadaPendiente.current = null;
+      const interrumpido = cortada && Date.now() - cortada.en < CORTADA_VIGENTE_MS ? interrumpidoDe(cortada.oido) : undefined;
+      registro.nuevoTurno();
+      const cuerpo = cuerpoTurno(q, hiloAntes, { idTurno: nuevoIdTurno(), interrumpido });
+      const turno = new TurnoEnVivo();
+      const c = vozActivaRef.current ? nuevaCola() : null;
+      const vigente = () => montado.current && turnoN.current === mio;
+      let idDoctor: number | null = null;
+      const pedido = pedirTurno(
+        {
+          stream: (cu, alEvento) => preguntarEnVivo(cu, alEvento),
+          json: (cu) => preguntarCuerpo(cu),
+          sinStream: () => sinStream.current,
+          alSinStream: () => {
+            sinStream.current = true;
+            console.warn('[electrum] turno: el servidor no trae el stream; sigo por la ruta de siempre');
+          },
+        },
+        cuerpo,
+        turno,
+        (r) => {
+          if (!vigente()) return;
+          if (r.tipo === 'frase' && r.frase) {
+            // El texto crece en la pantalla y la frase va a la voz en cuanto llega.
+            const ahora = turno.textoVisible();
+            if (idDoctor === null) idDoctor = agregar({ de: 'doctor', texto: ahora, ...(turno.panel ? { panel: turno.panel } : {}) });
+            else cambiar(idDoctor, { texto: ahora });
+            c?.decir({ texto: r.frase.texto, voz: limpiarParaVoz(r.frase.voz), ...(r.frase.idioma ? { idioma: r.frase.idioma } : {}) });
+          } else if ((r.tipo === 'herramienta' || r.tipo === 'panel') && idDoctor !== null) {
+            cambiar(idDoctor, { traza: [...turno.traza], ...(turno.panel ? { panel: turno.panel } : {}) });
+          }
+        }
+      );
+      turnoEnCurso.current = { abortar: pedido.abortar, n: mio };
       try {
-        const r = await preguntar(q, hiloAntes);
-        if (!montado.current) return;
-        const dicho = String(r.texto || '').trim();
+        const { fin } = await pedido.promesa;
+        if (!vigente()) return;
+        const dicho = fin.texto.trim();
         if (!dicho) {
+          c?.callar();
           marcarFallo(idPregunta);
           agregar({ de: 'doctor', texto: 'No me salió nada que decirte. Pregúntamelo de nuevo, con otras palabras si puedes.', fallo: true });
           caraAhora('CONCERNED');
           return;
         }
-        const informe = informeDe(r.ui);
-        agregar({
+        const informe = informeDe(fin.ui?.length ? fin.ui : turno.ui);
+        const renglon: TurnoCampo = {
           de: 'doctor',
           texto: dicho,
-          panel: r.panel,
-          traza: Array.isArray(r.traza) ? r.traza : [],
+          panel: fin.panel ?? turno.panel,
+          traza: fin.traza ?? turno.traza,
           informe: informe ? { ...informe, estado: { fase: 'listo' } } : undefined,
-        });
-        caraAhora('SPEAKING');
-        // En el idioma en que contestó: inglés si le hablaron en inglés.
-        void decir(dicho, r.emocion, r.idioma);
+        };
+        // El texto entero reemplaza lo que fue creciendo.
+        if (idDoctor === null) agregar(renglon);
+        else cambiar(idDoctor, renglon);
+        // Lo que falta decir (nada, si las frases ya sonaron; la mesa, cada uno con su voz). En el idioma en que
+        // contestó: inglés si le hablaron en inglés.
+        if (c && !c.termino) {
+          for (const f of porDecirAlFin(fin, c.frasesEncoladas)) c.decir(f);
+          c.cerrar();
+        }
+        if (!c) caraAhora('SPEAKING');
       } catch (e: any) {
+        // Cortado a propósito (una pregunta nueva, hablarle encima, salir): lo dicho se queda, nada que avisar.
+        if (e instanceof TurnoCancelado) {
+          c?.cerrar();
+          return;
+        }
         // El detalle técnico, al registro; en el hilo, qué pasó y qué hacer (ver frases.ts).
         console.warn('[electrum] turno:', e?.name, e?.status ?? '', e?.message || e);
-        if (!montado.current) return;
-        marcarFallo(idPregunta);
+        if (!vigente()) return;
+        // Lo que ya sonó termina; no viene más.
+        c?.cerrar();
+        if (idDoctor === null) marcarFallo(idPregunta);
         agregar({ de: 'doctor', texto: fraseDeError(e, 'contestar'), fallo: true });
         caraAhora('CONCERNED');
         if (e instanceof SinPuerta) salirPorPuerta(e);
       } finally {
-        enVuelo.current = false;
-        if (montado.current) {
-          setPensando(false);
-          caraLuego('IDLE');
+        if (turnoEnCurso.current?.n === mio) turnoEnCurso.current = null;
+        if (turnoN.current === mio) {
+          enVuelo.current = false;
+          if (montado.current) {
+            setPensando(false);
+            if (!cola.current || cola.current.termino) caraLuego('IDLE');
+          }
         }
       }
     },
-    [agregar, marcarFallo, caraAhora, caraLuego, callar, decir, salirPorPuerta]
+    [agregar, cambiar, marcarFallo, caraAhora, caraLuego, callar, cortarTurno, nuevaCola, registro, salirPorPuerta]
   );
+  const mandarRef = useRef(mandar);
+  mandarRef.current = mandar;
 
   /* --------------------------------------------------------------- hablarle */
 
@@ -382,13 +540,22 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
       escucha.current.parar();
       return;
     }
+    if (dictando.current) return;
     // El micrófono oiría al doctor hablando.
     callar();
+    // El dictado se queda con el micrófono: manos libres lo suelta ANTES de que se abra (un solo dueño).
+    dictando.current = true;
+    aplicarDueno();
+    const soltarDictado = () => {
+      dictando.current = false;
+      aplicarDueno();
+    };
     const e = await escuchar({
       onParcial: (t) => setTexto(t),
       onFinal: (t) => setTexto(t),
       onFin: () => {
         escucha.current = null;
+        soltarDictado();
         if (!montado.current) return;
         setOyendo(false);
         caraAhora('IDLE');
@@ -396,7 +563,10 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
       // `motivo` ya viene como frase (dictado.ts lo traduce con `fraseDeDictado`), nunca como código.
       onError: (motivo) => Alert.alert('Micrófono', motivo),
     });
-    if (!e) return;
+    if (!e) {
+      soltarDictado();
+      return;
+    }
     if (!montado.current) {
       e.cancelar();
       return;
@@ -404,7 +574,123 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
     escucha.current = e;
     setOyendo(true);
     caraAhora('LISTENING');
-  }, [callar, caraAhora]);
+  }, [callar, caraAhora, aplicarDueno]);
+
+  /* --------------------------------------------------------------- manos libres */
+
+  /**
+   * El oído de manos libres (oido.ts): sus avisos, puestos una vez. Lo que va entendiendo cae en la caja (sin pisar lo
+   * escrito a mano) y la frase que cierra se MANDA sola. Mientras el doctor habla, lo que se oye pasa por
+   * `decidirEncima`: su eco y un «ajá» no lo cortan; la persona sí, y lo que alcanzó a oír viaja con su pregunta.
+   */
+  useEffect(() => {
+    if (!hayManos) return;
+    const m = oidoCampo();
+    const ponerOido = (t: string) => {
+      if (!montado.current) return;
+      // Lo escrito a mano no se pisa: solo la caja vacía o lo que el propio oído puso.
+      if (textoRef.current.trim() && textoRef.current !== textoDelOido.current) return;
+      textoDelOido.current = t;
+      setTexto(t);
+    };
+    const vaciarOido = () => {
+      if (montado.current && textoDelOido.current && textoRef.current === textoDelOido.current) setTexto('');
+      textoDelOido.current = '';
+    };
+    m.setCallbacks({
+      onSpeechStart: () => {
+        // Una frase nueva oída sin cortar a nadie ya no lleva el eco de antes.
+        if (!m.oyendoEncima()) ecoAlCortar.current = null;
+        if (montado.current && !enVuelo.current && !cola.current) caraAhora('LISTENING');
+      },
+      onPartial: (t) => {
+        const eco = ecoAlCortar.current;
+        ponerOido(eco ? quitarEco(t, eco) : t);
+      },
+      onPartialEncima: (t) => {
+        const dichos = registro.dichos();
+        if (decidirEncima(t, dichos) !== 'cortar' || !m.tomarTurno()) return;
+        // Le hablaron encima: se calla YA, el turno que llegaba se corta y se anota lo que alcanzó a oír.
+        const oido = registro.cortar(cola.current?.fraccion());
+        cortadaPendiente.current = oido ? { oido, en: Date.now() } : null;
+        ecoAlCortar.current = dichos;
+        callar();
+        cortarTurno();
+        console.log('[electrum] manos libres: le hablaron encima');
+        if (montado.current) caraAhora('LISTENING');
+        ponerOido(quitarEco(t, dichos));
+      },
+      onFinal: (t) => {
+        const eco = ecoAlCortar.current;
+        ecoAlCortar.current = null;
+        const frase = fraseOida(t, { eco });
+        vaciarOido();
+        if (!frase || !montado.current) return;
+        const hablando = !!cola.current && !cola.current.termino;
+        if (enVuelo.current || hablando) {
+          // Mientras piensa: un «ajá», «ok» de quien espera no corta nada; una pregunta nueva, sí.
+          if (!cortaAlPensar(frase, registro.dichos())) return;
+          if (!cortadaPendiente.current) {
+            const oido = registro.cortar(cola.current?.fraccion());
+            if (oido) cortadaPendiente.current = { oido, en: Date.now() };
+          }
+        }
+        void mandarRef.current(frase, false, { forzar: true });
+      },
+      onListeningChange: (on) => {
+        if (montado.current) setOyendoManos(on);
+      },
+      onMedida: (x) => console.log(`[electrum] manos libres: frase de ${(x.vozMs / 1000).toFixed(1)} s lista ${x.trasCallarMs} ms tras callar (${x.via})`),
+      onError: (motivo) => console.warn('[electrum] manos libres:', motivo),
+      onAviso: (t) => console.warn('[electrum] manos libres:', t),
+      onUnavailable: (motivo) => {
+        // Tres veces sin micrófono: se apaga en esta sesión (lo guardado no cambia) y sigue el botón.
+        console.warn('[electrum] manos libres sin micrófono:', motivo);
+        manosRef.current = false;
+        m.silenciar();
+        if (!montado.current) return;
+        setManosLibres(false);
+        setOyendoManos(false);
+        Alert.alert('Manos libres', 'No pude abrir el micrófono para oírte sin tocar. Puede que otra app lo tenga ocupado. El botón del micrófono sigue funcionando.');
+      },
+    });
+    return () => m.destruir();
+  }, [hayManos, registro, callar, cortarTurno, caraAhora]);
+
+  /** Encender o apagar manos libres. Se guarda en este teléfono. */
+  const alternarManos = useCallback(async () => {
+    const nuevo = !manosRef.current;
+    if (nuevo && !(await permisoMicrofono())) {
+      Alert.alert('Manos libres', 'Sin permiso de micrófono no puedo oírte. Activalo en los ajustes del teléfono.');
+      return;
+    }
+    if (!montado.current) return;
+    manosRef.current = nuevo;
+    setManosLibres(nuevo);
+    if (!nuevo) setOyendoManos(false);
+    AsyncStorage.setItem(CLAVE_MANOS_LIBRES, nuevo ? '1' : '0').catch(() => {});
+    aplicarDueno();
+  }, [aplicarDueno]);
+
+  // Lo guardado: si quedó encendido en este teléfono, vuelve encendido (con el permiso que ya se dio).
+  useEffect(() => {
+    if (!hayManos) return;
+    let vivo = true;
+    void (async () => {
+      try {
+        if (!manosLibresGuardado(await AsyncStorage.getItem(CLAVE_MANOS_LIBRES))) return;
+        if (!vivo || !(await permisoMicrofono()) || !vivo || !montado.current) return;
+        manosRef.current = true;
+        setManosLibres(true);
+        aplicarDueno();
+      } catch {
+        /* sin almacén: apagado */
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [hayManos, aplicarDueno]);
 
   /* --------------------------------------------------------------- enseñarle */
 
@@ -717,6 +1003,23 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
             </Text>
           </Pressable>
         </View>
+        {/*
+          * Manos libres: solo donde el teléfono lo puede hacer (Android con el micrófono crudo). Apagado por omisión;
+          * encendido, se queda así en este teléfono. En vertical, «MANOS» (con la marca, VOZ y SALIR no cabe más).
+          */}
+        {hayManos && (
+          <Pressable
+            onPress={() => void alternarManos()}
+            hitSlop={6}
+            accessibilityRole="switch"
+            accessibilityLabel="Manos libres"
+            accessibilityHint="Te escucha sin tocar el micrófono y manda lo que digas. Se le puede hablar encima."
+            accessibilityState={{ checked: manosLibres }}
+            style={[s.chip, manosLibres && s.chipOn, manosLibres && oyendoManos && s.chipOyendo]}
+          >
+            <Text style={[s.chipTexto, manosLibres && { color: ACENTO }]}>{apaisado ? 'MANOS LIBRES' : 'MANOS'}</Text>
+          </Pressable>
+        )}
         <Pressable
           onPress={alternarVoz}
           hitSlop={6}
@@ -884,8 +1187,10 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
               value={texto}
               onChangeText={setTexto}
               // En vertical la caja mide 160 px y la pista larga partía en dos renglones.
-              placeholder={oyendo ? 'te escucho…' : apaisado ? 'Preguntale a Dr Electrum…' : 'Escribí tu pregunta…'}
-              placeholderTextColor={oyendo ? ACENTO : TENUE}
+              placeholder={
+                oyendo ? 'te escucho…' : manosLibres && oyendoManos ? 'te escucho, hablame…' : apaisado ? 'Preguntale a Dr Electrum…' : 'Escribí tu pregunta…'
+              }
+              placeholderTextColor={oyendo || (manosLibres && oyendoManos) ? ACENTO : TENUE}
               accessibilityLabel="Pregunta para Dr Electrum"
               style={s.campo}
               multiline
@@ -1010,6 +1315,8 @@ const s = StyleSheet.create({
    */
   chip: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', borderRadius: 999, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' },
   chipOn: { borderColor: ACENTO },
+  // Manos libres oyendo de verdad (el micrófono entrega audio): el borde más grueso, para verlo de reojo.
+  chipOyendo: { borderWidth: 2 },
   chipTexto: { color: GRIS, fontSize: 13, letterSpacing: 1.2, fontWeight: '600' },
   // `overflow` recorta a propósito: los anillos del halo miden 4,3 veces el iris y desbordaban
   // la caja, pisando el texto de abajo. Recortados quedan como una banda, que es lo que se busca.
