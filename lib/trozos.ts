@@ -26,6 +26,16 @@ export function puntoDeCorte(cuerpo: string, enviado: number): number {
 }
 
 /**
+ * Cada corte después de `enviado` (el final de cada tramo, exclusivo: se suelta `cuerpo.slice(anterior, fin)`), para
+ * soltar frase por frase y no todo lo llegado de golpe (Dr Electrum, evento `frase`). El último es `puntoDeCorte + 1`.
+ */
+export function cortesDesde(cuerpo: string, enviado: number): number[] {
+  return cortesDe(cuerpo)
+    .map((c) => c.fin)
+    .filter((f) => f > enviado);
+}
+
+/**
  * Desde cuántos caracteres la PRIMERA frase se puede soltar en una coma. Antes 60: una respuesta de
  * una sola frase larga («Te recomiendo empezar por lo más urgente, revisar…») salía entera al final y
  * la voz esperaba al 27B completo. Con ~28 sale el primer tramo con sentido («Te recomiendo empezar

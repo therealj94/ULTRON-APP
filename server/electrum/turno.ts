@@ -21,7 +21,14 @@ import { garantizarMapasGeo } from './geo-garantia';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
-import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
+import { NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
+import { limpiarTexto } from '../../lib/agente/protocolo';
+import { modoCerebroElectrum, pensarConQwen, pensarElectrum, type GanchosPensar } from './cerebro';
+import { anotarRecibosElectrum, guardaHonestidadElectrum, recibosElectrum, recibosRecientesElectrum } from './honestidad';
+import { guardaRepeticion, mismaPreguntaQue, previasDe } from '../../lib/repeticion';
+import { hechoInterrumpida } from '../../lib/interrumpida';
+import { pulirParaVoz } from '../../lib/habla-natural';
+import { lineaTiemposTurno, type MedidaTurno } from '../../lib/tiempos-turno';
 import { decidirPanel, herramientasDe, promptPanel } from './especialistas';
 import { bloqueMesa, duenioDe, EXPERTOS, OFICIOS, quienesDe, textoDeVoces, vocesDelTurno, type Voz } from './personajes';
 import { bloqueExpedientes, expedientesDeLaPregunta } from './expedientes-previos';
@@ -91,50 +98,11 @@ export function msRestanteDelTurno(inicio: number, ahora = Date.now()): number {
 }
 /** Lo que esperan la pantalla y el teléfono. Tiene que ser MAYOR que el presupuesto del turno. */
 export const ESPERA_CLIENTE_MS = 75_000;
-/**
- * Ni una llamada eterna ni una que no alcanza a pensar. Antes había además un MÍNIMO de 8 s que se
- * daba aunque al turno le quedaran 2: así se pasaba de su presupuesto (auditoría H08). Ahora, con
- * menos de lo que hace falta para pensar, no se llama y el bucle cierra con lo que tiene.
+/*
+ * La llamada al modelo (Bedrock con sus manos, o el Qwen del nodo) vive en ./cerebro.ts: allí están sus topes
+ * (MIN_PARA_PENSAR_MS, MAX_LLAMADA_MS) y `pensarConQwen`, que se reexporta para quien lo usaba desde aquí.
  */
-const MIN_PARA_PENSAR_MS = 1_500;
-const MAX_LLAMADA_MS = 60_000;
-
-/**
- * Pregunta al nodo. Devuelve el mensaje entero para poder leer `tool_calls` nativo si el servidor
- * lo trae; si no, el harness lo saca del texto en formato Hermes.
- */
-async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRestante: number, senal?: AbortSignal) {
-  if (msRestante < MIN_PARA_PENSAR_MS) throw new Error('sin tiempo para pensar');
-  const tope = Math.min(MAX_LLAMADA_MS, msRestante);
-  const r = await fetchNodo(`${NODO_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': NODO_SECRETO },
-    body: JSON.stringify({
-      model: NODO_MODELO,
-      stream: false,
-      messages: mensajes,
-      // Si el servidor no conoce `tools`, lo ignora y el harness cae al formato Hermes.
-      tools: herramientas,
-      options: { temperature: 0.4 },
-    }),
-    // Se corta por tiempo o porque quien preguntaba se fue (auditoría H09), lo que pase primero.
-    signal: senal ? AbortSignal.any([AbortSignal.timeout(tope), senal]) : AbortSignal.timeout(tope),
-  });
-  /*
-   * Un nodo que contesta 502 o 500 NO contestó.
-   *
-   * Antes se leía el cuerpo igual, salía `{}`, y el bucle lo tomaba por una respuesta vacía del
-   * modelo: el turno terminaba «contestó» con texto en blanco. La pantalla ponía «No pude
-   * contestar» sin decir por qué y Telegram mandaba un mensaje vacío. Lanzando, el bucle hace lo
-   * que ya sabe hacer con un cerebro caído: decir que no lo alcanzó y lo que alcanzó a averiguar.
-   */
-  if (!r.ok) throw new Error(`el nodo contestó ${r.status}`);
-  const j: any = await r.json().catch(() => ({}));
-  const mensaje = j?.message || {};
-  trazaActual()?.tokens(j?.prompt_eval_count, j?.eval_count);
-  trazaActual()?.modelo(NODO_MODELO);
-  return { texto: String(mensaje.content || ''), mensaje };
-}
+export { pensarConQwen };
 
 /** El nombre con el que la saluda. Sin padrón detrás, no se inventa uno. */
 function nombreVisible(ctx: Contexto): string {
@@ -198,6 +166,20 @@ export type OpcionesTurno = {
    * micrófono o el idioma en que se venía hablando. El texto del mensaje manda sobre la pista.
    */
   idioma?: string;
+  /**
+   * El texto de la respuesta mientras el modelo lo escribe, a trozos (el stream lo corta en frases:
+   * server/electrum/voz-frases.ts). Sale el de TODAS las vueltas: lo que dice antes de pedir una herramienta
+   * («Déjame mirar el catastro») también se dice. No sale en la mesa (varias voces): esa se reparte al final.
+   * El texto de autoridad sigue siendo el `texto` del final (citas verificadas, garantías y guardas).
+   */
+  alTexto?: (trozo: string) => void;
+  /** Terminó una vuelta del modelo (lo que quedó sin punto ya se puede decir). Solo si hubo `alTexto`. */
+  alFinDeRonda?: () => void;
+  /**
+   * La persona le habló encima a la respuesta anterior: lo que alcanzó a oír de ella ('' si la cortó antes de la
+   * primera palabra; null/undefined si no la interrumpió). lib/interrumpida.ts: acusa corto y sigue con lo nuevo.
+   */
+  interrumpido?: string | null;
 };
 
 export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: OpcionesTurno = {}): Promise<RespuestaTurno> {
@@ -206,7 +188,7 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
   return enTurno(reg, async () => {
     try {
       // Lo que se lea en el turno queda como evidencia citable y se verifica al final (H13).
-      const r = await conEvidencias(() => turnoElectrumInterno(mensaje, ctx, opciones));
+      const r = await conEvidencias(() => turnoElectrumInterno(mensaje, ctx, opciones, reg.id));
       if (r.panel) reg.agente(r.panel);
       reg.cerrar({ respuesta: r.texto, emocion: r.emocion, via: r.fin });
       return { ...r, trazaId: reg.id };
@@ -242,9 +224,11 @@ async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Pr
   return `DE INTERNET (lo pidieron buscar; usalo, y citá cada dato con su fuente así: (fuente: dominio). Lo que no esté acá no lo atribuyas a internet):\n${lista.join('\n\n')}`;
 }
 
-async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
+async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno, idTraza = ''): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado, senal } = opciones;
   const inicio = opciones.inicio ?? Date.now();
+  // Una línea de tiempos por turno en el log (lib/tiempos-turno.ts): sin nada de lo que se dijo.
+  const medida: MedidaTurno = { inicio, herramientas: [], camino: 'electrum' };
   // Español por defecto; inglés si le hablan en inglés. Sin señal en el mensaje, la pista del
   // micrófono y, si no, el idioma de la última pregunta.
   const ultimaPregunta = [...historial].reverse().find((m) => m.role === 'user');
@@ -330,10 +314,19 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     ...(deExpedientes ? [deExpedientes] : []),
     ...(deInternet ? [deInternet] : []),
     ...(deLaMesa ? [deLaMesa] : []),
+    // Le habló encima: lo último antes de la pregunta, para que acuse corto y siga con lo nuevo (con su trato, no el de AU-RA).
+    ...(typeof opciones.interrumpido === 'string'
+      ? [`${hechoInterrumpida(idioma === 'en' ? 'en' : 'es', opciones.interrumpido)}${idioma === 'en' ? '' : ' Con tu trato y tu voz de siempre.'}`]
+      : []),
   ];
   const usuario = previos.length ? `${previos.join('\n\n')}\n\n${mensaje}` : mensaje;
 
-  if (!NODO_URL || !NODO_SECRETO) {
+  /*
+   * El cerebro: Bedrock con sus manos (y el Qwen del nodo de respaldo, vuelta por vuelta) o solo el nodo
+   * (ELECTRUM_CEREBRO=qwen). Con Bedrock el nodo ya no es imprescindible: sin él, solo falta el respaldo.
+   */
+  const modo = modoCerebroElectrum();
+  if (modo === 'qwen' && (!NODO_URL || !NODO_SECRETO)) {
     return {
       texto:
         idioma === 'en'
@@ -348,6 +341,25 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     };
   }
 
+  // El texto sale mientras llega solo si contesta una voz: la mesa se reparte entre sus personajes al final.
+  const alTexto = !deLaMesa ? opciones.alTexto : undefined;
+  const ganchos: GanchosPensar = {
+    alTexto: alTexto
+      ? (t) => {
+          medida.primerTexto ??= Date.now();
+          alTexto(t);
+        }
+      : undefined,
+    alModelo: ({ modelo, proveedor }) => {
+      medida.modelo = modelo;
+      medida.proveedor = proveedor;
+    },
+    alPrimeraFicha: () => {
+      medida.primeraFicha ??= Date.now();
+    },
+  };
+  medida.preparado = Date.now();
+  const tHarness = Date.now();
   const r = await correrAgente({
     mensajes: [
       { role: 'system', content: system },
@@ -356,7 +368,24 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     ],
     herramientas,
     ctx,
-    pensar: ({ mensajes, herramientas: nativas, msRestante, senal: s }) => pensarConQwen(mensajes, nativas, msRestante, s),
+    // Con Bedrock las herramientas van nativas (toolConfig): el protocolo Hermes en el system solo confundiría al
+    // modelo. Si una vuelta cae al nodo, ./cerebro.ts se lo pone a esa vuelta.
+    nativo: modo === 'rapido',
+    pensar: async (p) => {
+      const t0 = Date.now();
+      try {
+        if (modo === 'rapido') return await pensarElectrum({ ...p, ...ganchos });
+        const salida = await pensarConQwen(p.mensajes, p.herramientas, p.msRestante, p.senal);
+        ganchos.alModelo?.({ modelo: NODO_MODELO, proveedor: 'nodo' });
+        ganchos.alPrimeraFicha?.();
+        const dicho = limpiarTexto(salida.texto || '');
+        if (dicho) ganchos.alTexto?.(dicho);
+        return salida;
+      } finally {
+        medida.modeloMs ??= Date.now() - t0;
+        if (alTexto) opciones.alFinDeRonda?.();
+      }
+    },
     // Lo que queda del reloj único que empezó al llegar la petición (auditoría H08).
     presupuesto: { rondas: 3, llamadas: 8, ms: msRestanteDelTurno(inicio) },
     abandonado,
@@ -368,6 +397,8 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
         }
       : undefined,
   });
+
+  medida.harnessMs = Date.now() - tHarness;
 
   /*
    * Las citas se comprueban contra lo leído en ESTE turno (auditoría H13): `[D12-p5]` pasa a
@@ -438,13 +469,47 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     console.warn('[electrum] garantía de mapas geológicos:', String(e?.message || e).slice(0, 160));
   }
   /*
-   * La VOZ lleva las etiquetas de expresión que escribió el modelo ([thoughtful], [laughs]…): la
-   * pantalla no las enseña, pero Eleven v4 las actúa. Si alguna garantía cambió el texto, la voz
-   * dice el texto final tal cual (sin etiquetas que ya no calzan).
+   * NUNCA DECIR QUE SE HIZO LO QUE NO SE HIZO (server/electrum/honestidad.ts, la guarda de AU-RA con los recibos de
+   * Electrum): «te generé el informe», «lo puse en el mapa», «te mandé la alerta» necesitan su recibo de ESTE turno
+   * (o, si la persona pregunta por eso, de uno reciente). Sin recibo, la frase se cambia por la verdad.
    */
-  const voz = final === texto && emo.texto.trim() !== limpio ? emo.texto.trim() : undefined;
+  const recibos = recibosElectrum(traza, ui);
+  const quienRecibos = ctx.duenio ?? ctx.quien;
+  const honesta = guardaHonestidadElectrum(final, { recibos, previos: recibosRecientesElectrum(quienRecibos), mensaje, idioma: idioma === 'en' ? 'en' : 'es' });
+  if (honesta.cambiada) {
+    final = honesta.texto;
+    const paso = { herramienta: 'honestidad', ok: false, resumen: `afirmaba sin recibo: ${[...new Set(honesta.falsas.map((a) => a.clase))].join(', ')}`, ms: 0 };
+    traza.push(paso);
+    trazaActual()?.paso(paso);
+  }
+  anotarRecibosElectrum(quienRecibos, recibos);
+  /*
+   * QUE NO SE REPITA (lib/repeticion.ts): si copia tal cual lo que ya contestó, se quitan las frases repetidas. Si la
+   * persona pide que repita, o vuelve a preguntar lo mismo, no se toca; si sin lo repetido no queda nada, tampoco.
+   */
+  if (!mismaPreguntaQue(mensaje, historial)) {
+    const g = guardaRepeticion(final, previasDe(historial), { mensaje });
+    if (g.repite && !g.vacia && g.texto) {
+      final = g.texto;
+      trazaActual()?.paso({ herramienta: 'repeticion', ok: false, resumen: `quitadas ${g.quitadas.length} frases repetidas`, ms: 0 });
+    }
+  }
+  /*
+   * La VOZ lleva las etiquetas de expresión que escribió el modelo ([thoughtful], [laughs]…): la
+   * pantalla no las enseña, pero Eleven v4 las actúa. Si alguna garantía o guarda cambió el texto, la
+   * voz dice el texto final tal cual (sin etiquetas que ya no calzan).
+   */
+  const conEtiquetas = final === texto && emo.texto.trim() !== limpio ? emo.texto.trim() : undefined;
   // La mesa: cada intervención con su personaje. El texto que se lee queda «Don Chema: …».
-  const voces = deLaMesa ? vocesDelTurno(voz ?? final, mesa ? EXPERTOS : quienes) : [];
+  const voces = deLaMesa ? vocesDelTurno(conEtiquetas ?? final, mesa ? EXPERTOS : quienes) : [];
+  /*
+   * Lo que se DICE, pulido (lib/habla-natural.ts PulidorVoz): sin markdown, viñetas ni fórmulas de asistente, con una
+   * etiqueta de voz como mucho. La pantalla sigue con `texto`; si no hay nada que limpiar, `voz` queda como estaba.
+   */
+  const pulida = voces.length ? '' : pulirParaVoz(conEtiquetas ?? final, { idioma: idioma === 'en' ? 'en' : 'es', mensaje, avatar: 'electrum', maxEtiquetas: 1 }).trim();
+  const voz = pulida && pulida !== final ? pulida : conEtiquetas;
+  medida.herramientas = traza.map((t) => ({ nombre: t.herramienta, ms: t.ms }));
+  console.log(lineaTiemposTurno(idTraza, medida));
   return {
     texto: voces.length ? textoDeVoces(voces) : final,
     voz: voces.length ? undefined : voz,
