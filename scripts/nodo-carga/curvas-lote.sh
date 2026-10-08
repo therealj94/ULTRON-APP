@@ -90,7 +90,7 @@ json.dump({
     'encuadre': [round(float(m.group(i)), 5) for i in (1, 2, 3, 4)],
     'zoomMax': 14,
     'vector': {'capa': 'curvas', 'color': '#E8C38A', 'etiqueta': 'cota', 'maestra': 'maestra'},
-    'notas': f'{int(n.group(1)):,} líneas. Desde lejos solo las maestras (cada 100 m); desde el zoom 13, todas.'.replace(',', '.'),
+    'notas': f'{int(n.group(1)):,}'.replace(',', '.') + ' líneas. Desde lejos solo las maestras (cada 100 m); desde el zoom 13, todas.',
 }, open(sal, 'w'), ensure_ascii=False, indent=1)
 PY
 echo "Listo: ${PM} ($(du -h "$PM" | cut -f1)). Se publica con: teselas-lote ${LOTE} --publicar"
