@@ -23,7 +23,7 @@
  * Y cada acción que cambia algo queda en la bitácora: quién, qué y cuándo. En un sistema que
  * contesta con fuentes, «¿quién borró el informe de Minas de Oro?» tiene que tener respuesta.
  */
-import { baseTieneRol, consulta, enTransaccion, hayBase, olvidarEsquemaV10 } from './db';
+import { baseTieneRol, consulta, enTransaccion, hayBase, olvidarConfigDeTexto, olvidarEsquemaV10 } from './db';
 import { cargarTexto, huellaDe, releerDocumento } from './aprender';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
@@ -107,6 +107,31 @@ const ESQUEMA_V10 = [
      ON CONFLICT (version) DO NOTHING`,
 ];
 
+/*
+ * v11: búsqueda sin tildes (db.ts, `configDeTexto`). `es_sin_tilde` es `spanish` con `unaccent`
+ * delante del lematizador, y la columna `tsv` se regenera con ella. Regenerar reescribe la tabla de
+ * fragmentos una vez (unos segundos por cada diez mil); después, cada arranque solo comprueba.
+ */
+const ESQUEMA_V11 = [
+  `DO $$ BEGIN
+     IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'es_sin_tilde') THEN
+       CREATE TEXT SEARCH CONFIGURATION es_sin_tilde (COPY = spanish);
+       ALTER TEXT SEARCH CONFIGURATION es_sin_tilde ALTER MAPPING FOR hword, hword_part, word WITH unaccent, spanish_stem;
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+        WHERE d.adrelid = 'fragmento'::regclass AND a.attname = 'tsv' AND pg_get_expr(d.adbin, d.adrelid) LIKE '%es_sin_tilde%'
+     ) THEN
+       DROP INDEX IF EXISTS fragmento_tsv_idx;
+       ALTER TABLE fragmento DROP COLUMN IF EXISTS tsv;
+       ALTER TABLE fragmento ADD COLUMN tsv tsvector GENERATED ALWAYS AS (to_tsvector('es_sin_tilde'::regconfig, texto)) STORED;
+       CREATE INDEX fragmento_tsv_idx ON fragmento USING GIN (tsv);
+     END IF;
+   END $$`,
+];
+
 let listo: Promise<boolean> | null = null;
 /** Las columnas y tablas del panel. Idempotente: se aplica una vez por arranque. */
 export function asegurarBiblioteca(): Promise<boolean> {
@@ -122,6 +147,10 @@ export function asegurarBiblioteca(): Promise<boolean> {
           await consulta(sql).catch((e) => console.error('[biblioteca] v10:', String(e?.message || e).slice(0, 200)));
         }
       }
+      for (const sql of ESQUEMA_V11) {
+        await consulta(sql).catch((e) => console.error('[biblioteca] v11:', String(e?.message || e).slice(0, 200)));
+      }
+      olvidarConfigDeTexto();
       olvidarEsquemaV10();
       // Una importación que corría DENTRO de este servidor murió con el reinicio: se dice. Las que
       // corren en un trabajo de Render siguen vivas aunque el servidor se reinicie.

@@ -35,3 +35,29 @@ test('buscar en español un informe en inglés', { skip: hayBase() ? false : 'si
   const lugar = await buscarPorTexto('Pueblo Nuevo');
   assert.equal(lugar[0]?.pagina, 58);
 });
+
+test('resultados variados: sin el mismo párrafo dos veces y como mucho dos del mismo documento', async () => {
+  const { variados } = await import('../server/electrum/db');
+  const plan = 'La forma ideal de explotación es por medio de túneles de 4x4 metros.';
+  const hits = [
+    { documento: 'PLAN DE EXPLOTACION EL CHAPARRO VII.docx', texto: plan },
+    { documento: 'PLAN DE EXPLOTACION EL CHAPARRO IV.docx', texto: plan },
+    { documento: 'PLAN DE EXPLOTACION EL CHAPARRO X.docx', texto: `  ${plan.toUpperCase()} ` },
+    { documento: 'Informe Fase III.pdf', texto: 'Rumbo N40E, buzamiento 60 SE.' },
+    { documento: 'Informe Fase III (OCR).txt', texto: 'Ley media 3,4 g/t.' },
+    { documento: 'Informe Fase III.pdf', texto: 'Tercer trozo del mismo informe.' },
+    { documento: 'Informe Fase III.pdf', texto: 'Cuarto trozo del mismo informe.' },
+  ];
+  const r = variados(hits, 5);
+  assert.deepEqual(r.map((h) => h.texto.slice(0, 12)), [plan.slice(0, 12), 'Rumbo N40E, ', 'Ley media 3,', 'Tercer trozo']);
+});
+
+test('filtro de documento por palabras enteras: «Fase II» no es «Fase III» y el número de una cifra cuenta', async () => {
+  const { filtroDocumento } = await import('../server/electrum/db');
+  const f = filtroDocumento('Informe de JICA Fase II', 1);
+  assert.deepEqual(f.args, ['JICA', 'Fase', 'II'], 'sin relleno («informe», «de»)');
+  assert.match(f.sql, /~ \('\(\^\|\[\^a-z0-9\]\)'/);
+  assert.deepEqual(filtroDocumento('Minas de Oro 2', 1).args, ['Minas', 'Oro', '2']);
+  assert.deepEqual(filtroDocumento('a.b (c)', 1).args, []);
+  assert.deepEqual(filtroDocumento('x+y', 1).args, ['x\\+y']);
+});

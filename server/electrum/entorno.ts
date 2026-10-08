@@ -166,9 +166,13 @@ export async function capasPorRol(): Promise<CapaRol[]> {
     `SELECT id::text, nombre, ${tiene ? 'rol' : 'NULL::text AS rol'}
        FROM capa WHERE EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = capa.id)${sqlCapaVisible('capa')}`
   );
-  return filas
-    .map((f) => ({ id: Number(f.id), nombre: f.nombre, rol: (tiene ? f.rol : rolDeCapa(f.nombre)) as RolCapa | null }))
-    .filter((f): f is CapaRol => !!f.rol);
+  /*
+   * Una capa sin rol no se veía en ningún lado: ni en el control de capas, ni en la ficha, ni en el
+   * entorno. En producción eran 113 (oct-2026), todas de proyectos —«Rumbos y echados» con 307
+   * medidas, «Geoquímica», «Calicatas»—, subidas antes de que el cargador supiera ponerles rol. Sin
+   * rol, se adivina por el nombre y, si no, es de proyecto: material de la casa que se enciende a mano.
+   */
+  return filas.map((f) => ({ id: Number(f.id), nombre: f.nombre, rol: ((tiene && f.rol) || rolDeCapa(f.nombre) || 'proyecto') as RolCapa }));
 }
 
 /* ------------------------------------------------------------------ utilidades */

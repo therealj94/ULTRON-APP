@@ -95,13 +95,19 @@ export async function buscarPorSignificado(texto: string, limite = 30, opts: { d
   const v = await vectorDe(texto);
   if (!v) return [];
   const filtro = filtroDocumento(opts.documento, 3);
+  /*
+   * Con filtro de documento, sin el índice HNSW. El índice da los ~40 vecinos más cercanos de TODA
+   * la base (ef_search) y recién después se filtra por documento: buscar «solo en Fase III» se
+   * quedaba con cero y la búsqueda caía callada a solo texto justo cuando se acotaba. El `+ 0`
+   * obliga a medir la distancia exacta sobre los fragmentos de ese documento, que son pocos.
+   */
   const filas = await consulta<HitVector>(
     `SELECT f.id, d.nombre AS documento, f.pagina, left(f.texto, 700) AS texto,
             d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion,
             (1 - (f.embedding <=> $1::vector))::float8 AS similitud
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
       WHERE f.embedding IS NOT NULL${filtro.sql}${sqlDocumentoVisible('d')}
-      ORDER BY f.embedding <=> $1::vector
+      ORDER BY ${filtro.sql ? '(f.embedding <=> $1::vector) + 0' : 'f.embedding <=> $1::vector'}
       LIMIT $2`,
     [literalPg(v), limite, ...filtro.args]
   );

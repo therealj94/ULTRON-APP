@@ -16,7 +16,7 @@
  * dice en esa sección.
  */
 import type { FeatureCollection, Geometry } from 'geojson';
-import { geometriaDe, concesionPorId, conTextoReparado, consultaConTope, type FilaConcesion, type RolCapa } from './db';
+import { geometriaDe, concesionPorId, configDeTexto, conTextoReparado, consultaConTope, type FilaConcesion, type RolCapa } from './db';
 import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
 import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
@@ -188,11 +188,12 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
         6000
       ).then(conTextoReparado);
       // Con tope en la base, igual que todo lo de aquí: un toque abandonado no deja la consulta viva.
+      const cfg = await configDeTexto();
       const nombran = await consultaConTope<{ documento: string; pagina: number | null; texto: string }>(
         `SELECT d.nombre AS documento, f.pagina, left(f.texto, 400) AS texto
            FROM fragmento f JOIN documento d ON d.id = f.documento_id
-          WHERE f.tsv @@ phraseto_tsquery('spanish', $1)${sqlDocumentoVisible('d')}
-          ORDER BY ts_rank(f.tsv, phraseto_tsquery('spanish', $1)) DESC LIMIT 4`,
+          WHERE f.tsv @@ phraseto_tsquery('${cfg}', $1)${sqlDocumentoVisible('d')}
+          ORDER BY ts_rank(f.tsv, phraseto_tsquery('${cfg}', $1)) DESC LIMIT 4`,
         [f.nombre],
         6000
       ).then(conTextoReparado);

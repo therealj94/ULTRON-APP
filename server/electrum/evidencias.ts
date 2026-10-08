@@ -39,6 +39,23 @@ export function evidenciasDelTurno(): Evidencia[] {
 }
 
 const CODIGO = /\s?\[(D\d+(?:-p\d+)?)\]/g;
+/*
+ * Un código mal escrito no pasaba por la verificación y salía tal cual, con aspecto de cita
+ * comprobada: «[D99-p1, D12-p5]», «[d99-p1]», «[D99 p.1]». Antes de verificar se normalizan a la
+ * forma de siempre —uno por corchete, en mayúscula, con `-p`—, y así un código inventado se quita.
+ */
+const CODIGO_SUELTO = /\[\s*([dD]\s?\d+(?:\s*(?:-|,)?\s*p(?:ág|ag)?\.?\s*\d+)?(?:\s*[,;]\s*[dD]\s?\d+(?:\s*(?:-|,)?\s*p(?:ág|ag)?\.?\s*\d+)?)*)\s*\]/g;
+export function normalizarCodigos(texto: string): string {
+  return texto.replace(CODIGO_SUELTO, (_m, dentro: string) =>
+    dentro
+      .split(/\s*;\s*|\s*,\s*(?=[dD]\s?\d)/)
+      .map((c) => {
+        const m = /^[dD]\s?(\d+)(?:\s*(?:-|,)?\s*p(?:ág|ag)?\.?\s*(\d+))?$/.exec(c.trim());
+        return m ? `[D${m[1]}${m[2] ? `-p${m[2]}` : ''}]` : `[${c.trim()}]`;
+      })
+      .join(' ')
+  );
+}
 
 /**
  * Cambia los códigos del texto por su cita legible y quita los que no son de lo leído. Un código de
@@ -54,7 +71,7 @@ export function verificarCitas(
   for (const e of evidencias) if (!porDoc.has(e.documentoId)) porDoc.set(e.documentoId, e);
   const citas = new Map<string, Evidencia>();
   const quitadas: string[] = [];
-  let salida = texto.replace(CODIGO, (_m, codigo: string) => {
+  let salida = normalizarCodigos(texto).replace(CODIGO, (_m, codigo: string) => {
     const e = por.get(codigo) ?? (/-p/.test(codigo) ? undefined : porDoc.get(Number(codigo.slice(1))));
     if (!e) {
       quitadas.push(codigo);

@@ -82,7 +82,10 @@ const catastro_buscar: Herramienta = {
   plataformas: ['electrum'],
   async ejecutar({ texto }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const filas = await buscarConcesiones(String(texto), 10);
+    // Se piden 12 y se enseñan TODAS: antes decía «coinciden 10» y nombraba 6, y las otras cuatro
+    // (Chaparro II, III, VII y VIII) no estaban en ningún lado para pedirlas.
+    const TOPE = 12;
+    const filas = await buscarConcesiones(String(texto), TOPE);
     if (!filas.length) return { ok: true, texto: `No hay ninguna concesión que coincida con «${texto}» en el catastro cargado.`, ui: { filas: [] } };
     // La que se nombró tal cual gana aunque la búsqueda tolerante traiga parecidas.
     const exacta = unicaExacta(filas, String(texto));
@@ -90,7 +93,7 @@ const catastro_buscar: Herramienta = {
     const cabeza =
       filas.length === 1 || exacta
         ? `${uno.nombre} (id ${uno.id}), expediente ${uno.expediente || 'sin número'}. Titular ${(uno.titular || 'no declarado').replace(/\.$/, '')}. ${uno.tipo ? `Concesión de ${uno.tipo}` : 'Concesión'}${uno.mineral ? ` para ${uno.mineral}` : ''}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
-        : `Coinciden ${filas.length}: ${filas.slice(0, 6).map(distinguir).join('; ')}. Pedí una por su id o su expediente para la ficha.`;
+        : `Coinciden ${filas.length >= TOPE ? `al menos ${TOPE} (estas son las más parecidas; afiná el nombre para ver otras)` : filas.length}: ${filas.map(distinguir).join('; ')}. Pedí una por su id o su expediente para la ficha.`;
     /*
      * El mapa sigue a la búsqueda, sin esperar a que el modelo se acuerde de `mapa_volar`: con una
      * sola concesión vuela a ella; con varias, las pinta y las encuadra a todas mientras se pregunta
@@ -666,7 +669,7 @@ const expediente_buscar: Herramienta = {
   async ejecutar({ texto, documento }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const doc = documento ? String(documento).slice(0, 120) : undefined;
-    const hits = await buscarEnExpedientes(String(texto), 5, { documento: doc });
+    const hits = await buscarEnExpedientes(String(texto), 6, { documento: doc });
     if (!hits.length) {
       return {
         ok: true,
@@ -677,16 +680,16 @@ const expediente_buscar: Herramienta = {
       };
     }
     const cita = hits
-      .slice(0, 3)
+      .slice(0, 5)
       .map(
         (h) =>
           `${h.codigo ? `[${h.codigo}] ` : ''}${esHistorico(h.documento) ? '[HISTÓRICO] ' : ''}${h.transcripcion ? '[FOTO TRANSCRITA, SIN REVISAR] ' : ''}${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`
       )
       .join(' | ');
-    const transcrito = hits.slice(0, 3).some((h) => h.transcripcion);
-    const historico = hits.slice(0, 3).some((h) => esHistorico(h.documento));
+    const transcrito = hits.slice(0, 5).some((h) => h.transcripcion);
+    const historico = hits.slice(0, 5).some((h) => esHistorico(h.documento));
     // Los informes de JICA y los 43-101 están en inglés: la persona lee español.
-    const ingles = hits.slice(0, 3).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
+    const ingles = hits.slice(0, 5).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
     return {
       ok: true,
       texto: `${cita}. ${COMO_CITAR}${transcrito ? ' Lo marcado [FOTO TRANSCRITA, SIN REVISAR] es una lectura automática de una foto: decilo al usarlo y no lo des como el documento original (expedientes, coordenadas, leyes, titulares y fechas se confirman con el papel).' : ''} Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}${historico ? ' Lo marcado [HISTÓRICO] es de estudios viejos (JICA-MMAJ, 1978-2003): citalo como antecedente, con su año, nunca como la situación de hoy; lo vigente sale del catastro oficial.' : ''}`,
