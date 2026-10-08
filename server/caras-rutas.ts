@@ -1,7 +1,9 @@
 /**
  * LAS CARAS CONOCIDAS (el reconocimiento con permiso de la app; lo guarda lib/caras-miembro.ts).
  *
- *   GET    /api/caras        → { personas: [{ id, nombre, relacion, parentesco?, vectores, creado }] }
+ *   GET    /api/caras        → { personas: [{ id, nombre, relacion, parentesco?, vectores, creado, porConfirmar?, menor?, presentadoPor?, presentadoEn? }] }
+ *                             (tanda F1: un posible menor POR CONFIRMAR va sin vectores —el teléfono no puede reconocerlo— y con
+ *                             quién lo presentó y cuándo, para la hoja de la dueña)
  *   POST   /api/caras        { nombre, relacion: 'yo'|'conocido', vectores: number[128][], consentimiento: { como, frase? }, parentesco? }
  *                             → { persona } (400 con la frase si falta el permiso o no es un vector)
  *   POST   /api/caras/:id/muestras { vectores: number[128][] (1-2) } → { ok, muestras } (aprender con el uso:
@@ -17,8 +19,8 @@
  */
 import type express from 'express';
 import { BorradoDegradado } from '../lib/biometria-durable';
-import { pendienteDeConfirmar } from '../lib/biometria-consentimiento';
-import { agregarCara, cargarCaras, CarasNoDisponibles, CarasNoGuardadas, confirmarConsentimientoCara, olvidarCara, olvidarTodasLasCaras, sumarMuestras, validarAlta, validarMuestras } from '../lib/caras-miembro';
+import { pendienteDeConfirmar, vistaPorConfirmar } from '../lib/biometria-consentimiento';
+import { agregarCara, cargarCaras, CarasNoDisponibles, CarasNoGuardadas, confirmarConsentimientoCara, olvidarCara, olvidarTodasLasCaras, sumarMuestras, validarAlta, validarMuestras, vectoresParaReconocer } from '../lib/caras-miembro';
 import type { Sesion } from './seguridad';
 
 type Deps = {
@@ -55,7 +57,8 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
     try {
       const { personas } = await cargarCaras(s.correo);
       return res.json({
-        personas: personas.map((p) => ({ id: p.id, nombre: p.nombre, relacion: p.relacion, ...(p.parentesco ? { parentesco: p.parentesco } : {}), vectores: p.vectores, creado: p.creado, ...(pendienteDeConfirmar(p.consentimiento) ? { porConfirmar: true } : {}) })),
+        // Tanda F1: hasta que la dueña confirme en su pantalla, los vectores de un posible menor no salen (no se reconoce).
+        personas: personas.map((p) => ({ id: p.id, nombre: p.nombre, relacion: p.relacion, ...(p.parentesco ? { parentesco: p.parentesco } : {}), vectores: vectoresParaReconocer(p), creado: p.creado, ...vistaPorConfirmar(p.consentimiento) })),
         honesto: true,
       });
     } catch (e) {

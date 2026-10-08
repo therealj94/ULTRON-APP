@@ -45,6 +45,7 @@ import { HojaCalendario, useEstadoCalendario } from './Calendario';
 import { resumenFila } from '../agenda/logica';
 import { HojaComputadora } from './Computadora';
 import { HojaAvisos } from './Avisos';
+import { HojaIniciativaDia } from './IniciativaDia';
 import { HojaCerebro } from '../app/HojasCerebro';
 import type { PantallaCerebro } from '../compa/cerebro';
 import { INFO_PERMISOS, abrirAjustesAlarma, estadoAlarmaExacta, estadosPermisos, listo, type EstadoAlarma } from '../primeravez/permisos';
@@ -73,7 +74,7 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'calendario' | 'computadora' | 'avisos' | 'whatsapp-desvincular' | PantallaCerebro | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'calendario' | 'computadora' | 'avisos' | 'iniciativa-dia' | 'whatsapp-desvincular' | PantallaCerebro | null;
 
 /** Lo que se lee debajo de «Iniciativa de AURA», según el nivel elegido. */
 function pieIniciativa(n: NivelIniciativa): string {
@@ -287,6 +288,12 @@ export function Ajustes({ navigation }: Props) {
                 onCambiar={(n) => guardarPerfil({ iniciativa: n })}
               />
             </View>
+            <Fila
+              titulo={tr('Resumen y avisos del día', 'Daily summary and nudges')}
+              detalle={tr('Resumen de la mañana, avisos a tiempo, «llámame» y horas quietas', 'Morning summary, timely nudges, “call me” and quiet hours')}
+              icono="sol"
+              onPress={() => abrir('iniciativa-dia')}
+            />
             <Fila titulo={tr('Tus avisos', 'Your notifications')} detalle={tr('Horario, canal, cuántos y de qué', 'Schedule, channel, how many and about what')} icono="campana" onPress={() => abrir('avisos')} />
           </Grupo>
         </Aparecer>
@@ -424,6 +431,7 @@ export function Ajustes({ navigation }: Props) {
       <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
       <HojaCalendario visible={hoja === 'calendario'} onCerrar={() => setHoja(null)} />
       <HojaAvisos visible={hoja === 'avisos'} onCerrar={() => setHoja(null)} />
+      <HojaIniciativaDia visible={hoja === 'iniciativa-dia'} onCerrar={() => setHoja(null)} />
       <HojaComputadora visible={hoja === 'computadora'} onCerrar={() => setHoja(null)} nombreAvatar={de(avatar.nombre)} />
       <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' || hoja === 'recordatorios' ? hoja : null} onCerrar={() => setHoja(null)} />
 

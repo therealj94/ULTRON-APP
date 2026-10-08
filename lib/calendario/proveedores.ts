@@ -157,20 +157,25 @@ export type NuevoEvento = { titulo: string; inicio: number; fin: number; lugar?:
 /** «2026-10-09T21:00:00.0000000» en UTC (Prefer outlook.timezone="UTC") → instante. */
 const deGraphUtc = (s: unknown) => Date.parse(`${String(s || '').replace(/(\.\d{3})\d*$/, '$1').replace(/Z$/, '')}Z`);
 
+/** Un enlace de llamada que se puede abrir (https, acotado), o ''. */
+const reunionDe = (u: unknown) => (typeof u === 'string' && /^https:\/\/\S{4,500}$/.test(u.trim()) ? u.trim() : '');
+/** El enlace de video de Google (conferenceData), si no vino como hangoutLink. */
+const videoDeGoogle = (e: any) => (Array.isArray(e?.conferenceData?.entryPoints) ? e.conferenceData.entryPoints.find((p: any) => p?.entryPointType === 'video')?.uri : '') || '';
+
 function deGraph(e: any): EventoCal {
   const todo = !!e?.isAllDay;
   // Un evento de todo el día es de FECHAS, no de horas: con la zona UTC pedida, «el 9» llega como 2026-10-09T00:00 UTC,
   // que en Honduras serían las 18:00 del 8. Se toma la fecha tal cual como día de Honduras.
   const inicio = todo ? inicioDelDia(String(e?.start?.dateTime || '').slice(0, 10)) : deGraphUtc(e?.start?.dateTime);
   const fin = todo ? inicioDelDia(String(e?.end?.dateTime || '').slice(0, 10)) : deGraphUtc(e?.end?.dateTime);
-  return { id: String(e?.id || ''), proveedor: 'microsoft', titulo: String(e?.subject || '').trim(), inicio, fin, todoElDia: todo, ...(e?.location?.displayName ? { lugar: String(e.location.displayName) } : {}), ...(e?.webLink ? { enlace: String(e.webLink) } : {}), ...(e?.isCancelled ? { cancelado: true } : {}) };
+  return { id: String(e?.id || ''), proveedor: 'microsoft', titulo: String(e?.subject || '').trim(), inicio, fin, todoElDia: todo, ...(e?.location?.displayName ? { lugar: String(e.location.displayName) } : {}), ...(e?.webLink ? { enlace: String(e.webLink) } : {}), ...(reunionDe(e?.onlineMeeting?.joinUrl) ? { reunion: reunionDe(e.onlineMeeting.joinUrl) } : {}), ...(e?.isCancelled ? { cancelado: true } : {}) };
 }
 
 function deGoogle(e: any): EventoCal {
   const todo = !!e?.start?.date && !e?.start?.dateTime;
   const inicio = todo ? inicioDelDia(String(e.start.date)) : Date.parse(String(e?.start?.dateTime || ''));
   const fin = todo ? inicioDelDia(String(e?.end?.date || e.start.date)) : Date.parse(String(e?.end?.dateTime || ''));
-  return { id: String(e?.id || ''), proveedor: 'google', titulo: String(e?.summary || '').trim(), inicio, fin, todoElDia: todo, ...(e?.location ? { lugar: String(e.location) } : {}), ...(e?.htmlLink ? { enlace: String(e.htmlLink) } : {}), ...(e?.status === 'cancelled' ? { cancelado: true } : {}) };
+  return { id: String(e?.id || ''), proveedor: 'google', titulo: String(e?.summary || '').trim(), inicio, fin, todoElDia: todo, ...(e?.location ? { lugar: String(e.location) } : {}), ...(e?.htmlLink ? { enlace: String(e.htmlLink) } : {}), ...(reunionDe(e?.hangoutLink || videoDeGoogle(e)) ? { reunion: reunionDe(e?.hangoutLink || videoDeGoogle(e)) } : {}), ...(e?.status === 'cancelled' ? { cancelado: true } : {}) };
 }
 
 /** El id de Google que sale del intento aprobado (base32hex: solo 0-9 y a-v; los dígitos hex caben). */
@@ -179,7 +184,7 @@ export const idGoogleDe = (idempotencia: string) => `aura${crypto.createHash('sh
 export async function listarEventos(p: ProveedorCal, acceso: string, desde: number, hasta: number, traer: Fetch = fetch): Promise<EventoCal[]> {
   const out: EventoCal[] = [];
   if (p === 'microsoft') {
-    let url: string | null = `${GRAPH}/me/calendarView?${new URLSearchParams({ startDateTime: new Date(desde).toISOString(), endDateTime: new Date(hasta).toISOString(), $top: '100', $orderby: 'start/dateTime', $select: 'id,subject,start,end,location,isAllDay,isCancelled,webLink' })}`;
+    let url: string | null = `${GRAPH}/me/calendarView?${new URLSearchParams({ startDateTime: new Date(desde).toISOString(), endDateTime: new Date(hasta).toISOString(), $top: '100', $orderby: 'start/dateTime', $select: 'id,subject,start,end,location,isAllDay,isCancelled,webLink,onlineMeeting' })}`;
     for (let pagina = 0; url && pagina < 3; pagina++) {
       const j: any = await pedirJson(url, acceso, { headers: { Prefer: 'outlook.timezone="UTC"' } }, traer);
       for (const e of j?.value || []) out.push(deGraph(e));

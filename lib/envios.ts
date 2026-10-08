@@ -252,6 +252,24 @@ async function enviarUnaVezSinLinea<R = unknown>(o: PedidoEnvio<R>): Promise<Res
   return { ...base, estado: salida.estado, entrega, reconciliado, ...(referencia ? { referencia } : {}), ...(salida.detalle ? { detalle: salida.detalle } : {}), ...(salida.datos !== undefined ? { datos: salida.datos } : {}) };
 }
 
+/**
+ * ¿Ese borrador ya tiene operación de envío? (su operationId estable, `operacionDeBorrador`). `hay`: se registró (salió,
+ * está saliendo, quedó incierto o falló: en cualquier caso ya no es «un borrador esperando»); `ninguno`: no consta ningún
+ * envío; `incierto`: el almacén no contestó. Para no decir de algo que ya salió que sigue esperando
+ * (lib/iniciativa-dia.ts, los empujones).
+ */
+export async function reciboDeBorrador(canal: CanalEnvio, dueno: string, intento: string, almacen?: AlmacenDurable): Promise<'hay' | 'ninguno' | 'incierto'> {
+  const d = String(dueno || '').trim().toLowerCase();
+  if (!d || !String(intento || '').trim()) return 'incierto';
+  try {
+    const l = await leerOperacion(d, operacionDeBorrador(canal, intento), almacen || almacenDurable());
+    if (l.ok === false) return 'incierto';
+    return l.valor ? 'hay' : 'ninguno';
+  } catch {
+    return 'incierto';
+  }
+}
+
 /* ------------------------------------------------------------------ eventos entrantes */
 
 /**

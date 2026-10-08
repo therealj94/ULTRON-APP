@@ -535,9 +535,15 @@ export function arrancarIniciativa(o: {
   cadaMs?: number;
   /** Máximo de personas por vuelta (cada una puede pedir al modelo). */
   max?: number;
+  /**
+   * ¿Dijo hoy «no me molestes»? (lib/iniciativa-dia.ts hoyNoActivo, el registro durable; las pruebas ponen otro). Ese
+   * día no se le propone nada, ni por push ni por llamada: lo encolado espera (se revalida al otro día).
+   */
+  hoyNo?: (correo: string, ahora: number) => Promise<boolean>;
 }): { parar(): void; vuelta(): Promise<number> } {
   let corriendo = false;
   const alProponer = o.alProponer;
+  const hoyNo = o.hoyNo || (async (c: string, t: number) => (await import('../lib/iniciativa-dia')).hoyNoActivo(c, t));
   const entregadores: Partial<Record<CanalAviso, Entregador>> = o.entregadores || (alProponer ? { app: async (c, a) => Number(await Promise.resolve(alProponer(c, a.propuesta))) || 0 } : {});
   const vuelta = async (): Promise<number> => {
     const ahora = o.reloj ? o.reloj() : Date.now();
@@ -556,6 +562,8 @@ export function arrancarIniciativa(o: {
           const prefs = await preferenciasDe(correo);
           // Avisos apagados: nada que empujar (lo pendiente ya se canceló al apagar).
           if (prefs.apagado) continue;
+          // «No me molestes hoy» (revisión de la tanda F, B4): ni propuestas ni llamadas de la iniciativa en todo el día.
+          if (await hoyNo(correo, ahora).catch(() => false)) continue;
           if (!enHorasQuietas(ahora, prefs)) {
             const r = await proponerPara({ ...p, correo }, { ...o, prefs });
             if (r.nueva && r.propuesta) await encolarAviso(correo, r.propuesta, ahora);

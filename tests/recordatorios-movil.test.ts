@@ -188,3 +188,47 @@ test('reconciliar (revisión tanda E, B3): la alarma de la vez que el servidor A
   const leida = S.listaDelServidor({ recordatorios: [{ id: RID, texto: 'x', proxima: null, llamada: false, repetir: { tipo: 'una' }, sonado: true, ultimaEntrega: T }], borrados: [] });
   assert.equal(leida.recordatorios[0]?.ultimaEntrega, T);
 });
+
+test('marcar hecho (tanda F1): la alarma de la vez que el servidor ya entregó se quita YA del teléfono; no suena una vez más', async () => {
+  // El servidor entregó la vez T (push) y la alarma del teléfono todavía no sonó (Doze la atrasa). La persona toca «Hecho».
+  const T = AHORA - 30_000;
+  const deT = S.baseServidor(RID, T);
+  // Reconciliar SOLO no la quita (la protege, revisión B3: podía no haber sonado): por eso sonaba igual.
+  const sonado = { recordatorios: [srv({ proxima: null, sonado: true, ultimaEntrega: T, repetir: { tipo: 'nunca' } })], borrados: [] };
+  assert.deepEqual(S.planReconciliar(sonado, [local(deT, T)], AHORA).quitar, [], 'antes: se quedaba puesta');
+  // Ya marcado hecho, el servidor ni lo lista: reconciliar tampoco la quita.
+  assert.deepEqual(S.planReconciliar({ recordatorios: [], borrados: [] }, [local(deT, T)], AHORA).quitar, []);
+  // Ahora, al marcarlo hecho en la hoja: uno de una vez → todas las suyas, ya.
+  const r = sonado.recordatorios[0];
+  const otraDeOtro = S.baseServidor(RID2, AHORA + H);
+  assert.deepEqual(S.alarmasAlCambiar(r, 'hecho', [local(deT, T), local(otraDeOtro, AHORA + H)], AHORA), [deT]);
+  // Borrar: lo mismo (todas las de ese recordatorio).
+  assert.deepEqual(
+    S.alarmasAlCambiar(srv({ proxima: AHORA + 2 * H }), 'borrar', [local(S.baseServidor(RID, AHORA + 2 * H), AHORA + 2 * H), local(otraDeOtro, AHORA + H)], AHORA),
+    [S.baseServidor(RID, AHORA + 2 * H)]
+  );
+  // Uno que se repite y ACABA de sonar: la de esa vez (T); la de mañana sigue en pie.
+  const manana = S.baseServidor(RID, T + 24 * H);
+  const diario = srv({ proxima: T + 24 * H, ultimaEntrega: T });
+  assert.deepEqual(S.alarmasAlCambiar(diario, 'hecho', [local(deT, T), local(manana, T + 24 * H)], AHORA), [deT]);
+  // Uno que se repite y NO acaba de sonar («ya fui al banco esta semana»): se salta la próxima, esa sale ya.
+  const proxima = S.baseServidor(RID, AHORA + 2 * H);
+  const viejo = srv({ proxima: AHORA + 2 * H, ultimaEntrega: AHORA - 3 * 24 * H });
+  assert.deepEqual(S.alarmasAlCambiar(viejo, 'hecho', [local(proxima, AHORA + 2 * H)], AHORA), [proxima]);
+
+  // Con notifee (de mentira): la alarma de la vez T (aviso, llamada y su reintento) se quita de verdad; la de otro, no.
+  Rec._olvidarRecordatorios();
+  const f = notifeeFalso();
+  const deps = { notifee: () => ({ m: f.m, k: K }), ahora: () => AHORA, dueno: () => 'u0123456789abcdef' };
+  // Puestas cuando todavía faltaba (el reloj de la prueba, antes de T).
+  const antesDeT = { ...deps, ahora: () => T - 10 * 60_000 };
+  assert.equal((await Rec.programarRecordatorio({ texto: 'La pastilla', cuando: T, rid: RID, llamada: true }, antesDeT)).ok, true);
+  assert.equal((await Rec.programarRecordatorio({ texto: 'Otra', cuando: AHORA + H, rid: RID2 }, antesDeT)).ok, true);
+  const quitadas = await Rec.quitarAlarmasAlCambiar(r, 'hecho', deps);
+  assert.deepEqual(quitadas, [deT]);
+  const quedan = [...f.puestos.values()].map((n: any) => n.data.base);
+  assert.ok(!quedan.includes(deT), 'ni el aviso ni la llamada ni su reintento de la vez T');
+  assert.ok(quedan.includes(S.baseServidor(RID2, AHORA + H)), 'la de otro recordatorio sigue');
+  // Sin notifee que cancele, nada (y no lanza).
+  assert.deepEqual(await Rec.quitarAlarmasAlCambiar(r, 'hecho', { ...deps, notifee: () => null }), []);
+});

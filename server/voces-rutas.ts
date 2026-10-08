@@ -2,7 +2,8 @@
  * LAS VOCES CONOCIDAS (reconocer quién habla, con permiso; lo guarda lib/voces-miembro.ts y el motor es
  * lib/voces-motor.ts).
  *
- *   GET    /api/voces          → { personas: [{ id, nombre, relacion, parentesco?, muestras, creado }], motor }
+ *   GET    /api/voces          → { personas: [{ id, nombre, relacion, parentesco?, muestras, creado, porConfirmar?, menor?, presentadoPor?, presentadoEn? }], motor }
+ *                                (tanda F1: a un posible menor POR CONFIRMAR /quien no lo reconoce: lib/voces-miembro.ts identificarVoz)
  *   POST   /api/voces/aprender { nombre, relacion: 'yo'|'conocido', parentesco?, audios: base64[] (o audio),
  *                                consentimiento: { como, frase? } } → { persona }
  *   POST   /api/voces/quien    { audio } → { persona: { id, nombre, relacion, parentesco? } | null, similitud, motivo }
@@ -37,7 +38,7 @@ import {
 import { estadoMotorVoces, huellaDeVoz, MIN_VOZ_SEG, muestrasDeAudio, precalentarMotorVoces, soloVoz, VozNoDisponible } from '../lib/voces-motor';
 import type { Sesion } from './seguridad';
 import { BorradoDegradado } from '../lib/biometria-durable';
-import { pendienteDeConfirmar } from '../lib/biometria-consentimiento';
+import { pendienteDeConfirmar, vistaPorConfirmar } from '../lib/biometria-consentimiento';
 
 type Deps = {
   exigirMesa: express.RequestHandler;
@@ -90,7 +91,7 @@ export function montarRutasVoces(app: express.Express, d: Deps) {
       // Quien tiene voces guardadas va a hablar pronto: que el motor empiece a cargar ya, sin esperar.
       if (personas.length) precalentarMotorVoces();
       return res.json({
-        personas: personas.map((p) => ({ ...publica(p), muestras: p.vectores.length, creado: p.creado, ...(pendienteDeConfirmar(p.consentimiento) ? { porConfirmar: true } : {}) })),
+        personas: personas.map((p) => ({ ...publica(p), muestras: p.vectores.length, creado: p.creado, ...vistaPorConfirmar(p.consentimiento) })),
         motor: estadoMotorVoces().estado,
         honesto: true,
       });
@@ -141,7 +142,8 @@ export function montarRutasVoces(app: express.Express, d: Deps) {
         if (yo && parecidoA(ultima, yo) >= UMBRAL_VOZ) return res.status(409).json({ error: `Esa voz se parece a la tuya, no a la de ${v.nombre}. Que hable ${v.nombre}.`, code: 'voz_de_la_duena', honesto: true });
       }
       const p = await agregarVoz(s.correo, v, vectores);
-      return res.json({ persona: { ...publica(p), muestras: p.vectores.length }, vozSeg: Math.round(voz * 10) / 10, honesto: true });
+      // Tanda F1: un posible menor queda por confirmar (no se reconoce hasta que la dueña lo toque en su pantalla).
+      return res.json({ persona: { ...publica(p), muestras: p.vectores.length, ...(pendienteDeConfirmar(p.consentimiento) ? { porConfirmar: true } : {}) }, vozSeg: Math.round(voz * 10) / 10, honesto: true });
     } catch (e) {
       return errorComun(res, e);
     }

@@ -97,3 +97,65 @@ export function hechoCaras(o: { escena: string; mensaje: string; invitado?: bool
   if (preguntaQuien) return 'CARAS: no llegó quién es nadie por la cara (reconocer caras apagado o nadie a la vista). No adivines nombres; para reconocer a alguien, que active «Reconocer caras» (Más → Caras) y te lo presente. No digas que no puedes reconocer caras.';
   return null;
 }
+
+/* ── tanda F1: quien espera la confirmación de la dueña no se nombra en la escena ───────────────────── */
+
+const plano = (t: string) =>
+  String(t || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * La escena del teléfono sin el nombre de nadie que todavía no se puede reconocer: un posible menor que la dueña no
+ * confirmó en su pantalla (lib/biometria-consentimiento.ts reconocible). Sale de «Reconozco a …» / "I recognize …" (con su
+ * parentesco) y de «Por la voz, habla …» / "By voice, …"; en su lugar queda que hay alguien guardado que todavía no se
+ * puede reconocer, sin nombre (y sin «que no conozco», para que no se ofrezca aprenderla otra vez). `nombres`: los de esas
+ * personas (lib/caras-miembro.ts nombresCarasPorConfirmar, lib/voces-miembro.ts nombresVocesPorConfirmar).
+ */
+/** La marca que el teléfono pone a quien le habla (la dueña: mobile/src/caras/caras.ts frasePresentes, relacion «yo»). */
+const RE_QUIEN_HABLA = /\((quien te habla|the person talking to you)\)\s*$/i;
+
+export function escenaSinPorConfirmar(escena: string, nombres: readonly string[], o: { proteger?: readonly string[] } = {}): string {
+  const e = String(escena || '');
+  // Revisión de la tanda F: la escena no trae ids, solo nombres. Quien se llama igual que la dueña (o que quien habla) NO se
+  // quita: un menor por confirmar que se llama «José» no puede borrar «Reconozco a José (quien te habla)».
+  const protegidos = new Set((o.proteger || []).map(plano).filter(Boolean));
+  const quitar = new Set(nombres.map(plano).filter((n) => n && !protegidos.has(n)));
+  if (!e || !quitar.size) return e;
+  let quitadas = 0;
+  let en = false;
+  let out = e.replace(/\b(reconozco a|I recognize)\s+([^;.]*)/gi, (m, intro: string, lista: string) => {
+    const partes = lista.split(/,\s*/);
+    // La entrada marcada como quien te habla es la dueña: nunca se quita, aunque otro guardado se llame igual.
+    const quedan = partes.filter((p) => RE_QUIEN_HABLA.test(p) || !quitar.has(plano(p.replace(/\s*\([^)]*\)\s*$/, ''))));
+    if (quedan.length === partes.length) return m;
+    if (/^I /i.test(intro)) en = true;
+    quitadas += partes.length - quedan.length;
+    return quedan.length ? `${intro} ${quedan.join(', ')}` : '';
+  });
+  out = out
+    .replace(/\bPor la voz, habla ([^,.;()]{1,60})(?: \([^)]{0,40}\))?, no [^.;]*[.;]?/gi, (m, n: string) => {
+      if (!quitar.has(plano(n))) return m;
+      quitadas += 1;
+      return '';
+    })
+    .replace(/\bBy voice, ([^,.;()]{1,60}) is speaking(?: \([^)]{0,40}\))?, not [^.;]*[.;]?/gi, (m, n: string) => {
+      if (!quitar.has(plano(n))) return m;
+      en = true;
+      quitadas += 1;
+      return '';
+    });
+  if (!quitadas) return e;
+  const aviso = en
+    ? `${quitadas} saved person(s) I can't recognize yet (the owner still has to confirm it on screen): don't name them`
+    : `${quitadas} persona(s) guardada(s) que todavía no puedo reconocer (falta que la dueña lo confirme en su pantalla): no la nombres`;
+  out = out
+    .replace(/\b(Con la c[aá]mara trasera|With the back camera):\s*(?=;|$)/gi, '')
+    .replace(/(\s*;\s*)+/g, '; ')
+    .replace(/^[\s;,.]+|[\s;,]+$/g, '')
+    .trim();
+  return out ? `${out}; ${aviso}` : aviso.charAt(0).toUpperCase() + aviso.slice(1);
+}

@@ -203,7 +203,23 @@ test('mando: el ámbito sigue vivo a través de express (después de leer el cue
   assert.match(server.slice(i, i + 220), /puedeMandar\(id, 'ultron'\) \|\| puedeMandar\(id, 'electrum'\)/);
 });
 
-test('oído Turbo: el permiso adelantado no se cobra hasta usarlo o hasta que vence sin avisar', async () => {
+
+/** Reloj a mediodía de Honduras (18:00 UTC): las pruebas de vencimiento suman 20–40 min y, cerca de la medianoche de
+ * Honduras, el contador del día se reiniciaba a mitad de la prueba y fallaba según la hora en que corría CI. */
+function aMediodia<T>(f: () => Promise<T> | T): Promise<T> {
+  const real = Date.now;
+  const hoy = new Date();
+  const base = Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), hoy.getUTCDate(), 18, 0, 0);
+  const inicio = real();
+  Date.now = () => base + (real() - inicio);
+  return Promise.resolve()
+    .then(f)
+    .finally(() => {
+      Date.now = real;
+    });
+}
+
+test('oído Turbo: el permiso adelantado no se cobra hasta usarlo o hasta que vence sin avisar', () => aMediodia(async () => {
   _reiniciarFrenoGasto();
   process.env.ELEVENLABS_API_KEY = 'xi-de-prueba';
   process.env.AURA_TOPE_DIA_STT_SEGUNDOS = String(10 * SEGUNDOS_POR_PERMISO_TURBO);
@@ -233,9 +249,9 @@ test('oído Turbo: el permiso adelantado no se cobra hasta usarlo o hasta que ve
     (globalThis as any).__sinTokenTurbo = false;
   }
   assert.equal(estadoGasto().stt.usado, 4 * SEGUNDOS_POR_PERMISO_TURBO);
-});
+}));
 
-test('oído Turbo (E4): un adelantado que vence sin aviso se cobra una sola vez, a la cuenta que toca; el suelto no', async () => {
+test('oído Turbo (E4): un adelantado que vence sin aviso se cobra una sola vez, a la cuenta que toca; el suelto no', () => aMediodia(async () => {
   _reiniciarFrenoGasto();
   process.env.AURA_TOPE_DIA_STT_SEGUNDOS = String(10 * SEGUNDOS_POR_PERMISO_TURBO);
   const t0 = Date.now();
@@ -258,7 +274,7 @@ test('oído Turbo (E4): un adelantado que vence sin aviso se cobra una sola vez,
   const e = estadoGasto(vence + VIGENCIA_PERMISO_ANTICIPADO_MS + 1).stt;
   assert.equal(e.exento, SEGUNDOS_POR_PERMISO_TURBO);
   assert.equal(e.usado, 3 * SEGUNDOS_POR_PERMISO_TURBO, 'el de otro@x también venció y se cobró');
-});
+}));
 
 test('oído Turbo: un teléfono que nunca avisa no oye gratis (más de MAX adelantados: el más viejo se cobra); pasado el tope, sin permiso', async () => {
   _reiniciarFrenoGasto();

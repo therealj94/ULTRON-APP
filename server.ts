@@ -92,6 +92,7 @@ import { resolverMarcar } from './server/marcar';
 import { dichoSinContacto, preguntaCualMarcar, type ResolucionMarcar } from './lib/marcar';
 import { detectarIdioma } from './lib/idioma-detectar';
 import { mismoTextoBorrador, propuestaDeEnvio } from './lib/borrador-propuesto';
+import { anotarEfectosNoVistos, avisoEfectosNoVistos, conAvisoDeAntes, confirmarEfectosNoVistos, efectosDelTurno, turnoVisto, type EfectoNoVisto } from './lib/efectos-no-vistos';
 import { anotarEfectoReal, efectosRecientes, guardaDeHonestidad, motivosDeHonestidad, promesaSinCumplir, recibosDeAcciones, recibosDePasos, sinLoRespaldado, trozoAfirmaHecho, trozoPrometeAccion, type ContextoHonestidad, type ReciboEfecto } from './lib/honestidad';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
@@ -141,8 +142,10 @@ import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe,
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, esDuenoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, CADA_MS_INICIATIVA, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
+import { correosDuenos, fuentesProductivas, montarRutasIniciativaDia, ordenIniciativaDia, redactorProductivo, RelojIniciativaDia } from './server/iniciativa-dia';
+import { comandoIniciativa, cuentasConIniciativa, fijarDuenoDia } from './lib/iniciativa-dia';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
 import type { VistaTexto } from './lib/conocer-persona';
@@ -297,7 +300,7 @@ import { memoriaSinLeer,
   type CanalMem,
 } from './lib/memoria';
 import { anotarRespuestaSinMemoria, avatarQuedoAtras, esOrdenDeAvatar, esSaludoCorto, fusionarHilo, pedidoRed, resolverReferencia, respuestasSinMemoria, urlsParaLeer, type MsgHilo } from './lib/conversacion';
-import { nombreDe, puedeCambiarSistema, quienesMandan } from './lib/junta';
+import { miembrosUltron, nombreDe, puedeCambiarSistema, quienesMandan } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
   ayudaTelegram,
@@ -1645,6 +1648,10 @@ montarRutasAlertas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) 
 // el reloj: lo que se ve al pensar una propuesta y al revalidarla antes de mostrarla o avisarla sale de lo mismo.
 const iniciativa = componerIniciativa({ contadores: contadoresProductivos() });
 iniciativa.montarRutas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), nivelDe: (c) => nivelDeCorreo(c) });
+// La iniciativa del día (tanda F2, server/iniciativa-dia.ts): el resumen de la mañana, los empujones a tiempo y «llámame».
+// Encendida por omisión solo para la cuenta dueña (WHATSAPP_DUENOS); las demás la encienden en Ajustes → Iniciativa.
+fijarDuenoDia((c) => esDuenoWhatsapp(c));
+montarRutasIniciativaDia(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Su cerebro continuo: lo que hablamos antes, lo que quedó a medias, lo que sé de ti, su círculo y sus mensajes ordenados.
 montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Las tareas durables y el panel de tareas (server/trabajos.ts, AUR08): adapta la tarea en curso de cada
@@ -3021,6 +3028,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // corriendo. Se da por dicho solo si el modelo contesta con estos hechos (como lo de su computadora).
   const deLaInvestigacion = duenoComputadora ? avisosInvestigacion(duenoComputadora) : null;
   if (deLaInvestigacion) hechos.push(...deLaInvestigacion.hechos.map((h) => neutralizarMarca(h)));
+  // Tanda F1: lo que salió en un turno suyo que se cortó en el teléfono (lib/efectos-no-vistos.ts): la respuesta lo dice
+  // al empezar, con la frase fija del recibo; el modelo solo sabe que ya va dicho.
+  const avisoEfectos = duenoComputadora && !invitado ? avisoEfectosNoVistos(duenoComputadora, idiomaTurno === 'en' ? 'en' : 'es') : null;
+  if (avisoEfectos) hechos.push(neutralizarMarca(avisoEfectos.hecho));
   // El «sí» o el «no» a lo que esperaba su decisión (un borrador de correo o de WhatsApp, la pregunta de su
   // computadora) lo resuelve el servidor aquí (server/decision-turno.ts), no el modelo.
   // Permisos exactos (4-oct): lo que espera la app cuenta para saber si un «sí» es ambiguo; si lo es (o nombró otra
@@ -3675,6 +3686,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     appVista: decision.appVista,
     // Lo que el «sí» de este turno de verdad mandó, con su recibo (lib/honestidad.ts: sin recibo no se dice «enviado»).
     recibosDecision: decision.recibos || [],
+    // Tanda F1: lo que el «sí» hizo afuera (por si este turno se corta) y el aviso de un turno anterior que se cortó.
+    efectosDecision: decision.efectos || [],
+    avisoEfectos: avisoEfectos ? { quien: duenoComputadora, ids: avisoEfectos.ids, frase: avisoEfectos.frase } : null,
     mode,
     hechos,
     datos,
@@ -4435,6 +4449,13 @@ type SalidaTurno = {
   /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): el cliente la enseña y aprueba esa decisión. */
   propuestaTaller?: PropuestaTallerVista;
   /**
+   * Tanda F1 (solo para el servidor: no va en el JSON): lo que el turno hizo afuera, con recibo (si su respuesta no llega
+   * al teléfono, el turno siguiente lo dice), y el aviso de un turno anterior cortado que esta respuesta lleva delante
+   * (se da por dicho cuando se entrega). lib/efectos-no-vistos.ts.
+   */
+  efectos?: EfectoNoVisto[];
+  avisoEfectos?: { quien: string; ids: string[] };
+  /**
    * El turno fue de confirmación o dejó un borrador (revisión del 5-oct, GRAVE-1): en voz (`voz` del respaldo JSON de
    * la mesa) se dice entero, sin tope. Solo para el servidor: no va en el JSON.
    */
@@ -4514,6 +4535,28 @@ function ambitoDelTurno(body: any, opciones: OpcionesTurno = {}): string {
 function hayDecisionEsperando(body: any, opciones: OpcionesTurno = {}): boolean {
   const dueno = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   return !!dueno && decisionEsperando(dueno, ambitoDelTurno(body, opciones), ambitoApp(dueno, body?.aparato));
+}
+
+/**
+ * Una orden de la iniciativa del día dicha por la persona de la SESIÓN (server/iniciativa-dia.ts ordenIniciativaDia): se
+ * guarda y se contesta al instante, sin cerebro. Solo con sesión de la app o la web (no Telegram) y sin invitado ni otra voz.
+ * El turno queda en su hilo como cualquier otro. Un «para» a secas no es de aquí (calla la voz y nada más).
+ *
+ * Revisión de la tanda F (B2), el contrato del turno especulativo: lo que guarda (pausar el día, la hora del resumen, las
+ * llamadas) y su memoria van por `opciones.retener` (como ordenDeApp): una frase a medias que se descarta no escribe nada.
+ */
+async function ordenDelDia(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; via: string } | null> {
+  const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
+  const message = String(body?.message || body?.text || '').trim();
+  if (!correo || !message || body?.image || body?.visto || body?.documento || body?.pdf || modoInvitadoDe(body)) return null;
+  if (otraVozDe(body?.escena) || typeof body?.quienHabla?.id === 'string') return null;
+  const r = await ordenIniciativaDia(correo, message, Date.now(), opciones.retener ? { hacer: opciones.retener.hacer } : {}).catch(() => null);
+  if (!r) return null;
+  const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
+  void recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }, opciones.retener)
+    .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: r.decir, canal: 'mesa', esperar: false }, opciones.retener))
+    .catch(() => undefined);
+  return r;
 }
 
 async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; acciones: EventoAccion[]; via: string } | null> {
@@ -4991,6 +5034,10 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   // Un solo reloj para el turno entero (EXEC04): cada llamada y cada herramienta mira lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   empezarTurnoDeCuenta(body, opciones);
+  const delDia = await ordenDelDia(body, opciones);
+  if (delDia) {
+    return { reply: delDia.decir, voz: delDia.decir, emocion: 'neutral', via: delDia.via, mode: String(body?.mode || 'GUARDIAN'), ms: Date.now() - t00, herramientas: [], foto: null, acciones: [], honesto: true };
+  }
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {
     return { reply: rapida.decir, voz: rapida.decir, emocion: 'neutral', via: rapida.via, mode: String(body?.mode || 'GUARDIAN'), ms: Date.now() - t00, herramientas: ['app'], foto: null, acciones: rapida.acciones, honesto: true };
@@ -5012,6 +5059,8 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   let vozLectura = false;
   /** Los recibos de los pasos del harness de este turno (lib/honestidad.ts recibosDePasos). */
   let recibosTurno: ReciboEfecto[] = [];
+  /** Los pasos del harness (tanda F1: lo que hicieron afuera, por si la respuesta no llega al teléfono). */
+  let pasosTurno: ReadonlyArray<{ herramienta?: string; estado?: string; recibo?: { efecto?: string; entrega?: string } }> = [];
   const guardar = async (out: Omit<SalidaTurno, 'emocion' | 'voz' | 'acciones'> & { emocion?: Emocion }, delModelo = false): Promise<SalidaTurno> => {
     const app = await accionesDelCerebro(out.reply, p, delModelo);
     // Que no repita lo que ya dijo (lib/repeticion.ts; José, 7-oct): solo lo que escribió el modelo (no las respuestas fijas
@@ -5032,10 +5081,27 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const hon = honestidadDelTurno(app.texto, p, { recibos: recibosTurno, acciones: app.acciones, via: out.via });
     if (hon.cambiada) app.texto = hon.texto;
     if (!out.error) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), app.acciones);
+    // Tanda F1: lo de un turno anterior que se cortó en el teléfono va delante, con la frase fija de su recibo (después de
+    // la guarda: no es del modelo). Se da por dicho cuando esta respuesta se entrega (la ruta).
+    const avisoDeAntes = p.avisoEfectos && app.texto.trim() && !turnoSuperado(opciones) ? p.avisoEfectos : null;
+    if (avisoDeAntes) app.texto = conAvisoDeAntes(app.texto, avisoDeAntes.frase);
+    const efectosTurno = [...(p.efectosDecision || []), ...efectosDelTurno({ pasos: pasosTurno })];
     const e = extraerEmocion(app.texto);
     const estado: EstadoRespuesta = out.estado ?? (out.error ? 'error' : 'completo');
     // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
-    const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones, ...(vozCompleta ? { vozCompleta: true } : {}), ...(vozLectura ? { vozLectura: true } : {}) };
+    const final: SalidaTurno = {
+      ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}),
+      ...out,
+      estado,
+      reply: quitarExpresiones(e.texto).trim(),
+      voz: e.texto.trim(),
+      emocion: out.emocion || e.emocion,
+      acciones: app.acciones,
+      ...(vozCompleta ? { vozCompleta: true } : {}),
+      ...(vozLectura ? { vozLectura: true } : {}),
+      ...(efectosTurno.length ? { efectos: efectosTurno } : {}),
+      ...(avisoDeAntes ? { avisoEfectos: { quien: avisoDeAntes.quien, ids: avisoDeAntes.ids } } : {}),
+    };
     // Un invitado oye y ve que se le contesta en modo invitado (una frase, sin nada privado).
     // Revisión 7 (G2): con la voz sin confirmar no hay aviso (puede ser ella con un «sí» corto; avisoInvitado da '').
     const aviso = p.invitado ? avisoInvitado(p.idioma === 'en' ? 'en' : 'es', p.invitado) : '';
@@ -5076,6 +5142,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   const h = await bucleHarness({ reply: replyQ1, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, reloj });
   memorizable = h.memorizable;
   recibosTurno = recibosDePasos(h.pasos);
+  pasosTurno = h.pasos;
   // G2 (7-oct): con algo hecho afuera (o un borrador), el turno ya no se descarta por tardío: su recibo y su respuesta quedan.
   if ((h.pasos as ReadonlyArray<{ herramienta: string; recibo?: { efecto?: string } }>).some((x) => (x.recibo?.efecto ? x.recibo.efecto !== 'ninguno' : herramientaConEfecto(x.herramienta, x.herramienta === 'correo' || x.herramienta === 'whatsapp' ? 'leer' : '')))) opciones.conEfecto = true;
   // Un borrador o una confirmación: si el turno fue dictado por voz, lo que se dice va entero (GRAVE-1). Una lectura,
@@ -5167,7 +5234,10 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
  */
 function responderSoloRepetir(req: express.Request, res: express.Response, c: Awaited<ReturnType<typeof consultarTurno>>) {
   if ('noExiste' in c) return res.status(404).json({ error: 'Ese pedido no me llegó (o no dejó respuesta). No lo corro solo: mándalo tú si aún lo quieres.', codigo: 'no_existe', motivo: c.motivo, noExiste: true, honesto: true });
-  if ('previo' in c) return res.json(jsonDelTurno(c.previo, { repetido: true }));
+  if ('previo' in c) {
+    res.once('finish', () => repetidoEntregado(cuerpoTurnoHttp(req)));
+    return res.json(jsonDelTurno(c.previo, { repetido: true }));
+  }
   if ('desconocido' in c) return res.json(jsonDelTurno(turnoReconciliando(req.body?.idioma, c.desconocido.efectos), { reconciliando: true, repetido: true }));
   return res.status(409).json({ error: FRASE_FALLO.enCurso[normalizarIdioma(req.body?.idioma)], codigo: 'en-curso', enCurso: true, honesto: true });
 }
@@ -5191,11 +5261,19 @@ function topeDelJson(out: Pick<SalidaTurno, 'vozCompleta' | 'vozLectura'>, mensa
 // medirTurno va primero: un turno que falla (también por la sesión o el cupo) o tarda deja UNA línea, sin contenido.
 app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   const body = cuerpoTurnoHttp(req);
+  // Tanda F1: ¿se cortó la conexión antes de entregar la respuesta? (el teléfono calló el turno, una llamada, la mesa se fue).
+  let cortado = false;
+  res.on('close', () => {
+    if (!res.writableEnded) cortado = true;
+  });
   // R1 (revisión 9): con `soloRepetir` solo se lee lo guardado de ese idTurno; nunca se corre el cerebro.
   if ((body as Record<string, unknown>).soloRepetir === true) return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
   // Un reintento de la app con el mismo `idTurno`: la misma respuesta, sin correr otro turno.
   const unico = await reclamarTurno(claveDelTurno(req, body));
-  if ('previo' in unico) return res.json(jsonDelTurno(unico.previo, { repetido: true }));
+  if ('previo' in unico) {
+    res.once('finish', () => repetidoEntregado(body));
+    return res.json(jsonDelTurno(unico.previo, { repetido: true }));
+  }
   // El mismo turno sigue corriendo en otra petición: no se corre otro (EXEC01). La app lo trata como un error.
   if ('enCurso' in unico) return res.status(409).json({ error: FRASE_FALLO.enCurso[normalizarIdioma(req.body?.idioma)], codigo: 'en-curso', enCurso: true, honesto: true });
   // Lo corría un proceso que se cayó después de despachar algo (AUR06): no se corre otra vez a ciegas.
@@ -5240,12 +5318,42 @@ app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeM
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
   }
+  // Tanda F1: la conexión se cortó antes de la respuesta (el teléfono calló el turno): nada se entregó.
+  if (cortado) {
+    presentaciones.descartar();
+    efectosTrasEntregar(body, out, false);
+    return void res.end();
+  }
   res.json(jsonDelTurno(g, { foto: out.foto }));
   // Entregada la respuesta (la persona no se fue antes): lo presentado en ella cuenta.
   if (!res.destroyed) presentaciones.entregar();
   else presentaciones.descartar();
+  efectosTrasEntregar(body, out, !res.destroyed);
   return;
 });
+
+/**
+ * Tanda F1 (lib/efectos-no-vistos.ts): si la respuesta de un turno JSON (el respaldo de la mesa, la foto) NO llegó al
+ * teléfono y en él salió algo afuera, el turno siguiente lo dice; si llegó, el aviso de antes que llevaba ya está dicho.
+ */
+function efectosTrasEntregar(body: Record<string, unknown>, out: Pick<SalidaTurno, 'efectos' | 'avisoEfectos'>, entregado: boolean) {
+  const dueno = String((body.sesion as { correo?: unknown } | undefined)?.correo || '').toLowerCase();
+  if (entregado) {
+    if (out.avisoEfectos) confirmarEfectosNoVistos(out.avisoEfectos.quien, out.avisoEfectos.ids);
+    return;
+  }
+  if (dueno && out.efectos?.length) {
+    anotarEfectosNoVistos(dueno, idTurnoValido(body.idTurno), out.efectos);
+    console.log(`[turno] respuesta no entregada con ${out.efectos.length} efecto(s): se dice en el turno siguiente`);
+  }
+}
+
+/** Tanda F1: el reintento de ese idTurno recibió la respuesta guardada (que ya lo decía): no queda nada que avisar. */
+function repetidoEntregado(body: Record<string, unknown>) {
+  const dueno = String((body.sesion as { correo?: unknown } | undefined)?.correo || '').toLowerCase();
+  const id = idTurnoValido(body.idTurno);
+  if (dueno && id) turnoVisto(dueno, id);
+}
 
 /**
  * Por dónde sale un turno en vivo: el SSE de /api/turno/stream, o la voz de la conversación fluida
@@ -5354,6 +5462,8 @@ app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60)
   // Lo corría un proceso que se cayó después de despachar algo (AUR06): se contesta eso, sin correr nada.
   const repetido = 'previo' in unico ? unico.previo : 'desconocido' in unico ? turnoReconciliando(req.body?.idioma, unico.desconocido.efectos) : null;
   if (repetido) {
+    // Tanda F1: el reintento recibe la respuesta guardada (que ya decía lo que salió): nada que avisar después.
+    if ('previo' in unico) res.once('finish', () => repetidoEntregado(body));
     const g = repetido;
     escribir('tools', { tools: g.herramientas });
     escribir('emocion', { emocion: g.emocion });
@@ -5530,7 +5640,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   };
   // Cada trozo sale dos veces: `text` para leer (sin expresiones; es lo único que entienden las APK
   // viejas) y `voz` con sus [risa]… para la voz. Los clientes nuevos hablan `voz` y enseñan `text`.
-  const soltar = (evento: 'delta' | 'replace', crudo: string) => {
+  /** Tanda F1: lo de un turno anterior que se cortó en el teléfono (va delante de la respuesta; un `replace` lo conserva). */
+  let fraseDeAntes = '';
+  const soltar = (evento: 'delta' | 'replace', crudoDado: string) => {
+    const crudo = evento === 'replace' && fraseDeAntes ? conAvisoDeAntes(crudoDado, fraseDeAntes) : crudoDado;
     const texto = pulido ? (evento === 'replace' ? pulido.reemplazo(crudo) : pulido.trozo(crudo)) : crudo;
     if (!texto && crudo) return;
     if (texto.trim()) {
@@ -5541,6 +5654,19 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   };
 
   empezarTurnoDeCuenta(body, opciones);
+  // «No me molestes hoy», «mándame el resumen de la mañana a las 7», «ya no me llames» (la iniciativa del día): al
+  // instante. Revisión de la tanda F (B2): en el turno especulativo de la mesa, una orden así espera el «sí» del teléfono
+  // antes de contestar (como cualquier pedido que no es charla) y lo que guarda va además por `retener`.
+  if (esp && comandoIniciativa(String(body?.message || body?.text || '')) && !(await sigueEspeculativo())) return;
+  const delDia = await ordenDelDia(body, opciones);
+  if (delDia) {
+    send('tools', { tools: [] });
+    send('emocion', { emocion: 'neutral' });
+    soltar('delta', delDia.decir);
+    reg.cerrar({ respuesta: delDia.decir, emocion: 'neutral', via: delDia.via });
+    send('done', { reply: delDia.decir, voz: delDia.decir, emocion: 'neutral', ms: 0, via: delDia.via, acciones: [], trazaId: reg.id });
+    return salida.fin();
+  }
   // Una orden simple para la app no espera al cerebro.
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {
@@ -5601,6 +5727,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   // Un invitado oye y ve primero que se le contesta en modo invitado (una frase, sin nada privado).
   // Revisión 7 (G2): con la voz sin confirmar, sin aviso (avisoInvitado da '').
   if (p.invitado && p.message && avisoInvitado(idioma, p.invitado)) soltar('delta', `${avisoInvitado(idioma, p.invitado)} `);
+  // Tanda F1 (lib/efectos-no-vistos.ts): lo que salió en un turno suyo que se cortó en el teléfono, primero y con la frase
+  // fija del recibo. Se da por dicho cuando el `done` de este turno se entrega (terminar).
+  const avisoDeAntes = !!p.message && p.avisoEfectos && !turnoSuperado(opciones) ? p.avisoEfectos : null;
+  if (avisoDeAntes) {
+    soltar('delta', `${avisoDeAntes.frase} `);
+    fraseDeAntes = avisoDeAntes.frase;
+  }
   if (!p.message) {
     send('error', { error: FRASE_FALLO.vacio[idioma], codigo: 'vacio' });
     reg.cerrar({ error: 'message vacío' });
@@ -5643,7 +5776,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   let topeDelTurno = topeDeVoz(message, !!opciones.voz, { confirmacion: p.vozCompleta });
   // Sin tope (un borrador, una confirmación) o con el de lectura: lo que se dice es literal y el pulidor no lo toca.
   vozLiteral = () => esVozLiteral(topeDelTurno);
-  const vozConTope = (texto: string) => (pulido ? pulido.todo(recorteDeVoz(texto, topeDelTurno)) : recorteDeVoz(texto, topeDelTurno)).trim();
+  /** Con tope; `delante` (tanda F1: lo de un turno anterior cortado) va antes y no entra en el tope ni en el pulidor. */
+  const vozConTope = (texto: string, delante = '') => conAvisoDeAntes((pulido ? pulido.todo(recorteDeVoz(texto, topeDelTurno)) : recorteDeVoz(texto, topeDelTurno)).trim(), delante);
   /** Un borrador de correo o de WhatsApp espera su «sí» en esta conversación (de este turno o de uno anterior). */
   const hayBorradorPendiente = () => !!p.dueno && !!(borradorDe(p.dueno, p.ambito) || borradorWhatsappDe(p.dueno, p.ambito));
   /**
@@ -5695,14 +5829,14 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // la dice; antes decía «Se me fue el hilo…»).
     if (app.sustituido) soltar('delta', app.texto);
     anotarHerramientasAura(reg, tools);
-    const leido = quitarExpresiones(pulido ? pulido.paraPantalla(app.texto) : app.texto).trim();
+    const leido = conAvisoDeAntes(quitarExpresiones(pulido ? pulido.paraPantalla(app.texto) : app.texto).trim(), fraseDeAntes);
     const fin: Cierre = senal?.aborted && cierre.estado === 'completo' ? { estado: 'error', motivo: 'la persona interrumpió' } : cierre;
     const parcial = fin.estado !== 'completo';
     const autor = quienContesto(via, quien?.modelo, quien?.proveedor);
     reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: fin.motivo || fin.estado } : {}) });
     const datos = {
       reply: leido,
-      voz: vozConTope(app.texto.trim()),
+      voz: vozConTope(app.texto.trim(), fraseDeAntes),
       emocion,
       ms: Date.now() - t0,
       via,
@@ -5722,6 +5856,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       const entregar = entregaDelTurno();
       if (opciones.retener) opciones.retener.hacer(entregar);
       else entregar();
+      // Tanda F1: lo de antes ya se le dijo (iba delante de esta respuesta). En la voz y en el turno especulativo, solo
+      // cuando el turno se confirma: una especulación descartada no se lo llevó (lo dice la respuesta que sí suene).
+      if (avisoDeAntes) {
+        const dicho = () => confirmarEfectosNoVistos(avisoDeAntes.quien, avisoDeAntes.ids);
+        if (opciones.retener) opciones.retener.hacer(dicho);
+        else dicho();
+      }
     }
     // La apertura de esta respuesta: la siguiente no abre con la misma muletilla (lib/habla-natural.ts).
     if (pulido) anotarApertura(claveHabla, pulido.apertura);
@@ -6777,12 +6918,30 @@ async function startServer() {
       });
       // A-6: los correos importantes también avisan (a la misma gente y con la misma cadencia de 30 minutos).
       arrancarAlertasCorreo({ personas: () => personasRecientes(), cadaMs: CADA_MS_INICIATIVA });
+      // La iniciativa del día (tanda F2): cada minuto, a las cuentas dueñas y a las que la encendieron, el resumen de la
+      // mañana a su hora y, cada 5 minutos por cuenta, un empujón si lo hay y los límites lo dejan (3 al día, 45 min entre
+      // uno y otro, fuera de sus horas quietas, nada el día de «no me molestes»). Cada envío se reclama antes: sale una vez.
+      const redaccion = redactorProductivo();
+      relojIniciativaDia = new RelojIniciativaDia({
+        personas: async () => [...correosDuenos(clave('whatsapp_duenos'), miembrosUltron()), ...(await cuentasConIniciativa())],
+        fuentes: fuentesProductivas(),
+        salidas: {
+          avisar: async (correo, a) => (await avisarPush(correo, { titulo: a.titulo, texto: a.texto, id: a.id, abrir: 'mesa', ...(a.decir ? { decir: a.decir } : {}) }).catch(() => ({ enviados: 0 }))).enviados,
+          llamar: async (correo, a) => (await llamarPorPush(correo, { motivo: a.motivo, id: a.id }).catch(() => ({ enviados: 0 }))).enviados,
+          unaVez: (fuente, correo, id) => primeraVezEvento(fuente, correo, id),
+          redactor: redaccion.redactor,
+          redactorActivo: redaccion.activo,
+        },
+      });
+      relojIniciativaDia.arrancar();
     }
   });
 }
 
 /** El reloj de los recordatorios del servidor (lo arranca startServer). */
 let relojRecordatorios: RelojRecordatorios | null = null;
+/** El reloj de la iniciativa del día (lo arranca startServer). */
+let relojIniciativaDia: RelojIniciativaDia | null = null;
 
 startServer();
 

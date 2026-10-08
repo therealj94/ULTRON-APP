@@ -23,6 +23,7 @@ import { otraVozDelTurno } from '../lib/voces-miembro';
 import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
 import { atadoAlPresentado, presentadoEnChat, type AtaduraEscrita } from './presentacion-decision';
 import { reciboDeDecision, type ReciboEfecto } from '../lib/honestidad';
+import { efectosDelTurno, type EfectoNoVisto } from '../lib/efectos-no-vistos';
 import { propuestaEventoDe, resolverPropuestaEvento } from './calendario';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
@@ -99,6 +100,11 @@ export type SalidaDecisionTurno = {
   appVista?: AppEsperando | null;
   /** Lo que este «sí» de verdad mandó (o deja saliendo al confirmarse el turno de voz), con su recibo (lib/honestidad.ts). */
   recibos?: ReciboEfecto[];
+  /**
+   * Tanda F1: lo que este «sí» hizo afuera (salió o quedó incierto), con su destino: si la respuesta no llega al teléfono
+   * (el turno se cortó), el siguiente lo dice (lib/efectos-no-vistos.ts).
+   */
+  efectos?: EfectoNoVisto[];
 };
 
 /* ------------------------------------------------------------------ lo que espera en esta conversación */
@@ -515,7 +521,15 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
       );
     }
   }
-  return nada({ delCorreo, delWhatsapp, deLaPregunta, delCalendario, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null, recibos });
+  // Tanda F1: lo que salió afuera (o quedó incierto) con este «sí», por si la respuesta no llega al teléfono.
+  const efectos = efectosDelTurno({
+    decisiones: [
+      { canal: 'correo', r: conCorreo, destino: vistoCorreo?.destino },
+      { canal: 'whatsapp', r: conWhatsapp, destino: vistoWhatsapp?.destino },
+      { canal: 'calendario', r: conEvento, destino: vistoEvento?.texto },
+    ],
+  });
+  return nada({ delCorreo, delWhatsapp, deLaPregunta, delCalendario, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null, recibos, ...(efectos.length ? { efectos } : {}) });
 }
 
 /**

@@ -185,6 +185,29 @@ export function lineaDeRecordatorio(r: Pick<RecordatorioDelServidor, 'proxima' |
   return [proximaEnPalabras(r.proxima, ahora, idioma), r.repeticion, r.llamada ? (idioma === 'en' ? 'I call you' : 'te llamo') : ''].filter(Boolean).join(' · ');
 }
 
+/** Una vez que ya sonó y se marca hecha dentro de este tiempo es ESA (lib/recordatorios-servidor.ts marcarHechoServidor). */
+export const HECHO_DE_LA_QUE_SONO_MS = 12 * 3600_000;
+
+/**
+ * Las alarmas de ESTE teléfono que se quitan YA al marcar hecho (o borrar) un recordatorio del servidor (tanda F1). Antes
+ * esperaban a reconciliar, y reconciliar NO quita la alarma de la vez que el servidor acaba de entregar (`ultimaEntrega`,
+ * revisión B3: podía no haber sonado todavía): uno de una vez marcado «hecho» entre el push del servidor y la alarma del
+ * teléfono (Doze la atrasa) sonaba igual una vez.
+ *   · borrar, o uno de una vez hecho: todas las suyas (de cualquier vez);
+ *   · uno que se repite, hecho: la de la vez que se hizo. Si acaba de sonar (< 12 h), la vez entregada (`ultimaEntrega`);
+ *     si no, la próxima (el servidor salta a la siguiente y reconciliar pone la nueva). La siguiente de una que acaba de
+ *     sonar se queda: esa sigue en pie.
+ */
+export function alarmasAlCambiar(r: Pick<RecordatorioDelServidor, 'id' | 'proxima' | 'repetir' | 'ultimaEntrega'>, que: 'hecho' | 'borrar', locales: readonly Pick<RecordatorioPuesto, 'id'>[], ahora: number): string[] {
+  const suyas = locales.map((l) => l.id).filter((id) => ridDe(id) === r.id);
+  if (que === 'borrar' || r.repetir.tipo === 'nunca') return suyas;
+  const acabaDeSonar = r.ultimaEntrega !== undefined && ahora - r.ultimaEntrega < HECHO_DE_LA_QUE_SONO_MS;
+  const vez = acabaDeSonar ? r.ultimaEntrega : r.proxima;
+  if (vez === null || vez === undefined) return [];
+  const base = baseServidor(r.id, vez);
+  return suyas.filter((id) => id === base);
+}
+
 /** La lista quitando uno (lo que se ve al instante al borrar o marcar hecho uno de una vez). */
 export function sinRecordatorio(xs: readonly RecordatorioDelServidor[], id: string): RecordatorioDelServidor[] {
   return xs.filter((r) => r.id !== id);

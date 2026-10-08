@@ -51,8 +51,26 @@ export const POSES: readonly { es: string; en: string }[] = [
 ];
 
 export type Relacion = 'yo' | 'conocido';
-/** `parentesco`: lo que la dueña dijo al presentarla («mi esposa Ana» → «esposa»). */
-export type CaraConocida = { id: string; nombre: string; relacion: Relacion; vectores: number[][]; parentesco?: string };
+/**
+ * `parentesco`: lo que la dueña dijo al presentarla («mi esposa Ana» → «esposa»). Tanda F1: `porConfirmar`, un posible menor
+ * que la dueña todavía no confirmó en su pantalla (el servidor la manda sin vectores y aquí tampoco se compara), con la
+ * constancia para la hoja (`menor`, `presentadoPor`, `presentadoEn`).
+ */
+export type CaraConocida = {
+  id: string;
+  nombre: string;
+  relacion: Relacion;
+  vectores: number[][];
+  parentesco?: string;
+  creado?: number;
+  porConfirmar?: boolean;
+  menor?: boolean;
+  presentadoPor?: string;
+  presentadoEn?: number;
+};
+
+/** Tanda F1: con quién se compara (quien espera la confirmación de la dueña, no). */
+const reconocibles = (conocidas: readonly CaraConocida[]) => conocidas.filter((c) => !c.porConfirmar);
 /** `indice`: a qué caja de ML Kit pertenece (cuando el motor analizó recortes de esas cajas). */
 export type CaraVista = { caja: { x: number; y: number; w: number; h: number }; vector: number[]; puntaje: number; indice?: number };
 
@@ -90,11 +108,12 @@ export type Reconocida = { id: string; nombre: string; relacion: Relacion; dista
 /** La distancia a la persona guardada más parecida (Infinity sin nadie): para la miga de «no sé» (pistaNativa.ts). */
 export function distanciaMasCercana(vector: number[], conocidas: CaraConocida[]): number {
   let d = Infinity;
-  for (const c of conocidas) for (const v of c.vectores) if (vectorValido(v)) d = Math.min(d, distancia(vector, v));
+  for (const c of reconocibles(conocidas)) for (const v of c.vectores) if (vectorValido(v)) d = Math.min(d, distancia(vector, v));
   return d;
 }
 
-export function identificar(vector: number[], conocidas: CaraConocida[]): Reconocida | null {
+export function identificar(vector: number[], todas: CaraConocida[]): Reconocida | null {
+  const conocidas = reconocibles(todas);
   const filas = conocidas
     .map((c) => ({ c, d: Math.min(...c.vectores.filter(vectorValido).map((v) => distancia(vector, v))) }))
     .filter((f) => Number.isFinite(f.d))

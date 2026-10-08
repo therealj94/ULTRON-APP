@@ -59,6 +59,7 @@ import { GeneracionCaras, analizarVigente } from './cercoReconocer';
 import { fraseEscenaCaras } from './escenaCaras';
 import { DiagnosticoReconocer } from './pistaNativa';
 import { guardarCara, listarCaras, olvidarCara, olvidarTodasLasCaras, sumarMuestrasCara } from './api';
+import { abrirHojaBio, escucharCambiosBio } from './porConfirmar';
 
 /** Lo que vale lo reconocido para el cerebro (visto hace menos que esto). */
 const FRESCO_MS = 10_000;
@@ -183,6 +184,8 @@ export function useCaras(o: Opciones): ApiCaras {
   useEffect(() => {
     if (activas && conocidas === null) void refrescar();
   }, [activas, conocidas, refrescar]);
+  // Tanda F1: confirmó o borró a alguien en la hoja «Por confirmar»: la lista (y sus vectores) al día.
+  useEffect(() => escucharCambiosBio((t) => void (t === 'cara' && refrescar())), [refrescar]);
 
   const montarMotor = activas && o.camaraEncendida && o.mesaVisible;
   useEffect(() => generacion.subir(), [generacion, montarMotor, o.lado, o.correo]);
@@ -323,8 +326,20 @@ export function useCaras(o: Opciones): ApiCaras {
       void activar();
       return;
     }
+    // Tanda F1: la hoja de la mesa (HojaConsentimiento.tsx), con quién conoce y la insignia «Por confirmar» de quien espera
+    // su confirmación en pantalla; sin mesa que la muestre, el aviso de siempre.
+    const enHoja = abrirHojaBio({
+      tipo: 'cara',
+      titulo: tr('Reconocer caras · activado', 'Recognize faces · on'),
+      texto: tr('Di «conóceme» para que aprenda tu cara, o «te presento a …» para presentarme a alguien.', 'Say “get to know me” to learn your face, or “meet …” to introduce someone.'),
+      mandos: [
+        { titulo: tr('Olvidar todas', 'Forget all'), peligro: true, alTocar: confirmarBorrarTodas },
+        { titulo: tr('Desactivar', 'Turn off'), alTocar: () => void desactivar(false) },
+      ],
+    });
+    if (enHoja) return;
     const l = conocidasRef.current;
-    const quienes = l.length ? l.map((c) => (c.relacion === 'yo' ? tr(`${c.nombre} (tú)`, `${c.nombre} (you)`) : c.parentesco ? `${c.nombre} (${c.parentesco})` : c.nombre)).join(', ') : tr('nadie todavía', 'nobody yet');
+    const quienes = l.length ? l.map((c) => (c.relacion === 'yo' ? tr(`${c.nombre} (tú)`, `${c.nombre} (you)`) : c.parentesco ? `${c.nombre} (${c.parentesco})` : c.nombre) + (c.porConfirmar ? tr(' — por confirmar', ' — to confirm') : '')).join(', ') : tr('nadie todavía', 'nobody yet');
     Alert.alert(
       tr('Reconocer caras · activado', 'Recognize faces · on'),
       tr(`Conozco a: ${quienes}.\n\nDi «conóceme» para que aprenda tu cara, o «te presento a …» para presentarme a alguien.`, `I know: ${quienes}.\n\nSay “get to know me” to learn your face, or “meet …” to introduce someone.`),
@@ -392,8 +407,9 @@ export function useCaras(o: Opciones): ApiCaras {
       conocidas: () => conocidasRef.current,
       tomarPoses: (elegir) => tomarPosesRef.current(elegir),
       guardar: async (x) => {
-        await guardarCara(x);
+        const p = await guardarCara(x);
         await refrescarRef.current();
+        return { porConfirmar: p?.porConfirmar === true };
       },
       saludado: (nombre) => saludados.current.add(sinTildes(nombre)),
       conoceme: () => conocerDuenaRef.current(),
