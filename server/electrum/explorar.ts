@@ -330,6 +330,33 @@ export async function capasVisibles(): Promise<CapaVisible[]> {
 }
 
 /**
+ * TODAS las capas con rasgos, se vean o no, y por qué no: para diagnosticar «subí la capa y no
+ * aparece» sin entrar a la base. Las que se ven son las de `capasVisibles`; el resto queda con su
+ * motivo (rol que no se pinta, o demasiados rasgos para mandarla entera a un teléfono).
+ */
+export async function inventarioCapas(): Promise<Array<CapaVisible & { visible: boolean; motivo?: string }>> {
+  const capas = await capasPorRol();
+  if (!capas.length) return [];
+  const cuentas = await consultaConTope<{ id: string; n: number }>(
+    `SELECT capa_id::text AS id, count(*)::int AS n FROM entidad_geo WHERE capa_id = ANY($1::bigint[]) GROUP BY capa_id`,
+    [capas.map((c) => c.id)],
+    8000
+  );
+  const n = new Map(cuentas.map((c) => [Number(c.id), c.n]));
+  return capas
+    .map((c) => {
+      const entidades = n.get(c.id) || 0;
+      const motivo = !ROLES_VISIBLES.includes(c.rol)
+        ? `su clase (${c.rol}) no se pinta entera: se cruza en la ficha de cada concesión o va como teselas`
+        : entidades > MAX_RASGOS
+          ? `tiene ${entidades} rasgos, más de ${MAX_RASGOS}: va como teselas o no se pinta`
+          : undefined;
+      return { ...c, nombre: repararTexto(c.nombre), entidades, visible: !motivo, ...(motivo ? { motivo } : {}) };
+    })
+    .sort((a, b) => a.rol.localeCompare(b.rol) || b.entidades - a.entidades);
+}
+
+/**
  * Una capa para pintarla: geometría simplificada (es para mirar, no para medir) y lo mínimo en cada
  * rasgo —su id, nombre y, en la litología, la clase de roca para colorearla—. Los atributos enteros
  * se piden al tocar el rasgo.

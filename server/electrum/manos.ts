@@ -57,6 +57,11 @@ import { esHistorico, fraseFuente, fuenteCatastro } from './ordenar';
 import { restriccionesDe, restriccionesEnTexto } from './restricciones';
 import { analizarCartera, carteraEnTexto, carteras } from './cartera';
 import { sqlDocumentoVisible } from './organizacion';
+import { indiceTeselas } from './teselas';
+import { inventarioCapas } from './explorar';
+import { CATEGORIAS, categoriaDeRaster, categoriaDeRol } from '../../src-electrum/mapa/categorias';
+
+const NOMBRE_CATEGORIA = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c.nombre])) as Record<string, string>;
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -651,6 +656,39 @@ const mapa_capa: Herramienta = {
   },
 };
 
+/** El índice de capas del mapa: qué hay, en qué categoría, si se ve y, si no, por qué. */
+const capas_listar: Herramienta = {
+  nombre: 'capas_listar',
+  descripcion: 'Lista las capas del mapa con su categoría y rasgos, si se ven y por qué no.',
+  esquema: { type: 'object', properties: { buscar: { type: 'string', description: 'Parte del nombre (opcional)' } } },
+  plataformas: ['electrum'],
+  async ejecutar({ buscar }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const q = String(buscar || '').trim().toLowerCase();
+    const capas = (await inventarioCapas()).filter((c) => !q || c.nombre.toLowerCase().includes(q) || c.rol.includes(q));
+    const { rasters } = await indiceTeselas().catch(() => ({ rasters: [] as Array<{ clave: string; nombre: string; grupo?: string; vector?: unknown }> }));
+    const teselas = rasters.filter((x) => !q || `${x.clave} ${x.nombre}`.toLowerCase().includes(q));
+    if (!capas.length && !teselas.length) return { ok: true, texto: q ? `No hay capas que se llamen como «${buscar}».` : 'No hay capas cargadas.' };
+    const porCat = new Map<string, string[]>();
+    for (const c of capas) {
+      const k = NOMBRE_CATEGORIA[categoriaDeRol(c.rol)];
+      porCat.set(k, [...(porCat.get(k) || []), `- [${c.id}] ${c.nombre} · ${c.entidades} rasgos${c.visible ? '' : ` · NO se pinta: ${c.motivo}`}`]);
+    }
+    for (const x of teselas) {
+      const k = NOMBRE_CATEGORIA[categoriaDeRaster(x)];
+      porCat.set(k, [...(porCat.get(k) || []), `- [teselas ${x.clave}] ${x.nombre} · ${x.vector ? 'vectorial' : 'imagen'}`]);
+    }
+    const visibles = capas.filter((c) => c.visible).length;
+    return {
+      ok: true,
+      texto: [
+        `${capas.length} capas en la base (${visibles} se pueden encender en el mapa) y ${teselas.length} mapas en el índice de teselas.`,
+        ...[...porCat].map(([k, xs]) => `\n${k}:\n${xs.slice(0, 60).join('\n')}${xs.length > 60 ? `\n… y ${xs.length - 60} más` : ''}`),
+      ].join('\n'),
+    };
+  },
+};
+
 /**
  * Encender o apagar capas del mapa por categoría o por nombre. No baja nada aquí: el navegador
  * tiene el catálogo y resuelve lo pedido (src-electrum/mapa/categorias.ts), igual que cuando se
@@ -1056,6 +1094,7 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_volar,
   mapa_capa,
   mapa_capas,
+  capas_listar,
   expediente_buscar,
   expediente_listar,
   expediente_leer,

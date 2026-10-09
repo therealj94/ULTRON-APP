@@ -265,7 +265,8 @@ const ROLES: Array<[RolCapa, RegExp]> = [
   ['historico', /(^| )jica( |$)|(^| )mmaj( |$)|historic/],
   ['microcuenca', /microcuenca|cuencas? declarada/],
   ['zona_informal', /informal|artesanal|guiris|pequena mineria|(^| )mape( |$)/],
-  ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto/],
+  // «Depósitos minerales», «Deposito oro»: un depósito de mineral; «depósitos aluviales» es roca, no.
+  ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto|^depositos?$|(^| )depositos? (minerales?|de (oro|plata|cobre|hierro|mercurio|antimonio|zinc|plomo|manganeso)|(oro|plata|cobre|hierro|mercurio|antimonio|zinc|plomo|manganeso))( |$)/],
   ['area_protegida', /protegida|sinaph|reserva biologica|parque nacional|refugio de vida/],
   ['forestal', /forestal|bosque/],
   ['poblado', /caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad/],

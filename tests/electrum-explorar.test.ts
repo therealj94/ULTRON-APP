@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Feature, Geometry } from 'geojson';
 import { consulta, guardarCapa, hayBase } from '../server/electrum/db';
-import { capaParaMapa, capasVisibles, datosDe, fichaParaMapa, queHayAqui, rasgoParaMapa, renglonesEntorno } from '../server/electrum/explorar';
+import { capaParaMapa, capasVisibles, datosDe, inventarioCapas, fichaParaMapa, queHayAqui, rasgoParaMapa, renglonesEntorno } from '../server/electrum/explorar';
 import type { Capa } from '../server/electrum/gis';
 
 const HAY = hayBase();
@@ -162,5 +162,18 @@ test('tocar el mapa, contra PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL
     assert.equal(r!.nombre, 'Falla Guayape');
     assert.deepEqual(Object.fromEntries(r!.atributos), { NOMBRE: 'Falla Guayape', TIPO: 'normal' });
     assert.equal(await rasgoParaMapa(99999999), null);
+  });
+
+  await t.test('el mapa político: departamentos con su nombre aunque el cargador no lo encontrara', async () => {
+    await guardarCapa(capa('DEPARTAMENTOS', [[{ cod: '03', depto: 'Comayagua' }, caja(-88, 14, -87, 15)]]), { comoConcesiones: false });
+    await guardarCapa(capa('Depósitos minerales', [[{ MINERAL: 'Au' }, { type: 'Point', coordinates: [-87.19, 14.81] }]]), { comoConcesiones: false });
+    const capas = await capasVisibles();
+    assert.equal(capas[0].rol, 'departamento', 'el político va primero: es lo que se enciende solo');
+    const dep = await capaParaMapa(capas[0].id);
+    assert.equal(dep!.geojson.features[0].properties!.nombre, 'Comayagua');
+    assert.ok(capas.some((c) => c.nombre === 'Depósitos minerales' && c.rol === 'ocurrencia'), 'un depósito de mineral va con los yacimientos');
+    const inv = await inventarioCapas();
+    assert.ok(inv.find((c) => c.nombre === 'DEPARTAMENTOS')!.visible);
+    assert.ok(inv.every((c) => c.visible || c.motivo), 'lo que no se ve dice por qué');
   });
 });

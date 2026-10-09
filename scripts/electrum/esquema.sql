@@ -565,7 +565,7 @@ CREATE OR REPLACE FUNCTION electrum_rol_capa(nombre text) RETURNS text AS $$
     WHEN n ~ '(^| )jica( |$)|(^| )mmaj( |$)|historic' THEN 'historico'
     WHEN n ~ 'microcuenca|cuencas? declarada' THEN 'microcuenca'
     WHEN n ~ 'informal|artesanal|guiris|pequena mineria|(^| )mape( |$)' THEN 'zona_informal'
-    WHEN n ~ 'ocurrencia|yacimiento|defomin|indicio|prospecto' THEN 'ocurrencia'
+    WHEN n ~ 'ocurrencia|yacimiento|defomin|indicio|prospecto|^depositos?$|(^| )depositos? (minerales?|de (oro|plata|cobre|hierro|mercurio|antimonio|zinc|plomo|manganeso)|(oro|plata|cobre|hierro|mercurio|antimonio|zinc|plomo|manganeso))( |$)' THEN 'ocurrencia'
     WHEN n ~ 'protegida|sinaph|reserva biologica|parque nacional|refugio de vida' THEN 'area_protegida'
     WHEN n ~ 'forestal|bosque' THEN 'forestal'
     WHEN n ~ 'caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad' THEN 'poblado'
