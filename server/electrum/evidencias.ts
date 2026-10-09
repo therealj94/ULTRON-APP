@@ -44,13 +44,13 @@ const CODIGO = /\s?\[(D\d+(?:-p\d+)?)\]/g;
  * comprobada: «[D99-p1, D12-p5]», «[d99-p1]», «[D99 p.1]». Antes de verificar se normalizan a la
  * forma de siempre —uno por corchete, en mayúscula, con `-p`—, y así un código inventado se quita.
  */
-const CODIGO_SUELTO = /\[\s*([dD]\s?\d+(?:\s*(?:-|,)?\s*p(?:ág|ag)?\.?\s*\d+)?(?:\s*[,;]\s*[dD]\s?\d+(?:\s*(?:-|,)?\s*p(?:ág|ag)?\.?\s*\d+)?)*)\s*\]/g;
+const CODIGO_SUELTO = /\[\s*([dD]\s?\d+(?:\s*(?:-|,)?\s*[pP](?:[áa]g|[ÁA]G)?\.?\s*\d+)?(?:\s*[,;]\s*[dD]\s?\d+(?:\s*(?:-|,)?\s*[pP](?:[áa]g|[ÁA]G)?\.?\s*\d+)?)*)\s*\]/g;
 export function normalizarCodigos(texto: string): string {
   return texto.replace(CODIGO_SUELTO, (_m, dentro: string) =>
     dentro
       .split(/\s*;\s*|\s*,\s*(?=[dD]\s?\d)/)
       .map((c) => {
-        const m = /^[dD]\s?(\d+)(?:\s*(?:-|,)?\s*p(?:ág|ag)?\.?\s*(\d+))?$/.exec(c.trim());
+        const m = /^[dD]\s?(\d+)(?:\s*(?:-|,)?\s*[pP](?:[áa]g|[ÁA]G)?\.?\s*(\d+))?$/.exec(c.trim());
         return m ? `[D${m[1]}${m[2] ? `-p${m[2]}` : ''}]` : `[${c.trim()}]`;
       })
       .join(' ')

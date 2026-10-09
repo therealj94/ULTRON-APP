@@ -75,8 +75,9 @@ test('la búsqueda devuelve el código y marca la foto sin revisar', { skip: hay
 });
 
 test('un código mal escrito también se verifica: lista, minúscula o «p.» no se cuelan como cita', () => {
-  const r = verificarCitas('La ley es 3,4 g/t [D12-p5, D99-p1] y en otro [d12-p5] y [D12 p.5].', leido);
+  const r = verificarCitas('La ley es 3,4 g/t [D12-p5, D99-p1] y en otro [d12-p5] y [D12 p.5] y [D99-P1].', leido);
   assert.equal((r.texto.match(/\(Informe Fase III, p\. 5\)/g) || []).length, 3);
   assert.doesNotMatch(r.texto, /D99|d12|\[D12 p/);
-  assert.deepEqual(r.quitadas, ['D99-p1']);
+  assert.doesNotMatch(r.texto, /D99-P1/);
+  assert.deepEqual(r.quitadas, ['D99-p1', 'D99-p1']);
 });
