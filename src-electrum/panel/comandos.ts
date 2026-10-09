@@ -8,6 +8,8 @@
  * pregunta, no la orden «siguiente»: por eso un comando tiene que ser casi toda la frase.
  */
 
+import { esPedidoDeCapa } from '../mapa/categorias';
+
 export type Comando =
   | { accion: 'siguiente' }
   | { accion: 'detener' }
@@ -35,7 +37,9 @@ export type Comando =
   /** Explorar sin voces, o que vuelvan a hablar. */
   | { accion: 'silencio'; activar: boolean }
   /** Dejar que le hablen encima (se calla y escucha), o no. */
-  | { accion: 'interrumpir'; activar: boolean };
+  | { accion: 'interrumpir'; activar: boolean }
+  /** Encender o apagar capas del mapa por nombre o por categoría; `solo` apaga lo demás. */
+  | { accion: 'capas'; mostrar: boolean; que: string; solo?: boolean };
 
 /** Minúsculas, sin tildes ni signos, espacios simples. */
 export function normalizarDicho(texto: string): string {
@@ -112,6 +116,20 @@ export function comandoDe(texto: string): Comando | null {
 
   if (/^(activa|activar|enciende|prende|pon|usar|usa)( el| las| los)? (air touch|manos|gestos|control con las manos)$/.test(t)) return { accion: 'manos', activar: true };
   if (/^(desactiva|desactivar|apaga|apagar|quita|quitar)( el| las| los)? (air touch|manos|gestos|camara)$/.test(t)) return { accion: 'manos', activar: false };
+
+  /*
+   * Capas, al final: todo lo de arriba sigue siendo lo que era («pon satélite» es el fondo, «muestra
+   * el relieve» es el 3D, «muestra las capas» abre la caja). Y solo si lo que sigue al verbo nombra
+   * algo del mapa: «muéstrame las concesiones de oro» es una pregunta, no una capa.
+   */
+  if (/^(limpia|limpiar|despeja)( el)? mapa$|^(quita|quitar|apaga|apagar|esconde|oculta)( todas)? las capas$/.test(t)) return { accion: 'capas', mostrar: false, que: 'todo' };
+  const solo = t.match(/^(?:deja(?:me)? |muestra(?:me)? |pon(?:me)? |ver )?solo(?: el| la| los| las)? (.+)$/);
+  if (solo && esPedidoDeCapa(solo[1])) return { accion: 'capas', mostrar: true, que: solo[1], solo: true };
+  const capa = t.match(/^(muestrame|muestra|ensename|ponme|pon|enciende|prende|activa|carga|cargame|agrega|anade|pinta|dibuja|quiero ver|ver|esconde|escondeme|oculta|ocultame|quita|quitame|apaga|desactiva|saca|retira|borra)( tambien)? (.+)$/);
+  if (capa && esPedidoDeCapa(capa[3])) {
+    const mostrar = !/^(esconde|escondeme|oculta|ocultame|quita|quitame|apaga|desactiva|saca|retira|borra)$/.test(capa[1]);
+    return { accion: 'capas', mostrar, que: capa[3] };
+  }
 
   if (/^(donde estoy|mi ubicacion|muestrame donde estoy|llevame a donde estoy|ve a mi ubicacion|aqui donde estoy)$/.test(t)) return { accion: 'ubicacion' };
   return null;
@@ -215,5 +233,6 @@ export function nombreDeComando(c: Comando): string {
     case 'mesa': return c.abrir ? 'Mesa técnica abierta' : 'Mesa técnica cerrada';
     case 'silencio': return c.activar ? 'Modo silencio' : 'Voces encendidas';
     case 'interrumpir': return c.activar ? 'Puede interrumpir hablando' : 'Termina lo que dice';
+    case 'capas': return `${c.solo ? 'Solo' : c.mostrar ? 'Mostrando' : 'Ocultando'} ${c.que}`;
   }
 }

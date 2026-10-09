@@ -57,6 +57,11 @@ import { esHistorico, fraseFuente, fuenteCatastro } from './ordenar';
 import { restriccionesDe, restriccionesEnTexto } from './restricciones';
 import { analizarCartera, carteraEnTexto, carteras } from './cartera';
 import { sqlDocumentoVisible } from './organizacion';
+import { indiceTeselas } from './teselas';
+import { inventarioCapas } from './explorar';
+import { CATEGORIAS, categoriaDeRaster, categoriaDeRol } from '../../src-electrum/mapa/categorias';
+
+const NOMBRE_CATEGORIA = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c.nombre])) as Record<string, string>;
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -82,7 +87,10 @@ const catastro_buscar: Herramienta = {
   plataformas: ['electrum'],
   async ejecutar({ texto }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const filas = await buscarConcesiones(String(texto), 10);
+    // Se piden 12 y se enseñan TODAS: antes decía «coinciden 10» y nombraba 6, y las otras cuatro
+    // (Chaparro II, III, VII y VIII) no estaban en ningún lado para pedirlas.
+    const TOPE = 12;
+    const filas = await buscarConcesiones(String(texto), TOPE);
     if (!filas.length) return { ok: true, texto: `No hay ninguna concesión que coincida con «${texto}» en el catastro cargado.`, ui: { filas: [] } };
     // La que se nombró tal cual gana aunque la búsqueda tolerante traiga parecidas.
     const exacta = unicaExacta(filas, String(texto));
@@ -90,7 +98,7 @@ const catastro_buscar: Herramienta = {
     const cabeza =
       filas.length === 1 || exacta
         ? `${uno.nombre} (id ${uno.id}), expediente ${uno.expediente || 'sin número'}. Titular ${(uno.titular || 'no declarado').replace(/\.$/, '')}. ${uno.tipo ? `Concesión de ${uno.tipo}` : 'Concesión'}${uno.mineral ? ` para ${uno.mineral}` : ''}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
-        : `Coinciden ${filas.length}: ${filas.slice(0, 6).map(distinguir).join('; ')}. Pedí una por su id o su expediente para la ficha.`;
+        : `Coinciden ${filas.length >= TOPE ? `al menos ${TOPE} (estas son las más parecidas; afiná el nombre para ver otras)` : filas.length}: ${filas.map(distinguir).join('; ')}. Pedí una por su id o su expediente para la ficha.`;
     /*
      * El mapa sigue a la búsqueda, sin esperar a que el modelo se acuerde de `mapa_volar`: con una
      * sola concesión vuela a ella; con varias, las pinta y las encuadra a todas mientras se pregunta
@@ -648,6 +656,66 @@ const mapa_capa: Herramienta = {
   },
 };
 
+/** El índice de capas del mapa: qué hay, en qué categoría, si se ve y, si no, por qué. */
+const capas_listar: Herramienta = {
+  nombre: 'capas_listar',
+  descripcion: 'Lista las capas del mapa con su categoría y rasgos, si se ven y por qué no.',
+  esquema: { type: 'object', properties: { buscar: { type: 'string', description: 'Parte del nombre (opcional)' } } },
+  plataformas: ['electrum'],
+  async ejecutar({ buscar }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const q = String(buscar || '').trim().toLowerCase();
+    const capas = (await inventarioCapas()).filter((c) => !q || c.nombre.toLowerCase().includes(q) || c.rol.includes(q));
+    const { rasters } = await indiceTeselas().catch(() => ({ rasters: [] as Array<{ clave: string; nombre: string; grupo?: string; vector?: unknown }> }));
+    const teselas = rasters.filter((x) => !q || `${x.clave} ${x.nombre}`.toLowerCase().includes(q));
+    if (!capas.length && !teselas.length) return { ok: true, texto: q ? `No hay capas que se llamen como «${buscar}».` : 'No hay capas cargadas.' };
+    const porCat = new Map<string, string[]>();
+    for (const c of capas) {
+      const k = NOMBRE_CATEGORIA[categoriaDeRol(c.rol)];
+      porCat.set(k, [...(porCat.get(k) || []), `- [${c.id}] ${c.nombre} · ${c.entidades} rasgos${c.visible ? '' : ` · NO se pinta: ${c.motivo}`}`]);
+    }
+    for (const x of teselas) {
+      const k = NOMBRE_CATEGORIA[categoriaDeRaster(x)];
+      porCat.set(k, [...(porCat.get(k) || []), `- [teselas ${x.clave}] ${x.nombre} · ${x.vector ? 'vectorial' : 'imagen'}`]);
+    }
+    const visibles = capas.filter((c) => c.visible).length;
+    return {
+      ok: true,
+      texto: [
+        `${capas.length} capas en la base (${visibles} se pueden encender en el mapa) y ${teselas.length} mapas en el índice de teselas.`,
+        ...[...porCat].map(([k, xs]) => `\n${k}:\n${xs.slice(0, 60).join('\n')}${xs.length > 60 ? `\n… y ${xs.length - 60} más` : ''}`),
+      ].join('\n'),
+    };
+  },
+};
+
+/**
+ * Encender o apagar capas del mapa por categoría o por nombre. No baja nada aquí: el navegador
+ * tiene el catálogo y resuelve lo pedido (src-electrum/mapa/categorias.ts), igual que cuando se
+ * dice de palabra sin pasar por el cerebro.
+ */
+const mapa_capas: Herramienta = {
+  nombre: 'mapa_capas',
+  // Corta a propósito: el system de un panel de tres tiene que caber en el proxy del nodo.
+  descripcion: 'Enciende u oculta capas del mapa («geología», «ríos», «mapa político»).',
+  esquema: {
+    type: 'object',
+    properties: { accion: { type: 'string', enum: ['mostrar', 'ocultar', 'solo'], description: '«solo» apaga lo demás' }, que: { type: 'string', description: 'Capa o categoría' } },
+    required: ['accion', 'que'],
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ accion, que }) {
+    const q = String(que || '').trim().slice(0, 80);
+    if (!q) return { ok: false, texto: 'Falta qué capa o categoría.' };
+    const a = accion === 'ocultar' ? 'ocultar' : accion === 'solo' ? 'solo' : 'mostrar';
+    return {
+      ok: true,
+      texto: a === 'ocultar' ? `Apagué «${q}» en el mapa.` : a === 'solo' ? `Dejé solo «${q}» en el mapa.` : `Encendí «${q}» en el mapa.`,
+      ui: { accion: 'capas', mostrar: a !== 'ocultar', solo: a === 'solo', que: q },
+    };
+  },
+};
+
 /* ------------------------------------------------------------------ expedientes */
 
 const expediente_buscar: Herramienta = {
@@ -666,7 +734,7 @@ const expediente_buscar: Herramienta = {
   async ejecutar({ texto, documento }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const doc = documento ? String(documento).slice(0, 120) : undefined;
-    const hits = await buscarEnExpedientes(String(texto), 5, { documento: doc });
+    const hits = await buscarEnExpedientes(String(texto), 6, { documento: doc });
     if (!hits.length) {
       return {
         ok: true,
@@ -677,16 +745,16 @@ const expediente_buscar: Herramienta = {
       };
     }
     const cita = hits
-      .slice(0, 3)
+      .slice(0, 5)
       .map(
         (h) =>
           `${h.codigo ? `[${h.codigo}] ` : ''}${esHistorico(h.documento) ? '[HISTÓRICO] ' : ''}${h.transcripcion ? '[FOTO TRANSCRITA, SIN REVISAR] ' : ''}${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`
       )
       .join(' | ');
-    const transcrito = hits.slice(0, 3).some((h) => h.transcripcion);
-    const historico = hits.slice(0, 3).some((h) => esHistorico(h.documento));
+    const transcrito = hits.slice(0, 5).some((h) => h.transcripcion);
+    const historico = hits.slice(0, 5).some((h) => esHistorico(h.documento));
     // Los informes de JICA y los 43-101 están en inglés: la persona lee español.
-    const ingles = hits.slice(0, 3).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
+    const ingles = hits.slice(0, 5).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
     return {
       ok: true,
       texto: `${cita}. ${COMO_CITAR}${transcrito ? ' Lo marcado [FOTO TRANSCRITA, SIN REVISAR] es una lectura automática de una foto: decilo al usarlo y no lo des como el documento original (expedientes, coordenadas, leyes, titulares y fechas se confirman con el papel).' : ''} Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}${historico ? ' Lo marcado [HISTÓRICO] es de estudios viejos (JICA-MMAJ, 1978-2003): citalo como antecedente, con su año, nunca como la situación de hoy; lo vigente sale del catastro oficial.' : ''}`,
@@ -1025,6 +1093,8 @@ export const MANOS: Record<string, Herramienta> = {
   gis_medir,
   mapa_volar,
   mapa_capa,
+  mapa_capas,
+  capas_listar,
   expediente_buscar,
   expediente_listar,
   expediente_leer,

@@ -10,6 +10,10 @@
 # presentación o un Word (.pptx, .ppt, .docx, .doc) se pasa antes a PDF con LibreOffice: muchas
 # diapositivas son fotos de un mapa o de una tabla, y el lector de .pptx solo ve el texto escrito.
 # Las hojas de cálculo y los .txt se saltan: ahí no hay imágenes que leer.
+#
+# El texto queda en ocr-mejora/<ruta con su extensión>.txt («a/x.pdf.txt»): con la extensión fuera,
+# «a/x.pdf» y «a/x.docx» iban los dos a «a/x.txt», el segundo se daba por hecho («ya estaba») y
+# cargaba el texto del primero.
 set -euo pipefail
 
 LOTE="${1:?cargar lote}"; LISTA="${2:?y la lista de --listar}"
@@ -21,7 +25,7 @@ mkdir -p "$SAL" "$TMP"
 command -v soffice >/dev/null || { echo "Falta LibreOffice (apt install libreoffice-impress libreoffice-writer)."; exit 1; }
 
 leer_uno() {  # leer_uno <ruta relativa dentro del lote>
-  local rel="$1" ent="${ORIG}/$1" sal="${SAL}/${1%.*}.txt" pdf lista
+  local rel="$1" ent="${ORIG}/$1" sal="${SAL}/$1.txt" pdf lista
   [ -s "$sal" ] && { echo "= ${rel}"; return; }
   [ -f "$ent" ] || { echo "✗ ${rel} (no está el original)"; return; }
   mkdir -p "$(dirname "$sal")"
@@ -36,11 +40,13 @@ leer_uno() {  # leer_uno <ruta relativa dentro del lote>
     *) echo "– ${rel} (no es imagen: se salta)"; return ;;
   esac
   lista="$(mktemp "${TMP}/lista-XXXX")"; printf '%s\n' "$pdf" > "$lista"
-  OMP_THREAD_LIMIT=1 bash "${CODIGO}/scripts/electrum/ocr.sh" "$lista" "$(dirname "$sal")" >/dev/null 2>&1 || true
-  # ocr.sh nombra la salida por el PDF; si vino de una conversión, se lleva al nombre del original.
-  local hecho; hecho="$(dirname "$sal")/$(basename "${pdf%.*}").txt"
-  [ "$hecho" = "$sal" ] || { [ -f "$hecho" ] && mv -f "$hecho" "$sal"; }
-  rm -f "$lista"; [ "$pdf" = "$ent" ] || rm -rf "$(dirname "$pdf")"
+  # ocr.sh nombra la salida por el PDF sin extensión («x.txt»): cada uno escribe en su propio
+  # directorio, para que dos hilos con «x.pdf» y «x.docx» no se pisen, y se lleva al nombre de verdad.
+  local aqui; aqui="$(mktemp -d "${TMP}/sal-XXXX")"
+  OMP_THREAD_LIMIT=1 bash "${CODIGO}/scripts/electrum/ocr.sh" "$lista" "$aqui" >/dev/null 2>&1 || true
+  local hecho; hecho="${aqui}/$(basename "${pdf%.*}").txt"
+  [ -f "$hecho" ] && mv -f "$hecho" "$sal"
+  rm -rf "$lista" "$aqui"; [ "$pdf" = "$ent" ] || rm -rf "$(dirname "$pdf")"
   if [ -s "$sal" ]; then echo "✓ ${rel} ($(wc -c < "$sal") caracteres)"; else echo "✗ ${rel} (el OCR no sacó nada)"; fi
 }
 export -f leer_uno; export ORIG SAL TMP CODIGO

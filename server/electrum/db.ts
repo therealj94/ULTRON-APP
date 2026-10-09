@@ -265,7 +265,8 @@ const ROLES: Array<[RolCapa, RegExp]> = [
   ['historico', /(^| )jica( |$)|(^| )mmaj( |$)|historic/],
   ['microcuenca', /microcuenca|cuencas? declarada/],
   ['zona_informal', /informal|artesanal|guiris|pequena mineria|(^| )mape( |$)/],
-  ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto/],
+  // «Depósitos minerales», «Deposito oro»: un depósito de mineral; «depósitos aluviales» es roca, no.
+  ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto|^depositos?$|(^| )depositos? (minerales?|de (oro|plata|cobre|hierro|mercurio|antimonio|zinc|plomo|manganeso)|(oro|plata|cobre|hierro|mercurio|antimonio|zinc|plomo|manganeso))( |$)/],
   ['area_protegida', /protegida|sinaph|reserva biologica|parque nacional|refugio de vida/],
   ['forestal', /forestal|bosque/],
   ['poblado', /caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad/],
@@ -1095,6 +1096,49 @@ export async function capaGeojson(capaId: number): Promise<FeatureCollection> {
 const INTERROGATIVAS =
   /\b(qu[eé]|cu[aá]l(es)?|c[oó]mo|cu[aá]nt[oa]s?|d[oó]nde|cu[aá]ndo|qui[eé]n(es)?|por qu[eé]|para qu[eé]|dime|decime|dame|mostrame|busca|buscame|hay|existe|tiene|es|son|est[aá]n?)\b/gi;
 
+/*
+ * BÚSQUEDA SIN TILDES. El índice era `to_tsvector('spanish', …)`, y el lematizador español solo
+ * reconoce los sufijos con tilde: «mineralización» quedaba como `mineraliz` y «mineralizacion»
+ * (como sale del OCR de JICA o de un teléfono) como `mineralizacion`. Buscar sin tilde encontraba
+ * 241 fragmentos y con tilde 2747 (medido en producción, oct-2026). `es_sin_tilde` es una copia de
+ * `spanish` que pasa cada palabra por `unaccent` antes de lematizarla: con y sin tilde dan lo mismo.
+ * Se usa solo si la columna `tsv` ya se generó con ella (biblioteca.ts, v11); si no, la de siempre,
+ * porque consultar con una configuración distinta de la del índice empeora en vez de mejorar.
+ */
+let configTexto: Promise<string> | null = null;
+let configHasta = 0;
+export function configDeTexto(): Promise<string> {
+  // Se vuelve a mirar cada 10 minutos: si la columna se regeneró desde otro proceso (el nodo de
+  // carga, una migración a mano), este se entera solo sin reiniciar.
+  if (!configTexto || Date.now() > configHasta) {
+    configHasta = Date.now() + 10 * 60_000;
+    configTexto = consulta<{ expr: string }>(
+      `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
+         FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+        WHERE d.adrelid = 'fragmento'::regclass AND a.attname = 'tsv'`
+    )
+      .then(([r]) => (/es_sin_tilde/.test(r?.expr || '') ? 'es_sin_tilde' : 'spanish'))
+      .catch(() => {
+        configTexto = null;
+        return 'spanish';
+      });
+  }
+  return configTexto;
+}
+/** Tras regenerar el índice, para que el proceso deje de usar la configuración vieja. */
+export function olvidarConfigDeTexto() {
+  configTexto = null;
+}
+
+/**
+ * Palabras que no distinguen un documento de otro: con ellas un filtro «Informe de Minas de Oro»
+ * exigía que el nombre del archivo dijera «informe», y una pregunta larga gastaba su cupo de
+ * términos en «por favor según» antes de llegar a «oro» o «Tatanacho».
+ */
+const RELLENO = new Set(
+  'el la los las un una unos unas de del al y o u e en por para con sin sobre segun según que favor porfa me mi mis tu su sus lo le les se este esta estos estas ese esa eso aquel informe documento archivo dice decir dame datos informacion información todo toda'.split(' ')
+);
+
 function terminosDeBusqueda(texto: string): string {
   return String(texto || '')
     .replace(/[¿?¡!.,;:]/g, ' ')
@@ -1151,7 +1195,7 @@ export function consultaBilingue(limpio: string, union: '&' | '|' = '&'): string
   const palabras = limpio
     .split(/\s+/)
     .map((w) => w.replace(/['\\:&|!()<>*"-]/g, ''))
-    .filter((w) => w.length >= 2)
+    .filter((w) => w.length >= 2 && !RELLENO.has(w.toLowerCase()))
     .slice(0, 10);
   let traducida = false;
   const grupos = palabras.map((w) => {
@@ -1173,16 +1217,22 @@ export function filtroDocumento(documento: string | undefined, desde: number): {
   // «#123»: ese documento y ningún otro (lo usa la búsqueda previa del turno cuando ya sabe cuál es).
   const porId = /^#(\d{1,9})$/.exec(String(documento || '').trim());
   if (porId) return { sql: ` AND d.id = $${desde}::bigint`, args: [porId[1]] };
+  /*
+   * Palabras ENTERAS, no trozos: con `LIKE %ii%`, «JICA Fase II» casaba también con «Fase III» y
+   * se leía y citaba el informe equivocado. Los números de una cifra cuentan («Minas de Oro 2» no
+   * es «Minas de Oro 5»); el relleno («el», «de», «informe») no se exige.
+   */
   const palabras = String(documento || '')
     .split(/[\s/_,.;:()«»"'-]+/)
     .map((w) => w.trim())
-    .filter((w) => w.length >= 2)
+    .filter((w) => (w.length >= 2 || /^\d$/.test(w)) && !RELLENO.has(w.toLowerCase()))
     .slice(0, 6);
   if (!palabras.length) return { sql: '', args: [] };
   const sql = palabras
-    .map((_, i) => `unaccent(lower(d.nombre || ' ' || coalesce(d.carpeta, ''))) LIKE unaccent(lower($${desde + i})) ESCAPE '\\'`)
+    .map((_, i) => `unaccent(lower(d.nombre || ' ' || coalesce(d.carpeta, ''))) ~ ('(^|[^a-z0-9])' || unaccent(lower($${desde + i})) || '($|[^a-z0-9])')`)
     .join(' AND ');
-  return { sql: ` AND ${sql}`, args: palabras.map((w) => `%${w.replace(/[\\%_]/g, (c) => `\\${c}`)}%`) };
+  // La palabra va como texto literal dentro de la expresión regular: se escapan sus metacaracteres.
+  return { sql: ` AND ${sql}`, args: palabras.map((w) => w.replace(/[\\.^$|?*+()[\]{}]/g, (c) => `\\${c}`)) };
 }
 
 export async function buscarPorTexto(
@@ -1192,6 +1242,7 @@ export async function buscarPorTexto(
 ): Promise<Array<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>> {
   const limpio = terminosDeBusqueda(texto);
   const filtro = filtroDocumento(opts.documento, 3);
+  const cfg = await configDeTexto();
   if (!limpio) {
     if (!filtro.sql) return [];
     // Sin términos útiles pero con documento: el comienzo del documento, que es de lo que trata.
@@ -1206,7 +1257,7 @@ export async function buscarPorTexto(
   const SQL = (op: string) => `
     WITH q AS (SELECT ${op} AS tq)
     SELECT f.id, d.nombre AS documento, f.pagina, d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion,
-           ts_headline('spanish', f.texto, q.tq,
+           ts_headline('${cfg}', f.texto, q.tq,
              'MaxWords=55, MinWords=25, ShortWord=3, MaxFragments=2, FragmentDelimiter=" … ", StartSel="", StopSel=""') AS texto,
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
     FROM fragmento f
@@ -1217,7 +1268,7 @@ export async function buscarPorTexto(
 
   const bilingue = consultaBilingue(limpio, '&');
   const exacto = await consulta<any>(
-    bilingue ? SQL("to_tsquery('spanish', $1)") : SQL("websearch_to_tsquery('spanish', $1)"),
+    bilingue ? SQL(`to_tsquery('${cfg}', $1)`) : SQL(`websearch_to_tsquery('${cfg}', $1)`),
     [bilingue || limpio, limite, ...filtro.args]
   );
   if (exacto.length) return exacto;
@@ -1225,13 +1276,13 @@ export async function buscarPorTexto(
   // Segunda pasada: cualquiera de los términos, que es lo que un humano espera de un buscador.
   const sueltos = limpio
     .split(/\s+/)
-    .filter((w) => w.length >= 3)
+    .filter((w) => w.length >= 3 && !RELLENO.has(w.toLowerCase()))
     .slice(0, 8)
     .map((w) => w.replace(/['\\:&|!()<>]/g, ''))
     .filter(Boolean)
     .join(' | ');
   if (!sueltos) return filtro.sql ? primerosFragmentos(opts.documento, limite) : [];
-  const alguno = await consulta<any>(SQL("to_tsquery('spanish', $1)"), [consultaBilingue(limpio, '|') || sueltos, limite, ...filtro.args]);
+  const alguno = await consulta<any>(SQL(`to_tsquery('${cfg}', $1)`), [consultaBilingue(limpio, '|') || sueltos, limite, ...filtro.args]);
   if (alguno.length || !filtro.sql) return alguno;
   return primerosFragmentos(opts.documento, limite);
 }
@@ -1269,6 +1320,29 @@ export type HitExpediente = {
  * significado, fundidos por rango), y solo por texto si no. Lo que sale queda anotado en la traza
  * del turno como documento consultado.
  */
+/**
+ * Resultados distintos entre sí. Un mismo párrafo puede estar en varios documentos —los nueve planes
+ * de explotación de El Chaparro son casi el mismo texto, un informe llega en PDF y en su OCR, la
+ * misma carpeta de fotos se copió dos veces—: el 9,5 % de los fragmentos de producción está repetido
+ * en otro documento (oct-2026). Sin esto, los tres trozos que ve el modelo eran el mismo párrafo.
+ * Se queda el primero de cada texto (el mejor puesto) y como mucho dos por nombre de documento.
+ */
+export function variados<T extends { documento: string; texto: string }>(hits: T[], limite: number, porDocumento = 2): T[] {
+  const vistos = new Set<string>();
+  const porNombre = new Map<string, number>();
+  const salida: T[] = [];
+  for (const h of hits) {
+    const huella = h.texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 240);
+    const nombre = h.documento.toLowerCase().replace(/\.[a-z0-9]{2,5}$/, '');
+    if (vistos.has(huella) || (porNombre.get(nombre) || 0) >= porDocumento) continue;
+    vistos.add(huella);
+    porNombre.set(nombre, (porNombre.get(nombre) || 0) + 1);
+    salida.push(h);
+    if (salida.length >= limite) break;
+  }
+  return salida;
+}
+
 export async function buscarEnExpedientes(texto: string, limite = 8, opts: { documento?: string } = {}): Promise<HitExpediente[]> {
   const [porTexto, porSignificado] = await Promise.all([
     buscarPorTexto(texto, Math.max(limite, 20), opts),
@@ -1279,11 +1353,14 @@ export async function buscarEnExpedientes(texto: string, limite = 8, opts: { doc
     documentoId: x.documento_id != null ? Number(x.documento_id) : undefined,
     transcripcion: x.transcripcion === true || undefined,
   });
+  // Se funde todo y se recorta DESPUÉS de quitar repetidos (`variados`): recortar antes dejaba los
+  // primeros puestos llenos de copias del mismo párrafo y fuera lo distinto que venía detrás.
+  const cupo = Math.max(limite * 4, 20);
   if (!porSignificado.length) {
-    hits = porTexto.slice(0, limite).map(({ id: _id, documento_id, transcripcion, ...h }: any) => ({ ...h, ...deFila({ documento_id, transcripcion }), via: 'texto' as const }));
+    hits = porTexto.slice(0, cupo).map(({ id: _id, documento_id, transcripcion, ...h }: any) => ({ ...h, ...deFila({ documento_id, transcripcion }), via: 'texto' as const }));
   } else {
     const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string; documento_id?: number; transcripcion?: boolean }>([porTexto, porSignificado], (x) => String(x.id));
-    hits = fundidos.slice(0, limite).map(({ item, puntaje, de }) => ({
+    hits = fundidos.slice(0, cupo).map(({ item, puntaje, de }) => ({
       documento: item.documento,
       pagina: item.pagina,
       texto: item.texto,
@@ -1292,6 +1369,7 @@ export async function buscarEnExpedientes(texto: string, limite = 8, opts: { doc
       via: de.length > 1 ? ('ambos' as const) : de[0] === 0 ? ('texto' as const) : ('significado' as const),
     }));
   }
+  hits = variados(hits, limite);
   for (const h of hits) {
     trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
     if (h.documentoId != null) h.codigo = anotarEvidencia({ documentoId: h.documentoId, documento: h.documento, pagina: h.pagina, transcripcion: h.transcripcion });

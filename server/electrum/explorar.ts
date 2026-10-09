@@ -16,8 +16,8 @@
  * dice en esa sección.
  */
 import type { FeatureCollection, Geometry } from 'geojson';
-import { geometriaDe, concesionPorId, conTextoReparado, consultaConTope, type FilaConcesion, type RolCapa } from './db';
-import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
+import { geometriaDe, concesionPorId, configDeTexto, conTextoReparado, consultaConTope, type FilaConcesion, type RolCapa } from './db';
+import { alertasDe, capasPorRol, entornoDe, nombreDe, type Entorno } from './entorno';
 import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
 import { sateliteEnRenglones } from './satelite';
@@ -188,11 +188,12 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
         6000
       ).then(conTextoReparado);
       // Con tope en la base, igual que todo lo de aquí: un toque abandonado no deja la consulta viva.
+      const cfg = await configDeTexto();
       const nombran = await consultaConTope<{ documento: string; pagina: number | null; texto: string }>(
         `SELECT d.nombre AS documento, f.pagina, left(f.texto, 400) AS texto
            FROM fragmento f JOIN documento d ON d.id = f.documento_id
-          WHERE f.tsv @@ phraseto_tsquery('spanish', $1)${sqlDocumentoVisible('d')}
-          ORDER BY ts_rank(f.tsv, phraseto_tsquery('spanish', $1)) DESC LIMIT 4`,
+          WHERE f.tsv @@ phraseto_tsquery('${cfg}', $1)${sqlDocumentoVisible('d')}
+          ORDER BY ts_rank(f.tsv, phraseto_tsquery('${cfg}', $1)) DESC LIMIT 4`,
         [f.nombre],
         6000
       ).then(conTextoReparado);
@@ -292,6 +293,9 @@ export async function queHayAqui(lon: number, lat: number): Promise<AquiMapa> {
  * ficha de cada concesión, que las cruza en la base.
  */
 export const ROLES_VISIBLES: RolCapa[] = [
+  // El mapa político va primero: es lo que se enciende solo al abrir el mapa.
+  'departamento',
+  'municipio',
   'litologia',
   'falla',
   'tracto_permisivo',
@@ -302,7 +306,6 @@ export const ROLES_VISIBLES: RolCapa[] = [
   'forestal',
   'provincia_geologica',
   'placa',
-  'municipio',
   // Referencia (v10): se encienden a mano; el catastro principal es el oficial.
   'proyecto',
   'historico',
@@ -327,6 +330,33 @@ export async function capasVisibles(): Promise<CapaVisible[]> {
 }
 
 /**
+ * TODAS las capas con rasgos, se vean o no, y por qué no: para diagnosticar «subí la capa y no
+ * aparece» sin entrar a la base. Las que se ven son las de `capasVisibles`; el resto queda con su
+ * motivo (rol que no se pinta, o demasiados rasgos para mandarla entera a un teléfono).
+ */
+export async function inventarioCapas(): Promise<Array<CapaVisible & { visible: boolean; motivo?: string }>> {
+  const capas = await capasPorRol();
+  if (!capas.length) return [];
+  const cuentas = await consultaConTope<{ id: string; n: number }>(
+    `SELECT capa_id::text AS id, count(*)::int AS n FROM entidad_geo WHERE capa_id = ANY($1::bigint[]) GROUP BY capa_id`,
+    [capas.map((c) => c.id)],
+    8000
+  );
+  const n = new Map(cuentas.map((c) => [Number(c.id), c.n]));
+  return capas
+    .map((c) => {
+      const entidades = n.get(c.id) || 0;
+      const motivo = !ROLES_VISIBLES.includes(c.rol)
+        ? `su clase (${c.rol}) no se pinta entera: se cruza en la ficha de cada concesión o va como teselas`
+        : entidades > MAX_RASGOS
+          ? `tiene ${entidades} rasgos, más de ${MAX_RASGOS}: va como teselas o no se pinta`
+          : undefined;
+      return { ...c, nombre: repararTexto(c.nombre), entidades, visible: !motivo, ...(motivo ? { motivo } : {}) };
+    })
+    .sort((a, b) => a.rol.localeCompare(b.rol) || b.entidades - a.entidades);
+}
+
+/**
  * Una capa para pintarla: geometría simplificada (es para mirar, no para medir) y lo mínimo en cada
  * rasgo —su id, nombre y, en la litología, la clase de roca para colorearla—. Los atributos enteros
  * se piden al tocar el rasgo.
@@ -334,9 +364,10 @@ export async function capasVisibles(): Promise<CapaVisible[]> {
 export async function capaParaMapa(capaId: number): Promise<{ rol: RolCapa; geojson: FeatureCollection } | null> {
   const capa = (await capasVisibles()).find((c) => c.id === capaId);
   if (!capa) return null;
-  const tolerancia = capa.rol === 'ocurrencia' ? 0 : capa.rol === 'municipio' || capa.rol === 'placa' ? 0.002 : 0.0005;
+  const tolerancia = capa.rol === 'ocurrencia' ? 0 : capa.rol === 'municipio' || capa.rol === 'departamento' || capa.rol === 'placa' ? 0.002 : 0.0005;
   const filas = await consultaConTope<{ id: string; nombre: string | null; texto: string | null; g: string }>(
-    `SELECT e.id::text, e.nombre,
+    // El nombre como lo llama la gente: «entidad 7» no es un departamento, «Comayagua» sí.
+    `SELECT e.id::text, ${nombreDe(capa.rol)} AS nombre,
             CASE WHEN $3::boolean THEN (SELECT string_agg(a.v, ' ') FROM jsonb_each_text(e.atributos) AS a(k, v)
                                 WHERE a.k ~* '(desc|lito|roca|unit|unidad|label|clase|type|tipo|name|nombre)') END AS texto,
             ST_AsGeoJSON(CASE WHEN $2::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $2::float8) ELSE e.geom END, 5)::text AS g

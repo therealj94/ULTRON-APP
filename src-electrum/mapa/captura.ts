@@ -46,6 +46,7 @@ export type Tocado =
   | { tipo: 'punto'; lngLat: [number, number] };
 
 export type RolVisible =
+  | 'departamento'
   | 'litologia'
   | 'falla'
   | 'tracto_permisivo'
@@ -76,8 +77,8 @@ export type RasterEscaneado = {
   grupo?: string;
   /** Qué quiere decir cada color, para las capas calculadas (Sentinel-2). */
   leyenda?: Array<{ color: string; texto: string }>;
-  /** Teselas vectoriales de líneas (curvas de nivel): capa, color, rótulo y marca de maestras. */
-  vector?: { capa: string; color?: string; etiqueta?: string; maestra?: string };
+  /** Teselas vectoriales (curvas de nivel, ríos, fallas, caseríos): capa, color, rótulo, maestras, líneas o puntos y desde qué zoom. */
+  vector?: { capa: string; color?: string; etiqueta?: string; maestra?: string; tipo?: 'linea' | 'punto'; desde?: number };
 };
 /** Un mapa escaneado encendido, con la transparencia que se le dio. */
 export type RasterEncendido = RasterEscaneado & { opacidad: number };

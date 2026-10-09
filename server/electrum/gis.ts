@@ -400,7 +400,20 @@ const baseNombre = (n: string) => String(n || 'capa').replace(/\.[a-z0-9]+$/i, '
  * Nunca lanza: los problemas salen como avisos, porque el que sube un archivo necesita saber qué pasó.
  */
 export async function ingerir(nombreArchivo: string, datos: Buffer): Promise<Ingesta> {
-  return soloGrados(await ingerirCrudo(nombreArchivo, datos));
+  return sinVacias(soloGrados(await ingerirCrudo(nombreArchivo, datos)));
+}
+
+/**
+ * Sin ninguna geometría no hay capa. Un GeoJSON, CSV o KML sin entidades usables se leía «bien» y
+ * quien llamaba guardaba una capa vacía: aparecía en la lista de capas sin nada que pintar y, al
+ * relanzar un lote, como «ya estaba». Se rechaza diciéndolo.
+ */
+function sinVacias(ing: Ingesta): Ingesta {
+  if (!ing.capa || ing.capa.geojson.features.length) return ing;
+  const avisos = ing.avisos.some((a) => /ninguna geometr/i.test(a.texto))
+    ? ing.avisos
+    : [...ing.avisos, { nivel: 'error' as const, texto: 'El archivo no traía ninguna geometría usable.' }];
+  return { capa: null, avisos };
 }
 
 /**

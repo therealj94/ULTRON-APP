@@ -204,6 +204,21 @@ test('CSV de libreta de campo: prefiere grados a x/y, y si solo hay UTM usa la c
   assert.ok(r2.avisos.some((a) => /reproyect/i.test(a.texto)));
 });
 
+test('un archivo sin ninguna geometría no se vuelve una capa vacía', async (t) => {
+  const vacios: Array<[string, string]> = [
+    ['vacio.geojson', JSON.stringify({ type: 'FeatureCollection', features: [] })],
+    ['vacio.csv', 'nombre,lon,lat\n'],
+    ['vacio.kml', '<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document></Document></kml>'],
+  ];
+  for (const [nombre, texto] of vacios) {
+    await t.test(nombre, async () => {
+      const { capa, avisos } = await ingerir(nombre, Buffer.from(texto, 'utf8'));
+      assert.equal(capa, null);
+      assert.ok(avisos.some((a) => a.nivel === 'error'), JSON.stringify(avisos));
+    });
+  }
+});
+
 test('formatos que todavía no entran lo dicen claro, no fallan en silencio', async (t) => {
   await t.test('gpkg', async () => {
     const { capa, avisos } = await ingerir('catastro.gpkg', Buffer.from('x'));

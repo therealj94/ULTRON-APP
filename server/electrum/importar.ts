@@ -23,6 +23,7 @@
 import JSZip from 'jszip';
 import { aprender, huellaDe } from './aprender';
 import { consulta, recalcularTraslapes } from './db';
+import { organizacionParaGuardar } from './organizacion';
 import { olvidarTablero } from './tablero';
 import { anotar, anotarSinTexto, asegurarBiblioteca, normalizarCarpeta } from './biblioteca';
 import { bajarExpediente, bucketExpedientes, carpetasExpedientes, listarExpedientes, type ObjetoS3 } from '../../lib/s3';
@@ -278,7 +279,12 @@ async function preparar(prefijo: string, carpeta: string | null, imagenes: boole
 
 /** Si un documento con este contenido se borró en el panel (la bitácora guarda su huella). */
 export async function huellaBorrada(huella: string): Promise<boolean> {
-  const r = await consulta(`SELECT 1 FROM biblioteca_bitacora WHERE accion = 'eliminar' AND detalle->>'huella' = $1 LIMIT 1`, [huella]);
+  // Solo lo que borró ESTA organización (la casa guarda sin marca): que un cliente borre su copia de
+  // un formulario no puede impedir que otro, o la casa, cargue la suya.
+  const r = await consulta(
+    `SELECT 1 FROM biblioteca_bitacora WHERE accion = 'eliminar' AND detalle->>'huella' = $1 AND organizacion IS NOT DISTINCT FROM $2 LIMIT 1`,
+    [huella, organizacionParaGuardar()]
+  );
   return r.length > 0;
 }
 

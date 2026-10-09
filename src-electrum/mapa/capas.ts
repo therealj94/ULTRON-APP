@@ -221,7 +221,8 @@ export const ESTILO_ROL: Record<string, { color: string; relleno: number; ancho:
   zona_informal: { color: '#FF7A00', relleno: 0.25, ancho: 1.4, nombre: 'Minería informal' },
   forestal: { color: '#1B9E5A', relleno: 0.16, ancho: 1, nombre: 'Patrimonio forestal' },
   provincia_geologica: { color: '#C9A0FF', relleno: 0, ancho: 1.4, guiones: [4, 2], nombre: 'Provincias geológicas' },
-  municipio: { color: '#FFFFFF', relleno: 0, ancho: 0.8, nombre: 'Municipios' },
+  departamento: { color: '#FFFFFF', relleno: 0, ancho: 2.2, nombre: 'Departamentos' },
+  municipio: { color: '#E6EDF1', relleno: 0, ancho: 0.8, guiones: [3, 2], nombre: 'Municipios' },
   proyecto: { color: '#FFB020', relleno: 0.12, ancho: 1.6, guiones: [2, 1], nombre: 'Proyectos propios' },
   historico: { color: '#B8A68A', relleno: 0.06, ancho: 1.2, guiones: [4, 3], nombre: 'Histórico (JICA y otros)' },
 };
@@ -262,5 +263,27 @@ export function capasDeExtra(fuente: string, rol: string) {
         'circle-stroke-width': 1,
       },
     },
+    // El mapa político se lee por sus nombres: el departamento de lejos, el municipio de cerca.
+    ...(rol === 'departamento' || rol === 'municipio'
+      ? [
+          {
+            id: `${fuente}-nombre`,
+            type: 'symbol',
+            source: fuente,
+            ...(rol === 'municipio' ? { minzoom: 9 } : { maxzoom: 10 }),
+            filter: ['!=', ['geometry-type'], 'Point'],
+            layout: {
+              'text-field': ['get', 'nombre'],
+              'text-font': ['Noto Sans Medium'],
+              'text-size': rol === 'departamento' ? ['interpolate', ['linear'], ['zoom'], 6, 11, 9, 14] : 11,
+              'text-transform': rol === 'departamento' ? 'uppercase' : 'none',
+              'text-letter-spacing': rol === 'departamento' ? 0.12 : 0.02,
+              'text-max-width': 8,
+              'text-padding': 4,
+            },
+            paint: { 'text-color': rol === 'departamento' ? '#F4F7F9' : '#DCE5EA', 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.4 },
+          },
+        ]
+      : []),
   ];
 }

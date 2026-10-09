@@ -97,6 +97,13 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
     assert.equal(rol['Yacimientos y ocurrencias mineras DEFOMIN'], 'ocurrencia');
   });
 
+  await t.test('un depósito de mineral es ocurrencia; uno de sedimento, no', () => {
+    assert.equal(rolDeCapa('Depósitos minerales'), 'ocurrencia');
+    assert.equal(rolDeCapa('Deposito oro'), 'ocurrencia');
+    assert.equal(rolDeCapa('Depósitos'), 'ocurrencia');
+    assert.notEqual(rolDeCapa('Depositos aluviales'), 'ocurrencia');
+  });
+
   await t.test('la base y la aplicación deciden el mismo rol (electrum_rol_capa ↔ rolDeCapa)', async () => {
     const nombres = [
       'RED HIDRICA HN', 'RED_HIDRICA_HN', 'Ríos principales', 'CASERIOS', 'ALDEAS', 'Microcuencas declaradas',
@@ -110,6 +117,8 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
       'Intrusivos Olancho', 'Lineamientos Landsat', 'Falla de Guayape', 'Plutones terciarios',
       // Referencia (v10): lo de JICA es histórico, salvo que sea un mapa de roca.
       'zonas de JICA', 'zona de estudio 3 fases jica', 'JICA-MMAJ zonas', 'Mapa geológico JICA Olancho', 'Catastro histórico 2015',
+      // Depósitos de mineral, no de sedimento.
+      'Depósitos minerales', 'Depósitos', 'Deposito oro', 'Deposito Mercurio', 'Depósitos de plata Olancho',
     ];
     const filas = await consulta<{ n: string; rol: string | null }>(`SELECT n, electrum_rol_capa(n) AS rol FROM unnest($1::text[]) AS n`, [nombres]);
     for (const f of filas) assert.equal(f.rol, rolDeCapa(f.n), `«${f.n}»: la base dice ${f.rol}, la aplicación ${rolDeCapa(f.n)}`);
