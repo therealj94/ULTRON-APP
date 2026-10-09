@@ -361,8 +361,46 @@ export function reponerTildes(s: string): string {
   });
 }
 
+/**
+ * Una colección de geometrías, reducida a lo que importa de ella.
+ *
+ * Google Earth guarda cada terreno como `<MultiGeometry>` con el polígono Y un punto para la
+ * etiqueta; togeojson lo devuelve como GeometryCollection, que no tiene `coordinates`, y la
+ * entidad entera se descartaba: así se perdían los 37 terrenos de PANTALEONA+TERRENOS.kmz y los de
+ * Chaparro, La Escalera-Guayabal y Tajo. Se queda la parte de mayor dimensión —el polígono; si no
+ * hay, las líneas; si no, los puntos—, que es lo que el archivo dibuja.
+ */
+export function aplanarColeccion(g: any): Geometry | null {
+  if (!g || g.type !== 'GeometryCollection') return g ?? null;
+  const partes: any[] = [];
+  const juntar = (x: any) => {
+    if (!x) return;
+    if (x.type === 'GeometryCollection') (x.geometries || []).forEach(juntar);
+    else partes.push(x);
+  };
+  juntar(g);
+  const de = (tipos: string[]) => partes.filter((x) => tipos.includes(x.type));
+  const poli = de(['Polygon', 'MultiPolygon']);
+  if (poli.length) {
+    const c = poli.flatMap((x) => (x.type === 'Polygon' ? [x.coordinates] : x.coordinates));
+    return c.length === 1 ? { type: 'Polygon', coordinates: c[0] } : { type: 'MultiPolygon', coordinates: c };
+  }
+  const lin = de(['LineString', 'MultiLineString']);
+  if (lin.length) {
+    const c = lin.flatMap((x) => (x.type === 'LineString' ? [x.coordinates] : x.coordinates));
+    return c.length === 1 ? { type: 'LineString', coordinates: c[0] } : { type: 'MultiLineString', coordinates: c };
+  }
+  const pts = de(['Point', 'MultiPoint']);
+  if (pts.length) {
+    const c = pts.flatMap((x) => (x.type === 'Point' ? [x.coordinates] : x.coordinates));
+    return c.length === 1 ? { type: 'Point', coordinates: c[0] } : { type: 'MultiPoint', coordinates: c };
+  }
+  return null;
+}
+
 /** Descarta lo que no tiene geometría usable, que en un catastro real es más común de lo que parece. */
 function limpiar(fc: FeatureCollection): { fc: FeatureCollection; descartadas: number } {
+  for (const f of fc.features) if (f?.geometry?.type === 'GeometryCollection') f.geometry = aplanarColeccion(f.geometry) as any;
   const buenas = fc.features.filter((f) => {
     if (!f?.geometry) return false;
     const c = primeraCoordenada(f.geometry);

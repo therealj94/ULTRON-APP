@@ -250,3 +250,21 @@ test('lectura del .prj', async (t) => {
     assert.equal(leerPrj('').nombre, 'sin declarar');
   });
 });
+
+test('KML: un terreno de Google Earth (MultiGeometry con polígono y punto de etiqueta) entra como polígono', async () => {
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Folder>
+<Placemark><name>Terreno 1</name><MultiGeometry>
+  <Point><coordinates>-86.5,14.5,0</coordinates></Point>
+  <Polygon><outerBoundaryIs><LinearRing><coordinates>-86.51,14.49,0 -86.49,14.49,0 -86.49,14.51,0 -86.51,14.51,0 -86.51,14.49,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+</MultiGeometry></Placemark>
+<Placemark><name>Solo etiquetas</name><MultiGeometry>
+  <Point><coordinates>-86.4,14.4,0</coordinates></Point><Point><coordinates>-86.41,14.41,0</coordinates></Point>
+</MultiGeometry></Placemark>
+</Folder></Document></kml>`;
+  const { capa } = await ingerir('PANTALEONA+TERRENOS.kml', Buffer.from(kml, 'utf8'));
+  assert.equal(capa!.entidades, 2);
+  assert.equal(capa!.descartadas, 0);
+  assert.equal(capa!.geojson.features[0].geometry.type, 'Polygon');
+  assert.equal(capa!.geojson.features[1].geometry.type, 'MultiPoint');
+});
