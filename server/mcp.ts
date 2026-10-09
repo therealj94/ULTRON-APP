@@ -36,7 +36,7 @@ import { conOrganizacion, organizacionDePersona } from './electrum/organizacion'
 import { ALCANCE, montarOauthMcp, quienPorTokenMcp, urlMetadatosRecurso } from './mcp-oauth';
 
 export const VERSIONES_MCP = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'informe_pdf']);
+const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'mapa_capas', 'informe_pdf']);
 const TOPE_POR_MINUTO = Number(process.env.MCP_TOPE_MINUTO || 60);
 const MAX_LOTE = 20;
 

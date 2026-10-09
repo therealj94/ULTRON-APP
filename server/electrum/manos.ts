@@ -651,6 +651,36 @@ const mapa_capa: Herramienta = {
   },
 };
 
+/**
+ * Encender o apagar capas del mapa por categoría o por nombre. No baja nada aquí: el navegador
+ * tiene el catálogo y resuelve lo pedido (src-electrum/mapa/categorias.ts), igual que cuando se
+ * dice de palabra sin pasar por el cerebro.
+ */
+const mapa_capas: Herramienta = {
+  nombre: 'mapa_capas',
+  descripcion:
+    'Enciende, apaga o deja solas capas del mapa por categoría o por nombre. Categorías: mapa político (departamentos, municipios), geología (rocas, fallas, placas, provincias, tractos), yacimientos y geoquímica (ocurrencias, muestras, anomalías), ambiente (áreas protegidas, microcuencas, bosque, minería informal), ríos y poblados (ríos, caseríos), mapas topográficos (hojas cartográficas), relieve (curvas de nivel), satélite Sentinel-2 (arcillas, óxidos de hierro, vegetación), proyectos propios, estudios históricos (JICA). Al abrir el mapa solo está el mapa político.',
+  esquema: {
+    type: 'object',
+    properties: {
+      accion: { type: 'string', enum: ['mostrar', 'ocultar', 'solo'], description: '«solo» apaga todo lo demás y deja encendido lo pedido' },
+      que: { type: 'string', description: 'La categoría o la capa, en palabras: «geología», «ríos», «áreas protegidas», «hojas cartográficas», «todo» (solo para ocultar)' },
+    },
+    required: ['accion', 'que'],
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ accion, que }) {
+    const q = String(que || '').trim().slice(0, 80);
+    if (!q) return { ok: false, texto: 'Falta qué capa o categoría.' };
+    const a = accion === 'ocultar' ? 'ocultar' : accion === 'solo' ? 'solo' : 'mostrar';
+    return {
+      ok: true,
+      texto: a === 'ocultar' ? `Apagué «${q}» en el mapa.` : a === 'solo' ? `Dejé solo «${q}» en el mapa.` : `Encendí «${q}» en el mapa.`,
+      ui: { accion: 'capas', mostrar: a !== 'ocultar', solo: a === 'solo', que: q },
+    };
+  },
+};
+
 /* ------------------------------------------------------------------ expedientes */
 
 const expediente_buscar: Herramienta = {
@@ -1028,6 +1058,7 @@ export const MANOS: Record<string, Herramienta> = {
   gis_medir,
   mapa_volar,
   mapa_capa,
+  mapa_capas,
   expediente_buscar,
   expediente_listar,
   expediente_leer,

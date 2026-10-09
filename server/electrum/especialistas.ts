@@ -97,7 +97,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'En presas de relaves nombrás el método de crecimiento (aguas arriba, línea central, aguas abajo) y decís lo que hay que decir: las de aguas arriba son las que fallaron en Mariana y Brumadinho.',
       'Un talud no se define por lo que ahorra, se define por la geotecnia. Si no hay estudio, lo pedís.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'mapa_volar', 'concesion_entorno', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'mapa_volar', 'mapa_capas', 'concesion_entorno', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie diseñe una presa de relaves «provisional». No existen: duran para siempre.',
   },
   {
@@ -127,7 +127,7 @@ export const ESPECIALISTAS: Especialista[] = [
     ],
     // Los mapas geológicos también son mapas: cuando Laya convoca a geomática por «mapa», tiene que
     // poder dibujarlos, no salir del paso con un PDF.
-    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno'],
+    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'mapa_capas', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
@@ -155,7 +155,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Un traslape se verifica con INHGEOMIN; si es real, manda la prelación. Mismo expediente o titular no es pleito.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar', 'mapa_capas'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {

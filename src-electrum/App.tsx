@@ -21,7 +21,7 @@ import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
 import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
-import { CapasControl, type MuestrasEncendidas } from './mapa/CapasControl';
+import { CapasControl, type MuestrasEncendidas, type PedidoCapas } from './mapa/CapasControl';
 import { Tablero } from './mapa/Tablero';
 import { Recorrido, prepararRecorrido, salirPantallaCompleta, entrarPantallaCompleta, type Controles, type ModoRecorrido } from './demo/Recorrido';
 import { Preguntas } from './demo/Preguntas';
@@ -295,7 +295,15 @@ export default function App() {
   const [rasters, setRasters] = useState<RasterEncendido[]>([]);
   const [muestras, setMuestras] = useState<MuestrasEncendidas | null>(null);
   const [traslapes, setTraslapes] = useState<unknown | null>(null);
-  const [curvas, setCurvas] = useState(true);
+  /** Apagadas al abrir: el mapa arranca con el catastro y el mapa político, y lo demás se pide. */
+  const [curvas, setCurvas] = useState(false);
+  /** Lo último que se pidió de palabra sobre las capas («muéstrame los ríos»); lo resuelve CapasControl. */
+  const [pedidoCapas, setPedidoCapas] = useState<PedidoCapas | null>(null);
+  const pedirCapas = useCallback((p: Omit<PedidoCapas, 'n'>) => setPedidoCapas({ ...p, n: Date.now() + Math.random() }), []);
+  // Solo se dice en voz alta cuando no se pudo: lo que sí se hizo se ve en el mapa.
+  const alResponderCapas = useCallback((texto: string, ok: boolean) => {
+    if (!ok) void hablar(texto, 'neutral', headersElectrum());
+  }, []);
   const [prospectividad, setProspectividad] = useState(false);
   const encuadrarRaster = useCallback((encuadre: [number, number, number, number]) => setOrden({ accion: 'encuadrar', encuadre, ms: 1600 }), []);
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
@@ -532,6 +540,10 @@ export default function App() {
         case 'fondo':
           setFondo(cmd.cual);
           break;
+        case 'capas':
+          setEscenario('trabajo');
+          pedirCapas({ mostrar: cmd.mostrar, que: cmd.que, solo: cmd.solo });
+          break;
         case 'dialogo':
           window.dispatchEvent(new Event('electrum:dialogo'));
           break;
@@ -739,6 +751,8 @@ export default function App() {
         setOrden({ accion: 'filtrar', mineral: typeof d.mineral === 'string' ? d.mineral : null });
       } else if (d.accion === 'capa' && d.geojson) {
         setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
+      } else if (d.accion === 'capas' && typeof d.que === 'string') {
+        pedirCapas({ mostrar: d.mostrar !== false, que: d.que, solo: d.solo === true });
       } else if (d.accion === 'candidatas' && d.geojson) {
         setOrden({ accion: 'candidatas', geojson: d.geojson as any, encuadre: d.encuadre as any });
       } else if (Array.isArray(d.punto)) {
@@ -964,7 +978,7 @@ export default function App() {
             />
           </Suspense>
           </SinMapa>
-          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} prospectividad={prospectividad} onProspectividad={setProspectividad} />
+          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} prospectividad={prospectividad} onProspectividad={setProspectividad} pedido={pedidoCapas} onRespuesta={alResponderCapas} />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
           <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md" data-tour="barra-mapa">
             {[

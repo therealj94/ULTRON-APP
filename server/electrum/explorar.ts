@@ -17,7 +17,7 @@
  */
 import type { FeatureCollection, Geometry } from 'geojson';
 import { geometriaDe, concesionPorId, configDeTexto, conTextoReparado, consultaConTope, type FilaConcesion, type RolCapa } from './db';
-import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
+import { alertasDe, capasPorRol, entornoDe, nombreDe, type Entorno } from './entorno';
 import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
 import { sateliteEnRenglones } from './satelite';
@@ -293,6 +293,9 @@ export async function queHayAqui(lon: number, lat: number): Promise<AquiMapa> {
  * ficha de cada concesión, que las cruza en la base.
  */
 export const ROLES_VISIBLES: RolCapa[] = [
+  // El mapa político va primero: es lo que se enciende solo al abrir el mapa.
+  'departamento',
+  'municipio',
   'litologia',
   'falla',
   'tracto_permisivo',
@@ -303,7 +306,6 @@ export const ROLES_VISIBLES: RolCapa[] = [
   'forestal',
   'provincia_geologica',
   'placa',
-  'municipio',
   // Referencia (v10): se encienden a mano; el catastro principal es el oficial.
   'proyecto',
   'historico',
@@ -335,9 +337,10 @@ export async function capasVisibles(): Promise<CapaVisible[]> {
 export async function capaParaMapa(capaId: number): Promise<{ rol: RolCapa; geojson: FeatureCollection } | null> {
   const capa = (await capasVisibles()).find((c) => c.id === capaId);
   if (!capa) return null;
-  const tolerancia = capa.rol === 'ocurrencia' ? 0 : capa.rol === 'municipio' || capa.rol === 'placa' ? 0.002 : 0.0005;
+  const tolerancia = capa.rol === 'ocurrencia' ? 0 : capa.rol === 'municipio' || capa.rol === 'departamento' || capa.rol === 'placa' ? 0.002 : 0.0005;
   const filas = await consultaConTope<{ id: string; nombre: string | null; texto: string | null; g: string }>(
-    `SELECT e.id::text, e.nombre,
+    // El nombre como lo llama la gente: «entidad 7» no es un departamento, «Comayagua» sí.
+    `SELECT e.id::text, ${nombreDe(capa.rol)} AS nombre,
             CASE WHEN $3::boolean THEN (SELECT string_agg(a.v, ' ') FROM jsonb_each_text(e.atributos) AS a(k, v)
                                 WHERE a.k ~* '(desc|lito|roca|unit|unidad|label|clase|type|tipo|name|nombre)') END AS texto,
             ST_AsGeoJSON(CASE WHEN $2::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $2::float8) ELSE e.geom END, 5)::text AS g

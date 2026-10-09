@@ -46,6 +46,7 @@ export type Tocado =
   | { tipo: 'punto'; lngLat: [number, number] };
 
 export type RolVisible =
+  | 'departamento'
   | 'litologia'
   | 'falla'
   | 'tracto_permisivo'
