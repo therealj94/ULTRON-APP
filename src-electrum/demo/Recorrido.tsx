@@ -412,12 +412,17 @@ export function Recorrido({
          * de la casa con sus terrenos y vetas, y lo de campo. Cada cosa se pide una vez, aquí, y el
          * capítulo que no tenga datos no se cuenta.
          */
-        const conLote = completo || modo === 'geologico';
-        const [biblio, carpetas, politicas, yacimientos, terrenos, campo] = conLote
+        // El geológico solo cuenta yacimientos y hojas: no espera la biblioteca, los municipios ni los
+        // proyectos (revisión de Codex en #167).
+        const geo = modo === 'geologico';
+        const nada = Promise.resolve([] as CapaExtra[]);
+        const [biblio, carpetas, politicas, yacimientos, terrenos, campo] = completo || geo
           ? await Promise.all([
-              json<{ documentos: number; capas: number; fragmentos: number; carpetas: number }>('/api/electrum/biblioteca/resumen').catch(() => null),
-              json<{ carpetas: Array<{ carpeta: string | null; documentos: number; capas: number }> }>('/api/electrum/biblioteca/arbol').then((j) => j.carpetas || []).catch(() => []),
-              Promise.all(capas.filter((x) => x.rol === 'departamento' || x.rol === 'municipio').map((x) => capa(x))).then(soloConRasgos),
+              completo ? json<{ documentos: number; capas: number; fragmentos: number; carpetas: number }>('/api/electrum/biblioteca/resumen').catch(() => null) : Promise.resolve(null),
+              completo
+                ? json<{ carpetas: Array<{ carpeta: string | null; documentos: number; capas: number }> }>('/api/electrum/biblioteca/arbol').then((j) => j.carpetas || []).catch(() => [])
+                : Promise.resolve([] as Array<{ carpeta: string | null; documentos: number; capas: number }>),
+              Promise.all(capas.filter((x) => x.rol === 'departamento' || (completo && x.rol === 'municipio')).map((x) => capa(x))).then(soloConRasgos),
               Promise.all(
                 capas
                   .filter((x) => x.rol === 'ocurrencia')
@@ -425,8 +430,8 @@ export function Recorrido({
                   .slice(0, 4)
                   .map((x) => capa(x))
               ).then(soloConRasgos),
-              Promise.all(capas.filter((x) => x.rol === 'proyecto' && /terreno|vetas (recorridas|proyectadas)/i.test(x.nombre)).slice(0, 8).map((x) => capa(x))).then(soloConRasgos),
-              Promise.all(capas.filter((x) => /videos? de campo|fotos? .*gps/i.test(x.nombre)).slice(0, 2).map((x) => capa(x))).then(soloConRasgos),
+              completo ? Promise.all(capas.filter((x) => x.rol === 'proyecto' && /terreno|vetas (recorridas|proyectadas)/i.test(x.nombre)).slice(0, 8).map((x) => capa(x))).then(soloConRasgos) : nada,
+              completo ? Promise.all(capas.filter((x) => /videos? de campo|fotos? .*gps/i.test(x.nombre)).slice(0, 2).map((x) => capa(x))).then(soloConRasgos) : nada,
             ])
           : [null, [], [], [], [], []];
         /** Lo cargado por carpeta de arriba (INFORMACION ELECTRUM, INDEXSA SEP 2026…), de mayor a menor. */
@@ -679,15 +684,21 @@ export function Recorrido({
             hay: !!(rios || caserios) && !!(cajaTerrenos || zona),
             correr: async () => {
               limpiar();
-              capitulo(++i, { titulo: 'Ríos, caseríos y fallas, de cerca', chips: ['Red hídrica nacional', 'Caseríos', 'Fallas 1:50 000'] });
+              // Se cuenta solo lo que está en el índice de este servidor (revisión de Codex en #167).
+              const hay3 = [rios && 'la red hídrica nacional completa', caserios && 'cada caserío con su nombre', fallas50 && 'las fallas del mapa uno a cincuenta mil'].filter(Boolean) as string[];
+              const dicho = hay3.length > 1 ? `${hay3.slice(0, -1).join(', ')} y ${hay3[hay3.length - 1]}` : hay3[0];
+              capitulo(++i, {
+                titulo: [rios && 'Ríos', caserios && 'caseríos', fallas50 && 'fallas'].filter(Boolean).join(', ').replace(/^./, (x) => x.toUpperCase()) + ', de cerca',
+                chips: [rios && 'Red hídrica nacional', caserios && 'Caseríos', fallas50 && 'Fallas 1:50 000'].filter(Boolean) as string[],
+              });
               const caja = cajaTerrenos || zona!.encuadre;
               mover({ accion: 'encuadrar', encuadre: caja, inclinacion: 55, giro: -15, ms: 6000 });
               await pausa(2000);
               c.current.rasters([rios, caserios, fallas50].filter((x): x is RasterEscaneado => !!x).map((x) => ({ ...x, opacidad: 0.9 })));
               await conversar([
-                { quien: 'electrum', texto: '[warmly] De cerca aparece lo que importa en el campo: la red hídrica nacional completa, cada caserío con su nombre y las fallas del mapa uno a cincuenta mil.', al: () => orbitar(-20, 20_000) },
+                { quien: 'electrum', texto: `[warmly] De cerca aparece lo que importa en el campo: ${dicho}.`, al: () => orbitar(-20, 20_000) },
                 { quien: 'tatiana', texto: '[serious] Eso es lo primero que miro yo: qué quebrada pasa por la concesión y qué comunidad queda cerca. Ahí se decide la licencia ambiental y la relación con la gente.' },
-                { quien: 'electrum', texto: 'Por eso en cada ficha le digo cuántos kilómetros de río tiene dentro y qué caseríos quedan a menos de un kilómetro.' },
+                { quien: 'electrum', texto: 'Por eso en cada ficha le digo cuántos kilómetros de río tiene dentro y qué poblados quedan cerca.' },
               ]);
             },
           },
