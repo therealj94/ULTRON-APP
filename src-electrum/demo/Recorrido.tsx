@@ -109,6 +109,26 @@ const ficha = (id: number) => json<Ficha & { encuadre: [number, number, number, 
 const capa = (c: { id: number; nombre: string } | undefined) =>
   c ? json<{ rol: any; geojson: any }>(`/api/electrum/mapa/capa/${c.id}`).then((r) => ({ id: c.id, nombre: c.nombre, rol: r.rol, geojson: r.geojson }) as CapaExtra).catch(() => null) : Promise.resolve(null);
 
+const soloConRasgos = (xs: Array<CapaExtra | null>) => xs.filter((x): x is CapaExtra => !!x && !!x.geojson?.features?.length);
+
+/** El rectángulo que encierra unas capas, para volar a ellas. */
+function cajaDe(xs: CapaExtra[]): [number, number, number, number] | null {
+  const b = [180, 90, -180, -90];
+  let hay = false;
+  const ver = (c: any) => {
+    if (!Array.isArray(c)) return;
+    if (typeof c[0] === 'number') {
+      b[0] = Math.min(b[0], c[0]);
+      b[1] = Math.min(b[1], c[1]);
+      b[2] = Math.max(b[2], c[0]);
+      b[3] = Math.max(b[3], c[1]);
+      hay = true;
+    } else c.forEach(ver);
+  };
+  for (const x of xs) for (const f of (x.geojson as any)?.features || []) ver(f.geometry?.coordinates);
+  return hay ? (b as [number, number, number, number]) : null;
+}
+
 const SIN_MARGEN: Margen = { arriba: 0, abajo: 0, izquierda: 0, derecha: 0 };
 /** Ancho que ocupa la ficha a la derecha en la computadora (372 px más su separación del borde). */
 const ANCHO_FICHA = 440;
@@ -324,8 +344,8 @@ export function Recorrido({
             ? json<{ rasters: RasterEscaneado[] }>('/api/electrum/mapa/rasters').then((j) => j.rasters || []).catch(() => [] as RasterEscaneado[])
             : Promise.resolve([] as RasterEscaneado[]),
           modo !== 'herramientas'
-            ? json<{ capas: Array<{ id: number; nombre: string; rol: string }> }>('/api/electrum/mapa/capas').then((j) => j.capas || []).catch(() => [])
-            : Promise.resolve([] as Array<{ id: number; nombre: string; rol: string }>),
+            ? json<{ capas: Array<{ id: number; nombre: string; rol: string; entidades?: number }> }>('/api/electrum/mapa/capas').then((j) => j.capas || []).catch(() => [])
+            : Promise.resolve([] as Array<{ id: number; nombre: string; rol: string; entidades?: number }>),
           completo
             ? json<{ lista: Array<{ id: number; nombre: string; ha: number }> }>('/api/electrum/satelite/mayores').then((j) => j.lista || []).catch(() => [])
             : Promise.resolve([] as Array<{ id: number; nombre: string; ha: number }>),
@@ -387,6 +407,49 @@ export function Recorrido({
                 )
               ).filter((x): x is CapaExtra => !!x && !!x.geojson?.features?.length)
             : [];
+        /*
+         * LO CARGADO (lote-1, 26 GB): la biblioteca, el mapa político, los yacimientos, los proyectos
+         * de la casa con sus terrenos y vetas, y lo de campo. Cada cosa se pide una vez, aquí, y el
+         * capítulo que no tenga datos no se cuenta.
+         */
+        // El geológico solo cuenta yacimientos y hojas: no espera la biblioteca, los municipios ni los
+        // proyectos (revisión de Codex en #167).
+        const geo = modo === 'geologico';
+        const nada = Promise.resolve([] as CapaExtra[]);
+        const [biblio, carpetas, politicas, yacimientos, terrenos, campo] = completo || geo
+          ? await Promise.all([
+              completo ? json<{ documentos: number; capas: number; fragmentos: number; carpetas: number }>('/api/electrum/biblioteca/resumen').catch(() => null) : Promise.resolve(null),
+              completo
+                ? json<{ carpetas: Array<{ carpeta: string | null; documentos: number; capas: number }> }>('/api/electrum/biblioteca/arbol').then((j) => j.carpetas || []).catch(() => [])
+                : Promise.resolve([] as Array<{ carpeta: string | null; documentos: number; capas: number }>),
+              Promise.all(capas.filter((x) => x.rol === 'departamento' || (completo && x.rol === 'municipio')).map((x) => capa(x))).then(soloConRasgos),
+              Promise.all(
+                capas
+                  .filter((x) => x.rol === 'ocurrencia')
+                  .sort((a, b) => (b.entidades ?? 0) - (a.entidades ?? 0))
+                  .slice(0, 4)
+                  .map((x) => capa(x))
+              ).then(soloConRasgos),
+              completo ? Promise.all(capas.filter((x) => x.rol === 'proyecto' && /terreno|vetas (recorridas|proyectadas)/i.test(x.nombre)).slice(0, 8).map((x) => capa(x))).then(soloConRasgos) : nada,
+              completo ? Promise.all(capas.filter((x) => /videos? de campo|fotos? .*gps/i.test(x.nombre)).slice(0, 2).map((x) => capa(x))).then(soloConRasgos) : nada,
+            ])
+          : [null, [], [], [], [], []];
+        /** Lo cargado por carpeta de arriba (INFORMACION ELECTRUM, INDEXSA SEP 2026…), de mayor a menor. */
+        const porRaiz = new Map<string, number>();
+        for (const k of carpetas) {
+          const raiz = (k.carpeta || 'Sin carpeta').split('/')[0];
+          porRaiz.set(raiz, (porRaiz.get(raiz) || 0) + k.documentos + k.capas);
+        }
+        const raices = [...porRaiz].sort((a, b) => b[1] - a[1]);
+        const docsProyectos = carpetas.filter((k) => /PROYECTOS INDEXSA/i.test(k.carpeta || '')).reduce((s2, k) => s2 + k.documentos, 0);
+        const ref = (k: string) => rasters.find((r) => r.clave === k);
+        const rios = ref('referencia-rios-hn');
+        const caserios = ref('referencia-caserios-hn');
+        const fallas50 = ref('referencia-fallas-1-50000');
+        const hojas = rasters.find((r) => /hojas/i.test(r.clave));
+        const hoja1620 = rasters.find((r) => /1620/.test(r.clave));
+        const cajaTerrenos = cajaDe(terrenos);
+        const cajaCampo = cajaDe(campo);
         const nombresHistoricos = t?.fuente?.historicas ?? capas.filter((x) => x.rol === 'historico').map((x) => x.nombre);
         const hayCatastroViejo = nombresHistoricos.some((n) => !/jica|mmaj/i.test(n));
         /*
@@ -556,6 +619,139 @@ export function Recorrido({
                 c.current.rasters([{ ...s2('s2-fe')!, opacidad: 0.85 }]);
                 await decir('Y óxidos de hierro, que marcan sulfuros meteorizados. No es un hallazgo: es una guía para ordenar dónde ir a campo primero.');
               }
+            },
+          },
+          biblioteca: {
+            hay: !!biblio?.documentos,
+            correr: async () => {
+              limpiar();
+              capitulo(++i, {
+                titulo: 'Todo lo que leí',
+                cifras: [
+                  { valor: biblio!.documentos, etiqueta: 'documentos' },
+                  { valor: biblio!.capas, etiqueta: 'capas del mapa' },
+                  { valor: biblio!.fragmentos, etiqueta: 'fragmentos indexados' },
+                ],
+                chips: raices.slice(0, 5).map(([k, n]) => `${k} · ${nf(n)}`),
+              });
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 30, giro: 0, ms: 4000 });
+              await conversar([
+                {
+                  quien: 'electrum',
+                  texto: `[warmly] Antes de seguir, lo que tengo leído. Son ${plural(biblio!.documentos, 'documento', 'documentos')} y ${plural(biblio!.capas, 'capa', 'capas')} de mapa: los veintiséis gigas que me subieron, con informes, leyes, planos, hojas de cálculo, fichas de ocurrencia, fotos y videos de campo.`,
+                },
+                {
+                  quien: 'electrum',
+                  texto: `Lo partí en ${nf(biblio!.fragmentos)} fragmentos que puedo buscar por significado, no solo por palabra. Cuando le contesto algo, le digo de qué documento y de qué página sale.`,
+                },
+                ...(docsProyectos ? [{ quien: 'tatiana' as const, texto: `[curious] ¿Y los proyectos de la casa también, doctor? Pantaleona, El Chaparro, Buena Vista, Minas de Oro…` }, { quien: 'electrum' as const, texto: `Todos. Solo de los proyectos son ${plural(docsProyectos, 'documento', 'documentos')}: lo legal, lo técnico, las finanzas y lo ambiental de cada uno.` }] : []),
+              ]);
+            },
+          },
+          politico: {
+            hay: politicas.length > 0,
+            correr: async () => {
+              limpiar();
+              capitulo(++i, { titulo: 'El mapa de Honduras, por capas', chips: ['Mapa político', 'Geología', 'Yacimientos', 'Ambiente', 'Ríos y poblados', 'Topográficos', 'Satélite', 'Proyectos'] });
+              c.current.capas(() => politicas);
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 0, giro: 0, ms: 4500 });
+              await pausa(1200);
+              await conversar([
+                { quien: 'electrum', texto: '[warmly] El mapa arranca limpio: el catastro sobre el mapa político, los dieciocho departamentos y sus municipios, con sus nombres.' },
+                { quien: 'electrum', texto: 'Todo lo demás está ordenado por categorías y se enciende cuando usted lo pide: tocando la categoría en el botón de capas, o diciéndolo. «Muéstrame los ríos», «esconde la geología», «deja solo el mapa político».' },
+                { quien: 'chema', texto: '[curious] ¿Así nomás, hablándole?' },
+                { quien: 'electrum', texto: '[warmly] Así nomás. Y si me pregunta qué capas hay, se las listo con lo que tiene cada una.' },
+              ]);
+            },
+          },
+          yacimientos: {
+            hay: yacimientos.length > 0,
+            correr: async () => {
+              limpiar();
+              const n = yacimientos.reduce((s2, x) => s2 + ((x.geojson as any)?.features?.length || 0), 0);
+              capitulo(++i, { titulo: 'Yacimientos y depósitos minerales', cifras: [{ valor: n, etiqueta: 'puntos de mineralización' }], chips: yacimientos.map((x) => x.nombre).slice(0, 4) });
+              c.current.capas(() => [...politicas.filter((x) => x.rol === 'departamento'), ...yacimientos]);
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 40, giro: 12, ms: 5000 });
+              await pausa(1500);
+              await conversar([
+                { quien: 'electrum', texto: `[thoughtful] Estos son los yacimientos, depósitos y ocurrencias minerales que tengo: ${plural(n, 'punto', 'puntos')} de varias fuentes, el servicio geológico de Estados Unidos, DEFOMIN y las fichas de ocurrencia minera de INHGEOMIN.`, al: () => orbitar(25, 22_000) },
+                { quien: 'chema', texto: '[curious] ¿Y de cada punto sabe qué mineral es?' },
+                { quien: 'electrum', texto: 'De la mayoría sí: oro, plata, antimonio, barita, cobre, hierro, mercurio. Toque cualquiera y le muestro su ficha. Y lo cruzo con cada concesión: una que tiene ocurrencias cerca sube en el puntaje de prospectividad.' },
+              ]);
+            },
+          },
+          referencia: {
+            hay: !!(rios || caserios) && !!(cajaTerrenos || zona),
+            correr: async () => {
+              limpiar();
+              // Se cuenta solo lo que está en el índice de este servidor (revisión de Codex en #167).
+              const hay3 = [rios && 'la red hídrica nacional completa', caserios && 'cada caserío con su nombre', fallas50 && 'las fallas del mapa uno a cincuenta mil'].filter(Boolean) as string[];
+              const dicho = hay3.length > 1 ? `${hay3.slice(0, -1).join(', ')} y ${hay3[hay3.length - 1]}` : hay3[0];
+              capitulo(++i, {
+                titulo: [rios && 'Ríos', caserios && 'caseríos', fallas50 && 'fallas'].filter(Boolean).join(', ').replace(/^./, (x) => x.toUpperCase()) + ', de cerca',
+                chips: [rios && 'Red hídrica nacional', caserios && 'Caseríos', fallas50 && 'Fallas 1:50 000'].filter(Boolean) as string[],
+              });
+              const caja = cajaTerrenos || zona!.encuadre;
+              mover({ accion: 'encuadrar', encuadre: caja, inclinacion: 55, giro: -15, ms: 6000 });
+              await pausa(2000);
+              c.current.rasters([rios, caserios, fallas50].filter((x): x is RasterEscaneado => !!x).map((x) => ({ ...x, opacidad: 0.9 })));
+              await conversar([
+                { quien: 'electrum', texto: `[warmly] De cerca aparece lo que importa en el campo: ${dicho}.`, al: () => orbitar(-20, 20_000) },
+                { quien: 'tatiana', texto: '[serious] Eso es lo primero que miro yo: qué quebrada pasa por la concesión y qué comunidad queda cerca. Ahí se decide la licencia ambiental y la relación con la gente.' },
+                { quien: 'electrum', texto: 'Por eso en cada ficha le digo cuántos kilómetros de río tiene dentro y qué poblados quedan cerca.' },
+              ]);
+            },
+          },
+          topografia: {
+            hay: !!(hojas || hoja1620),
+            correr: async () => {
+              limpiar();
+              const h = (hojas || hoja1620)!;
+              capitulo(++i, { titulo: 'Las hojas cartográficas', chips: [h.nombre, ...(hoja1620 && hoja1620 !== h ? [hoja1620.nombre] : [])] });
+              c.current.rasters([{ ...h, opacidad: 0.85 }]);
+              mover({ accion: 'encuadrar', encuadre: h.encuadre, inclinacion: 35, giro: 0, ms: 5500 });
+              await pausa(1500);
+              await conversar([
+                { quien: 'electrum', texto: '[thoughtful] Estas son las hojas topográficas del Instituto Geográfico, escaneadas y puestas en su lugar exacto sobre el terreno, con sus curvas, caminos y nombres.' },
+                { quien: 'chema', texto: '[warmly] Con esto ya se puede planear un acceso o dónde va la planta sin salir de la oficina.' },
+                ...(hoja1620 && hoja1620 !== h ? [{ quien: 'electrum' as const, texto: 'Y esta es la hoja de Minas de Oro en detalle, la que usamos para el proyecto.', al: () => { c.current.rasters([{ ...hoja1620, opacidad: 0.9 }]); mover({ accion: 'encuadrar', encuadre: hoja1620.encuadre, inclinacion: 45, giro: 15, ms: 5000 }); } }] : []),
+              ]);
+            },
+          },
+          proyectos: {
+            hay: terrenos.length > 0 && !!cajaTerrenos,
+            correr: async () => {
+              limpiar();
+              capitulo(++i, {
+                titulo: 'Los proyectos de la casa',
+                chips: terrenos.map((x) => x.nombre).slice(0, 5),
+                cifras: [{ valor: terrenos.reduce((s2, x) => s2 + ((x.geojson as any)?.features?.length || 0), 0), etiqueta: 'polígonos y vetas' }, ...(docsProyectos ? [{ valor: docsProyectos, etiqueta: 'documentos de proyectos' }] : [])],
+              });
+              c.current.capas(() => terrenos);
+              mover({ accion: 'encuadrar', encuadre: cajaTerrenos!, inclinacion: 60, giro: 20, ms: 6500 });
+              await pausa(2000);
+              await conversar([
+                { quien: 'electrum', texto: '[warmly] Y estos son los proyectos propios: las concesiones, los terrenos y las vetas que se trazaron en el campo. No cuentan en el catastro oficial: son su información, encima de él.', al: () => orbitar(30, 26_000) },
+                { quien: 'tatiana', texto: '[thoughtful] ¿Y sabe qué derechos oficiales quedan debajo de cada proyecto?' },
+                { quien: 'electrum', texto: 'Sí. Los junté en carteras por proyecto, y para cada una le doy el semáforo: qué está limpio, qué pisa un área protegida o una microcuenca, y qué vence pronto.' },
+                { quien: 'chema', texto: '[curious] ¿Y los informes de laboratorio de Pantaleona y El Chaparro?' },
+                { quien: 'electrum', texto: '[warmly] Leídos, con sus certificados. Pregúnteme por una ley o un ensayo y le digo el valor y de qué página sale.' },
+              ]);
+            },
+          },
+          campo: {
+            hay: campo.length > 0 && !!cajaCampo,
+            correr: async () => {
+              limpiar();
+              capitulo(++i, { titulo: 'Lo que se vio en el campo', chips: campo.map((x) => x.nombre) });
+              c.current.capas(() => campo);
+              mover({ accion: 'encuadrar', encuadre: cajaCampo!, inclinacion: 55, giro: -25, ms: 6000 });
+              await pausa(1800);
+              await conversar([
+                { quien: 'electrum', texto: '[warmly] Cada punto es un video o una foto de campo con su posición GPS. Los vi todos y anoté qué muestra cada uno: el afloramiento, la veta, el acceso, el río.' },
+                { quien: 'tatiana', texto: '[curious] O sea, ¿puedo preguntarle qué se vio en tal lugar?' },
+                { quien: 'electrum', texto: 'Exacto. Y le digo en qué video o foto está, y dónde se tomó.' },
+              ]);
             },
           },
           historico: {
@@ -1069,8 +1265,10 @@ export function Recorrido({
 
         const ORDEN: Record<ModoRecorrido, string[]> = {
           // El completo lo cuenta todo: la geología, lo legal y las herramientas, en ese orden.
-          completo: ['intro', 'potencial', 'satelite', 'historico', 'zona', 'analisis', 'oro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
-          geologico: ['intro', 'historico', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'mesa', 'cierre'],
+          // Primero qué hay (lo leído y el mapa por capas), después la geología y los proyectos, lo
+          // legal y al final las herramientas.
+          completo: ['intro', 'biblioteca', 'politico', 'potencial', 'yacimientos', 'satelite', 'historico', 'zona', 'analisis', 'oro', 'referencia', 'topografia', 'proyectos', 'campo', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
+          geologico: ['intro', 'yacimientos', 'historico', 'zona', 'analisis', 'oro', 'alteracion', 'topografia', 'geologicoVivo', 'mesa', 'cierre'],
           legal: ['intro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'mesa', 'cierre'],
           herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'chat', 'mesa', 'manos', 'pestanas', 'reparto', 'cierre'],
         };
