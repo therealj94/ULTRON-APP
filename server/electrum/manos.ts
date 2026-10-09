@@ -658,14 +658,11 @@ const mapa_capa: Herramienta = {
  */
 const mapa_capas: Herramienta = {
   nombre: 'mapa_capas',
-  descripcion:
-    'Enciende, apaga o deja solas capas del mapa por categoría o por nombre. Categorías: mapa político (departamentos, municipios), geología (rocas, fallas, placas, provincias, tractos), yacimientos y geoquímica (ocurrencias, muestras, anomalías), ambiente (áreas protegidas, microcuencas, bosque, minería informal), ríos y poblados (ríos, caseríos), mapas topográficos (hojas cartográficas), relieve (curvas de nivel), satélite Sentinel-2 (arcillas, óxidos de hierro, vegetación), proyectos propios, estudios históricos (JICA). Al abrir el mapa solo está el mapa político.',
+  // Corta a propósito: el system de un panel de tres tiene que caber en el proxy del nodo.
+  descripcion: 'Enciende u oculta capas del mapa («geología», «ríos», «mapa político»).',
   esquema: {
     type: 'object',
-    properties: {
-      accion: { type: 'string', enum: ['mostrar', 'ocultar', 'solo'], description: '«solo» apaga todo lo demás y deja encendido lo pedido' },
-      que: { type: 'string', description: 'La categoría o la capa, en palabras: «geología», «ríos», «áreas protegidas», «hojas cartográficas», «todo» (solo para ocultar)' },
-    },
+    properties: { accion: { type: 'string', enum: ['mostrar', 'ocultar', 'solo'], description: '«solo» apaga lo demás' }, que: { type: 'string', description: 'Capa o categoría' } },
     required: ['accion', 'que'],
   },
   plataformas: ['electrum'],
