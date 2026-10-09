@@ -90,7 +90,7 @@ export type RasterEscaneado = {
    * Si las teselas son VECTORIALES (líneas, como las curvas de nivel) en vez de imagen: la capa del
    * PMTiles, el color, y qué atributo se rotula y cuál marca las líneas maestras (más gruesas).
    */
-  vector?: { capa: string; color?: string; etiqueta?: string; maestra?: string };
+  vector?: { capa: string; color?: string; etiqueta?: string; maestra?: string; tipo?: 'linea' | 'punto'; desde?: number };
 };
 
 let indice: { cuando: number; rasters: RasterEscaneado[]; base: boolean } | null = null;
@@ -111,6 +111,9 @@ function vectorValido(v: unknown): RasterEscaneado['vector'] {
     color: typeof x.color === 'string' && /^#[0-9a-f]{6}$/i.test(x.color) ? x.color : undefined,
     etiqueta: nombre(x.etiqueta),
     maestra: nombre(x.maestra),
+    // Líneas (curvas, ríos, fallas) o puntos (caseríos); desde qué zoom se dibuja, entre 0 y 16.
+    tipo: x.tipo === 'punto' ? 'punto' : undefined,
+    desde: typeof x.desde === 'number' && x.desde >= 0 && x.desde <= 16 ? Math.round(x.desde) : undefined,
   };
 }
 

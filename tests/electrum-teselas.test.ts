@@ -88,6 +88,9 @@ test('teselas: tramos del cubo con sesión, índice de mapas escaneados, y los p
             encuadre: [-89.4, 12.9, -83.1, 16.6],
             vector: { capa: 'curvas', color: '#E8C38A', etiqueta: 'cota', maestra: 'maestra' },
           },
+          // Caseríos como puntos, desde el zoom 9; un «desde» fuera de rango se descarta.
+          { clave: 'lote-1-caserios', nombre: 'Caseríos', encuadre: [-89.4, 12.9, -83.1, 16.6], vector: { capa: 'caserios', color: '#F2F2F2', etiqueta: 'nombre', tipo: 'punto', desde: 9 } },
+          { clave: 'lote-1-rios', nombre: 'Ríos', encuadre: [-89.4, 12.9, -83.1, 16.6], vector: { capa: 'rios', tipo: 'poligono', desde: 99 } },
           {
             clave: 'lote-1-curvas-mal',
             nombre: 'Curvas con basura',
@@ -112,11 +115,14 @@ test('teselas: tramos del cubo con sesión, índice de mapas escaneados, y los p
   assert.equal(idx.base, true);
   assert.deepEqual(
     idx.rasters.map((r: any) => r.clave),
-    ['jica-olancho-geologico', 'lote-1-curvas', 'lote-1-curvas-mal', 'lote-1-sin-capa']
+    ['jica-olancho-geologico', 'lote-1-curvas', 'lote-1-caserios', 'lote-1-rios', 'lote-1-curvas-mal', 'lote-1-sin-capa']
   );
   const v = (c: string) => idx.rasters.find((r: any) => r.clave === c).vector;
   assert.equal(v('jica-olancho-geologico'), undefined, 'un ráster no trae vector');
   assert.deepEqual(v('lote-1-curvas'), { capa: 'curvas', color: '#E8C38A', etiqueta: 'cota', maestra: 'maestra' });
+  assert.deepEqual(v('lote-1-caserios'), { capa: 'caserios', color: '#F2F2F2', etiqueta: 'nombre', tipo: 'punto', desde: 9 });
+  // Un tipo desconocido es línea (sin `tipo`) y un zoom imposible no pasa.
+  assert.deepEqual(v('lote-1-rios'), { capa: 'rios' });
   // Color que no es #rrggbb y nombres que no son simples: fuera; la capa sí queda.
   assert.deepEqual(v('lote-1-curvas-mal'), { capa: 'curvas' });
   // Sin nombre de capa no hay qué pintar: se queda como si fuera ráster.

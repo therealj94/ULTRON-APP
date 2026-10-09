@@ -324,23 +324,41 @@ function pintarVectorIndice(
     m.addSource(f, { type: 'vector', url: urlTeselas(clave), ...(zoomMax ? { maxzoom: zoomMax } : {}) } as any);
   }
   const debajo = m.getStyle().layers.find((l) => l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id;
+  const punto = v.tipo === 'punto';
   if (!m.getLayer(f)) {
     m.addLayer(
-      {
-        id: f,
-        type: 'line',
-        source: f,
-        'source-layer': v.capa,
-        paint: {
-          'line-color': color,
-          'line-width': ['case', maestra, ['interpolate', ['linear'], ['zoom'], 10, 0.9, 15, 1.8], ['interpolate', ['linear'], ['zoom'], 12, 0.35, 15, 0.9]],
-          'line-opacity': opacidad,
-        },
-      } as any,
+      punto
+        ? ({
+            // Puntos (caseríos): chicos de lejos, que no tapen el catastro; más grandes de cerca.
+            id: f,
+            type: 'circle',
+            source: f,
+            'source-layer': v.capa,
+            ...(v.desde != null ? { minzoom: v.desde } : {}),
+            paint: {
+              'circle-color': color,
+              'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 1.2, 12, 2.6, 15, 4.5],
+              'circle-stroke-color': 'rgba(0,0,0,0.6)',
+              'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 0, 13, 0.8],
+              'circle-opacity': opacidad,
+            },
+          } as any)
+        : ({
+            id: f,
+            type: 'line',
+            source: f,
+            'source-layer': v.capa,
+            ...(v.desde != null ? { minzoom: v.desde } : {}),
+            paint: {
+              'line-color': color,
+              'line-width': ['case', maestra, ['interpolate', ['linear'], ['zoom'], 10, 0.9, 15, 1.8], ['interpolate', ['linear'], ['zoom'], 6, 0.3, 12, 0.6, 15, 1.1]],
+              'line-opacity': opacidad,
+            },
+          } as any),
       debajo
     );
   } else {
-    m.setPaintProperty(f, 'line-opacity', opacidad);
+    m.setPaintProperty(f, punto ? 'circle-opacity' : 'line-opacity', opacidad);
     if (m.getLayoutProperty(f, 'visibility') === 'none') m.setLayoutProperty(f, 'visibility', 'visible');
   }
   if (v.etiqueta) {
@@ -356,8 +374,9 @@ function pintarVectorIndice(
           minzoom: 12,
           filter: maestra ? ['any', ['>=', ['zoom'], 14], maestra] : true,
           layout: {
-            'symbol-placement': 'line',
-            'text-field': ['concat', ['to-string', ['get', v.etiqueta]], ' m'],
+            'symbol-placement': punto ? 'point' : 'line',
+            'text-field': punto ? ['to-string', ['get', v.etiqueta]] : ['concat', ['to-string', ['get', v.etiqueta]], ' m'],
+            ...(punto ? { 'text-offset': [0, 0.9], 'text-anchor': 'top' } : {}),
             'text-size': 10,
             'text-font': ['Noto Sans Medium'],
             'symbol-spacing': 320,
