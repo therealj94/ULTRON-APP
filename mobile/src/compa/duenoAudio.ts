@@ -33,7 +33,7 @@
  * Sin React Native: se prueba en Node.
  */
 
-export type DuenoAudio = 'llamada' | 'conversacion' | 'mesa' | 'companera' | 'nadie';
+export type DuenoAudio = 'llamada' | 'conversacion' | 'burbuja' | 'mesa' | 'companera' | 'nadie';
 
 /** ¿El oído del teléfono (el reconocedor de la mesa) es el que escucha con este dueño? */
 export function oidoPropio(d: DuenoAudio | null): boolean {
@@ -51,15 +51,22 @@ export type SituacionAudio = {
   appActiva: boolean;
   /** La compañera se ve (en los chats, Ajustes o el perfil: chiquita, al lado o a pantalla completa). */
   companeraVisible?: boolean;
+  /**
+   * La burbuja del asistente digital está abierta (src/burbuja/logica.ts `burbujaAbierta`): el botón lateral la abrió
+   * encima de otra app y el micrófono es suyo. Comparte el motor de JS con la mesa: sin esto, al ponerse delante la
+   * burbuja React dice «app activa» y la mesa (montada detrás) reabría su oído y contestaba encima.
+   */
+  burbuja?: boolean;
 };
 
 /**
- * La llamada manda sobre todo; después la conversación; con la app delante, la mesa si se la ve y, si
- * no, la compañera (si se la ve). Con la app detrás, nadie.
+ * La llamada manda sobre todo; después la conversación; después la burbuja (la persona la acaba de llamar con el
+ * botón); con la app delante, la mesa si se la ve y, si no, la compañera (si se la ve). Con la app detrás, nadie.
  */
 export function duenoAudio(s: SituacionAudio): DuenoAudio {
   if (s.enLlamada) return 'llamada';
   if (s.conversacion) return 'conversacion';
+  if (s.burbuja) return 'burbuja';
   if (!s.appActiva) return 'nadie';
   if (s.mesaVisible) return 'mesa';
   if (s.companeraVisible) return 'companera';
@@ -87,6 +94,12 @@ export type DepsOidoMesa = {
    * con tope). Si falta, el oído se reabre en el acto.
    */
   esperarAudioLibre?: () => Promise<void>;
+  /**
+   * Revisión de fases: el acuse a la burbuja (burbuja/logica.ts `burbujaAbierta.acusar`). Se llama cuando el dueño pasa a
+   * «burbuja» y la mesa TERMINÓ de soltar su micrófono (o en el acto, si no lo tenía abierto): la burbuja espera esto en
+   * vez de un respiro fijo antes de abrir el suyo (que un `muteMic` tardío de la mesa ya no lo cierre).
+   */
+  acusarBurbuja?: () => void;
   miga?: (texto: string) => void;
 };
 
@@ -129,7 +142,10 @@ export class OidoMesa {
   aplicar(nuevo: DuenoAudio): 'suelta' | 'toma' | 'nada' {
     const antes = this.dueno;
     this.dueno = nuevo;
-    if (antes === nuevo) return 'nada';
+    if (antes === nuevo) {
+      if (nuevo === 'burbuja') this.d.acusarBurbuja?.();
+      return 'nada';
+    }
     const ahoraOye = oidoPropio(nuevo);
     const antesOia = antes === null || oidoPropio(antes);
     if (ahoraOye && antesOia) {
@@ -143,8 +159,21 @@ export class OidoMesa {
       this.d.cancelarTurno();
       void this.d.stopSpeaking();
       this.d.pauseMicForTts(false);
-      void this.d.muteMic();
-      this.d.miga?.(`oído de la mesa: lo suelta (${nuevo})`);
+      // Revisión de fases: el micrófono solo se cierra si la mesa lo estaba usando (era suyo y la persona lo quería
+      // abierto). Si ya estaba cerrado (venía de «nadie», de otro dueño, o silenciado), un `muteMic` de más cerraría el
+      // del NUEVO dueño (la burbuja usa el mismo oído, prestado).
+      const loUsaba = antesOia && this.d.micQuerido();
+      const avisar = nuevo === 'burbuja' ? this.d.acusarBurbuja : undefined;
+      if (loUsaba) {
+        let hecho: Promise<unknown>;
+        try {
+          hecho = Promise.resolve(this.d.muteMic()).catch(() => undefined);
+        } catch {
+          hecho = Promise.resolve();
+        }
+        if (avisar) void hecho.then(() => avisar());
+      } else avisar?.();
+      this.d.miga?.(`oído de la mesa: lo suelta (${nuevo})${loUsaba ? '' : ' (ya estaba cerrado)'}`);
       return 'suelta';
     }
     this.d.pauseMicForTts(false);

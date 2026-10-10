@@ -12,7 +12,7 @@
  * estilo de principal, sin preselección, y no se arma hasta ARMADO_MS después de aparecer la tarjeta.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Alert, Linking, StyleSheet, View } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Hoja, Texto } from '../ui';
@@ -193,12 +193,17 @@ function TarjetaDecision({ t, idioma, variasTareas, onResultado, onEditar, onEdi
   }
   const [armada, setArmada] = useState(false);
   const [ocupado, setOcupado] = useState<string | null>(null);
+  const ops = opcionesTarjeta(d);
+  const conEfecto = ops.find((o) => o.conEfecto);
   useEffect(() => {
     setArmada(false);
-    const r = setTimeout(() => setArmada(true), ARMADO_MS + 30);
+    const r = setTimeout(() => {
+      setArmada(true);
+      // El botón con efecto se habilitó: se anuncia (un lector de pantalla no ve que dejó de estar apagado).
+      if (conEfecto) AccessibilityInfo.announceForAccessibility(tr(`Ya puedes tocar «${conEfecto.label}».`, `You can tap «${conEfecto.label}» now.`));
+    }, ARMADO_MS + 30);
     return () => clearTimeout(r);
-  }, [d.id]);
-  const ops = opcionesTarjeta(d);
+  }, [d.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const caduca = d.expiresAt ? new Date(d.expiresAt) : null;
   const elegir = async (id: string, conEfecto: boolean) => {
     if (!puedeActivar({ conEfecto }, { aparecio: aparecio.current, ahora: Date.now(), via: 'toque' })) return;

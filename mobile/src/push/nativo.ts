@@ -39,9 +39,13 @@ import { abrirHoja, hayAnfitrion } from '../app/hojas';
 import { pedirPanelTrabajos } from '../trabajos/abrirPanel';
 import { usuarioActual } from '../app/sesion';
 import { pedirChatWA } from '../whatsapp/pedido';
+import { pedirObjetivo } from '../objetivos/abrirObjetivo';
 import {
   anotarVisto,
+  avisoTrasDecidir,
   claveVisto,
+  finDecisionAviso,
+  pedidoDecisionAviso,
   destinoMensajeExterno,
   interpretarAperturaPush,
   interpretarToque,
@@ -187,10 +191,37 @@ export async function atenderToque(e: EventoAviso): Promise<boolean> {
   }
 }
 
-async function manejarToque(t: { accion: AccionPush; datos: DatosPush; idAviso: string }) {
+/**
+ * Un botón de «Necesito tu decisión» (Fase 2): manda ESA opción con la revisión que traía el aviso, sin abrir la app (con
+ * la app cerrada también: es la tarea de fondo de notifee). El aviso se reemplaza (mismo id) por una confirmación corta, o
+ * por «Cambió mientras tanto: ábrelo para ver la versión nueva» si el objetivo cambió (409). Nunca lanza.
+ */
+async function decidirDesdeAviso(t: { datos: DatosPush; idAviso: string; opcion?: string }) {
+  const n = avisos();
+  const opcion = String(t.opcion || '');
+  const pedido = pedidoDecisionAviso(t.datos, opcion, await idAparato().catch(() => ''));
+  if (!pedido) return;
+  let respuesta: { status: number; json?: any } | null = null;
+  try {
+    const json = await api<any>(pedido.ruta, { method: 'POST', body: JSON.stringify(pedido.cuerpo) }, 20_000);
+    respuesta = { status: 200, json };
+  } catch (e: any) {
+    respuesta = typeof e?.status === 'number' ? { status: e.status, json: e.data || {} } : null;
+  }
+  const fin = finDecisionAviso(respuesta);
+  miga(`aviso push: decisión desde el aviso → ${fin}`);
+  if (!n) return;
+  try {
+    await n.m.displayNotification?.({ ...avisoTrasDecidir(t.datos, fin, opcion, n.k), id: t.idAviso });
+  } catch {
+    /* sin aviso de vuelta: la app lo enseña al abrirla */
+  }
+}
+
+async function manejarToque(t: { accion: AccionPush; datos: DatosPush; idAviso: string; opcion?: string }) {
   try {
     const ahora = Date.now();
-    const clave = `${t.accion}:${claveVisto(t.datos)}`;
+    const clave = `${t.accion}:${claveVisto(t.datos)}${t.opcion ? `:${t.opcion}` : ''}`;
     for (const [c, en] of tocados) if (ahora - en > VIDA_PENDIENTE_MS) tocados.delete(c);
     // El mismo toque llega dos veces (el evento de fondo y lo que abrió la app): una sola.
     if (tocados.has(clave)) return;
@@ -200,6 +231,10 @@ async function manejarToque(t: { accion: AccionPush; datos: DatosPush; idAviso: 
     if (t.datos.para !== (await leerDueno())) return;
     if (t.accion === 'luego') {
       if (t.datos.tipo === 'propuesta') await responderPropuesta(t.datos.id, 'luego');
+      return;
+    }
+    if (t.accion === 'decidir') {
+      await decidirDesdeAviso(t);
       return;
     }
     const lista = await leerJson<Pendiente[]>(CLAVE_PENDIENTES, []);
@@ -231,6 +266,15 @@ async function hacer(x: Pendiente, correo: string) {
     const out = await turno({ message: pedido, mode: 'GUARDIAN', userName: u?.name || '', correo, historial: [], idTurno: `push-si-${d.id}-${nuevoIdTurno()}`.slice(0, 80) });
     for (const a of accionesDelTurno(out)) emitir('accion', a);
     decir(out.reply || (out.error ? tr('No pude terminar eso ahora.', "I couldn't finish that right now.") : null));
+    return;
+  }
+  if (d.tipo === 'decision') {
+    // «Necesito tu decisión» tocado (no un botón): la mesa con la hoja del objetivo; si era la aprobación de una tarea,
+    // también su panel de tareas (ahí está la tarjeta de decisión con todo lo que se propone).
+    miga('aviso push: decisión → abrir el objetivo');
+    abrirRuta('Mesa');
+    if (d.tareaId) pedirPanelTrabajos();
+    else if (d.objetivoId) pedirObjetivo(d.objetivoId);
     return;
   }
   if (d.tipo === 'mensaje-externo') {

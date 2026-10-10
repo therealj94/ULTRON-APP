@@ -17,7 +17,7 @@ import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, saludEl
 import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server/voz-agente';
 import { montarMotorVoz, motorDe } from './server/voz-motor';
 import { anotarDesdeRuta } from './server/voz-medidas';
-import { interruptor } from './lib/interruptores';
+import { interruptor, precargarInterruptores } from './lib/interruptores';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
@@ -107,12 +107,20 @@ import {
   abrirEncargoComputadora,
   cerrarEncargoComputadora,
   enTurnoConTrabajos,
+  duenoDeTareas,
   montarRutasTrabajos,
   nuevoContextoTrabajos,
+  revisarTarea,
+  type DepsTrabajos,
 } from './server/trabajos';
+import { bloqueObjetivosDelTurno, montarRutasObjetivos } from './server/objetivos';
+import { iniciarPlanificador } from './server/planificador';
+import { esDelPlanificador } from './lib/tareas-durables';
+import { registrarCompromisos } from './lib/compromisos';
+import { pedirDecisionPorPush } from './lib/push';
 import { correrDocumento, montarRutasDocumentos } from './server/documentos';
 import { avisosCalendario, correrCalendarioConEstado, montarRutasCalendario, propuestaEventoDe } from './server/calendario';
-import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
+import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible, investigarTareaEnCola } from './server/investigar';
 import { trozoPromete, trozoPrometeUOfrece, vigilarPromesas, type PasoVigilado } from './lib/promesas';
 import { primeraVezEvento, vezDelEvento } from './lib/envios';
 import { respuestaFija } from './lib/respuestas-fijas';
@@ -138,11 +146,12 @@ import {
   vistaMision,
   type MotorNodo,
 } from './server/computadora';
-import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
+import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, rehidratarBorradorCorreo, respuestaAlBorrador } from './server/correo';
+import { descartarBorradorDurable } from './server/borradores-durables';
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, esDuenoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, descripcionMedia, destinoWhatsapp, editarBorradorWhatsapp, esDuenoWhatsapp, montarRutasWhatsapp, rehidratarBorradorWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, CADA_MS_INICIATIVA, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { correosDuenos, fuentesProductivas, montarRutasIniciativaDia, ordenIniciativaDia, redactorProductivo, RelojIniciativaDia } from './server/iniciativa-dia';
 import { comandoIniciativa, cuentasConIniciativa, fijarDuenoDia } from './lib/iniciativa-dia';
@@ -177,7 +186,7 @@ import { iniciarCentinela } from './lib/centinela';
 import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
-import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
+import { edadDeVista, etiquetasDeVista, focoDePregunta, focoValido, hechoVisionDelTelefono, vistaAHechos } from './lib/vision-estructurada';
 import { hechoCaras, preguntaPorVer as preguntaPorVerCamara } from './lib/caras-turno';
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, PRESUPUESTO_VISION_TURNO_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
@@ -1880,7 +1889,7 @@ montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesion
 // conversación, las misiones de su computadora y los borradores que esperan su decisión.
 // Los documentos de oficina que genera AU-RA (server/documentos.ts): se bajan solo con la sesión de su dueño.
 montarRutasDocumentos(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
-montarRutasTrabajos(app, {
+const depsTrabajos: DepsTrabajos = {
   exigirMesa,
   limitar,
   sesionDe: (req) => sesionDe(req),
@@ -1901,7 +1910,14 @@ montarRutasTrabajos(app, {
       return b ? { intento: b.intento, huella: b.huella } : null;
     },
     enviar: (correo, canal, ambito, intento, huella) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí', huella),
-    descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
+    // Fase 2 (server/borradores-durables.ts): tras un reinicio o desde otra réplica, el borrador de ESE intento y ESA huella
+    // vuelve de lo durable (la memoria del proceso sigue siendo el camino rápido).
+    rehidratar: (correo, canal, ambito, intento, huella) => (canal === 'correo' ? rehidratarBorradorCorreo(correo, ambito, intento, huella) : rehidratarBorradorWhatsapp(correo, ambito, intento, huella)),
+    // Descartar también deja la marca durable (server/borradores-durables.ts): ninguna réplica lo rehidrata después.
+    descartar: async (correo, canal, ambito, intento) => {
+      await descartarBorradorDurable(canal, correo, intento).catch(() => false);
+      return resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no');
+    },
     // «Editar» de la ventana de decisión: el borrador nuevo (otro intento y huella) espera su propio «sí»; nada sale.
     editar: (correo, canal, ambito, intento, huella, cambios) => {
       if (canal === 'correo') {
@@ -1918,6 +1934,19 @@ montarRutasTrabajos(app, {
     vigente: (correo, v) => nivelDeCorreo(correo) === 'junta' && vinculoTallerVigente(v, correo),
     ejecutar: (correo, v) => ejecutarAprobadoTaller(v, { cuenta: correo }),
   },
+};
+montarRutasTrabajos(app, depsTrabajos);
+// Los objetivos con estado (Fase 2, server/objetivos.ts): dueños de sus tareas, documentos y decisiones; sobreviven a cerrar
+// el chat y a un reinicio, y los comparten el teléfono, la web y Windows. Solo AU-RA (la sesión de siempre + la puerta de
+// la plataforma: Dr Electrum no entra). Al entrar a «esperando decisión» sale el aviso con un botón por opción.
+montarRutasObjetivos(app, {
+  exigir: [exigirMesa, exigirPlataforma('ultron')],
+  limitar,
+  sesionDe: (req) => sesionDe(req),
+  revisarTarea: (dueno, reg) => revisarTarea(depsTrabajos, dueno, reg),
+  avisarDecision: (correo, p) => pedirDecisionPorPush(correo, p),
+  // Cancelar el objetivo descarta los borradores que esperaban el «sí» de sus tareas (memoria y durable).
+  borradores: depsTrabajos.borradores,
 });
 // Investigar en segundo plano (server/investigar.ts): las mismas piezas que `web` y `leer` (con urlPublica), el
 // mismo cerebro de las vueltas del harness (redactarConCerebro) y el aviso al teléfono (y al navegador).
@@ -3586,7 +3615,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // pregunta: se acota y se le quitan las marcas de acción, como a la escena.
     const visto = typeof body?.visto === 'string' ? neutralizarMarca(body.visto.replace(/\s+/g, ' ').trim().slice(0, 2600)) : '';
     if (visto && !image) {
-      hechos.push(`VISION (la cámara del teléfono, ahora mismo): ${visto}`);
+      // Con su frescura (`vistoEdadMs` de la app): la app reutiliza una vista de hasta 20 s; «ahora mismo» solo si lo es.
+      hechos.push(hechoVisionDelTelefono(visto, edadDeVista(body?.vistoEdadMs)));
       tools.push('vision');
     }
     // Preguntan qué ve y no llegó ni foto ni escena de la cámara: se le da la verdad al modelo. Sin
@@ -3796,7 +3826,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // (server/prompt-turno.ts).
   // Su cerebro continuo: lo que quedó a medias y lo que hablaron antes de esto (en el mensaje del turno), y
   // lo que AU-RA sabe de su vida (en lo fijo, sin la firma: aprender un dato no rehace el system).
-  const bloqueCerebro = personal.bloqueCerebro;
+  // Sus objetivos abiertos (Fase 2, lib/objetivos-turno.ts): «sigue con lo de…», «¿en qué quedamos?» se contestan desde
+  // ahí. Solo AU-RA y con la sesión de la app; ≤400 caracteres; lee del almacén a lo más 250 ms (si no, lo último sabido).
+  const bloqueObjetivos = correoApp ? await bloqueObjetivosDelTurno(correoApp, { plataforma: ES_ULTRON ? 'ultron' : 'electrum' }).catch(() => '') : '';
+  const bloqueCerebro = [personal.bloqueCerebro, bloqueObjetivos ? vista.texto(bloqueObjetivos) : ''].filter(Boolean).join('\n\n');
   const conocer = personal.conocer;
   const argsPiezas: Parameters<typeof piezasDelTurno>[0] = {
     nivel,
@@ -5054,6 +5087,16 @@ function honestidadDelTurno(texto: string, p: TurnoHonesto, o: { recibos?: Recib
   return { texto: r.texto, cambiada: r.cambiada };
 }
 
+/**
+ * El libro de compromisos (Fase 2, lib/compromisos.ts): lo que AURA prometió para después en lo que de verdad dijo (ya
+ * pasada la guarda de honestidad) queda anotado. Solo registro, en segundo plano y sin cambiar la respuesta.
+ */
+function anotarCompromisosDelTurno(p: { dueno?: string; correoApp?: string }, texto: string) {
+  const quien = duenoDeTareas(String(p.dueno || p.correoApp || ''));
+  if (!quien || !texto) return;
+  void registrarCompromisos(quien, texto).catch(() => undefined);
+}
+
 /** Lo que de verdad pasó en este turno queda en el registro de efectos de su cuenta (para no desmentirlo después). */
 function anotarEfectosDelTurno(p: { dueno?: string; correoApp?: string }, recibos: ReadonlyArray<ReciboEfecto>, acciones: ReadonlyArray<{ accion?: { tipo?: string } } | undefined> = []) {
   const quien = String(p.dueno || p.correoApp || '');
@@ -5303,6 +5346,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     // La guarda dura de honestidad (lib/honestidad.ts): también el turno JSON y Telegram.
     const hon = honestidadDelTurno(app.texto, p, { recibos: recibosTurno, acciones: app.acciones, via: out.via });
     if (hon.cambiada) app.texto = hon.texto;
+    anotarCompromisosDelTurno(p, app.texto);
     if (!out.error) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), app.acciones);
     // Tanda F1: lo de un turno anterior que se cortó en el teléfono va delante, con la frase fija de su recibo (después de
     // la guarda: no es del modelo). Se da por dicho cuando esta respuesta se entrega (la ruta).
@@ -6045,6 +6089,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // chico, el respaldo del nodo y lo que la vuelta del harness dijo. Si ya sonó algo distinto, se reemplaza.
     const hon = honestidadDelTurno(app.texto, p, { recibos: recibosTurno, acciones: app.acciones, via });
     if (hon.cambiada) app.texto = hon.texto;
+    if (!senal?.aborted) anotarCompromisosDelTurno(p, app.texto);
     // Lo dicho cambió (la guarda de honestidad, o el avatar que no se cambia sin preguntar): se reemplaza en la voz.
     if ((hon.cambiada || app.corregido) && !app.sustituido) soltar('replace', recorteDeVoz(extraerAcciones(app.texto).texto, topeDelTurno));
     if (!senal?.aborted) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), app.acciones);
@@ -7043,6 +7088,10 @@ async function startServer() {
     });
   }
 
+  // Los interruptores guardados ANTES de aceptar turnos (lib/interruptores.ts): un interruptor que la junta apagó no se
+  // vuelve a encender solo con un reinicio. Con tope corto; si S3 no contesta, los últimos conocidos (o lo seguro).
+  const precarga = await precargarInterruptores();
+  if (precarga !== 's3' && precarga !== 'sin_s3') console.warn(`[interruptores] arranque con ${precarga === 'copia' ? 'la copia local' : 'lo seguro'}`);
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(
       `[${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}] :${PORT} — sirviendo ${PAGINA_RAIZ}` +
@@ -7087,6 +7136,17 @@ async function startServer() {
         unaVez: (correo, clave) => primeraVezEvento('recordatorio', correo, clave),
       });
       void relojRecordatorios.arrancar().catch((e) => console.warn('[recordatorios] reloj', String(e?.message || e).slice(0, 160)));
+    }
+    // El planificador (Fase 2, server/planificador.ts): al arrancar y cada 60 s arranca lo que espera en cola, revisa lo que
+    // tiene revisión programada y reconcilia los objetivos inciertos. Un lease por cosa: dos réplicas no hacen lo mismo.
+    if (ES_ULTRON) {
+      iniciarPlanificador({
+        // Una tarea de la API (POST /api/trabajos o de un objetivo) se trabaja como investigación de su objetivo. El
+        // planificador solo llega aquí con lo suyo y autorizado (`ejecutar: true`, permiso `investigar`, dentro de los topes).
+        ejecutar: async (dueno, reg) => (esDelPlanificador(reg) ? investigarTareaEnCola(dueno, reg.id, reg.objetivo || reg.titulo) : 'sin-ejecutor'),
+        revisar: (dueno, reg) => revisarTarea(depsTrabajos, dueno, reg),
+        avisarDecision: (correo, p) => pedirDecisionPorPush(correo, p),
+      });
     }
     // Cada mañana a las 7:00 de Honduras, quién contestó el correo de la campaña SFSP.
     if (ES_ULTRON) console.log('[AU-RA] campaña SFSP', iniciarRevisionCampana());

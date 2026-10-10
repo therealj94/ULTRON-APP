@@ -494,6 +494,12 @@ export type TurnoOpts = {
    * no se vuelve a subir. `foco` dice qué se pidió (leer, precio, qué es, escena).
    */
   visto?: string;
+  /**
+   * Cuándo se CAPTURÓ la foto de `visto` (Date.now() del teléfono). Al armar el pedido viaja como su edad
+   * (`vistoEdadMs`, sin depender del reloj del servidor): una vista reutilizada de hace 15 s no se le dice al cerebro
+   * como «ahora mismo».
+   */
+  vistoTomadaEn?: number;
   foco?: FocoVision;
   /** Lo dijo en voz alta (el oído de la mesa): el servidor no espera a internet más de lo que espera la voz. */
   hablado?: boolean;
@@ -584,6 +590,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.image ? { image: opts.image } : {}),
     ...(escena ? { escena } : {}),
     ...(opts.visto ? { visto: opts.visto.slice(0, 2600) } : {}),
+    ...(opts.visto && typeof opts.vistoTomadaEn === 'number' && opts.vistoTomadaEn > 0 ? { vistoEdadMs: Math.max(0, Date.now() - opts.vistoTomadaEn) } : {}),
     ...(opts.foco ? { foco: opts.foco } : {}),
     ...(opts.hablado ? { hablado: true } : {}),
     ...(opts.soloRapido ? { soloRapido: true } : {}),

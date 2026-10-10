@@ -53,6 +53,7 @@ import { cuentaSuspendida, cuentasDisponibles } from './cuentas';
 import { presentadoEnChat } from './presentacion-decision';
 import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
+import { anotarDescarteDurable, guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
 import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 import { leerAdjunto, tipoEnPalabras, MAX_ADJUNTO_BYTES } from '../lib/leer-adjunto';
 import { adjuntoReciente, recordarAdjunto } from '../lib/adjunto-reciente';
@@ -1116,7 +1117,14 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   // reemplazadas (antes seguían ahí y podían salir las dos).
   const viejas = APARTADOS.quitarDonde(k, mismoChat);
   if (viejas.length && !nota) nota = `Este borrador REEMPLAZA al que esperaba en su panel para el mismo chat («${resumenTexto(viejas[viejas.length - 1].texto)}»): ese ya no se manda. Díselo en una frase.\n`;
-  BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
+  const guardado: BorradorGuardado = { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) };
+  BORRADORES.set(k, guardado);
+  // Fase 2: también durable (server/borradores-durables.ts), salvo un archivo (sus bytes solo viven en la memoria).
+  if (!b.media || b.media.tipo === 'nota') guardarBorradorDurable('whatsapp', quien, ambito, guardado);
+  // Revisión de fases: lo que este reemplazó (el que esperaba, si no quedó apartado, y sus versiones viejas) deja su lápida:
+  // tras un reinicio no revive desde lo durable.
+  const apartado = !!previo && previo.soloPanel && !motivoBorrador(previo, quien) && !mismoChat(previo);
+  for (const x of [...(previo && !apartado ? [previo] : []), ...viejas]) if (x.intento !== guardado.intento) void anotarDescarteDurable(quien, x.intento, 'reemplazado');
   // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
   presentadoEnChat(quien, ambito, { canal: 'whatsapp', intento: vigencia.intento, huella });
   const para = destinoWhatsapp({ ...b, numero });
@@ -1245,6 +1253,7 @@ export async function resolverApartadoWhatsapp(quien: string, ambito: string, in
   if (!b) return null;
   if (respuesta === 'no') {
     APARTADOS.quitar(k, intento);
+    void anotarDescarteDurable(quien, intento, 'rechazado');
     return exito(`WHATSAPP: no se mandó; el borrador para ${destinoWhatsapp(b)} quedó descartado.`, { efecto: 'ninguno', codigo: 'descartado' });
   }
   const motivo = motivoPanel(b, huellaWhatsapp(b), huella);
@@ -1275,7 +1284,25 @@ export function editarBorradorWhatsapp(quien: string, ambito: string, intento: s
   const nuevo: BorradorGuardado = { ...base, ...vigenciaNueva(quien, base.creado, BORRADOR_VIVE_MS), huella: huellaWhatsapp(base) };
   if (BORRADORES.get(k)?.intento === intento) BORRADORES.set(k, nuevo);
   else APARTADOS.reemplazar(k, intento, nuevo);
+  if (!nuevo.media || nuevo.media.tipo === 'nota') guardarBorradorDurable('whatsapp', quien, ambito, nuevo);
+  // El de antes ya no se puede mandar: su lápida (no revive tras un reinicio).
+  void anotarDescarteDurable(quien, intento, 'reemplazado');
   return { ok: true, borrador: nuevo };
+}
+
+/**
+ * Fase 2: como `rehidratarBorradorCorreo` (server/correo.ts): el borrador de ESE intento y ESA huella vuelve a esperar en
+ * esta réplica (como apartado del panel) si lo guardado sigue valiendo y su huella recalculada es la misma.
+ */
+export async function rehidratarBorradorWhatsapp(quien: string, ambito: string, intento: string, huella: string): Promise<boolean> {
+  if (borradorWhatsappPorIntento(quien, ambito, intento)) return true;
+  if (!huella || rechazadoEnPanel(intento)) return false;
+  const g = await leerBorradorDurable<BorradorGuardado>('whatsapp', quien, ambito, intento, huella).catch(() => null);
+  if (!g || g.intento !== intento || g.huella !== huella || huellaWhatsapp(g) !== huella || motivoBorrador(g, quien)) return false;
+  if (g.media && g.media.tipo !== 'nota') return false;
+  if (borradorWhatsappPorIntento(quien, ambito, intento)) return true;
+  APARTADOS.apartar(llave(quien, ambito), { ...g, soloPanel: true });
+  return true;
 }
 
 /** Al empezar el turno: el «sí» o el «no» al borrador de WhatsApp lo resuelve el servidor (no el modelo). */
@@ -1406,7 +1433,9 @@ export async function enviarBorradorWhatsappAprobado(quien: string, b: BorradorG
     const k = o.ambito !== undefined ? llave(quien, o.ambito) : '';
     if (k && !BORRADORES.has(k)) {
       const { dueno: _d, vence: _v, intento: _i, huella: _h, repeticionAceptada: _r, ...plano } = b;
-      BORRADORES.set(k, { ...plano, ...vigenciaNueva(quien, Date.now(), BORRADOR_VIVE_MS), huella: huellaWhatsapp(b) });
+      const otro: BorradorGuardado = { ...plano, ...vigenciaNueva(quien, Date.now(), BORRADOR_VIVE_MS), huella: huellaWhatsapp(b) };
+      BORRADORES.set(k, otro);
+      if (!otro.media || otro.media.tipo === 'nota') guardarBorradorDurable('whatsapp', quien, o.ambito!, otro);
     }
     return fallo(`WHATSAPP: NO se mandó: lo que iba a salir ya no es lo que aprobó (cambió el chat, el texto o la cuenta; ahora sería para ${b.nombre}: «${b.texto.slice(0, 120)}»). Hace falta su decisión otra vez: léeselo y pregúntale si lo mandas.`, 'aprobacion');
   }

@@ -164,11 +164,18 @@ import { avisarTrabajos, useTrabajos } from '../trabajos/useTrabajos';
 import { IndicadorTrabajos } from '../trabajos/IndicadorTrabajos';
 import { PanelTrabajos } from '../trabajos/PanelTrabajos';
 import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
+import { escucharPedidoObjetivo, tomarPedidoObjetivo } from '../objetivos/abrirObjetivo';
+import { useObjetivos } from '../objetivos/useObjetivos';
+import { TarjetaContinuar } from '../objetivos/TarjetaContinuar';
+import { HojaObjetivo } from '../objetivos/HojaObjetivo';
 // La ventana de decisión de la mesa (José, 5-oct): Sí · No · Editar, también por voz, en orden.
 import { useVentanaDecision } from '../trabajos/useVentanaDecision';
 import { VentanaDecision } from '../trabajos/VentanaDecision';
 import { clienteTrabajos } from '../trabajos/useTrabajos';
 import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
+import { burbujaAbierta, hiloCompartido } from '../burbuja/logica';
+import { buzonHablar, oidoParaHablar } from '../entrada/enlace';
+import { useHablarEnMesa } from '../entrada/hablar';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
 import { avancePrimer, clasificarTurno, debePreguntar, queRecuperar, seguirTareasPrimer, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
 
@@ -481,6 +488,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     };
   }, []);
   /**
+   * La burbuja del asistente digital está abierta (botón lateral, mosaico, atajo: src/burbuja). Comparte este motor de
+   * JS: con ella delante React dice «app activa», pero el micrófono es suyo (compa/duenoAudio.ts, dueño «burbuja»).
+   */
+  const burbuja = useSyncExternalStore(burbujaAbierta.suscribir, burbujaAbierta.abierta, burbujaAbierta.abierta);
+  /**
    * La mesa está viva: se ve y la app está delante. Los sensores (acelerómetro), la mirada errante, el
    * enojo que baja solo y el perro guardián del micrófono solo corren así (A25: una pantalla tapada en
    * la pila no gasta batería ni reinicia un micrófono que es de otro).
@@ -512,6 +524,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     };
     abrir();
     return escucharPedidoPanel(abrir);
+  }, []);
+
+  // Los objetivos con estado (Fase 2): «Continuar trabajo» con el más reciente y su hoja. Un aviso «Necesito tu decisión»
+  // tocado pide la hoja de ESE objetivo (al montarse la mesa o al instante).
+  const [objetivoAbierto, setObjetivoAbierto] = useState<string | null>(null);
+  useObjetivos({ activo: mesaActiva || !!objetivoAbierto, conSesion: !!user.correo });
+  useEffect(() => {
+    const p = tomarPedidoObjetivo();
+    if (p) setObjetivoAbierto(p);
+    return escucharPedidoObjetivo(() => {
+      const id = tomarPedidoObjetivo();
+      if (id) setObjetivoAbierto(id);
+    });
   }, []);
 
   // Su computadora: se pregunta despacio (rápido mientras trabaja) con la mesa a la vista. Mientras
@@ -589,6 +614,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     longMemory.current = [];
     historialDe.current = user.correo;
   }
+  // La burbuja del asistente digital (src/burbuja) pregunta con ESTE hilo: lo que se venía hablando en la mesa.
+  useEffect(() => hiloCompartido.proveer(user.correo, () => historial.current), [user.correo]);
   const lastTapAt = useRef(0);
   const listenOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentTaps = useRef<number[]>([]);
@@ -664,6 +691,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   /** El oído de la mesa ya se abrió con el permiso concedido (el arranque o la persona al activarlo). */
   const oidoListo = useRef(false);
+  /** El arranque de la mesa ya decidió el micrófono (abierto, silenciado o sin permiso): un `hablar` puede atenderse. */
+  const arranqueHecho = useRef(false);
   /** El último pedido vino del oído (no del teclado ni de un atajo): el turno va con los topes de la voz. */
   const ultimoHablado = useRef(false);
   /** El reconocimiento de caras (se engancha más abajo, cuando ya existe `say`). */
@@ -687,6 +716,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       silenciadoPorPersona: () => micMutedRef.current,
       // Al colgar, el oído se reabre cuando la conversación soltó de verdad el audio (como mucho 4 s).
       esperarAudioLibre: () => esperarAudioLibre(),
+      // La burbuja espera este acuse (no un respiro fijo) antes de abrir su micrófono prestado.
+      acusarBurbuja: () => burbujaAbierta.acusar(),
       miga,
     });
     // Nace dueña (la mesa se monta visible) sin abrir nada todavía: el oído lo abre el arranque, con
@@ -1143,7 +1174,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [say]);
 
   const askBrain = useCallback(
-    async (cmd: string, opts?: { image?: string; visto?: string; foco?: FocoVision; ficha?: FichaTurno }) => {
+    async (cmd: string, opts?: { image?: string; visto?: string; vistoTomadaEn?: number; foco?: FocoVision; ficha?: FichaTurno }) => {
       // La ficha de ESTE turno (la de «¿qué ves?» si la trae; si esa ya se cortó o la reemplazó otra, no sale): todo lo de
       // abajo pregunta a ella.
       if (opts?.ficha && !opts.ficha.vigente) return;
@@ -1178,6 +1209,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         memoria: longMemory.current,
         image: opts?.image,
         visto: opts?.visto,
+        // Cuándo se sacó la foto de lo visto: viaja como su edad (una vista reutilizada no es «ahora mismo»).
+        vistoTomadaEn: opts?.vistoTomadaEn,
         foco: opts?.foco,
         escena: vista.escena,
         ...(vista.quienHabla ? { quienHabla: vista.quienHabla } : {}),
@@ -1593,7 +1626,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (etiquetas.length) setObjects(etiquetas);
         // Solo la de «¿qué ves?» queda como vista fresca: el hecho de «léeme esto» lleva otra instrucción.
         if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: vt.alSacar.lado, personas: vt.alSacar.personas, foto: vt.foto });
-        await askBrain(pedido, { visto: vt.visto, foco, ficha: tk });
+        // La hora de captura: la fresca trae su edad; la recién vista, lo que se esperó al servidor.
+        await askBrain(pedido, { visto: vt.visto, vistoTomadaEn: Date.now() - (vt.tipo === 'fresca' ? vt.edadMs : vt.esperaMs), foco, ficha: tk });
         if (vt.foto) cerrarVisorEn(VISOR_MS);
         return;
       }
@@ -2340,6 +2374,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // se ve tachado y el saludo lo dice. Los dos quedan en las migas.
       const migaMic = micOk ? migaArranqueMic(arranqueMic) : '';
       if (migaMic) miga(migaMic);
+      arranqueHecho.current = true;
 
       // El avatar se eligió al entrar (App): si es recién elegido, se presenta él mismo con su voz.
       handling.current = true;
@@ -2349,9 +2384,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const textoSaludo = saludoArranque(conPresentacion, { micSilenciado: micOk && silenciada, micReabierto, en: idiomaActual() === 'en' });
       // El aviso del micrófono (sigue en silencio, o el silencio venció) se VE siempre: el globo lo pone `say` y, si el
       // saludo no va a sonar (conversación, llamada, el audio es de otro), también queda en el chat.
-      const sonaraSaludo = !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar();
+      // La abrieron para HABLAR (`ultronfp://hablar`, entrada/hablar.ts): sin saludo hablado, que ocuparía la voz y el
+      // micrófono justo cuando la persona va a hablar. El aviso del micrófono, si lo hay, queda en el chat.
+      const paraHablar = !!buzonHablar.pendiente(Date.now());
+      const sonaraSaludo = !paraHablar && !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar();
       if (micOk && (silenciada || micReabierto) && !sonaraSaludo) logUltron(textoSaludo);
-      await say(textoSaludo, 'HAPPY', { emocion: 'feliz' });
+      if (!paraHablar) await say(textoSaludo, 'HAPPY', { emocion: 'feliz' });
       handling.current = false;
       // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat
       // (Claudio se pone de pie).
@@ -2671,7 +2709,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     // Con el recorrido abierto la mesa suelta el oído: si no, oiría a Claudio y ANT-ONIO y les contestaría.
     // Igual con las preguntas de la bienvenida a la vista: su dictado usa el micrófono.
     const tapada = tutorialAbierto || preguntasAbiertas;
-    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible: mesaVisible && !tapada, appActiva, companeraVisible: companeraVisible && !tapada });
+    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, burbuja, mesaVisible: mesaVisible && !tapada, appActiva, companeraVisible: companeraVisible && !tapada });
     const hizo = oidoMesa.current!.aplicar(dueno);
     if (hizo === 'suelta') {
       speakingRef.current = false;
@@ -2686,7 +2724,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // Se reabrió un reconocedor nuevo: «escuchando» cuando de verdad escuche (el vigilante lo mira).
       setStatus(micMutedRef.current ? 'muted' : oidoEscuchando() ? 'listening' : 'reconnect');
     }
-  }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace, tutorialAbierto, preguntasAbiertas]);
+  }, [enLlamada, vozOcupa, burbuja, mesaVisible, appActiva, companeraVisible, restFace, tutorialAbierto, preguntasAbiertas]);
+
+  // Lo que se habló en la burbuja, al hilo y al chat de la mesa en cuanto se cierra (o al montarse, si la app no estaba
+  // abierta): «Abrir en AURA» sigue la MISMA conversación.
+  useEffect(() => {
+    if (burbuja) return;
+    const nuevos = hiloCompartido.tomarPorEntregar(user.correo);
+    if (!nuevos.length) return;
+    historial.current = [...historial.current, ...nuevos].slice(-12);
+    setMensajes((m) => [...m, ...nuevos].slice(-80));
+    miga(`mesa: ${nuevos.length} turnos de la burbuja pasan al hilo`);
+  }, [burbuja, user.correo]);
 
   // La voz toma el avatar de la mesa. El permiso de la conversación se pide cuando suena la llamada
   // (VozProvider, `timbre`), no al entrar: eran segundos de GPU del nodo sin ninguna llamada.
@@ -2769,6 +2818,53 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       await say(tr('Te escucho de nuevo.', 'I’m listening again.'), 'HAPPY', { emocion: 'feliz' });
     }
   };
+
+  /*
+   * `ultronfp://hablar` (entrada/hablar.ts): la persona pidió hablar desde fuera (el «Abrir en AURA» de la burbuja). Se
+   * calla a AURA si hablaba, se abre el micrófono SIN decir nada y se mide hasta que el oído escucha de verdad. El
+   * silencio que la persona dejó puesto solo lo quita el pedido interno de la burbuja (lo acaba de pedir hablándole); un
+   * enlace de fuera lo respeta (entrada/enlace.ts `oidoParaHablar`).
+   */
+  useHablarEnMesa({
+    // Con la burbuja todavía abierta (el «Abrir en AURA» la está cerrando) el micrófono es suyo: se espera a que lo suelte.
+    lista: () => arranqueHecho.current && !burbujaAbierta.abierta(),
+    ocupada: () => conversandoRef.current || enLlamadaRef.current,
+    callar: () => {
+      if (!speakingRef.current) return;
+      void stopSpeaking();
+      oidoMesa.current?.vozCortada();
+      speakingRef.current = false;
+      avisarMesa({ hablando: false });
+    },
+    abrirOido: async (p) => {
+      const queHacer = oidoParaHablar(p, micMutedRef.current);
+      if (queHacer === 'respetar-silencio') {
+        setStatus('muted');
+        showBubble(tr('Sigo con el micrófono en silencio, como lo dejaste. Tócalo para hablarme.', 'My microphone is still muted, as you left it. Tap it to talk to me.'));
+        return 'silenciado';
+      }
+      const ok = await ensureSpeechPermissions();
+      if (!ok) {
+        pedirEnAjustes(tr('Micrófono', 'Microphone'), tr('Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.', 'I need the microphone to hear you. Turn it on in the phone settings.'));
+        return false;
+      }
+      if (queHacer === 'quitar-silencio' || !oidoListo.current) {
+        // Arrancó silenciada: el oído nunca se armó (enableAlwaysOnMic elige el motor y cae al siguiente si hace falta).
+        if (!oidoListo.current) await enableAlwaysOnMic();
+        else await unmuteMic();
+        oidoListo.current = true;
+        micMutedRef.current = false;
+        setMicMuted(false);
+        await saveSettings({ micMuted: false, micMutedEn: null, micMutedSesion: null });
+      } else if (!oidoEscuchando()) await reabrirMic();
+      setStatus('listening');
+      return true;
+    },
+    avisarSinOido: () => {
+      setStatus('reconnect');
+      showBubble(tr('No pude abrir el micrófono. ¿Otra app lo está usando?', 'I couldn’t open the microphone. Is another app using it?'));
+    },
+  });
 
   const toggleVision = () => menuCamara();
 
@@ -3506,6 +3602,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         <>
         {/* «Trabajando · 2» / «Necesito una decisión · 1»: arriba a la derecha, frente al estado; nunca abajo con el teclado. */}
         <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => (ventana.abrirDesdeIndicador() ? undefined : setPanelTrabajos(true))} style={[styles.trabajos, riel && { right: anchoR + 8 }]} />
+        {/* «Continuar trabajo» (Fase 2): el objetivo abierto más reciente, debajo del estado; no compite con el aviso de su computadora. */}
+        {!pcAviso && !tutorialAbierto ? (
+          <View pointerEvents="box-none" style={[styles.continuar, riel && { left: Math.max(16, ins.left + 8), right: anchoR + 16 }]}>
+            <TarjetaContinuar onAbrir={setObjetivoAbierto} />
+          </View>
+        ) : null}
         {/* «¿Te sirvió?» del primer resultado: abajo, por encima de la barra y del subtítulo (hasta tres líneas), sin tapar lo que dice la persona arriba. */}
         {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }, riel && { left: Math.max(16, ins.left + 8), right: anchoR + 16 }]}>{preguntaPrimer}</View>}
 
@@ -3698,6 +3800,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }}
       />
 
+      {/* La hoja del objetivo (Fase 2): meta, criterios, documentos, decisiones y eventos; cerrarla no cancela nada. */}
+      <HojaObjetivo id={objetivoAbierto} onCerrar={() => setObjetivoAbierto(null)} />
+
       {/* La ventana de decisión (José, 5-oct): Sí · No · Editar, también por voz; cerrarla es «Luego». */}
       <VentanaDecision v={ventana} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
 
@@ -3786,6 +3891,8 @@ const styles = StyleSheet.create({
   // El indicador de tareas (AUR08): arriba a la derecha, a la altura del estado; el cuadro del chat lo lleva dentro.
   trabajos: { position: 'absolute', top: 12, right: 16, zIndex: 35 },
   trabajosCuadro: { position: 'absolute', top: 10, right: 10, zIndex: 35 },
+  // «Continuar trabajo»: debajo de la fila del estado y del indicador de tareas (top 12 + 40 de alto + aire).
+  continuar: { position: 'absolute', top: 62, left: 16, right: 16, alignItems: 'center', zIndex: 34 },
   primerCuadro: { position: 'absolute', bottom: 10, left: 10, right: 10, alignItems: 'center', zIndex: 36 },
   primerFlota: { position: 'absolute', left: 16, right: 16, alignItems: 'center', zIndex: 36 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },

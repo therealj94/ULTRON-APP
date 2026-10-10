@@ -246,7 +246,7 @@ test('revisión 6-oct: turno de la dueña que NO pregunta por lo que se ve, con 
 test('turno de «¿qué ves?» con la vista del teléfono: ni la vista ni el pedido le dicen que no puede reconocer caras', async () => {
   const visto = vistaAHechos(parsearVista('{"escena":"dos personas en una mesa","personas":[{"que_hace":"sonríe"},{"que_hace":"mira"}]}'), 'escena');
   // (La marca del turno va pegada al final: «Mira, mira» deja de ser la frase entera; «Mira esto» sigue siendo mirar.)
-  const m = await turno('QUE-VES', { message: 'Mira esto', escena: ESCENA_HIJA, visto, foco: 'escena' });
+  const m = await turno('QUE-VES', { message: 'Mira esto', escena: ESCENA_HIJA, visto, vistoEdadMs: 800, foco: 'escena' });
   assert.match(m, /VISION \(la cámara del teléfono, ahora mismo\): Escena: dos personas en una mesa/);
   assert.doesNotMatch(m, /No identifiques a nadie por su cara/);
   assert.match(m, /CARAS: /);

@@ -12,9 +12,28 @@
  * Cada plataforma tiene su propia memoria (la junta no ve las fichas de los clientes mineros y al
  * revés). Escribir pasa por el motor de reglas como cualquier otra escritura; cada cambio queda en la
  * cadena de auditoría.
+ *
+ * AISLAMIENTO POR ORGANIZACIÓN (Dr Electrum, auditoría H14): en Electrum cada ficha es además de una organización, la de
+ * la petición en curso (server/electrum/organizacion.ts: el ámbito que abren /api/electrum, /mcp y Telegram). Toda
+ * lectura y escritura filtra por ella: un cliente no ve, ni relaciona, ni anota en las fichas de otro (ni por MCP). Como
+ * con los documentos, la casa guarda sin marca (`organizacion` nula) y lo sin organización ES de la casa:
+ * `coalesce(organizacion, CASA)`. MIGRACIÓN: lib/cognitivo/esquema.ts solo AGREGA la columna nula y cambia la unicidad a
+ * (plataforma, organizacion, tipo, clave); ninguna fila se reescribe: todas las fichas que ya existían quedan de la casa
+ * (la organización por omisión), que es quien las cargó. En el archivo local (sin base), igual: sin campo = la casa.
+ * Fuera de un ámbito (tareas internas) se mira lo de la casa. AU-RA no tiene organizaciones: sus fichas, como siempre.
  */
 import { auditar } from './auditoria';
 import { pareceInyeccion } from './clasificador';
+import { CASA, organizacionActual } from '../../server/electrum/organizacion';
+
+/** La organización de las fichas que se leen o escriben ahora: la de la petición en Electrum; la casa en lo demás. */
+export function organizacionDeFichas(plataforma: string): string {
+  return plataforma === 'electrum' ? organizacionActual() || CASA : CASA;
+}
+/** Cómo se guarda: la casa sin marca (como siempre); otra organización, con la suya. */
+const orgParaGuardar = (org: string) => (org === CASA ? null : org);
+/** ¿Esta ficha (o fila) es de esa organización? Lo sin organización es de la casa. */
+const deLaOrg = (x: { organizacion?: string | null }, org: string) => (x.organizacion || CASA) === org;
 
 /**
  * Lo que se guarda en una ficha lo escribió alguien (o un modelo empujado por una página que leyó)
@@ -37,6 +56,8 @@ import { leerTodas, reescribir, sql, tipo as tipoAlmacen } from './base';
 export type Entidad = {
   id: number;
   plataforma: string;
+  /** La organización dueña (Electrum). Nula/ausente = la casa. */
+  organizacion?: string | null;
   tipo: string;
   nombre: string;
   clave: string;
@@ -114,35 +135,36 @@ export async function registrarEntidad(o: {
   const atributos = atributosAcotados(o.atributos || {});
   if (o.estado) o = { ...o, estado: corto(o.estado, 120) };
   if (o.riesgo) o = { ...o, riesgo: corto(o.riesgo, 20) };
+  const org = organizacionDeFichas(o.plataforma);
   let e: Entidad;
   if (tipoAlmacen() === 'postgres') {
     const [f] = await sql(
-      `INSERT INTO cognitivo.entidad (plataforma, tipo, nombre, clave, atributos, estado, riesgo, creada_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT (plataforma, tipo, clave) DO UPDATE SET
+      `INSERT INTO cognitivo.entidad (plataforma, tipo, nombre, clave, atributos, estado, riesgo, creada_por, organizacion)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (plataforma, (COALESCE(organizacion, '')), tipo, clave) DO UPDATE SET
          atributos = cognitivo.entidad.atributos || EXCLUDED.atributos,
          estado = COALESCE(EXCLUDED.estado, cognitivo.entidad.estado),
          riesgo = COALESCE(EXCLUDED.riesgo, cognitivo.entidad.riesgo),
          actualizada = now()
        RETURNING *`,
-      [o.plataforma, tipo, nombre, clave, JSON.stringify(atributos), o.estado ?? null, o.riesgo ?? null, o.quien ?? null]
+      [o.plataforma, tipo, nombre, clave, JSON.stringify(atributos), o.estado ?? null, o.riesgo ?? null, o.quien ?? null, orgParaGuardar(org)]
     );
     e = normal(f);
   } else {
     const t = leerArchivo();
     const ahora = new Date().toISOString();
-    const i = t.entidades.findIndex((x) => x.plataforma === o.plataforma && x.tipo === tipo && x.clave === clave);
+    const i = t.entidades.findIndex((x) => x.plataforma === o.plataforma && deLaOrg(x, org) && x.tipo === tipo && x.clave === clave);
     if (i >= 0) {
       const v = t.entidades[i];
       e = { ...v, atributos: { ...v.atributos, ...atributos }, estado: o.estado ?? v.estado, riesgo: o.riesgo ?? v.riesgo, actualizada: ahora };
       t.entidades[i] = e;
     } else {
-      e = { id: siguiente(t.entidades), plataforma: o.plataforma, tipo, nombre, clave, atributos, estado: o.estado ?? null, riesgo: o.riesgo ?? null, creada: ahora, actualizada: ahora, creada_por: o.quien ?? null };
+      e = { id: siguiente(t.entidades), plataforma: o.plataforma, ...(orgParaGuardar(org) ? { organizacion: org } : {}), tipo, nombre, clave, atributos, estado: o.estado ?? null, riesgo: o.riesgo ?? null, creada: ahora, actualizada: ahora, creada_por: o.quien ?? null };
       t.entidades.push(e);
     }
     guardarArchivo(t);
   }
-  await auditar({ tipo: 'entidad.cambio', plataforma: o.plataforma, quien: o.quien ?? null, datos: { accion: 'registrar', id: e.id, tipo, nombre, atributos: atributos as any, estado: o.estado ?? null, riesgo: o.riesgo ?? null } });
+  await auditar({ tipo: 'entidad.cambio', plataforma: o.plataforma, quien: o.quien ?? null, datos: { accion: 'registrar', id: e.id, ...(orgParaGuardar(org) ? { organizacion: org } : {}), tipo, nombre, atributos: atributos as any, estado: o.estado ?? null, riesgo: o.riesgo ?? null } });
   return e;
 }
 
@@ -151,6 +173,7 @@ export async function relacionar(o: { plataforma: string; desde: number; hasta: 
   if (!TIPO_VALIDO.test(tipo)) throw new Error(`tipo de relación inválido: ${o.tipo}`);
   if (o.desde === o.hasta) throw new Error('una entidad no se relaciona consigo misma');
   const [a, b] = await Promise.all([entidadPorId(o.plataforma, o.desde), entidadPorId(o.plataforma, o.hasta)]);
+  // entidadPorId ya filtra por la organización de la petición: no se relaciona con una ficha ajena.
   if (!a || !b) throw new Error('alguna de las dos entidades no existe en esta plataforma');
   let r: Relacion;
   if (tipoAlmacen() === 'postgres') {
@@ -202,11 +225,12 @@ export async function registrarEvento(o: { plataforma: string; entidad: number; 
 /* ------------------------------------------------------------------ leer */
 
 export async function entidadPorId(plataforma: string, id: number): Promise<Entidad | null> {
+  const org = organizacionDeFichas(plataforma);
   if (tipoAlmacen() === 'postgres') {
-    const [f] = await sql(`SELECT * FROM cognitivo.entidad WHERE id = $1 AND plataforma = $2`, [id, plataforma]);
+    const [f] = await sql(`SELECT * FROM cognitivo.entidad WHERE id = $1 AND plataforma = $2 AND COALESCE(organizacion, $3) = $4`, [id, plataforma, CASA, org]);
     return f ? normal(f) : null;
   }
-  return leerArchivo().entidades.find((e) => e.id === id && e.plataforma === plataforma) || null;
+  return leerArchivo().entidades.find((e) => e.id === id && e.plataforma === plataforma && deLaOrg(e, org)) || null;
 }
 
 /** Busca por nombre (sin acentos, por pedazos) y opcionalmente por tipo. */
@@ -214,17 +238,18 @@ export async function buscarEntidades(plataforma: string, texto: string, o: { ti
   const q = claveDe(texto);
   const limite = Math.min(Math.max(o.limite || 10, 1), 50);
   if (!q) return [];
+  const org = organizacionDeFichas(plataforma);
   if (tipoAlmacen() === 'postgres') {
     const filas = await sql(
       `SELECT * FROM cognitivo.entidad
-        WHERE plataforma = $1 AND ($2::text IS NULL OR tipo = $2) AND (clave LIKE '%' || $3 || '%' OR $3 LIKE '%' || clave || '%')
+        WHERE plataforma = $1 AND COALESCE(organizacion, $5) = $6 AND ($2::text IS NULL OR tipo = $2) AND (clave LIKE '%' || $3 || '%' OR $3 LIKE '%' || clave || '%')
         ORDER BY (clave = $3) DESC, actualizada DESC LIMIT $4`,
-      [plataforma, o.tipo ? fold(o.tipo) : null, q, limite]
+      [plataforma, o.tipo ? fold(o.tipo) : null, q, limite, CASA, org]
     );
     return filas.map(normal);
   }
   return leerArchivo()
-    .entidades.filter((e) => e.plataforma === plataforma && (!o.tipo || e.tipo === fold(o.tipo)) && (e.clave.includes(q) || q.includes(e.clave)))
+    .entidades.filter((e) => e.plataforma === plataforma && deLaOrg(e, org) && (!o.tipo || e.tipo === fold(o.tipo)) && (e.clave.includes(q) || q.includes(e.clave)))
     .sort((a, b) => Number(b.clave === q) - Number(a.clave === q) || b.actualizada.localeCompare(a.actualizada))
     .slice(0, limite);
 }
@@ -232,14 +257,15 @@ export async function buscarEntidades(plataforma: string, texto: string, o: { ti
 export async function ficha(plataforma: string, id: number): Promise<Ficha | null> {
   const e = await entidadPorId(plataforma, id);
   if (!e) return null;
+  const org = organizacionDeFichas(plataforma);
   let relaciones: Ficha['relaciones'];
   let eventos: Evento[];
   if (tipoAlmacen() === 'postgres') {
     const rs = await sql(
       `SELECT r.tipo, CASE WHEN r.desde = $1 THEN 'sale' ELSE 'entra' END AS sentido, o.id, o.tipo AS otipo, o.nombre
          FROM cognitivo.relacion r JOIN cognitivo.entidad o ON o.id = CASE WHEN r.desde = $1 THEN r.hasta ELSE r.desde END
-        WHERE r.desde = $1 OR r.hasta = $1 ORDER BY r.creada`,
-      [id]
+        WHERE (r.desde = $1 OR r.hasta = $1) AND o.plataforma = $2 AND COALESCE(o.organizacion, $3) = $4 ORDER BY r.creada`,
+      [id, plataforma, CASA, org]
     );
     relaciones = rs.map((r: any) => ({ tipo: r.tipo, sentido: r.sentido, con: { id: Number(r.id), tipo: r.otipo, nombre: r.nombre } }));
     eventos = (await sql(`SELECT * FROM cognitivo.evento WHERE entidad = $1 ORDER BY t DESC LIMIT 20`, [id])).map((f: any) => ({ ...f, id: Number(f.id), entidad: Number(f.entidad), t: iso(f.t) }));
@@ -248,9 +274,10 @@ export async function ficha(plataforma: string, id: number): Promise<Ficha | nul
     const porId = new Map(t.entidades.map((x) => [x.id, x]));
     relaciones = t.relaciones
       .filter((r) => r.desde === id || r.hasta === id)
-      .map((r) => {
-        const otro = porId.get(r.desde === id ? r.hasta : r.desde)!;
-        return { tipo: r.tipo, sentido: r.desde === id ? ('sale' as const) : ('entra' as const), con: { id: otro.id, tipo: otro.tipo, nombre: otro.nombre } };
+      .flatMap((r) => {
+        const otro = porId.get(r.desde === id ? r.hasta : r.desde);
+        if (!otro || otro.plataforma !== plataforma || !deLaOrg(otro, org)) return [];
+        return [{ tipo: r.tipo, sentido: r.desde === id ? ('sale' as const) : ('entra' as const), con: { id: otro.id, tipo: otro.tipo, nombre: otro.nombre } }];
       });
     eventos = t.eventos.filter((x) => x.entidad === id).sort((a, b) => b.t.localeCompare(a.t)).slice(0, 20);
   }
@@ -294,17 +321,18 @@ export function fichaEnTexto(f: Ficha): string {
 export async function fichasMencionadas(plataforma: string, mensaje: string, max = 3): Promise<Ficha[]> {
   const q = claveDe(mensaje);
   if (q.length < 4) return [];
+  const org = organizacionDeFichas(plataforma);
   let ids: number[];
   if (tipoAlmacen() === 'postgres') {
     const filas = await sql<{ id: number }>(
       // Palabra entera: «Mario» no aparece en «sumario», ni «Rosa» en «prosa».
-      `SELECT id FROM cognitivo.entidad WHERE plataforma = $1 AND length(clave) >= 4 AND '-' || $2 || '-' LIKE '%-' || clave || '-%' ORDER BY length(clave) DESC LIMIT $3`,
-      [plataforma, q, max]
+      `SELECT id FROM cognitivo.entidad WHERE plataforma = $1 AND COALESCE(organizacion, $4) = $5 AND length(clave) >= 4 AND '-' || $2 || '-' LIKE '%-' || clave || '-%' ORDER BY length(clave) DESC LIMIT $3`,
+      [plataforma, q, max, CASA, org]
     );
     ids = filas.map((f) => Number(f.id));
   } else {
     ids = leerArchivo()
-      .entidades.filter((e) => e.plataforma === plataforma && e.clave.length >= 4 && `-${q}-`.includes(`-${e.clave}-`))
+      .entidades.filter((e) => e.plataforma === plataforma && deLaOrg(e, org) && e.clave.length >= 4 && `-${q}-`.includes(`-${e.clave}-`))
       .sort((a, b) => b.clave.length - a.clave.length)
       .slice(0, max)
       .map((e) => e.id);

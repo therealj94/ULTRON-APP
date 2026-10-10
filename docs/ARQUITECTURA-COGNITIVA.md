@@ -183,7 +183,11 @@ reglas manda a revisión todo lo que no sea lectura).
   nada, se prueba por significado (vectores cacheados en disco).
 - **Memoria estructurada** (`lib/cognitivo/entidades.ts`): fichas de empresas, personas, concesiones,
   wallets…, con relaciones y eventos fechados. Nombrar una entidad en una pregunta trae su ficha al
-  contexto. Escribir fichas es `escritura`: pasa por las reglas y queda auditado.
+  contexto. Escribir fichas es `escritura`: pasa por las reglas y queda auditado. En Dr Electrum cada
+  ficha es de una organización (la de la petición, también por MCP) y toda lectura o escritura filtra
+  por ella. Migración: `cognitivo.entidad` solo gana la columna nula `organizacion` y la unicidad pasa a
+  `(plataforma, coalesce(organizacion,''), tipo, clave)`; ninguna fila se reescribe y todas las fichas
+  que ya existían quedan de la casa (`ULTRON_ORGANIZACION_CASA`, la organización por omisión).
 - Vectores de lo ya cargado: `npx tsx scripts/cognitivo/indexar-vectores.ts`.
 
 ## Fase 5 — Modelo chico (listo, apagado por omisión)

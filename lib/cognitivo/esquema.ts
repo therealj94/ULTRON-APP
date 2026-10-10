@@ -94,9 +94,15 @@ CREATE TABLE IF NOT EXISTS cognitivo.entidad (
   creada      timestamptz NOT NULL DEFAULT now(),
   actualizada timestamptz NOT NULL DEFAULT now(),
   creada_por  text,
-  UNIQUE (plataforma, tipo, clave)
+  organizacion text
 );
 CREATE INDEX IF NOT EXISTS entidad_nombre ON cognitivo.entidad (plataforma, lower(nombre));
+-- Dr Electrum, aislamiento por organización (lib/cognitivo/entidades.ts): una ficha es de una organización; nula = la
+-- casa (todas las que ya existían). Solo se AGREGA la columna; la unicidad pasa a ser por organización (primero el índice
+-- nuevo, después se quita la restricción vieja: la tabla nunca queda sin protección contra duplicados).
+ALTER TABLE cognitivo.entidad ADD COLUMN IF NOT EXISTS organizacion text;
+CREATE UNIQUE INDEX IF NOT EXISTS entidad_org_clave ON cognitivo.entidad (plataforma, (COALESCE(organizacion, '')), tipo, clave);
+ALTER TABLE cognitivo.entidad DROP CONSTRAINT IF EXISTS entidad_plataforma_tipo_clave_key;
 
 CREATE TABLE IF NOT EXISTS cognitivo.relacion (
   id         bigserial PRIMARY KEY,

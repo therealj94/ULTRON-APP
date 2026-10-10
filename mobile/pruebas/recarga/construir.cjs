@@ -32,6 +32,8 @@ const piezaDe = (a) => {
   if (a.path === 'expo-constants') return 'constants';
   if (a.path === 'expo-splash-screen') return 'splash';
   if (a.importer === APP && (a.path === './src/app/AppAura' || a.path === './src/electrum/ElectrumApp')) return 'AppFalsa';
+  // La burbuja del asistente digital (App.tsx la monta solo con `modo: 'burbuja'`): aquí no se arranca nunca.
+  if (a.importer === APP && a.path === './src/burbuja/Burbuja') return 'BurbujaFalsa';
   return null;
 };
 
@@ -53,7 +55,12 @@ const alias = {
       return null;
     });
     b.onLoad({ filter: /.*/, namespace: 'pieza' }, (a) => {
-      const exp = a.path === 'AppFalsa' ? `module.exports = { AppAura: V.AppFalsa, default: V.AppFalsa, __esModule: true };` : `module.exports = V.${a.path};`;
+      const exp =
+        a.path === 'AppFalsa'
+          ? `module.exports = { AppAura: V.AppFalsa, default: V.AppFalsa, __esModule: true };`
+          : a.path === 'BurbujaFalsa'
+            ? `module.exports = { RaizBurbuja: V.AppFalsa, __esModule: true };`
+            : `module.exports = V.${a.path};`;
       return { contents: `const V = require(${JSON.stringify(VARIOS)});\n${exp}\n`, loader: 'js', resolveDir: __dirname };
     });
   },

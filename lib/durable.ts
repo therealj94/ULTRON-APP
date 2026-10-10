@@ -149,8 +149,8 @@ const etagDe = (texto: string) => `"${crypto.createHash('sha256').update(texto).
  * El disco local. Crear es atómico (archivo aparte + `link`, que falla si ya existe); el CAS es atómico en el
  * proceso (lectura, comparación y `rename` síncronos, sin `await` en medio). No coordina réplicas.
  */
-export function almacenDisco(dir?: string): AlmacenDurable {
-  const carpeta = () => dir || process.env.ULTRON_DURABLE_DIR || path.join(process.cwd(), 'data', 'durable');
+export function almacenDisco(dir?: string, carpetaPorOmision?: () => string): AlmacenDurable {
+  const carpeta = () => dir || carpetaPorOmision?.() || process.env.ULTRON_DURABLE_DIR || path.join(process.cwd(), 'data', 'durable');
   const archivo = (clave: string) => path.join(carpeta(), `${validar(clave)}.json`);
   const temporal = (f: string) => `${f}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   const leerSync = (f: string): { texto: string } | null => {
@@ -275,6 +275,65 @@ export function almacenDurable(): AlmacenDurable {
 /** Solo pruebas: fija un almacén (`null` vuelve al de siempre). */
 export function _usarAlmacenDurable(a: AlmacenDurable | null) {
   forzado = a;
+}
+
+/* ------------------------------------------------------------------ Dr Electrum, su propio prefijo */
+
+/**
+ * Los registros durables de los turnos de Dr Electrum van bajo SU prefijo (`electrum/durable/` en S3; en disco,
+ * `ELECTRUM_DURABLE_DIR` o la carpeta de lo durable con `-electrum`), no bajo `ultron/durable/` de AU-RA: una regla de
+ * ciclo de vida, un permiso o una limpieza de un producto no toca los del otro. Lo que ya estaba guardado bajo el prefijo
+ * viejo se sigue LEYENDO (almacenConRespaldo): un reintento de un turno de antes del despliegue recibe su misma respuesta.
+ */
+export const PREFIJO_S3_ELECTRUM = 'electrum/durable';
+/** Marca del ETag de algo leído del prefijo viejo: el CAS sobre eso lo MUDA al nuevo (crear condicional). */
+const ETAG_VIEJO = 'prefijo-viejo:';
+
+/**
+ * Un almacén nuevo que lee el viejo como respaldo. Leer: el nuevo; si no está, el viejo. Crear: solo si tampoco está en
+ * el viejo (si no, sería un duplicado de un registro que ya existía). CAS sobre algo leído del viejo: se comprueba que el
+ * viejo siga igual y se crea en el nuevo (si dos lo mudan a la vez, uno gana: crear es condicional); el viejo queda, pero
+ * las lecturas prefieren el nuevo. Nunca se escribe en el viejo. Enumerar: solo el nuevo.
+ */
+export function almacenConRespaldo(nuevo: AlmacenDurable, viejo: AlmacenDurable): AlmacenDurable {
+  return {
+    tipo: nuevo.tipo,
+    multiReplica: nuevo.multiReplica,
+    async leer<T>(clave: string): Promise<Leido<T>> {
+      const l = await nuevo.leer<T>(clave);
+      if (l.ok === false || l.valor !== null) return l;
+      const v = await viejo.leer<T>(clave);
+      if (v.ok === false) return v;
+      return v.valor === null ? l : { ok: true, valor: v.valor, etag: `${ETAG_VIEJO}${v.etag}` };
+    },
+    async crear(clave: string, valor: unknown): Promise<Escrito> {
+      const v = await viejo.leer(clave);
+      if (v.ok === false) return { ok: false, conflicto: false, detalle: v.detalle };
+      if (v.valor !== null) return { ok: false, conflicto: true, detalle: 'ya existe bajo el prefijo anterior' };
+      return nuevo.crear(clave, valor);
+    },
+    async cas(clave: string, valor: unknown, etag: string): Promise<Escrito> {
+      if (!String(etag || '').startsWith(ETAG_VIEJO)) return nuevo.cas(clave, valor, etag);
+      const v = await viejo.leer(clave);
+      if (v.ok === false) return { ok: false, conflicto: false, detalle: v.detalle };
+      if (v.valor === null || `${ETAG_VIEJO}${v.etag}` !== etag) return { ok: false, conflicto: true };
+      return nuevo.crear(clave, valor);
+    },
+    ...(nuevo.listar ? { listar: (p: string, o?: { desde?: string | null; max?: number }) => nuevo.listar!(p, o) } : {}),
+  };
+}
+
+let electrumS3: AlmacenDurable | null = null;
+let electrumDisco: AlmacenDurable | null = null;
+const carpetaElectrum = () => process.env.ELECTRUM_DURABLE_DIR || (process.env.ULTRON_DURABLE_DIR ? `${process.env.ULTRON_DURABLE_DIR.replace(/[\\/]+$/, '')}-electrum` : path.join(process.cwd(), 'data', 'durable-electrum'));
+
+/** El almacén de los turnos de Dr Electrum: su prefijo, con el de siempre (`ultron/durable/`) como respaldo de lectura. */
+export function almacenDurableElectrum(): AlmacenDurable {
+  if (forzado) return forzado;
+  const viejo = almacenDurable();
+  if (viejo.tipo === 'memoria') return viejo;
+  if (s3Listo()) return almacenConRespaldo((electrumS3 ||= almacenS3(PREFIJO_S3_ELECTRUM)), viejo);
+  return almacenConRespaldo((electrumDisco ||= almacenDisco(undefined, carpetaElectrum)), viejo);
 }
 
 /** Quién es este proceso (para leases y registros). Cambia en cada arranque. */
@@ -411,6 +470,27 @@ export async function soltarLease(lease: Lease): Promise<boolean> {
     lease.almacen
   );
   return r.ok && r.cambiado;
+}
+
+/**
+ * Toma el lease de `clave`, corre `f` con él y lo suelta al terminar (también si `f` lanza). Si otro lo tiene vigente
+ * (`ocupado`) o el almacén no contestó (`detalle`), `f` NO corre. Quien hace un efecto dentro pasa el lease a
+ * `ejecutarUnaVez`: si mientras tanto lo perdió (venció y otro lo tomó con un token mayor), el efecto no se despacha.
+ */
+export async function conLease<R>(
+  clave: string,
+  titular: string,
+  ms: number,
+  f: (lease: Lease) => Promise<R>,
+  o: { almacen?: AlmacenDurable; ahora?: () => number } = {}
+): Promise<{ ok: true; valor: R; token: number } | { ok: false; ocupado?: RegistroLease; detalle?: string }> {
+  const l = await tomarLease(clave, titular, ms, o);
+  if (l.ok === false) return 'ocupado' in l ? { ok: false, ocupado: l.ocupado } : { ok: false, detalle: l.detalle };
+  try {
+    return { ok: true, valor: await f(l.lease), token: l.lease.token };
+  } finally {
+    await soltarLease(l.lease).catch(() => false);
+  }
 }
 
 /**

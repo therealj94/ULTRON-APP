@@ -31,6 +31,14 @@
  *                                        texto (whatsapp/pedido.ts; no sale nada sin tocar «Enviar»). Correo: se abren
  *                                        sus correos y AURA dice de quién es.
  *
+ *   decision     {objetivoId, tareaId?, decisionId, revision, pregunta, opciones:[{id, etiqueta≤24}]≤3}
+ *                                        → (Fase 2) «Necesito tu decisión»: un botón por opción (≤3). Tocar un botón manda
+ *                                        ESA opción con la revisión del aviso (`revisionVista`), sin abrir la app; si el
+ *                                        objetivo cambió mientras tanto (409) el aviso pasa a «Cambió mientras tanto: ábrelo
+ *                                        para ver la versión nueva»; si salió, a una confirmación corta. Tocar el aviso abre
+ *                                        el objetivo. Privado como todos: con el teléfono bloqueado Android no enseña la
+ *                                        pregunta ni los botones (`privacidadDecision`); al desbloquear, sí.
+ *
  * Nada se enseña si `para` no es de quien está registrado en este teléfono (teléfono compartido: si ya
  * entró otra persona, el aviso de la anterior no aparece). Cada aviso una sola vez (por tipo e id).
  */
@@ -40,7 +48,7 @@ import { avisoDeLlamada, avisoNormal, CANAL_LLAMADA, type ConstantesNotifee } fr
 /** Las constantes de notifee que se usan (las de los recordatorios y el estilo de texto largo). */
 export type ConstantesPush = ConstantesNotifee & { AndroidStyle?: { BIGTEXT: number } };
 
-export const TIPOS_PUSH = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora', 'mensaje-externo'] as const;
+export const TIPOS_PUSH = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora', 'mensaje-externo', 'decision'] as const;
 export type TipoPush = (typeof TIPOS_PUSH)[number];
 
 /** Lo que llega, ya validado y acotado. */
@@ -75,7 +83,28 @@ export type DatosPush = {
    * solo cuántos y quién, para la pantalla bloqueada, y lo detallado aquí). Vacío: dice `texto`.
    */
   decir: string;
+  /** decision (Fase 2): de qué objetivo y (si es la aprobación de una tarea suya) de qué tarea. */
+  objetivoId: string;
+  tareaId: string;
+  decisionId: string;
+  /** decision: la revisión del objetivo (o la versión de la tarea) que vio el aviso: va como `revisionVista`. */
+  revision: number;
+  pregunta: string;
+  /** decision: un botón por opción (≤3, etiquetas cortas). */
+  opciones: OpcionAviso[];
 };
+
+export type OpcionAviso = { id: string; etiqueta: string };
+/** Cuántas opciones lleva el aviso y de qué largo (lib/push.ts MAX_OPCIONES_PUSH / MAX_ETIQUETA_PUSH). */
+export const MAX_OPCIONES_AVISO = 3;
+export const MAX_ETIQUETA_AVISO = 24;
+/** El prefijo de los botones de una decisión: `aura-push-decidir:<id de la opción>`. */
+export const ACCION_DECIDIR = 'aura-push-decidir:';
+/**
+ * La privacidad de los avisos de AURA en la pantalla bloqueada (la de siempre: `privado()`, visibilidad PRIVATE): Android
+ * enseña que hay un aviso, no lo que dice. Un aviso de decisión la respeta: sin contenido en la pantalla bloqueada.
+ */
+export const CONTENIDO_EN_BLOQUEO = false;
 
 export const CANAL_AVISOS = 'aura-avisos';
 export const ACCION_ABRIR = 'aura-push-abrir';
@@ -90,6 +119,28 @@ export const MAX_VISTOS = 80;
 export const ABRIBLES = ['mesa', 'chats', 'ajustes', 'computadora', 'correos', 'tareas', 'whatsapp'] as const;
 
 const linea = (s: unknown, max: number) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+/** Las opciones del aviso `decision`: llegan como texto JSON (FCM solo lleva texto) o ya como lista. ≤3, válidas. */
+export function leerOpcionesAviso(v: unknown): OpcionAviso[] {
+  let xs: unknown = v;
+  if (typeof v === 'string') {
+    try {
+      xs = JSON.parse(v);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(xs)) return [];
+  const out: OpcionAviso[] = [];
+  for (const x of xs) {
+    const id = String((x as OpcionAviso)?.id ?? '');
+    const etiqueta = linea((x as OpcionAviso)?.etiqueta, MAX_ETIQUETA_AVISO);
+    if (!/^[A-Za-z0-9_:.-]{1,60}$/.test(id) || !etiqueta || out.some((o) => o.id === id)) continue;
+    out.push({ id, etiqueta });
+    if (out.length >= MAX_OPCIONES_AVISO) break;
+  }
+  return out;
+}
 
 /** Los datos de FCM, validados. null si no son un aviso de AURA (o están rotos). Nunca lanza. */
 export function leerDatos(d: unknown): DatosPush | null {
@@ -108,6 +159,12 @@ export function leerDatos(d: unknown): DatosPush | null {
   const chat = linea(x.chat, 140);
   const chatValido = canal === 'whatsapp' ? /^[0-9A-Za-z._:-]{3,120}@[a-z.]{2,40}$/.test(chat) : canal === 'correo' ? /^[A-Za-z0-9_-]{1,80}:\d{1,12}$/.test(chat) : false;
   if (tipo === 'mensaje-externo' && !chatValido) return null;
+  // Una decisión sin a qué contestar (ni objetivo ni tarea, sin id de decisión o sin revisión) no se enseña.
+  const objetivoId = /^ob_[a-z0-9]{8,40}$/.test(String(x.objetivoId || '')) ? String(x.objetivoId) : '';
+  const tareaId = /^[A-Za-z0-9_-]{4,64}$/.test(String(x.tareaId || '')) ? String(x.tareaId) : '';
+  const decisionId = /^[A-Za-z0-9_:.-]{1,80}$/.test(String(x.decisionId || '')) ? String(x.decisionId) : '';
+  const revision = Number(x.revision);
+  if (tipo === 'decision' && ((!objetivoId && !tareaId) || !decisionId || !Number.isInteger(revision) || revision < 1)) return null;
   return {
     tipo,
     id,
@@ -126,6 +183,12 @@ export function leerDatos(d: unknown): DatosPush | null {
     rid: /^aura-rec-s[a-z0-9]{8,20}$/.test(String(x.rid || '')) ? String(x.rid) : '',
     cuando: Number.isFinite(Number(x.cuando)) ? Number(x.cuando) : 0,
     decir: tipo === 'mensaje' ? linea(x.decir, 900) : '',
+    objetivoId: tipo === 'decision' ? objetivoId : '',
+    tareaId: tipo === 'decision' ? tareaId : '',
+    decisionId: tipo === 'decision' ? decisionId : '',
+    revision: tipo === 'decision' ? revision : 0,
+    pregunta: tipo === 'decision' ? linea(x.pregunta, 200) : '',
+    opciones: tipo === 'decision' ? leerOpcionesAviso(x.opciones) : [],
   };
 }
 
@@ -147,6 +210,9 @@ function datosAviso(p: DatosPush): Record<string, string> {
     // Lo que AURA dice al tocarlo: en los datos del aviso (no se muestra), nunca en el cuerpo que se ve bloqueado.
     ...(p.tipo === 'mensaje' && p.decir ? { decir: p.decir } : {}),
     ...(p.tipo === 'mensaje-externo' ? { canal: p.canal, chat: p.chat, nombre: p.nombre, sugerencia: p.sugerencia, urgente: p.urgente } : {}),
+    ...(p.tipo === 'decision'
+      ? { objetivoId: p.objetivoId, tareaId: p.tareaId, decisionId: p.decisionId, revision: String(p.revision), pregunta: p.pregunta, opciones: JSON.stringify(p.opciones) }
+      : {}),
   };
 }
 
@@ -260,7 +326,84 @@ export function planear(p: DatosPush, o: { dueno: string; ahora: number; k: Cons
       };
     case 'mensaje-externo':
       return { que: 'mostrar', canales: [canalAvisos(k)], aviso: avisoMensajeExterno(p, k) };
+    case 'decision':
+      return { que: 'mostrar', canales: [canalAvisos(k)], aviso: avisoDecision(p, k) };
   }
+}
+
+/**
+ * La privacidad de un aviso de decisión en la pantalla bloqueada. Con contenido permitido (`CONTENIDO_EN_BLOQUEO`):
+ * público, con su pregunta y sus botones. Sin él (lo de siempre en AU-RA): privado; Android enseña solo «AU-RA · contenido
+ * oculto» en la pantalla bloqueada segura —ni la pregunta ni los botones— y todo al desbloquear.
+ */
+export function privacidadDecision(k: ConstantesNotifee, contenidoEnBloqueo = CONTENIDO_EN_BLOQUEO): { visibility?: number; botonesEnBloqueo: boolean; preguntaEnBloqueo: boolean } {
+  if (contenidoEnBloqueo) return { ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PUBLIC } : {}), botonesEnBloqueo: true, preguntaEnBloqueo: true };
+  return { ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PRIVATE ?? 0 } : {}), botonesEnBloqueo: false, preguntaEnBloqueo: false };
+}
+
+/**
+ * Los botones del aviso: uno por opción (≤3), cada uno manda ESA opción sin abrir la app.
+ *
+ * Solo para decisiones de un OBJETIVO (elegir entre caminos). Una decisión de una TAREA puede ser aprobar un correo o
+ * un WhatsApp que sale en ese instante: eso no se aprueba desde un aviso sin ver el borrador entero. Sin botones; el
+ * toque abre la app con la propuesta delante.
+ */
+export function botonesDecision(p: Pick<DatosPush, 'opciones' | 'tareaId'>): { title: string; pressAction: { id: string } }[] {
+  if (p.tareaId) return [];
+  return p.opciones.slice(0, MAX_OPCIONES_AVISO).map((o) => ({ title: o.etiqueta, pressAction: { id: `${ACCION_DECIDIR}${o.id}` } }));
+}
+
+/** «Necesito tu decisión»: la pregunta, un botón por opción y, al tocarlo, el objetivo. */
+export function avisoDecision(p: DatosPush, k: ConstantesPush, contenidoEnBloqueo = CONTENIDO_EN_BLOQUEO): Record<string, unknown> {
+  const priv = privacidadDecision(k, contenidoEnBloqueo);
+  const botones = botonesDecision(p);
+  const aviso = avisoComun(p, k, tr('Necesito tu decisión', 'I need your decision'), p.pregunta || tr('Ábrelo para decidir.', 'Open it to decide.'), botones.length ? { actions: botones } : {});
+  const android = { ...(aviso.android as Record<string, unknown>) };
+  if (priv.visibility !== undefined) android.visibility = priv.visibility;
+  else delete android.visibility;
+  return { ...aviso, android };
+}
+
+/** Cómo terminó mandar la decisión desde el aviso: `ok` (quedó, o ya estaba), `cambio` (409: cambió), `error` (red, otro). */
+export type FinDecisionAviso = 'ok' | 'cambio' | 'error';
+
+/** Qué significa la respuesta del servidor a la decisión mandada desde un botón del aviso. */
+export function finDecisionAviso(r: { status: number; json?: any } | null | undefined): FinDecisionAviso {
+  if (!r) return 'error';
+  if (r.status >= 200 && r.status < 300) return 'ok';
+  const codigo = String(r.json?.codigo || r.json?.code || '');
+  // 409 (otra revisión, la pregunta ya cambió, ya se decidió, terminó), 404 (ya no está) o una opción que ya no se ofrece.
+  if (r.status === 409 || r.status === 404 || codigo === 'opcion') return 'cambio';
+  return 'error';
+}
+
+/** Lo que se manda al tocar un botón: la ruta y el cuerpo exactos (objetivo con `revisionVista`; tarea con su versión). */
+export function pedidoDecisionAviso(p: Pick<DatosPush, 'tipo' | 'objetivoId' | 'tareaId' | 'decisionId' | 'revision' | 'opciones'>, opcion: string, aparato = ''): { ruta: string; cuerpo: Record<string, unknown> } | null {
+  if (p.tipo !== 'decision' || !p.opciones.some((o) => o.id === opcion)) return null;
+  if (p.tareaId) return { ruta: `/api/trabajos/${encodeURIComponent(p.tareaId)}/decisiones?estados=respondida`, cuerpo: { decisionId: p.decisionId, expectedVersion: p.revision, opcion } };
+  if (!p.objetivoId) return null;
+  return { ruta: `/api/objetivos/${encodeURIComponent(p.objetivoId)}/decisiones`, cuerpo: { decisionId: p.decisionId, opcion, revisionVista: p.revision, ...(aparato ? { aparato } : {}) } };
+}
+
+/**
+ * El aviso después de tocar un botón (reemplaza al de la pregunta, con el mismo id): una confirmación corta, «Cambió
+ * mientras tanto: ábrelo para ver la versión nueva», o que no se pudo. Sin botones; tocarlo abre el objetivo.
+ */
+export function avisoTrasDecidir(p: DatosPush, fin: FinDecisionAviso, opcion: string, k: ConstantesPush): Record<string, unknown> {
+  const etiqueta = p.opciones.find((o) => o.id === opcion)?.etiqueta || '';
+  const titulo = fin === 'ok' ? tr('Listo', 'Done') : fin === 'cambio' ? tr('Cambió mientras tanto', 'It changed in the meantime') : tr('No pude mandar tu decisión', "I couldn't send your decision");
+  const cuerpo =
+    fin === 'ok'
+      ? etiqueta
+        ? tr(`Elegiste «${etiqueta}». Sigo con eso.`, `You chose «${etiqueta}». I'll carry on.`)
+        : tr('Tu decisión quedó. Sigo con eso.', "Your decision is in. I'll carry on.")
+      : fin === 'cambio'
+        ? tr('Cambió mientras tanto: ábrelo para ver la versión nueva.', 'It changed in the meantime: open it to see the new version.')
+        : tr('No sé si llegó. Ábrelo para ver cómo quedó antes de repetir.', "I don't know if it arrived. Open it to check before trying again.");
+  const aviso = avisoComun(p, k, titulo, cuerpo);
+  const android = { ...(aviso.android as Record<string, unknown>) };
+  delete android.actions;
+  return { ...aviso, android };
 }
 
 /** El aviso de un mensaje importante: quién y qué dijo, y la respuesta sugerida (que se abre como borrador al tocarlo). */
@@ -284,14 +427,14 @@ export function destinoMensajeExterno(p: DatosPush): { abrir: 'whatsapp'; chat: 
 
 /* ── los toques ──────────────────────────────────────────────────────────────────────────── */
 
-export type AccionPush = 'abrir' | 'si' | 'luego';
+export type AccionPush = 'abrir' | 'si' | 'luego' | 'decidir';
 export type EventoAviso = { type: number; detail?: { notification?: { id?: string; data?: Record<string, unknown> }; pressAction?: { id?: string } } };
 
 /**
  * Qué significa un evento de notifee para estos avisos, o null si no es de ellos (la llamada no pasa
  * por aquí: sus datos son los de un recordatorio y la atiende compa/recordatoriosNativo.ts).
  */
-export function interpretarToque(e: EventoAviso, k: ConstantesNotifee): { accion: AccionPush; datos: DatosPush; idAviso: string } | null {
+export function interpretarToque(e: EventoAviso, k: ConstantesNotifee): { accion: AccionPush; datos: DatosPush; idAviso: string; opcion?: string } | null {
   const datos = leerDatosAviso(e?.detail?.notification?.data);
   if (!datos) return null;
   const T = k.EventType ?? { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 };
@@ -299,6 +442,11 @@ export function interpretarToque(e: EventoAviso, k: ConstantesNotifee): { accion
   const idA = String(e.detail?.notification?.id || idAviso(datos));
   if (e.type === T.ACTION_PRESS && id === ACCION_SI) return { accion: 'si', datos, idAviso: idA };
   if (e.type === T.ACTION_PRESS && id === ACCION_LUEGO) return { accion: 'luego', datos, idAviso: idA };
+  // Un botón de una decisión: la opción tiene que ser una de las que trajo el aviso (nada inventado desde el evento).
+  if (e.type === T.ACTION_PRESS && typeof id === 'string' && id.startsWith(ACCION_DECIDIR)) {
+    const opcion = id.slice(ACCION_DECIDIR.length);
+    return datos.tipo === 'decision' && datos.opciones.some((o) => o.id === opcion) ? { accion: 'decidir', datos, idAviso: idA, opcion } : null;
+  }
   if (e.type === T.PRESS || (e.type === T.ACTION_PRESS && id === ACCION_ABRIR)) return { accion: 'abrir', datos, idAviso: idA };
   return null;
 }

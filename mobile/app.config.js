@@ -72,6 +72,14 @@ const AURA_ICONO = '#2C2E32';
  */
 const FIREBASE_PLUGINS = ['@react-native-firebase/app', '@react-native-firebase/messaging'];
 
+/*
+ * AU-RA COMO ASISTENTE DIGITAL (plugins/asistente-digital.js): el botón lateral del teléfono, la burbuja encima de
+ * cualquier app, el mosaico de Ajustes rápidos y el atajo del ícono. SOLO AU-RA: la burbuja habla con el cerebro de
+ * AURA y el asistente del teléfono es uno solo; en la APK de Dr Electrum no queda ni una pieza (ni clases ni recursos:
+ * el plugin las copia a la app, no van en un módulo que se enlace en las dos).
+ */
+const ASISTENTE_PLUGINS = ['./plugins/asistente-digital'];
+
 /** Cambia las opciones de un plugin de la lista sin tocar el resto. */
 function conPlugin(plugins, nombre, cambiar) {
   return (plugins || []).map((p) => {
@@ -89,7 +97,7 @@ module.exports = ({ config }) => {
       ...expo,
       // «automatic»: el tema «Sistema» de la 5.0 sigue al teléfono (con «dark» Android siempre dice oscuro).
       userInterfaceStyle: 'automatic',
-      plugins: [...conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })), ...FIREBASE_PLUGINS],
+      plugins: [...conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })), ...FIREBASE_PLUGINS, ...ASISTENTE_PLUGINS],
       android: {
         ...expo.android,
         // Firebase Cloud Messaging (src/push): solo AU-RA. Ver FIREBASE_PLUGINS.

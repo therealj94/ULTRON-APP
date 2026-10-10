@@ -32,6 +32,9 @@ windows/centro/node_modules/
 build-server/
 # Lo durable sin S3 (lib/durable.ts: turnos, operaciones, leases): estado local, nunca al repositorio.
 data/durable/
+data/durable-electrum/
+# La copia local de los últimos interruptores conocidos (lib/interruptores.ts): estado local.
+data/interruptores.json
 # Las voces que conoce AURA (lib/voces-miembro.ts: números de cada cuenta) y el modelo que se baja solo.
 data/voces/
 data/modelos-voz/

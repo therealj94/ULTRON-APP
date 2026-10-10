@@ -46,6 +46,7 @@ import { Conversacion } from './13-trabajo/Conversacion';
 import { Compositor } from './13-trabajo/Compositor';
 import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
 import { IndicadorTrabajos, PanelTrabajos, clienteTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
+import { BotonObjetivos, PanelObjetivos, useObjetivosWeb } from './13-trabajo/Objetivos';
 import { VisorEscritorio, abrirEscritorio, olvidarVisor, useVisorEscritorioAbierto } from './13-trabajo/VisorEscritorio';
 import { refsDeTurno } from '../mobile/src/lib/trabajos';
 
@@ -201,6 +202,9 @@ export default function App() {
   const [tareaEnfocada, setTareaEnfocada] = useState<string | null>(null);
   const [propuestaCampo, setPropuestaCampo] = useState<{ texto: string; n: number } | null>(null);
   const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, cuenta: cuentaActiva, panelAbierto: panelTareas });
+  // Los objetivos con estado (Fase 2): el botón del encabezado y su panel, con «qué cambió desde que te fuiste» por navegador.
+  const [panelObjetivos, setPanelObjetivos] = useState(false);
+  const objetivos = useObjetivosWeb({ conSesion: usuario.authenticated, cuenta: cuentaActiva, panelAbierto: panelObjetivos });
   // El visor del escritorio de su computadora (U1, auditoría del 4-oct): el mismo de la app, abierto desde la tarea.
   const escritorioAbierto = useVisorEscritorioAbierto();
   const cuentaDelEscritorio = usuario.authenticated ? cuentaActiva : null;
@@ -226,6 +230,9 @@ export default function App() {
           // El resultado de una investigación vive en el panel de Tareas: se abre ahí, no solo la vista de trabajo.
           setModoMesa('trabajar');
           abrirTarea(null);
+        } else if (d === 'objetivos') {
+          // «Necesito tu decisión» de un objetivo (Fase 2): se abren sus Objetivos.
+          setPanelObjetivos(true);
         } else setModoMesa(d);
       }),
     [abrirTarea]
@@ -1445,6 +1452,7 @@ export default function App() {
             <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto shrink-0">
               {/* «Trabajando · 2» / «Necesito una decisión · 1» (AUR08): en el encabezado, nunca sobre el teclado. */}
               <IndicadorTrabajos texto={trabajos.indicador} res={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => abrirTarea(null)} />
+              <BotonObjetivos abiertos={objetivos.abiertos.length} novedades={objetivos.novedades} decisiones={objetivos.abiertos.reduce((n, o) => n + (o.decisionesPendientes || 0), 0)} onAbrir={() => setPanelObjetivos(true)} />
               <button
                 type="button"
                 onClick={() => setAccesoOpen(true)}
@@ -1737,6 +1745,17 @@ export default function App() {
         />
 
         <UltronVaultModal isOpen={vaultOpen} onClose={() => setVaultOpen(false)} onSpeak={(t) => decir(t, { emocion: 'neutral' })} />
+
+        {/* Los objetivos (Fase 2): la hoja de cada uno, sus decisiones con su revisión y qué cambió desde que te fuiste. */}
+        <PanelObjetivos
+          abierto={panelObjetivos}
+          onCerrar={() => setPanelObjetivos(false)}
+          objetivos={objetivos.objetivos}
+          vistos={objetivos.vistos}
+          onObjetivo={objetivos.aplicar}
+          marcarVisto={objetivos.marcarVisto}
+          onRefrescar={() => void objetivos.refrescar()}
+        />
 
         {/* El panel de tareas (AUR08): cerrarlo no cancela nada; el servidor es la fuente de verdad. */}
         <PanelTrabajos

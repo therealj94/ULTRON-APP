@@ -146,6 +146,51 @@ export function conLapidas(previo: Durable | null | undefined, ids: string[], ah
   return unirLapidas(previo?.lapidas, ids.map((id) => ({ id, t: ahora })));
 }
 
+/** Cuántas veces se reintenta reparar S3 cuando otra instancia lo cambió entre la lectura y la escritura. */
+export const INTENTOS_REPARAR_S3 = 3;
+
+/**
+ * Reparar la copia de S3 que quedó atrás (fusionarCopias dijo `atrasada: ['s3']`) SIN pisar una copia más nueva. Antes se
+ * escribía lo fusionado sin condición: si entre la lectura y la escritura otra instancia guardó un cajón con una lápida
+ * nueva (olvidó a alguien), la reparación lo pisaba y la persona borrada VOLVÍA. Ahora, en cada intento: se relee S3 (con
+ * su ETag), se fusiona con lo acumulado (las lápidas de TODAS las copias vistas se conservan siempre), y se escribe con la
+ * condición de lo releído (412 → otra vuelta, hasta INTENTOS_REPARAR_S3). Si S3 ya está al día, no se escribe. Un sobre que
+ * no abre o S3 que no contesta: no se escribe nada. Sin escritura condicional (un S3 que no la sabe), se escribe lo
+ * fusionado con lo recién releído (la ventana queda mínima, nunca se descarta una lápida vista). Nunca lanza.
+ */
+export async function repararCopiaS3<P extends { id: string; creado?: number }, C extends ConPersonas<P>>(o: {
+  cajon: C;
+  leer: () => Promise<{ ok: boolean; json: unknown; etag?: string | null; missing?: boolean }>;
+  abrir: (json: unknown) => C;
+  escribirSi?: (cajon: C, cond: { siNoExiste?: boolean; siCoincide?: string }) => Promise<{ ok: boolean; conflicto?: boolean }>;
+  escribir: (cajon: C) => Promise<{ ok: boolean }>;
+  intentos?: number;
+}): Promise<{ estado: 'reparada' | 'al_dia' | 'conflicto' | 'fallo'; cajon: C }> {
+  let acumulado = o.cajon;
+  for (let i = 0; i < (o.intentos ?? INTENTOS_REPARAR_S3); i++) {
+    try {
+      const r = await o.leer();
+      if (!r.ok) return { estado: 'fallo', cajon: acumulado };
+      const fresco = r.json != null && !r.missing ? o.abrir(r.json) : null;
+      const f = fusionarCopias<P, C>(acumulado, fresco);
+      acumulado = f.cajon || acumulado;
+      if (fresco && !f.atrasada.includes('s3')) return { estado: 'al_dia', cajon: acumulado };
+      if (!o.escribirSi) {
+        const w = await o.escribir(acumulado);
+        return { estado: w.ok ? 'reparada' : 'fallo', cajon: acumulado };
+      }
+      const cond = !fresco ? { siNoExiste: true } : r.etag ? { siCoincide: r.etag } : null;
+      if (!cond) return { estado: 'fallo', cajon: acumulado };
+      const w = await o.escribirSi(acumulado, cond);
+      if (w.ok) return { estado: 'reparada', cajon: acumulado };
+      if (!w.conflicto) return { estado: 'fallo', cajon: acumulado };
+    } catch {
+      return { estado: 'fallo', cajon: acumulado };
+    }
+  }
+  return { estado: 'conflicto', cajon: acumulado };
+}
+
 /* ── el disco, inyectable (las pruebas simulan un disco que falla) ─────────────────────────────────── */
 
 type Disco = Pick<typeof fs, 'writeFileSync' | 'renameSync' | 'unlinkSync' | 'mkdirSync'>;

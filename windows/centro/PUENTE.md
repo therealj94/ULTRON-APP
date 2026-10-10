@@ -44,6 +44,10 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | `whatsapp.enviar` | `{ chat, texto }` | `{ mensaje }`. La persona lo escribió y tocó Enviar: sale directo. `chat` es un JID (`…@s.whatsapp.net`, `…@g.us`, `…@lid`); `texto` no vacío y ≤ 4000 letras (se rechaza, no se recorta) |
 | `whatsapp.leido` | `{ chat }` | `{ ok }`: marca leído el chat (al abrirlo y cuando llega algo con él a la vista) |
 | `whatsapp.media` | `{ chat, id }` | `{ base64, mime }` de `GET /api/whatsapp/media` (foto, video, nota de voz o documento en grande), con tope de 8 MB: más grande, error con su texto |
+| `trabajos.lista` | — | `{ objetivos[], tareas[], aviso?, abrir? }`: tus objetivos (`GET /api/objetivos`) y tareas (`GET /api/trabajos`) con `estadoTexto` y `espera` (qué espera cada uno, en palabras) y `nuevo` (cambió desde la última revisión que vio esta PC). `abrir`: la hoja que pidió el notch («Continuar») si la página aún cargaba |
+| `objetivos.abrir` | `{ id }` | `{ objetivo, nuevos[] }`: la hoja (`GET /api/objetivos/:id`) y los hechos nuevos desde lo que vio esta PC (`/cambios?desde=`). Anota la revisión como vista en esta PC (Ajustes) |
+| `objetivos.decidir` | `{ id, decisionId, opcion, revisionVista }` | `{ ok, conflicto?, objetivo }`. Un 409 (otro aparato se adelantó) llega como `conflicto: { codigo, mensaje: "Cambió desde otro aparato", detalle }` con el objetivo de ahora, nunca como error |
+| `objetivos.control` | `{ id, accion: "pausar"\|"reanudar"\|"cancelar", revisionVista? }` | igual que `objetivos.decidir` |
 | `spotify.*`, `cartera.*`, `conectar`, `desconectar` | ver `src/vistas/*.ts` | |
 
 ## Eventos
@@ -51,6 +55,7 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | Evento | Datos |
 |---|---|
 | `estado` | `Estado` completo cuando cambia algo |
+| `objetivo.abrir` | `{ id }` · abrir la hoja de ese objetivo en «Trabajos» (el botón de «Continuar» del notch) |
 | `ir` | id de sección a mostrar (`pulse` trae PULSE2CHAT al frente; `whatsapp`, la misma sección con WhatsApp al frente si la cuenta lo tiene) |
 | `llamada.accion` | `{ accion: 'contestar' \| 'rechazar' \| 'colgar' }` desde el notch |
 | `chat.mensaje` | `{ quien, texto, id, parcial? }` |

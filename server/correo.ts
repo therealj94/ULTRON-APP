@@ -44,6 +44,7 @@ import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo
 import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { dentroDe, intervaloDeCorreo, sinTiempo, type Intervalo } from '../lib/correo/intervalo';
 import { presentadoEnChat } from './presentacion-decision';
+import { anotarDescarteDurable, guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
 import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
@@ -955,7 +956,14 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = '', 
   // reemplazadas (antes seguían ahí y podían salir las dos). Un correo distinto a la misma persona se queda.
   const viejas = APARTADOS.quitarDonde(k, mismos);
   if (viejas.length && !version) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(viejas[viejas.length - 1].asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
-  BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
+  const guardado: BorradorGuardado = { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) };
+  BORRADORES.set(k, guardado);
+  // Fase 2: también durable (server/borradores-durables.ts): su aprobación vale tras un reinicio o desde otra réplica.
+  guardarBorradorDurable('correo', quien, ambito, guardado);
+  // Revisión de fases: lo que este reemplazó (el que esperaba, si no quedó apartado, y sus versiones viejas) deja su lápida:
+  // tras un reinicio no revive desde lo durable.
+  const apartado = !!previo && previo.soloPanel && !motivoBorrador(previo, quien) && !mismos(previo);
+  for (const x of [...(previo && !apartado ? [previo] : []), ...viejas]) if (x.intento !== guardado.intento) void anotarDescarteDurable(quien, x.intento, 'reemplazado');
   // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
   presentadoEnChat(quien, ambito, { canal: 'correo', intento: vigencia.intento, huella });
   const aviso =
@@ -1058,6 +1066,7 @@ export async function resolverApartadoCorreo(quien: string, ambito: string, inte
   if (!b) return null;
   if (respuesta === 'no') {
     APARTADOS.quitar(k, intento);
+    void anotarDescarteDurable(quien, intento, 'rechazado');
     return exito(`CORREO: no se mandó; el borrador para ${b.para.join(', ')} quedó descartado.`, { efecto: 'ninguno', codigo: 'descartado' });
   }
   const motivo = motivoPanel(b, huellaCorreo(b), huella);
@@ -1088,7 +1097,27 @@ export function editarBorradorCorreo(quien: string, ambito: string, intento: str
   const nuevo: BorradorGuardado = { ...base, ...vigenciaNueva(quien, base.creado, BORRADOR_VIVE_MS), huella: huellaCorreo(base) };
   if (BORRADORES.get(k)?.intento === intento) BORRADORES.set(k, nuevo);
   else APARTADOS.reemplazar(k, intento, nuevo);
+  guardarBorradorDurable('correo', quien, ambito, nuevo);
+  // El de antes ya no se puede mandar: su lápida (no revive tras un reinicio).
+  void anotarDescarteDurable(quien, intento, 'reemplazado');
   return { ok: true, borrador: nuevo };
+}
+
+/**
+ * Fase 2: el borrador de ESE intento y ESA huella vuelve a esperar en esta réplica si el mapa del proceso ya no lo tiene
+ * (se reinició el servidor, o lo armó otra réplica). Solo si lo guardado es del mismo dueño y conversación, no venció, no
+ * salió, no se rechazó en el panel y su huella recalculada es la misma: entonces espera como apartado (el panel lo
+ * decide, el chat no). true si espera (ya estaba o volvió).
+ */
+export async function rehidratarBorradorCorreo(quien: string, ambito: string, intento: string, huella: string): Promise<boolean> {
+  if (borradorCorreoPorIntento(quien, ambito, intento)) return true;
+  if (!huella || rechazadoEnPanel(intento)) return false;
+  const g = await leerBorradorDurable<BorradorGuardado>('correo', quien, ambito, intento, huella).catch(() => null);
+  if (!g || g.intento !== intento || g.huella !== huella || huellaCorreo(g) !== huella || motivoBorrador(g, quien)) return false;
+  // Mientras se leía pudo volver por otro camino: no se duplica.
+  if (borradorCorreoPorIntento(quien, ambito, intento)) return true;
+  APARTADOS.apartar(llave(quien, ambito), { ...g, soloPanel: true });
+  return true;
 }
 
 /** De quién es un borrador nuevo, hasta cuándo vale y su id de intento (correo y WhatsApp). */
@@ -1408,7 +1437,9 @@ export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado,
     const k = o.ambito !== undefined ? llave(quien, o.ambito) : '';
     if (k && !BORRADORES.has(k)) {
       const { dueno: _d, vence: _v, intento: _i, huella: _h, repeticionAceptada: _r, ...plano } = b;
-      BORRADORES.set(k, { ...plano, ...vigenciaNueva(quien, Date.now(), BORRADOR_VIVE_MS), huella: huellaCorreo(b) });
+      const otro: BorradorGuardado = { ...plano, ...vigenciaNueva(quien, Date.now(), BORRADOR_VIVE_MS), huella: huellaCorreo(b) };
+      BORRADORES.set(k, otro);
+      guardarBorradorDurable('correo', quien, o.ambito!, otro);
     }
     return fallo(
       `CORREO: NO se mandó: lo que iba a salir ya no es lo que aprobó (cambió el destinatario, el contenido o la cuenta; ahora sería para ${b.para.join(', ')} — «${b.asunto}»). ` +

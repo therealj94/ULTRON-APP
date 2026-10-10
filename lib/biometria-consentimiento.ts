@@ -77,10 +77,16 @@ export function consentimientoDeAlta(o: { relacion: 'yo' | 'conocido'; crudo: un
   };
 }
 
-/** Un alta nueva de alguien ya guardado: la constancia nueva, sin perder una confirmación en pantalla de antes. */
+/**
+ * Un alta nueva de alguien ya guardado: la constancia nueva, sin perder una confirmación en pantalla de antes. La marca
+ * de posible menor es PEGAJOSA: si la persona ya la tenía, la conserva aunque el alta nueva no repita el parentesco
+ * («mi hija Nora» y después solo «Nora»); y con ella su «por confirmar». Solo la confirmación explícita de la dueña en su
+ * pantalla (confirmarConsentimiento*, o `confirmadoEnPantalla` del alta) la vuelve reconocible.
+ */
 export function unirConsentimiento(previo: ConsentimientoBio | undefined, nuevo: ConsentimientoBio): ConsentimientoBio {
-  const conf = nuevo.confirmadoEnPantalla || (nuevo.menor && previo?.confirmadoEnPantalla) || 0;
-  return { ...nuevo, ...(conf ? { confirmadoEnPantalla: conf } : {}) };
+  const menor = !!nuevo.menor || !!previo?.menor;
+  const conf = nuevo.confirmadoEnPantalla || (menor && previo?.confirmadoEnPantalla) || 0;
+  return { ...nuevo, ...(menor ? { menor: true } : {}), ...(conf ? { confirmadoEnPantalla: conf } : {}) };
 }
 
 /** Es posible menor y la dueña todavía no lo confirmó en pantalla. */

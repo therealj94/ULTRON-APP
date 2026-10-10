@@ -38,6 +38,8 @@ internal static class Controles
     public static List<Control> Visibles(IntPtr ventana, bool ingles, int maxNodos = 3000, int maxMs = 1500)
     {
         var lista = new List<Control>();
+        // Recorrer los controles de otra ventana también es leerla: el notch lo muestra mientras dura.
+        using var leyendo = Pantalla.MarcarLectura();
         var reloj = Stopwatch.StartNew();
         var cola = new Queue<AutomationElement>();
         try { cola.Enqueue(AutomationElement.FromHandle(ventana)); } catch { return lista; }

@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { identificar, nivelDe } from '../lib/acceso';
 import { PLATAFORMA, type Plataforma } from '../lib/plataforma';
-import { borrarSesion, emitirTokenMcp, firmarDato, leerDato, leerTokenMcp, limitar, sesionDe } from './seguridad';
+import { autoridadSinSesion, borrarSesion, emitirTokenMcp, firmarDato, leerDato, leerTokenMcp, limitar, sesionDe } from './seguridad';
 import { modoDesarrollo } from '../lib/entorno';
 
 export const TTL_ACCESO_MS = 60 * 60_000;
@@ -96,11 +96,36 @@ export function quienPorTokenMcp(token: string, plataforma: Plataforma = PLATAFO
   if (!t) return null;
   // El padrón se mira en CADA llamada: a quien le quitan el acceso se le corta sin esperar la hora.
   const p = personaConAcceso(t.correo, t.nombre, plataforma);
-  return p ? { quien: p.persona.id, nivel: p.nivel, cliente: t.cid } : null;
+  return p ? { quien: p.persona.id, nivel: p.nivel, cliente: t.cid, correo: t.correo } : null;
 }
+
+/**
+ * SEC-04 también fuera de /api: ¿la cuenta sigue con autoridad vigente? La misma regla que exigirAutoridadVigente
+ * (server/seguridad.ts): suspendida → no; desconocida → no, salvo la identidad configurada en el despliegue. /mcp la
+ * mira en CADA petición (OAuth y token fijo) y /oauth/* antes de aprobar, canjear o renovar: una suspensión corta el
+ * conector sin esperar la hora del token ni los 30 días del refresco. Varios correos (una persona del padrón): basta
+ * con que uno esté suspendido o no se pueda comprobar para negar. Nunca lanza.
+ */
+export async function autoridadMcp(correos: string | string[]): Promise<'permitida' | 'suspendida' | 'desconocida'> {
+  const lista = (Array.isArray(correos) ? correos : [correos]).map((c) => String(c || '').trim().toLowerCase()).filter(Boolean);
+  let estado: 'permitida' | 'suspendida' | 'desconocida' = 'permitida';
+  for (const c of lista) {
+    const r = await autoridadSinSesion(c).catch(() => 'desconocida' as const);
+    if (r === 'suspendida') return 'suspendida';
+    if (r === 'desconocida') estado = 'desconocida';
+  }
+  return estado;
+}
+
+const motivoAutoridad = (a: 'suspendida' | 'desconocida') => (a === 'suspendida' ? 'La cuenta está suspendida' : 'No se pudo comprobar que la cuenta siga activa');
 
 const errorOauth = (res: express.Response, status: number, error: string, descripcion: string) =>
   res.status(status).setHeader('Cache-Control', 'no-store').json({ error, error_description: descripcion });
+/** El registro de cuentas no contestó: 503 `temporarily_unavailable` (RFC 6749 §4.1.2.1), con un reintento sugerido. */
+const noDisponible = (res: express.Response) => {
+  res.setHeader('Retry-After', '30');
+  return errorOauth(res, 503, 'temporarily_unavailable', `${motivoAutoridad('desconocida')}. Probá otra vez en un momento.`);
+};
 
 function esc(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -237,7 +262,7 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
   });
 
   // La pantalla aprueba con la sesión de la app (la que ya tenía el navegador o la que acaba de sacar).
-  app.post('/oauth/authorize', limitar(30), (req, res) => {
+  app.post('/oauth/authorize', limitar(30), async (req, res) => {
     const p = pedidoDeAutorizacion(req.query as Record<string, unknown>, req);
     if (p.ok === false) return res.status(400).json({ error: 'pantalla' in p ? p.pantalla : 'Pedido inválido', volver: 'volver' in p ? p.volver : undefined });
     const volver = (params: Record<string, string>) => {
@@ -251,6 +276,8 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
     if (!s) return res.status(401).json({ error: 'Tu sesión venció. Entrá de nuevo.' });
     const acceso = personaConAcceso(s.correo, s.nombre, plataforma);
     if (!acceso) return res.status(403).json({ error: `Tu cuenta no tiene acceso a ${producto}.` });
+    const vigente = await autoridadMcp(s.correo);
+    if (vigente !== 'permitida') return res.status(vigente === 'suspendida' ? 403 : 503).json({ error: `${motivoAutoridad(vigente)}.`, code: vigente === 'suspendida' ? 'cuenta_suspendida' : 'autoridad_desconocida' });
     const codigo = firmarDato('k1', {
       c: s.correo,
       nm: s.nombre,
@@ -265,7 +292,7 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
     res.json({ volver: volver({ code: codigo }) });
   });
 
-  app.post('/oauth/token', limitar(60), formulario, (req, res) => {
+  app.post('/oauth/token', limitar(60), formulario, async (req, res) => {
     const b = req.body || {};
     const clientId = String(b.client_id || '');
     if (!clienteDe(clientId)) return errorOauth(res, 401, 'invalid_client', 'Cliente desconocido');
@@ -283,8 +310,13 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
       if (!k || Number(k.exp) < Date.now()) return errorOauth(res, 400, 'invalid_grant', 'Código vencido o inválido');
       if (k.cid !== clientId || k.ru !== String(b.redirect_uri || '')) return errorOauth(res, 400, 'invalid_grant', 'El código es de otro cliente o de otra dirección');
       if (s256(String(b.code_verifier || '')) !== k.cc) return errorOauth(res, 400, 'invalid_grant', 'code_verifier no corresponde');
-      if (!gastarCodigo(codigo)) return errorOauth(res, 400, 'invalid_grant', 'Ese código ya se usó');
       if (!personaConAcceso(k.c, k.nm, plataforma)) return errorOauth(res, 400, 'invalid_grant', 'La cuenta ya no tiene acceso');
+      // Revisión de fases: la cuenta se mira ANTES de gastar el código. Si el registro no contesta (`desconocida`) es una
+      // falla pasajera: 503 temporarily_unavailable y el código sigue valiendo para reintentar. Suspendida: invalid_grant.
+      const vigente = await autoridadMcp(k.c);
+      if (vigente === 'desconocida') return noDisponible(res);
+      if (vigente !== 'permitida') return errorOauth(res, 400, 'invalid_grant', motivoAutoridad(vigente));
+      if (!gastarCodigo(codigo)) return errorOauth(res, 400, 'invalid_grant', 'Ese código ya se usó');
       return emitir({ correo: k.c, nombre: k.nm, rol: k.rl });
     }
 
@@ -293,6 +325,12 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
       const t = leerTokenMcp(viejo, 'refresco');
       if (!t || t.cid !== clientId) return errorOauth(res, 400, 'invalid_grant', 'Token de refresco vencido, cerrado o de otro cliente');
       if (!personaConAcceso(t.correo, t.nombre, plataforma)) return errorOauth(res, 400, 'invalid_grant', 'La cuenta ya no tiene acceso');
+      // SEC-04: una cuenta suspendida no renueva (y su refresco se cierra: una reactivación no lo resucita).
+      const vigente = await autoridadMcp(t.correo);
+      if (vigente === 'suspendida') void borrarSesion(viejo);
+      // Sin poder comprobarla (registro caído): pasajero; el refresco NO se rota ni se cierra, se reintenta.
+      if (vigente === 'desconocida') return noDisponible(res);
+      if (vigente !== 'permitida') return errorOauth(res, 400, 'invalid_grant', motivoAutoridad(vigente));
       // Rotación (OAuth 2.1 para clientes públicos): el refresco viejo deja de valer al usarse.
       void borrarSesion(viejo);
       return emitir({ correo: t.correo, nombre: t.nombre, rol: t.rol });

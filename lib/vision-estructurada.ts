@@ -514,3 +514,33 @@ export function vistaAHechos(v: VistaEstructurada, foco: FocoVision = 'escena', 
   const cola = ` ${INSTRUCCION[foco]} ${REGLA_NOMBRES_VISTA}`;
   return (cuerpo.length + cola.length > max ? `${cuerpo.slice(0, Math.max(0, max - cola.length - 1))}…` : cuerpo) + cola;
 }
+
+/**
+ * Desde esta edad (ms) lo que vio la cámara del teléfono ya no se presenta como «ahora mismo». La app reutiliza una vista
+ * de hasta 20 s (mobile/src/lib/vistaTurno.ts VISTA_TURNO.frescaMs) y antes el servidor la etiquetaba siempre como actual.
+ */
+export const VISTA_ACTUAL_MS = 3000;
+/** Una edad que no es creíble (más de 10 min): se trata como «sin edad». */
+const EDAD_MAX_CREIBLE_MS = 10 * 60_000;
+
+/** La edad que manda la app (`vistoEdadMs`), saneada: ms enteros ≥ 0, o null si no vino o no es creíble. */
+export function edadDeVista(v: unknown): number | null {
+  if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < -2000 || n > EDAD_MAX_CREIBLE_MS) return null;
+  return Math.max(0, Math.round(n));
+}
+
+/**
+ * El hecho VISION de lo que la cámara del teléfono ya vio (`visto`), con su frescura honesta:
+ *  · hasta VISTA_ACTUAL_MS: «ahora mismo»;
+ *  · más vieja: «hace N s», y se le dice al modelo que no la describa como actual;
+ *  · sin edad (una app anterior, un comentario): «de hace un momento», nunca «ahora mismo».
+ * Puro: lo prueba tests/vision-frescura.test.ts.
+ */
+export function hechoVisionDelTelefono(visto: string, edadMs: number | null): string {
+  if (edadMs !== null && edadMs <= VISTA_ACTUAL_MS) return `VISION (la cámara del teléfono, ahora mismo): ${visto}`;
+  if (edadMs === null) return `VISION (la cámara del teléfono, de hace un momento): ${visto} (No sabes exactamente de cuándo es: no digas que es lo que ves ahora mismo; si importa, di que es lo último que viste.)`;
+  const s = Math.round(edadMs / 1000);
+  return `VISION (la cámara del teléfono, hace ${s} s): ${visto} (Es lo que se vio hace ${s} segundos, no ahora: no lo describas como actual; di «hace un momento vi…» y, si importa cómo está ahora, pide que te lo vuelva a mostrar.)`;
+}
