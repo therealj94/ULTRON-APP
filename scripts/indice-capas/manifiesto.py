@@ -361,6 +361,18 @@ for k, c in enumerate(sorted(otros, key=lambda c: fold(CAPAS[c]['nombre'])), 1):
     elif 'cimarron' in fold(x['carpeta']) or 'chaparro' in fold(x['nombre']): sug = '303000 Cimarrón'
     elif 'minas de oro' in fold(x['carpeta']): sug = '304000 Minas de Oro'
     elif 'geologicas municipios' in fold(x['carpeta']): sug = '2 Información geológica (mapas geológicos por municipio)'
+    elif 'la lola' in fold(x['carpeta']): sug = '3 Proyectos Indexa (proyecto La Lola, Olancho)'
+    elif 'proyectos y concesiones' in fold(x['carpeta']): sug = '107007 Targets (blancos) — versión anterior del mismo polígono'
+    if not sug:
+        n = fold(x['nombre'] + ' ' + x['carpeta'])
+        for pat, cat in ((r'deposit|antimonio|mineraliz|anomal|geoquim|muestre', '110000 Recursos mineros'),
+                         (r'geolog|litolog|estructural|falla|rumbo', '2 Información geológica'),
+                         (r'concesion|catastro|derecho', '104000 Derechos mineros (versión anterior)'),
+                         (r'video|foto', '303000 Cimarrón (fotos y videos de campo)'),
+                         (r'zona|area|sector|poligono|terreno|prop', '3 Proyectos Indexa')):
+            if re.search(pat, n):
+                sug = cat
+                break
     tes_ = None
     entrada(id=800000 + k, nombre=x['nombre'], padre=800000, orden=k, ruta=f"8_otros/{800000 + k}_{slug(x['nombre'])}/",
             ruta_web=f'/api/electrum/mapa/indice/capa/{800000 + k}', fuentes=[dict(capa=c, propiedades={})], num_entidades=x['n'],
