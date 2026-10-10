@@ -461,9 +461,9 @@ test('la burbuja con la app cerrada y sin permiso de alarmas: el recordatorio nu
 
 /* ------------------------------------------------------------------ el contrato por superficie */
 
-test('qué completa cada superficie: la mesa todo lo suyo; la burbuja solo lo del teléfono; Windows y la web nada local', () => {
+test('qué completa cada superficie: la mesa todo lo suyo; la burbuja solo lo del teléfono (y «llámame», que pasa a la app); Windows y la web nada local', () => {
   const burbuja = capacidadesDeSuperficie('burbuja', { android: true, electrum: false });
-  assert.deepEqual(burbuja, ['abrir_apps', 'intents_telefono']);
+  assert.deepEqual(burbuja, ['abrir_apps', 'intents_telefono', 'llamame']);
   assert.deepEqual(capacidadesDeSuperficie('burbuja', { android: true, electrum: true }), [], 'Dr Electrum: nada');
   const mesa = capacidadesDeSuperficie('mesa', { android: true, electrum: false });
   assert.ok(mesa.includes('pantallas') && mesa.includes('revision') && mesa.includes('recordatorio') && mesa.includes('abrir_apps'));
@@ -481,7 +481,7 @@ test('qué completa cada superficie: la mesa todo lo suyo; la burbuja solo lo de
   assert.equal(superficieDelTurno({ origen: 'windows', superficie: 'burbuja' }), 'windows');
   assert.equal(superficieDelTurno({}), 'web');
   assert.deepEqual(capacidadesDelTurno({ capacidades: ['abrir_apps', 'abrir_apps', 'MAL', 7, 'pantallas'] }), ['abrir_apps', 'pantallas']);
-  assert.deepEqual(manosDeSuperficie('burbuja', ['recordatorio', 'llamar'], burbuja), ['abrir_apps', 'intents_telefono'], 'en la burbuja, solo lo que ella declara');
+  assert.deepEqual(manosDeSuperficie('burbuja', ['recordatorio', 'llamar'], burbuja), ['abrir_apps', 'intents_telefono', 'llamame'], 'en la burbuja, solo lo que ella declara');
   assert.deepEqual(manosDeSuperficie('mesa', ['recordatorio'], ['abrir_apps', 'pantallas']), ['recordatorio', 'abrir_apps']);
   assert.deepEqual(manosDeSuperficie('web', ['recordatorio'], ['abrir_apps']), []);
 });

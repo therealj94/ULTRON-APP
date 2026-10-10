@@ -40,6 +40,12 @@
  * (NUNCA QUERY_ALL_PACKAGES), el permiso normal SET_ALARM y el filtro SEND de MainActivity. Sin CALL_PHONE ni SEND_SMS:
  * marcar y el SMS solo abren la pantalla con todo puesto; ella da el último toque.
  *
+ * LA GUARDIA NATIVA DE LA LLAMADA DEL AVATAR (APK 5.7.1): GuardiaLlamadaAura.kt (`AuraGuardiaLlamada`) va en el mismo
+ * paquete (TelefonoAuraPaquete la sirve también): un plazo en el Handler del hilo principal que cuelga la llamada que se
+ * quedó detrás aunque los relojes de JS estén congelados (src/compa/fondoLlamada.ts). No añade nada al manifiesto: ni
+ * servicio en primer plano nuevo, ni permisos (Android 14 no deja arrancar uno de micrófono desde segundo plano, y
+ * `phoneCall` sigue prohibido: plugins/servicio-llamada.js).
+ *
  * JS no necesita un módulo nativo para cerrar la burbuja: `BackHandler.exitApp()` llega a la actividad que está delante
  * (la burbuja) y su `invokeDefaultOnBackPressed` hace finish(); y al dejar de verse se termina sola (onStop).
  *

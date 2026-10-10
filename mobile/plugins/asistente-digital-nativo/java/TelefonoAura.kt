@@ -278,12 +278,22 @@ class TelefonoAura(private val ctx: ReactApplicationContext) : ReactContextBaseJ
   }
 }
 
-/** El paquete que registra el módulo (MainApplication, getPackages). Módulo clásico: lo sirve la interop de la nueva arquitectura. */
+/**
+ * El paquete que registra los módulos (MainApplication, getPackages): las manos del teléfono y la guardia nativa de la
+ * llamada del avatar (GuardiaLlamadaAura.kt). Módulos clásicos: los sirve la interop de la nueva arquitectura.
+ */
 class TelefonoAuraPaquete : BaseReactPackage() {
   override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule? =
-    if (name == TelefonoAura.NOMBRE) TelefonoAura(reactContext) else null
+    when (name) {
+      TelefonoAura.NOMBRE -> TelefonoAura(reactContext)
+      GuardiaLlamadaAura.NOMBRE -> GuardiaLlamadaAura(reactContext)
+      else -> null
+    }
 
   override fun getReactModuleInfoProvider(): ReactModuleInfoProvider = ReactModuleInfoProvider {
-    mapOf(TelefonoAura.NOMBRE to ReactModuleInfo(TelefonoAura.NOMBRE, TelefonoAura::class.java.name, false, false, false, false))
+    mapOf(
+      TelefonoAura.NOMBRE to ReactModuleInfo(TelefonoAura.NOMBRE, TelefonoAura::class.java.name, false, false, false, false),
+      GuardiaLlamadaAura.NOMBRE to ReactModuleInfo(GuardiaLlamadaAura.NOMBRE, GuardiaLlamadaAura::class.java.name, false, false, false, false),
+    )
   }
 }

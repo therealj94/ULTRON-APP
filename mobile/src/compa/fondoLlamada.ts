@@ -25,6 +25,19 @@
  *    espera RECHEQUEO_MS a ver si llega el «active» y solo cuelga si sigue detrás de verdad;
  *  · al volver, la llamada sigue (contestó, volvió a tiempo, o el reloj estuvo congelado). Solo si estuvo detrás más de
  *    FONDO_LARGO_MS sin ser cosa nuestra se cuelga entonces: esa llamada ya no le servía a nadie.
+ *
+ * LA GUARDIA NATIVA (APK 5.7.1): con el reloj de JS congelado, una llamada contestada que se quedó detrás solo se colgaba
+ * AL VOLVER, y mientras tanto los minutos de ElevenLabs seguían corriendo. Ahora, al irse con llamada, la guardia arma
+ * además un reloj en el hilo principal de Android (compa/guardiaNativa.ts → GuardiaLlamadaAura.kt, un Handler que no se
+ * congela) con el mismo plazo (`plazoNativo`: la gracia de arriba, contada desde que se fue o desde que terminó la
+ * ventana propia). Volver antes lo cancela (JS y también el nativo, en su onHostResume). Si vence con la app detrás:
+ *  1. el nativo avisa a JS con un evento (`auraGuardiaLlamada`). El hilo de JS sigue vivo detrás (solo se congelan sus
+ *     relojes), así que el aviso se atiende en el acto: `disparoNativo` cuelga (el ciclo apaga la llamada y la sesión de
+ *     ElevenLabs se desmonta: se cierra el WebRTC, se suelta el micrófono y la voz, y JS avisa el cierre al servidor);
+ *  2. a la vez, el nativo hace él mismo el POST /api/voz/agente/cerrar con el pase de la sesión viva (`cierreNativo`):
+ *     el servidor invalida ese pase y el siguiente turno que pida ElevenLabs recibe un 401, con lo que ElevenLabs cuelga
+ *     aunque JS no hubiera podido hacer nada (el nativo no puede tocar el WebRTC de LiveKit);
+ *  3. si JS no estaba para oír el evento, al volver lo toma (`tomarDisparo`) y cuelga lo que quedara.
  */
 
 export const GRACIA_FONDO_MS = 3_000;
@@ -53,6 +66,13 @@ export type DepsFondoLlamada = {
   ahora?: () => number;
   setTimeout?: (f: () => void, ms: number) => Reloj;
   clearTimeout?: (h: Reloj) => void;
+  /**
+   * La guardia NATIVA (Android: compa/guardiaNativa.ts → GuardiaLlamadaAura.kt), con un reloj del hilo principal de
+   * Android que NO se congela con la app detrás como los de JS. Se arma al irse (con llamada) con el plazo real que falta
+   * (`plazoNativo`), se vuelve a armar si llega una transición propia y se desarma al volver, al colgar o al soltar.
+   */
+  armarNativo?: (ms: number) => void;
+  desarmarNativo?: () => void;
 };
 
 export class GuardiaFondoLlamada {
@@ -69,6 +89,8 @@ export class GuardiaFondoLlamada {
   private readonly ahora: () => number;
   private readonly poner: (f: () => void, ms: number) => Reloj;
   private readonly quitar: (h: Reloj) => void;
+  /** La guardia nativa quedó armada (para desarmarla una sola vez). */
+  private armadaNativa = false;
 
   constructor(private d: DepsFondoLlamada) {
     this.ahora = d.ahora ?? Date.now;
@@ -90,6 +112,8 @@ export class GuardiaFondoLlamada {
     if (hasta > this.propiaHasta) this.propiaHasta = hasta;
     if (this.desde) this.fuePropia = true;
     this.d.miga?.(`voz: transición propia (${motivo}): el segundo plano no cuelga la llamada`);
+    // Ya detrás: el plazo nativo se corre hasta el final de la ventana nueva (más la gracia).
+    if (this.desde) this.armarNativa();
   }
 
   /** Lo que dice AppState. Solo `background` es irse; `active` es volver. */
@@ -99,11 +123,46 @@ export class GuardiaFondoLlamada {
     this.desde = this.ahora();
     this.fuePropia = this.esPropiaAhora() || !!this.d.burbuja?.();
     this.programar(this.gracia());
+    this.armarNativa();
   }
 
   /** Se desmonta: nada pendiente. */
   soltar() {
     this.cancelar();
+    this.desarmarNativa();
+  }
+
+  /**
+   * Lo que falta (ms, desde ahora) para que la llamada se cuelgue si la app sigue detrás: la gracia cuenta desde que se
+   * fue o, si después hubo una transición nuestra, desde que termina su ventana (lo mismo que decide `revisar`).
+   */
+  plazoNativo(): number {
+    const inicio = Math.max(this.desde || this.ahora(), this.propiaHasta);
+    return Math.max(50, Math.round(inicio + this.gracia() - this.ahora()));
+  }
+
+  /**
+   * Disparó la guardia nativa (Android, con el reloj de JS congelado o no): si la app sigue detrás y hay llamada, se
+   * cuelga ya. true si colgó. Con la app ya delante (el aviso llegó tarde) no hace nada.
+   */
+  disparoNativo(): boolean {
+    this.armadaNativa = false;
+    if (!this.desde || this.d.estadoApp() === 'active' || !this.d.hayLlamada()) return false;
+    this.cancelar();
+    this.d.colgar(`segundo plano (guardia nativa, ${this.ahora() - this.desde} ms)`);
+    return true;
+  }
+
+  private armarNativa() {
+    if (!this.d.armarNativo || !this.d.hayLlamada()) return;
+    this.armadaNativa = true;
+    this.d.armarNativo(this.plazoNativo());
+  }
+
+  private desarmarNativa() {
+    if (!this.armadaNativa) return;
+    this.armadaNativa = false;
+    this.d.desarmarNativo?.();
   }
 
   /** ¿Dentro de la ventana de una transición nuestra? (la burbuja abierta no cuenta aquí: alarga la gracia, no la anula). */
@@ -133,6 +192,7 @@ export class GuardiaFondoLlamada {
   private volver() {
     const desde = this.desde;
     this.cancelar();
+    this.desarmarNativa();
     this.desde = 0;
     if (!desde) return;
     const ms = Math.max(0, this.ahora() - desde);
@@ -152,7 +212,7 @@ export class GuardiaFondoLlamada {
     if (!this.desde) return;
     if (this.d.estadoApp() === 'active') return this.volver();
     // Sin llamada no hay nada que colgar (la medida del rato detrás sigue, por si suena una).
-    if (!this.d.hayLlamada()) return;
+    if (!this.d.hayLlamada()) return this.desarmarNativa();
     const ahora = this.ahora();
     const atraso = ahora - this.debia;
     // El reloj estuvo congelado (Android pausa los timers con la app detrás): la app está volviendo. Se espera el «active».
@@ -168,8 +228,26 @@ export class GuardiaFondoLlamada {
     const falta = this.gracia() - (ahora - Math.max(this.desde, this.propiaHasta));
     // Contestó mientras tanto (la gracia creció): se espera lo que falte.
     if (falta > 0) return this.programar(falta);
+    this.desarmarNativa();
     this.d.colgar(`segundo plano (${ahora - this.desde} ms)`);
   }
+}
+
+/** Lo que la guardia nativa manda al servidor al colgar ella (POST /api/voz/agente/cerrar), ya armado en JS. */
+export type CierreNativo = { url: string; cuerpo: string; cabeceras: Record<string, string> };
+
+/**
+ * El aviso de cierre para la guardia nativa: la misma petición que hace JS al terminar una conversación
+ * (VozProvider `avisarCierre`), con el pase de la sesión viva y las cabeceras de la cuenta. Solo https y con pase: sin
+ * eso, null (la guardia nativa solo avisa a JS).
+ */
+export function cierreNativo(o: { base: string; pase: string | null | undefined; cabeceras: Record<string, string | null | undefined> }): CierreNativo | null {
+  const base = String(o.base || '').replace(/\/+$/, '');
+  const pase = String(o.pase || '').trim();
+  if (!pase || !/^https:\/\//i.test(base)) return null;
+  const cabeceras: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  for (const [k, v] of Object.entries(o.cabeceras || {})) if (typeof v === 'string' && v) cabeceras[k] = v;
+  return { url: `${base}/api/voz/agente/cerrar`, cuerpo: JSON.stringify({ pase }), cabeceras };
 }
 
 /** Lo que tarda la app en venir delante cuando la burbuja pidió la llamada (arrancar MainActivity, cerrar la burbuja). */

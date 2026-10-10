@@ -159,7 +159,7 @@ test('el Kotlin va a la carpeta del paquete, con el paquete y el esquema puestos
   const { manifiesto, raizAndroid } = await correrPlugin();
   const dir = path.join(raizAndroid, 'app/src/main/java', ...PAQUETE.split('.'), 'asistente');
   const kt = fs.readdirSync(dir).sort();
-  assert.deepEqual(kt, ['AsistenteVoz.kt', 'BurbujaActivity.kt', 'Invocacion.kt', 'MosaicoAura.kt', 'ReconocedorAura.kt', 'TelefonoAura.kt']);
+  assert.deepEqual(kt, ['AsistenteVoz.kt', 'BurbujaActivity.kt', 'GuardiaLlamadaAura.kt', 'Invocacion.kt', 'MosaicoAura.kt', 'ReconocedorAura.kt', 'TelefonoAura.kt']);
   for (const f of kt) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
     assert.match(src, new RegExp(`^package ${PAQUETE.replace(/\./g, '\\.')}\\.asistente$`, 'm'), f);

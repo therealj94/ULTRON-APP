@@ -39,6 +39,11 @@ export type ResultadoBurbuja = {
   revision?: boolean;
   /** Una acción del teléfono abrió otra app (la burbuja queda atrás y se termina sola). */
   abrioApp?: boolean;
+  /**
+   * El turno trajo un «llámame» nuevo: la llamada suena en la APP (burbuja/llamameBurbuja.ts). La burbuja la pasa al buzón,
+   * abre la app y se cierra; con la app abierta detrás, quien llegue primero (este turno o su canal) la atiende una vez.
+   */
+  llamame?: boolean;
 };
 
 /** La acción de un elemento de la lista del turno (`{ id, accion }` o la acción sola). */
@@ -46,9 +51,12 @@ function accionDe(x: unknown): unknown {
   return x && typeof x === 'object' && 'accion' in x ? (x as { accion: unknown }).accion : x;
 }
 
-/** ¿Pide revisión en la app? Las acciones del teléfono no: la burbuja las hace aquí con su recibo. */
+/**
+ * ¿Pide revisión en la app? Las acciones del teléfono no: la burbuja las hace aquí con su recibo. El «llámame» tampoco: la
+ * burbuja se lo pasa a la app (burbuja/llamameBurbuja.ts).
+ */
 function revisionDe(r: ChatResult): boolean {
-  const acciones = Array.isArray(r.acciones) ? r.acciones.filter((x) => !esAccionTelefono(accionDe(x))) : r.acciones;
+  const acciones = Array.isArray(r.acciones) ? r.acciones.filter((x) => !esAccionTelefono(accionDe(x)) && !esLlamame(x)) : r.acciones;
   return pideRevision({ acciones, tareas: r.tareas });
 }
 import { consultarTurnoGuardado } from '../lib/api';
@@ -59,6 +67,7 @@ import { depsEjecutor } from '../telefono/nativo';
 import { mandarRecibo } from '../telefono/recibos';
 import { instalarEnvioRecibos } from '../telefono/useTelefono';
 import { accionNueva } from '../compa/acciones';
+import { esLlamame, llamameDelTurno } from './llamameBurbuja';
 
 
 /**
@@ -131,15 +140,17 @@ export function turnoBurbuja(opts: Omit<TurnoOpts, 'idTurno'>, d: DepsTurnoBurbu
   };
 
   /** Lo del teléfono que trajo el turno: se hace con su recibo; lo que falló se dice (la compañera no está aquí). */
-  const despues = async (r: ChatResult): Promise<{ abrioApp?: boolean }> => {
+  const despues = async (r: ChatResult): Promise<{ abrioApp?: boolean; llamame?: boolean }> => {
     if (cortado) return {};
+    // «Llámame»: suena en la app (la burbuja la abre y se cierra). Va antes que lo demás: lo del teléfono no espera a esto.
+    const llamame = llamameDelTurno(r.acciones, (id, accion) => accionNueva(id, accion));
     const h = await hacerAccionesDelTelefono(r.acciones);
     if (h.fallos.length && !cortado) {
       const dicho = h.fallos.join(' ');
       d.alFrase(dicho);
       await speak(dicho, { onAudioStart: () => hablando(true) }).catch(() => false);
     }
-    return h.abrioApp ? { abrioApp: true } : {};
+    return { ...(h.abrioApp ? { abrioApp: true } : {}), ...(llamame ? { llamame: true } : {}) };
   };
 
   const correr = async (): Promise<ResultadoBurbuja> => {
