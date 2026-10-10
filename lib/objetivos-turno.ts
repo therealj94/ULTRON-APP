@@ -46,6 +46,50 @@ const corta = (v: unknown, max: number) => {
   return t.length <= max ? t : `${t.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
 };
 
+/* ------------------------------------------------------------------ ¿viene al caso en este turno? */
+
+/**
+ * «QUE HAGA LAS COSAS Y NO SE MIX CON OTRAS COSAS» (José, 10-oct, APK 5.7.0: le pidió abrir Spotify y AU-RA mezclaba lo
+ * del trabajo). El bloque iba en CADA turno; ahora solo cuando el mensaje es de eso:
+ *  · seguir o retomar («sigue», «continúa», «retoma», «¿en qué quedamos?», «¿dónde nos quedamos?»);
+ *  · el trabajo, sus objetivos, tareas, pendientes, propuestas, avances («¿cómo va la propuesta?», «lo pendiente»);
+ *  · nombra uno de sus objetivos abiertos (una palabra de su título de 4+ letras que no sea de relleno);
+ *  · o un objetivo espera su decisión Y pregunta qué le toca («¿qué falta?», «¿qué necesitas de mí?», «¿qué decido?»).
+ * Lo demás («abre Spotify», «¿cómo está el clima?», «cuéntame un chiste») va sin el bloque.
+ */
+const SIGUE = /^(y |bueno |ok |va |dale |entonces |ahora )*(sigue|seguimos|sigamos|segui|continua|continuemos|continuamos|retoma|retomemos|retomamos)( (por favor|pues|ya|asi|adelante))?$|\b(sigue|continua|retoma|seguir|continuar|retomar) (con|el|la|lo|los|las|donde|adelante|trabajando|en lo)\b/;
+const QUEDAMOS = /\b(en que|donde) (quedamos|nos quedamos|ibamos|vamos)\b|\bcomo (vamos|ibamos|va|van) con\b|\bque (sigue|hay pendiente|tengo pendiente|queda pendiente)\b/;
+const DEL_TRABAJO = /\b(el trabajo|mi trabajo|del trabajo|la propuesta|las propuestas|propuesta|pendiente\w*|objetivo\w*|metas?|tarea\w*|proyecto\w*|avance\w*|entregable\w*|lo que estabamos( haciendo)?)\b/;
+const PIDE_DECIDIR = /\b(que (falta|me toca|necesitas de mi|decido|tengo que decidir|esperas de mi)|algo (que|por) decidir|que hay que decidir|mi decision|decidir)\b/;
+const RELLENO = new Set(['para', 'sobre', 'como', 'esta', 'este', 'esto', 'todo', 'todos', 'nuevo', 'nueva', 'hacer', 'cosas', 'tema', 'plan', 'lista', 'final', 'banco']);
+
+const planoObj = (s: unknown) =>
+  String(s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9ñ\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** ¿El bloque de objetivos viene al caso en este mensaje? (ver arriba). Sin objetivos abiertos, nunca. */
+export function objetivosAlCaso(mensaje: string, xs: readonly ObjetivoParaTurno[]): boolean {
+  const abiertos = objetivosAbiertos(xs || []);
+  if (!abiertos.length) return false;
+  const m = planoObj(mensaje);
+  if (!m) return false;
+  if (SIGUE.test(m) || QUEDAMOS.test(m) || DEL_TRABAJO.test(m)) return true;
+  const palabras = new Set(m.split(' '));
+  const nombra = abiertos.some((o) =>
+    planoObj(o.titulo)
+      .split(' ')
+      .some((w) => w.length >= 4 && !RELLENO.has(w) && palabras.has(w))
+  );
+  if (nombra) return true;
+  const espera = abiertos.some((o) => o.estado === 'esperando-decision' || (o.decisiones || []).some((d) => !d.elegida));
+  return espera && PIDE_DECIDIR.test(m);
+}
+
 /** Los abiertos, del más reciente al más viejo. */
 export function objetivosAbiertos<T extends ObjetivoParaTurno>(xs: readonly T[]): T[] {
   return xs.filter((o) => o && !TERMINALES.has(o.estado)).sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0));

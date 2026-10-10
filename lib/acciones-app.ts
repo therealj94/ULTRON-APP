@@ -59,6 +59,7 @@ import {
 } from './manos-app';
 import { controlExplicito, dichoDeControl, interpretarControl, respuestaAclaracion, type ControlVoz, type EstadoControles, type QueTarea } from './controles-voz';
 import { numeroLegible, numeroValido, resolverParaMarcar, type PropuestaMarcar, type ResolucionMarcar } from './marcar';
+import { anotarAccionSalida } from './recibos-aparato';
 
 export type { AccionMano, Mano, Propuesta, RecordatorioApp } from './manos-app';
 export type { ControlVoz, EstadoControles } from './controles-voz';
@@ -401,6 +402,8 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   // Lo que espera el «sí» es de ESTE aparato (ámbito), no de la cuenta entera.
   const amb = ambitoApp(correo, aparato);
   if (aparato) anotarEnRegistro(amb, evento);
+  // Lo que hace el aparato solo cuenta como hecho con SU recibo, que nombra este id (lib/recibos-aparato.ts).
+  anotarAccionSalida(correo, evento as { id: string; accion: { tipo: string } & Record<string, unknown> }, aparato);
   let entregada = 0;
   for (const c of [...(canales.get(clave(correo)) || [])]) {
     if (aparato && c.aparato !== aparato) continue;

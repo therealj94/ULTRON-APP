@@ -40,8 +40,21 @@ import { esPantallaCerebro, type PantallaCerebro } from '../compa/cerebro';
 import { usuarioActual } from './sesion';
 import { abrirMarcador } from '../compa/marcar';
 import { anotarAlarmaServidor } from '../compa/recordatoriosSync';
+import { ejecutarAccionTelefono } from '../telefono/ejecutor';
+import { depsEjecutor, nativoTelefono } from '../telefono/nativo';
 
 /* ── el oyente del bus ────────────────────────────────────────────────────────────────────── */
+
+/** `tel:` por el marcador nativo (ACTION_DIAL, sin CALL_PHONE) si esta APK lo trae; lo demás, como siempre. */
+async function abrirConMarcador(url: string): Promise<void> {
+  const n = nativoTelefono();
+  if (url.startsWith('tel:') && n?.marcar) {
+    const r = await n.marcar(decodeURIComponent(url.slice(4)));
+    if (!r.ok) throw new Error(r.motivo || 'sin-marcador');
+    return;
+  }
+  await Linking.openURL(url);
+}
 
 function hecho(accion: AccionApp, ok: boolean, detalle?: string) {
   emitir('hecho', { accion, ok, detalle });
@@ -127,7 +140,8 @@ export function atenderAccion(a: AccionApp) {
       return;
     case 'marcar':
       // A-4: el marcador (o WhatsApp) con el número que la persona aprobó. La llamada la hace ella.
-      void abrirMarcador(a, (url) => Linking.openURL(url), tr).then((r) => hecho(a, r.ok, r.detalle));
+      // Con el módulo nativo (APK 5.7.1), el marcador por ACTION_DIAL con su recibo (resuelto y abierto); si no, `tel:`.
+      void abrirMarcador(a, (url) => abrirConMarcador(url), tr).then((r) => hecho(a, r.ok, r.detalle));
       return;
     case 'cancelar_recordatorio':
       void cancelarRecordatorio(a.id, depsRecordatorios).then((r) => hecho(a, r.ok, r.detalle));
@@ -135,6 +149,17 @@ export function atenderAccion(a: AccionApp) {
     case 'presencia':
       fijarPresencia(a.valor);
       return hecho(a, true);
+    // Las manos en el teléfono (APK 5.7.1, telefono/ejecutor.ts): otra app, un enlace, la ruta, el reloj, el SMS, el
+    // calendario. Su `hecho` es el recibo que va al servidor (telefono/useTelefono.ts).
+    case 'abrir_app':
+    case 'abrir_enlace':
+    case 'navegar':
+    case 'alarma':
+    case 'temporizador':
+    case 'sms':
+    case 'evento_calendario':
+      void ejecutarAccionTelefono(a, depsEjecutor()).then((r) => hecho(a, r.ok, r.detalle));
+      return;
     default:
       return;
   }

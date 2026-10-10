@@ -130,7 +130,8 @@ describe('honestidad: de dónde salen los recibos', () => {
     assert.deepEqual(recibosDePasos([{ herramienta: 'whatsapp', estado: 'succeeded', recibo: { efecto: 'borrador' } }]), []);
     assert.deepEqual(recibosDePasos([{ herramienta: 'whatsapp', estado: 'failed', recibo: { efecto: 'ninguno' } }]), []);
     assert.deepEqual(recibosDePasos([{ herramienta: 'mision', estado: 'succeeded', recibo: { efecto: 'guardado' } }]), [{ canal: 'guardado', estado: 'confirmado' }]);
-    assert.deepEqual(recibosDeAcciones([{ tipo: 'recordatorio' }, { tipo: 'redactar' }, { tipo: 'abrir' }]), [{ canal: 'recordatorio', estado: 'confirmado' }]);
+    // F02: lo que hace el teléfono sale «en curso»; solo su recibo (POST /api/app/recibo) lo vuelve confirmado.
+    assert.deepEqual(recibosDeAcciones([{ tipo: 'recordatorio' }, { tipo: 'redactar' }, { tipo: 'abrir' }]), [{ canal: 'recordatorio', estado: 'en-curso' }]);
     assert.deepEqual(reciboDeDecision('whatsapp', { estado: 'succeeded', recibo: { efecto: 'confirmado' } }, 'Padrino'), { canal: 'whatsapp', estado: 'confirmado', destino: 'Padrino' });
     assert.equal(reciboDeDecision('whatsapp', { estado: 'failed', recibo: { efecto: 'ninguno' } }), null);
     assert.deepEqual(reciboDeDecision('correo', { estado: 'succeeded', recibo: { efecto: 'borrador', codigo: 'pendiente-del-turno' } }), { canal: 'correo', estado: 'en-curso' });

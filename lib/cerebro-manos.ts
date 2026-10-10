@@ -20,6 +20,7 @@ import { partesHN, RECORDATORIO_MIN_MS } from './manos-app';
 import type { Mano } from './manos-app';
 import type { PiezaManos } from './cerebro-rapido';
 import { clasificarFrase, clasificarPromesas, frases, plano } from './promesas';
+import { accionDeAbrir, accionDeEvento, accionDeReloj, accionDeSms, nombraAppExterna } from './telefono-apps';
 
 /** Lo que este turno puede hacer (lo arma server.ts con el contexto del teléfono y la cuenta). */
 export type ManosDelTurno = {
@@ -42,7 +43,16 @@ export type ManosDelTurno = {
   documentos?: boolean;
   /** Con sesión: su calendario, leer y proponer eventos (server/calendario.ts). Sin el campo, NO va. */
   calendario?: boolean;
+  /** Los contactos del teléfono con su número (para el borrador de SMS a «mi mamá»). */
+  contactos?: ReadonlyArray<{ nombre?: string; telefono?: string }>;
 };
+
+/**
+ * Las herramientas del TELÉFONO (José, 10-oct, APK 5.7.1): abrir otra app o un enlace, la alarma y el temporizador del
+ * reloj, un borrador de SMS y la pantalla de un evento del calendario. Para el conjunto de herramientas que va siempre
+ * (lib/herramientas-turno.ts): solo existen en un turno cuyo teléfono declaró la mano (`abrir_apps` / `intents_telefono`).
+ */
+export const HERRAMIENTAS_TELEFONO = ['abrir_en_telefono', 'alarma_telefono', 'sms_telefono', 'evento_telefono'] as const;
 
 type Props = Record<string, unknown>;
 const tool = (name: string, description: string, properties: Props, required: string[] = []): Tool => ({
@@ -165,6 +175,46 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
           valor: str('El dato. El cumple siempre MM-DD («03-14»).'),
         },
         ['campo', 'valor']
+      )
+    );
+  // José, 10-oct (APK 5.7.0, «le pedí abrir Spotify y no pudo»): abrir OTRA app del teléfono (lib/telefono-apps.ts). Solo
+  // con la mano `abrir_apps` (AU-RA en Android; nunca Dr Electrum): el teléfono resuelve el nombre contra sus apps.
+  if (mano('abrir_apps'))
+    t.push(
+      tool(
+        'abrir_en_telefono',
+        'Abrir OTRA app de su teléfono (Spotify, YouTube, Maps, Waze, Instagram, la cámara o los ajustes del teléfono…) o algo dentro de ella: «abre Spotify», «pon música de Bad Bunny en Spotify», «llévame a San Pedro Sula». Se hace directo. Di solo algo corto como «Abriendo Spotify…»: nunca «ya la abrí» ni «ya está sonando» (el teléfono confirma; si no la tiene instalada, lo dice). Las pantallas de AU-RA son abrir_pantalla; mandar un WhatsApp es whatsapp.',
+        {
+          app: str('El nombre de la app como lo dijo («Spotify», «Google Maps», «la cámara»).'),
+          que: str('Lo que hay que buscar o poner dentro, si lo dijo («Bad Bunny», «San Pedro Sula»).'),
+          enlace: str('Opcional: un enlace exacto (spotify:, whatsapp://send?…, geo:, https:, tel:, mailto:).'),
+        }
+      )
+    );
+  if (mano('intents_telefono'))
+    t.push(
+      tool(
+        'alarma_telefono',
+        'La alarma o el temporizador del RELOJ de su teléfono, cuando lo pide así: «pon una alarma en el reloj a las 6», «alarma del teléfono para las 5:30», «temporizador de 10 minutos en el reloj». Se pone directo. Di «Poniendo la alarma…»: nunca «quedó puesta» (el teléfono confirma). Que TÚ la llames a una hora es recordatorio o llamarme.',
+        {
+          accion: str('alarma o temporizador.', { enum: ['alarma', 'temporizador'] }),
+          hora: str('Para alarma: HH:MM (24 h, hora de Honduras).'),
+          segundos: { type: 'integer', description: 'Para temporizador: cuántos segundos.' },
+          etiqueta: str('Para qué, corto, si lo dijo.'),
+        },
+        ['accion']
+      ),
+      tool(
+        'sms_telefono',
+        'Dejarle LISTO un SMS (mensaje de texto normal, no WhatsApp) en su teléfono: se abre su app de mensajes con el número y el texto; ELLA le da enviar. Di SIEMPRE a quién y el texto final, entero («Te dejo listo el SMS para Ana: «Llego a las 5». Tú le das enviar.»). Sin número ni contacto con número, pregunta el número.',
+        { a: str('El número o el nombre del contacto.'), texto: str('El mensaje final, como lo escribiría ella.') },
+        ['a', 'texto']
+      ),
+      tool(
+        'evento_telefono',
+        'Abrir la pantalla de evento NUEVO del calendario de su teléfono, ya llena, para que ELLA la guarde. Nunca digas «agendado» ni «quedó en tu calendario»: di que se la abriste para que la confirme. Si tiene su calendario conectado, es agendar.',
+        { titulo: str('Qué es, corto.'), inicio: str('AAAA-MM-DDTHH:MM en hora de Honduras.'), minutos: { type: 'integer', description: 'Cuánto dura (60 si no lo dijo).' } },
+        ['titulo', 'inicio']
       )
     );
   if (mano('cartera')) t.push(tool('abrir_cartera', 'Abrir su Cartera de Veta Wallet en la app («enséñame mi wallet»).', {}));
@@ -419,7 +469,12 @@ export function herramientaFueraDeTema(
  * La línea de siempre para una llamada a una herramienta (o null si vino mal: sin lo imprescindible).
  * `ahora` es para «llámame en 30 segundos».
  */
-export function lineaDeHerramienta(nombre: string, input: Record<string, any> = {}, ahora = Date.now(), o: { conLlamada?: boolean; llamarAhora?: boolean } = {}): string | null {
+export function lineaDeHerramienta(
+  nombre: string,
+  input: Record<string, any> = {},
+  ahora = Date.now(),
+  o: { conLlamada?: boolean; llamarAhora?: boolean; contactos?: ReadonlyArray<{ nombre?: string; telefono?: string }> } = {}
+): string | null {
   // Con la mano «llamame» (o «recordatorio_llamada»), los recordatorios suenan como llamada de AU-RA; sin
   // ellas, aviso normal. «Ahora mismo» solo con «llamame».
   const conLlamada = o.conLlamada !== false;
@@ -484,6 +539,22 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
       return i.campo && limpio(i.valor) ? accionApp({ tipo: 'perfil', campo: String(i.campo), valor: limpio(i.valor, 300) }) : null;
     case 'abrir_cartera':
       return accionApp({ tipo: 'cartera' });
+    case 'abrir_en_telefono': {
+      const a = accionDeAbrir({ app: i.app, enlace: i.enlace ?? i.uri, que: i.que, paquete: i.paquete });
+      return a ? accionApp(a) : null;
+    }
+    case 'alarma_telefono': {
+      const a = accionDeReloj(i);
+      return a ? accionApp(a) : null;
+    }
+    case 'sms_telefono': {
+      const a = accionDeSms(i, o.contactos);
+      return a ? accionApp(a) : null;
+    }
+    case 'evento_telefono': {
+      const a = accionDeEvento(i);
+      return a ? accionApp(a) : null;
+    }
     case 'preparar_pago':
       return limpio(i.con) ? accionApp({ tipo: 'pagar', con: limpio(i.con, 120), ...(i.monto ? { monto: limpio(i.monto, 40) } : {}), ...(i.moneda ? { moneda: limpio(i.moneda, 16) } : {}) }) : null;
     case 'buscar_web':
@@ -803,7 +874,9 @@ const QUE_PROMETE: Array<[RegExp, string[]]> = [
   // Su calendario (server/calendario.ts): «te lo pongo en tu calendario», «reviso tu agenda».
   [/\b(calendario|agenda|evento|calendar)\b/, ['agenda', 'agendar']],
   [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email|respond|contest|reenvi|despach|compart|recibi)|\ble llego\b|\b(les?|se lo|se la) (avis|pase)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
-  [/\b(abr|open|pantalla|ajustes)/, ['abrir_pantalla', 'abrir_cartera', 'chat_aura']],
+  [/\b(abr|open|pantalla|ajustes)/, ['abrir_pantalla', 'abrir_cartera', 'chat_aura', 'abrir_en_telefono']],
+  // Otra app del teléfono (lib/telefono-apps.ts): «te pongo música en Spotify», «te llevo con Maps», «reproduzco…».
+  [/\b(spotify|you ?tube|musica|cancion|reproduc|playlist|instagram|tik ?tok|netflix|waze|maps|aplicacion|la app)/, ['abrir_en_telefono']],
   [/\b(busc|investig|averig|consult|indag|rastre|recopil|search|research|look|find|dig)/, ['buscar_web', 'investigar', 'buscar_en_chats', 'leer_pagina', 'computadora']],
   [/\b(revis|lee|leer|leo|leyendo|read|review|check|chec)/, ['correo', 'whatsapp', 'leer_mensajes', 'ordenar_mensajes', 'leer_pagina', 'buscar_web', 'mision']],
   [/\b(pon|puse|set)\b|\b(pongo|poner|pondre)/, ['recordatorio', 'llamarme']],
@@ -825,11 +898,17 @@ const RESPALDAN_AVISO = ['investigar', 'recordatorio', 'llamarme', 'computadora'
 
 const LLAMARLA = /\bte (lo |la )?(llamo|marco|timbro|llamare|marcare)\b|\bahi te (llamo|marco|suena)\b|\b(llamame|marcame|timbrame)\b|\bcall (you|me)\b/;
 
+/** Las manos que abren algo DENTRO de AU-RA: no cumplen «te abro Spotify» (José, 10-oct). */
+const ABREN_EN_AURA = ['abrir_pantalla', 'abrir_cartera', 'chat_aura'];
+
 /** Las herramientas que harían lo que dice un texto (por sus verbos), sin mirar si el turno las tiene. */
 export function herramientasPara(texto: string): Set<string> {
   const p = plano(texto);
   const out = new Set<string>();
   for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
+  // «Te abro Spotify», «te pongo música en YouTube»: otra app del teléfono. Las pantallas de AU-RA no lo cumplen; sin
+  // `abrir_en_telefono` en el turno no hay segunda vuelta que valga (se dice que todavía no puede, sin red).
+  if (nombraAppExterna(texto) && !/(chat|chats|pantalla|ajustes de aura|cartera|wallet)/.test(p)) for (const h of ABREN_EN_AURA) out.delete(h);
   // Llamar: «te llamo» / «llámame» es que AU-RA la llame a ella; «le marco a Beto», llamar a otro.
   if (LLAMARLA.test(p)) out.add('llamarme');
   else if (/\b(llam|marc|timbr|call)|\bles? hable\b/.test(p)) for (const h of ['llamar_contacto', 'llamar_numero', 'circulo']) out.add(h);
@@ -1050,6 +1129,8 @@ export function corregirPromesaSinHerramienta(
   let quito = false;
   /** Todo lo quitado era de la cámara, las caras o las voces (lo hace el teléfono con su frase). */
   let soloDelTelefono = true;
+  /** Todo lo quitado era abrir otra app del teléfono («te abro Spotify»): se dice eso, concreto. */
+  let soloApps = true;
   const dichas = lineas
     .filter((l) => !esMaquina(l))
     .map((l) =>
@@ -1063,6 +1144,7 @@ export function corregirPromesaSinHerramienta(
           quito = true;
           // Con lo citado (el nombre de la vista, «Lo que veo») a la vista: también dice de qué habla.
           if (!fraseSinSegundaVuelta(tal, { mensaje: o.mensaje })) soloDelTelefono = false;
+          if (!nombraAppExterna(propia) && !(o.mensaje && nombraAppExterna(o.mensaje) && /\b(abr|pon|reproduc|llev)/.test(plano(propia)))) soloApps = false;
           return false;
         })
         .map((f) => f.texto)
@@ -1073,7 +1155,13 @@ export function corregirPromesaSinHerramienta(
   const resto = dichas.filter(Boolean).join('\n').replace(/[ \t]{2,}/g, ' ').trim();
   // Revisión del 6-oct: la cámara, «Lo que veo», las caras y las voces las maneja el teléfono con sus frases (ninguna
   // herramienta del cerebro): se dice cómo pedírselo en vez de «desde aquí no tengo cómo».
-  const honrado = soloDelTelefono
+  // José, 10-oct: «te abro Spotify» sin la herramienta (un APK u OTA de antes, la burbuja, Dr Electrum) → que no puede
+  // TODAVÍA, dicho claro (antes: «Eso todavía no lo hice», que sonaba a que lo haría).
+  const honrado = soloApps && sinHerramienta && !soloDelTelefono
+    ? idioma === 'en'
+      ? "I didn't open it: I can't open other apps on your phone from here yet."
+      : 'No la abrí: todavía no puedo abrir otras apps de tu teléfono desde aquí.'
+    : soloDelTelefono
     ? idioma === 'en'
       ? "I didn't do that: your phone does it when you say it plainly («turn on the camera», «back camera», «show me what you see») or from More."
       : 'Eso no lo hice yo: lo hace tu teléfono cuando se lo dices tal cual («enciende la cámara», «cámara trasera», «muéstrame lo que ves», «aprende mi voz») o desde Más.'
@@ -1082,8 +1170,8 @@ export function corregirPromesaSinHerramienta(
       ? "I haven't done that: I can't do it from here yet."
       : 'Eso todavía no lo hice: desde aquí no tengo cómo.'
     : idioma === 'en'
-      ? "I haven't done that yet."
-      : 'Eso todavía no lo hice.';
+      ? "I haven't done that yet: I couldn't do it this time."
+      : 'Eso todavía no lo hice: no pude hacerlo esta vez.';
   const maquina = lineas.filter(esMaquina);
   const final = `${emo}${[resto, honrado].filter(Boolean).join(' ')}${maquina.length ? `\n${maquina.join('\n')}` : ''}`.trim();
   return { texto: final, cambiada: final !== original };

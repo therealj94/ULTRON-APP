@@ -48,6 +48,7 @@ import { Ajustes } from '../ajustes/Ajustes';
 import { LoQueSabe } from '../ajustes/LoQueSabe';
 import { PrimeraVez } from '../primeravez/PrimeraVez';
 import { useAccionesDeAura } from './acciones';
+import { useTelefono } from '../telefono/useTelefono';
 import { AvisoActualizacion } from './AvisoActualizacion';
 import { AvisoDesbloqueo } from './AvisoDesbloqueo';
 import { ComputadoraEnVivo } from './ComputadoraEnVivo';
@@ -99,6 +100,8 @@ export function AppAura() {
   useIdioma();
   const tema = useTema();
   useAccionesDeAura();
+  // Las manos del teléfono (APK 5.7.1): los recibos de lo que hizo, el latido del aparato y lo compartido con AU-RA.
+  useTelefono();
   // `ultronfp://hablar` (el «Abrir en AURA» de la burbuja del asistente): directo a la mesa, escuchando (entrada/hablar.ts).
   useEnlacesHablar();
   const usuario = useUsuario();

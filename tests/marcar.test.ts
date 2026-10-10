@@ -190,16 +190,21 @@ test('el recibo es «te abrí el marcador», nunca «ya hablé con él» ni «ya
 });
 
 test('la guarda: con solo el marcador abierto, «ya hablé con él» y «ya lo llamé» se dicen como son', () => {
+  // F02: abrir el marcador lo hace el teléfono: sale «en curso» hasta su recibo.
   const recibos = recibosDeAcciones([{ tipo: 'marcar' }]);
-  assert.deepEqual(recibos, [{ canal: 'marcador', estado: 'confirmado' }]);
+  assert.deepEqual(recibos, [{ canal: 'marcador', estado: 'en-curso' }]);
   const a = guardaDeHonestidad('Listo, ya hablé con él.', { recibos, mensaje: 'sí' });
   assert.equal(a.cambiada, true);
-  assert.equal(a.texto, 'Solo te abrí el marcador: la llamada la haces tú, y no sé si contestó.');
+  assert.equal(a.texto, 'Solo te estoy abriendo el marcador: la llamada la haces tú, y no sabré si contesta.');
+  // Con el recibo del teléfono (se abrió de verdad): lo que pasó, en pasado.
+  assert.equal(guardaDeHonestidad('Listo, ya hablé con él.', { recibos: [{ canal: 'marcador', estado: 'confirmado' }], mensaje: 'sí' }).texto, 'Solo te abrí el marcador: la llamada la haces tú, y no sé si contestó.');
   const b = guardaDeHonestidad('Ya le llamé a Carlos.', { recibos, mensaje: 'sí' });
   assert.equal(b.cambiada, true);
-  assert.match(b.texto, /Solo te abrí el marcador/);
-  // Una llamada de PULSE2CHAT de verdad sí respalda «le llamé».
-  assert.equal(guardaDeHonestidad('Ya le llamé a Carlos.', { recibos: recibosDeAcciones([{ tipo: 'llamar', con: 'carlos@x.com' }]), mensaje: 'sí' }).cambiada, false);
+  assert.match(b.texto, /Solo te estoy abriendo el marcador/);
+  // Una llamada de PULSE2CHAT que salió al teléfono todavía no respalda «le llamé» (F02): sin su recibo, «te confirmo».
+  assert.equal(guardaDeHonestidad('Ya le llamé a Carlos.', { recibos: recibosDeAcciones([{ tipo: 'llamar', con: 'carlos@x.com' }]), mensaje: 'sí' }).texto, 'Mandé la llamada a tu teléfono; te confirmo cuando entre.');
+  // Con el recibo del teléfono, sí.
+  assert.equal(guardaDeHonestidad('Ya le llamé a Carlos.', { recibos: [{ canal: 'llamada', estado: 'confirmado', destino: 'carlos@x.com' }], mensaje: 'sí' }).cambiada, false);
   // Sin nada, la verdad de siempre.
   assert.equal(guardaDeHonestidad('Ya hablé con él.', { recibos: [], mensaje: 'sí' }).texto, 'Todavía no hice esa llamada.');
 });

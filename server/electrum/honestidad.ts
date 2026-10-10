@@ -97,7 +97,7 @@ export function afirmacionesElectrum(texto: string, contexto: { mensaje?: string
         // tercero; el doctor trata de usted, y «como le dije» es a quien tiene enfrente: un envío solo si se nombra
         // qué salió o por dónde.
         const a = afirmacionesDeHecho(f.texto, { mensaje: contexto.mensaje })[0];
-        if (a && !(a.clase === 'envio' && !SALIDA.test(s))) clase = a.clase === 'recordatorio' ? 'alerta' : a.clase;
+        if (a && !(a.clase === 'envio' && !SALIDA.test(s))) clase = a.clase === 'recordatorio' ? 'alerta' : a.clase === 'app' ? 'generico' : a.clase;
       }
       if (clase) out.push({ frase: f.texto, clase });
     }

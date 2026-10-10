@@ -463,8 +463,11 @@ prueba('la versión: desde la 5.5.0 (entró un módulo nativo nuevo), leída de 
   const [ma, mi, pa] = version.split('.').map(Number);
   assert.ok(ma * 1e6 + mi * 1e3 + pa >= 5_005_000, `la versión ${version} es anterior a la 5.5.0 (la del módulo nativo de la voz)`);
   assert.ok(Number.isInteger(codigo) && codigo >= 54, `versionCode ${codigo}: el de la 5.5.0 era 54`);
-  // Cada versión menor de la 5 subió un versionCode desde la 5.5.0/54 (5.6.0/55): si se sube una sin la otra, se dice.
-  if (ma === 5) assert.equal(codigo, 54 + (mi - 5), `5.${mi}.x va con versionCode ${54 + (mi - 5)}`);
+  // Cada versión menor de la 5 subió un versionCode desde la 5.5.0/54 (5.6.0/55): si se sube una sin la otra, se dice. Una
+  // de parche con nativo nuevo sube uno más (5.7.1/57: las manos del teléfono, plugins/asistente-digital.js).
+  const PARCHES_NATIVOS = { '5.7.1': 57 };
+  if (ma === 5 && PARCHES_NATIVOS[version]) assert.equal(codigo, PARCHES_NATIVOS[version], `${version} va con versionCode ${PARCHES_NATIVOS[version]}`);
+  else if (ma === 5) assert.equal(codigo, 54 + (mi - 5), `5.${mi}.x va con versionCode ${54 + (mi - 5)}`);
 });
 
 for (const [nombre, f] of pruebas) {

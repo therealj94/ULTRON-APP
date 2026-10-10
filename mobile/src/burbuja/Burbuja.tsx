@@ -480,6 +480,11 @@ function Burbuja({ origen, invocadaEn }: Props) {
       } else {
         setRespuesta(textoEstado('error', en));
       }
+      if (r.abrioApp) {
+        // Una acción del teléfono abrió otra app (Spotify, Maps…): la burbuja queda atrás y se cierra sola.
+        cerrar('fondo');
+        return;
+      }
       if (r.revision) {
         // Lo que pidió hacer en la app se revisa en AURA: la burbuja no mueve la app de atrás sin que se vea.
         pauseMicForTts(false);

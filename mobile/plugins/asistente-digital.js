@@ -31,6 +31,15 @@
  * Las plantillas viven en plugins/asistente-digital-nativo/ como archivos .kt/.xml normales (se leen y se revisan como
  * código); `__PAQUETE__` y `__ESQUEMA__` se cambian por el paquete y el esquema de la configuración.
  *
+ * LAS MANOS EN EL TELÉFONO (APK 5.7.1; José, 10-oct: «le pedí abrir Spotify y no pudo»): TelefonoAura.kt es un módulo
+ * nativo de React Native (`AuraTelefono`) que lista y abre las apps del teléfono, abre enlaces profundos y usa los intents
+ * estándar (alarma y temporizador con AlarmClock, navegar, el marcador con ACTION_DIAL, un borrador de SMS con SENDTO, la
+ * pantalla de un evento nuevo del calendario) y recibe lo que otra app le comparte (ACTION_SEND). Este plugin lo registra
+ * en MainApplication (getPackages: no es un módulo de modules/ porque esos se enlazan también en Dr Electrum) y pone en el
+ * manifiesto lo que Android 11+ exige para ver esas apps: un `<queries>` con MAIN/LAUNCHER y cada intent que se resuelve
+ * (NUNCA QUERY_ALL_PACKAGES), el permiso normal SET_ALARM y el filtro SEND de MainActivity. Sin CALL_PHONE ni SEND_SMS:
+ * marcar y el SMS solo abren la pantalla con todo puesto; ella da el último toque.
+ *
  * JS no necesita un módulo nativo para cerrar la burbuja: `BackHandler.exitApp()` llega a la actividad que está delante
  * (la burbuja) y su `invokeDefaultOnBackPressed` hace finish(); y al dejar de verse se termina sola (onStop).
  *
@@ -39,7 +48,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { AndroidConfig, withAndroidManifest, withDangerousMod } = require('expo/config-plugins');
+const { AndroidConfig, withAndroidManifest, withDangerousMod, withMainApplication } = require('expo/config-plugins');
 
 const PLANTILLAS = path.join(__dirname, 'asistente-digital-nativo');
 
@@ -119,6 +128,94 @@ function esPieza(paquete, n) {
   return Object.keys(PIEZAS).some((p) => n === nombre(paquete, p) || n === `.${PIEZAS[p]}`);
 }
 
+/* ── las manos en el teléfono ──────────────────────────────────────────────────────────────── */
+
+/** Los esquemas de enlace que abre (lib/telefono-apps.ts ESQUEMAS_ENLACE y TelefonoAura.kt). */
+const ESQUEMAS_ENLACE = ['spotify', 'whatsapp', 'geo', 'https', 'tel', 'mailto'];
+/** El permiso normal de poner alarmas y temporizadores (AlarmClock). Nunca CALL_PHONE, SEND_SMS ni QUERY_ALL_PACKAGES. */
+const PERMISO_ALARMA = 'com.android.alarm.permission.SET_ALARM';
+const PERMISOS_PROHIBIDOS = ['android.permission.QUERY_ALL_PACKAGES', 'android.permission.CALL_PHONE', 'android.permission.SEND_SMS'];
+
+/** Un `<intent>` de `<queries>`: la acción y, si hace falta, la categoría y el esquema o el tipo. */
+function intentConsulta(accion, { categoria, esquema, tipo } = {}) {
+  const i = { action: [{ $: { 'android:name': accion } }] };
+  if (categoria) i.category = [{ $: { 'android:name': categoria } }];
+  if (esquema) i.data = [{ $: { 'android:scheme': esquema } }];
+  else if (tipo) i.data = [{ $: { 'android:mimeType': tipo } }];
+  return i;
+}
+
+/**
+ * Las consultas de visibilidad de paquetes (Android 11+): sin ellas, queryIntentActivities y resolveActivity no ven las
+ * apps de otros. Lo justo para lo que hace TelefonoAura.kt.
+ */
+function consultasTelefono() {
+  return [
+    intentConsulta('android.intent.action.MAIN', { categoria: 'android.intent.category.LAUNCHER' }),
+    ...ESQUEMAS_ENLACE.map((esquema) => intentConsulta('android.intent.action.VIEW', { esquema })),
+    intentConsulta('android.intent.action.VIEW', { esquema: 'google.navigation' }),
+    intentConsulta('android.intent.action.SET_ALARM'),
+    intentConsulta('android.intent.action.SET_TIMER'),
+    intentConsulta('android.intent.action.DIAL', { esquema: 'tel' }),
+    intentConsulta('android.intent.action.SENDTO', { esquema: 'smsto' }),
+    intentConsulta('android.intent.action.INSERT', { tipo: 'vnd.android.cursor.dir/event' }),
+  ];
+}
+
+const firmaIntent = (i) => JSON.stringify([i.action, i.category || null, i.data || null]);
+
+/** El `<queries>` con las consultas del teléfono (idempotente: lo que ya estaba no se duplica). */
+function conConsultas(manifiesto) {
+  const m = manifiesto.manifest;
+  if (!Array.isArray(m.queries) || !m.queries.length) m.queries = [{}];
+  const q = m.queries[0];
+  const ya = new Set((q.intent || []).map(firmaIntent));
+  q.intent = [...(q.intent || []), ...consultasTelefono().filter((i) => !ya.has(firmaIntent(i)))];
+  return manifiesto;
+}
+
+/** El permiso de alarmas (normal) y fuera los prohibidos si algo los hubiera puesto. */
+function conPermisosTelefono(manifiesto) {
+  const m = manifiesto.manifest;
+  const actuales = (m['uses-permission'] || []).filter((p) => !PERMISOS_PROHIBIDOS.includes(p?.$?.['android:name']));
+  if (!actuales.some((p) => p?.$?.['android:name'] === PERMISO_ALARMA)) actuales.push({ $: { 'android:name': PERMISO_ALARMA } });
+  m['uses-permission'] = actuales;
+  return manifiesto;
+}
+
+/** El filtro de «Compartir» en MainActivity: texto, enlaces e imágenes que otra app le manda a AU-RA. */
+const filtrosCompartir = () =>
+  ['text/plain', 'image/*'].map((tipo) => ({
+    action: [{ $: { 'android:name': 'android.intent.action.SEND' } }],
+    category: [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }],
+    data: [{ $: { 'android:mimeType': tipo } }],
+  }));
+const esFiltroCompartir = (f) => (f?.action || []).some((a) => a?.$?.['android:name'] === 'android.intent.action.SEND');
+
+function conCompartir(manifiesto) {
+  const principal = AndroidConfig.Manifest.getMainActivityOrThrow(manifiesto);
+  principal['intent-filter'] = [...(principal['intent-filter'] || []).filter((f) => !esFiltroCompartir(f)), ...filtrosCompartir()];
+  return manifiesto;
+}
+
+/** La línea que registra el módulo en MainApplication (getPackages). */
+const lineaPaquete = (paquete) => `${paquete}.asistente.TelefonoAuraPaquete()`;
+
+/**
+ * Registra TelefonoAuraPaquete en getPackages de MainApplication.kt (las dos formas de la plantilla: `.apply { … }` de la
+ * SDK 54 y `val packages = …` de antes). Idempotente. Si no reconoce la plantilla, falla el prebuild: mejor eso que una APK
+ * que en silencio no abre nada.
+ */
+function conPaqueteTelefono(fuente, paquete) {
+  const linea = lineaPaquete(paquete);
+  if (fuente.includes(linea)) return fuente;
+  const conApply = /PackageList\(this\)\.packages\.apply\s*\{/;
+  if (conApply.test(fuente)) return fuente.replace(conApply, (m) => `${m}\n              add(${linea})`);
+  const conVal = /val\s+packages\s*=\s*PackageList\(this\)\.packages/;
+  if (conVal.test(fuente)) return fuente.replace(conVal, (m) => `${m}\n            packages.add(${linea})`);
+  throw new Error('asistente-digital: no encontré getPackages en MainApplication para registrar TelefonoAuraPaquete');
+}
+
 /**
  * Pone las piezas en el manifiesto (idempotente) y el atajo en MainActivity. Puro sobre el objeto del manifiesto: las
  * pruebas lo llaman sin prebuild.
@@ -132,6 +229,10 @@ function conAsistente(manifiesto, paquete) {
   const principal = AndroidConfig.Manifest.getMainActivityOrThrow(manifiesto);
   const meta = (principal['meta-data'] || []).filter((m) => m?.$?.['android:name'] !== 'android.app.shortcuts');
   principal['meta-data'] = [...meta, { $: { 'android:name': 'android.app.shortcuts', 'android:resource': '@xml/aura_atajos' } }];
+  // Las manos en el teléfono (TelefonoAura.kt): lo que Android 11+ exige para ver las apps, la alarma y «Compartir».
+  conConsultas(manifiesto);
+  conPermisosTelefono(manifiesto);
+  conCompartir(manifiesto);
   return manifiesto;
 }
 
@@ -184,6 +285,11 @@ function asistenteDigital(config) {
       return c;
     },
   ]);
+  config = withMainApplication(config, (c) => {
+    if (c.modResults.language !== 'kt') throw new Error('asistente-digital: MainApplication tiene que ser Kotlin');
+    c.modResults.contents = conPaqueteTelefono(c.modResults.contents, datosDe(c).paquete);
+    return c;
+  });
   return withAndroidManifest(config, (c) => {
     conAsistente(c.modResults, datosDe(c).paquete);
     return c;
@@ -196,3 +302,8 @@ module.exports.archivosNativos = archivosNativos;
 module.exports.escribirNativo = escribirNativo;
 module.exports.piezasManifiesto = piezasManifiesto;
 module.exports.PIEZAS = PIEZAS;
+module.exports.conConsultas = conConsultas;
+module.exports.conPaqueteTelefono = conPaqueteTelefono;
+module.exports.consultasTelefono = consultasTelefono;
+module.exports.PERMISO_ALARMA = PERMISO_ALARMA;
+module.exports.PERMISOS_PROHIBIDOS = PERMISOS_PROHIBIDOS;
