@@ -7,6 +7,8 @@ import ElectrumApp from './src/electrum/ElectrumApp';
 import { useActualizacionAlVolver } from './src/lib/ota';
 import { marcarActividad } from './src/lib/barreraOta';
 import { useRaizVacia } from './src/lib/recarga';
+import { modoDeArranque } from './src/entrada/enlace';
+import { RaizBurbuja } from './src/burbuja/Burbuja';
 
 /**
  * El splash nativo (negro con el ícono) se queda hasta que la intro está pintada encima: negro sobre
@@ -20,6 +22,19 @@ try {
 }
 
 /**
+ * La burbuja del asistente digital (botón lateral, mosaico, atajo: plugins/asistente-digital.js). BurbujaActivity
+ * arranca el MISMO componente con `{ modo: 'burbuja', origen, invocadaEn }` en las props: en vez de la app se dibuja la
+ * burbuja sobre fondo transparente (src/burbuja/Burbuja.tsx). Antes de todo lo demás: sin la actualización al volver
+ * (una OTA recargaría el JS con la persona hablándole encima de otra app) ni el splash, que es de MainActivity. Solo
+ * AU-RA tiene esa actividad; en Dr Electrum las props nunca traen el modo.
+ */
+export default function App(props: Record<string, unknown>) {
+  const modo = modoDeArranque(props);
+  if (modo.modo === 'burbuja' && !ES_ELECTRUM) return <RaizBurbuja origen={modo.origen} invocadaEn={modo.invocadaEn} />;
+  return <AppEntera />;
+}
+
+/**
  * Un binario, dos aplicaciones.
  *
  * La bifurcación va arriba del todo y es total: la app del doctor no atraviesa nada del arranque de
@@ -29,7 +44,7 @@ try {
  * Que sea una constante del manifiesto y no una prop permite que Metro y el motor descarten el
  * camino muerto.
  */
-export default function App() {
+function AppEntera() {
   // Antes de bifurcar: las actualizaciones por aire. Solo AU-RA las tiene encendidas; en Dr Electrum
   // `Updates.isEnabled` es falso y el hook no hace nada.
   useActualizacionAlVolver();

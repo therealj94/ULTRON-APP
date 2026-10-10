@@ -33,7 +33,7 @@
  * Sin React Native: se prueba en Node.
  */
 
-export type DuenoAudio = 'llamada' | 'conversacion' | 'mesa' | 'companera' | 'nadie';
+export type DuenoAudio = 'llamada' | 'conversacion' | 'burbuja' | 'mesa' | 'companera' | 'nadie';
 
 /** ¿El oído del teléfono (el reconocedor de la mesa) es el que escucha con este dueño? */
 export function oidoPropio(d: DuenoAudio | null): boolean {
@@ -51,15 +51,22 @@ export type SituacionAudio = {
   appActiva: boolean;
   /** La compañera se ve (en los chats, Ajustes o el perfil: chiquita, al lado o a pantalla completa). */
   companeraVisible?: boolean;
+  /**
+   * La burbuja del asistente digital está abierta (src/burbuja/logica.ts `burbujaAbierta`): el botón lateral la abrió
+   * encima de otra app y el micrófono es suyo. Comparte el motor de JS con la mesa: sin esto, al ponerse delante la
+   * burbuja React dice «app activa» y la mesa (montada detrás) reabría su oído y contestaba encima.
+   */
+  burbuja?: boolean;
 };
 
 /**
- * La llamada manda sobre todo; después la conversación; con la app delante, la mesa si se la ve y, si
- * no, la compañera (si se la ve). Con la app detrás, nadie.
+ * La llamada manda sobre todo; después la conversación; después la burbuja (la persona la acaba de llamar con el
+ * botón); con la app delante, la mesa si se la ve y, si no, la compañera (si se la ve). Con la app detrás, nadie.
  */
 export function duenoAudio(s: SituacionAudio): DuenoAudio {
   if (s.enLlamada) return 'llamada';
   if (s.conversacion) return 'conversacion';
+  if (s.burbuja) return 'burbuja';
   if (!s.appActiva) return 'nadie';
   if (s.mesaVisible) return 'mesa';
   if (s.companeraVisible) return 'companera';

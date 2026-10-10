@@ -64,6 +64,7 @@ import { abrirConversacion, abrirRuta, nav, pantallaDeRuta, RUTAS_DE_SESION, typ
 import { useUsuario } from './sesion';
 import { usePush } from '../push/nativo';
 import { prepararVoz } from '../lib/guardiaVoz';
+import { useEnlacesHablar } from '../entrada/hablar';
 
 const Pila = createNativeStackNavigator<RaizParams>();
 
@@ -98,6 +99,8 @@ export function AppAura() {
   useIdioma();
   const tema = useTema();
   useAccionesDeAura();
+  // `ultronfp://hablar` (el «Abrir en AURA» de la burbuja del asistente): directo a la mesa, escuchando (entrada/hablar.ts).
+  useEnlacesHablar();
   const usuario = useUsuario();
   // Avisos del servidor con la app cerrada (FCM): registra este teléfono al entrar y lo suelta al salir.
   usePush(usuario?.correo);

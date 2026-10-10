@@ -202,8 +202,35 @@ function wire() {
 }
 
 export function setSpeechCallbacks(cb: SpeechCallbacks) {
+  // Con el oído prestado (la burbuja), la mesa puede volver a poner los suyos (sus dependencias cambiaron): quedan
+  // guardados para cuando se devuelva, sin quitárselo a la burbuja a media frase.
+  if (prestamo) {
+    prestamo.anterior = cb;
+    return;
+  }
   callbacks = cb;
   wire();
+}
+
+/**
+ * EL OÍDO PRESTADO (src/burbuja/Burbuja.tsx). La burbuja del asistente digital comparte el motor de JS con la mesa, y
+ * este oído es uno solo: la burbuja pone sus callbacks y, al cerrarse, devuelve los que había (los de la mesa, si la app
+ * estaba abierta detrás), sin que la mesa tenga que volver a montarlos. Devolver dos veces no hace nada.
+ */
+let prestamo: { cb: SpeechCallbacks; anterior: SpeechCallbacks } | null = null;
+
+export function prestarOido(cb: SpeechCallbacks): () => void {
+  const anterior = prestamo ? prestamo.anterior : callbacks;
+  const yo = { cb, anterior };
+  prestamo = yo;
+  callbacks = cb;
+  wire();
+  return () => {
+    if (prestamo !== yo) return;
+    prestamo = null;
+    callbacks = yo.anterior;
+    wire();
+  };
 }
 
 export function currentSttEngine(): SttEngine {
@@ -453,5 +480,7 @@ export async function destroySpeech() {
   await native.nativeDestroy();
   await cloud.destroySpeech();
   turbo.turboDestruir();
-  callbacks = {};
+  // Con el oído prestado, lo que se borra es lo que se iba a devolver (la mesa que se desmonta), no lo de la burbuja.
+  if (prestamo) prestamo.anterior = {};
+  else callbacks = {};
 }

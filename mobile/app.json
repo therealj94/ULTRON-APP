@@ -2,13 +2,13 @@
   "expo": {
     "name": "AU-RA FP",
     "slug": "ultron-fp",
-    "version": "5.6.0",
+    "version": "5.7.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 55,
+      "versionCode": 56,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
