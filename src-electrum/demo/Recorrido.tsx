@@ -854,7 +854,7 @@ export function Recorrido({
               setEscena({ tipo: 'legal' });
               orbitar(40, 40_000);
               await conversar([
-                { quien: 'electrum', texto: 'Noveno, el marco legal. La superinteligencia lee y aplica el compendio: la Ley General de Minería y su Reglamento, la Ley General del Ambiente con el licenciamiento de MiAmbiente, y la normativa municipal y de consulta comunitaria.' },
+                { quien: 'electrum', texto: 'Noveno, el marco legal. La superinteligencia lee y aplica el compendio: la Ley General de Minería y su Reglamento, la Ley General del Ambiente con el licenciamiento ambiental de SERNA, y la normativa municipal y de consulta comunitaria.' },
                 { quien: 'electrum', texto: 'La legislación internacional la usamos solo como referencia: se trabaja con la ley hondureña vigente.' },
                 { quien: 'tatiana', texto: '[warmly] Y no lo dejamos solo: le preparamos la solicitud, acompañamos todo el trámite y el seguimiento, y le podemos recomendar un abogado.' },
                 { quien: 'electrum', texto: '[serious] Porque la inteligencia no sustituye al abogado ni da opiniones legales vinculantes, y las leyes cambian: siempre se confirma la versión vigente.' },
@@ -1375,7 +1375,7 @@ export function Recorrido({
                 },
                 { quien: 'electrum', texto: `[thoughtful] Esta es ${nombreParaDecir(conflicto!.concesion)}: pisa ${nf(conflicto!.ha, 1)} hectáreas de ${conflicto!.con}, el ${nf(conflicto!.pct)} por ciento de su superficie.` },
                 { quien: 'chema', texto: '[concerned] Ahí no hay planta que valga si la comunidad y el agua no están de acuerdo.' },
-                { quien: 'tatiana', texto: 'Por eso lo miramos primero. Esto, que antes eran semanas de escritorio, aquí lo tenemos al día en segundos, y es lo primero que va a preguntar MiAmbiente.' },
+                { quien: 'tatiana', texto: 'Por eso lo miramos primero. Esto, que antes eran semanas de escritorio, aquí lo tenemos al día en segundos, y es lo primero que va a preguntar SERNA.' },
               ]);
             },
           },
@@ -1502,7 +1502,7 @@ export function Recorrido({
                 { quien: 'electrum', texto: '[thoughtful] Tengo leídos los documentos legales: las reformas del Decreto 109-2019 a la Ley General de Minería y los formularios de INHGEOMIN, de exploración, explotación, beneficio, comercialización y declaración jurada.' },
                 { quien: 'chema', texto: '[curious] ¿Y está al día, doctor? Que la ley ha cambiado.' },
                 { quien: 'electrum', texto: '[serious] Al día. El Decreto 18-2024 prohibió concesiones en áreas protegidas y zonas de agua declaradas, y en junio de 2026 la Sala de lo Constitucional anuló en parte siete artículos, entre ellos los de plazos y consulta. Cuando le cito algo, le digo la fecha y la fuente.' },
-                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia de MiAmbiente, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
+                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia ambiental de SERNA, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
                 { quien: 'electrum', texto: '[warmly] Pregúntenos qué pide un trámite o qué dice un artículo y le contestamos citando el documento. En cada ficha, «Analizar» le hace el análisis legal y ambiental completo.' },
               ]);
             },

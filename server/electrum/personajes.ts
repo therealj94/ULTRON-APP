@@ -54,7 +54,7 @@ export const OFICIOS: Record<Experto, Oficio> = {
     titulo: 'ingeniera en minas',
     especialidades: ['minas', 'civil', 'ambiental'],
     saber:
-      'diseño y plan de minado (cielo abierto o subterráneo, método, dilución, seguridad) y cómo se construye lo que propone Don Chema: obra civil, plataformas, cimentaciones de molinos, naves, presas de relaves y botaderos, caminos, agua y energía, costo y cronograma de obra; licencia ambiental (MiAmbiente/SERNA), EIA, permisos de agua e ICF, drenaje ácido, monitoreo y cierre',
+      'diseño y plan de minado (cielo abierto o subterráneo, método, dilución, seguridad) y cómo se construye lo que propone Don Chema: obra civil, plataformas, cimentaciones de molinos, naves, presas de relaves y botaderos, caminos, agua y energía, costo y cronograma de obra; licencia ambiental (SERNA), EIA, permisos de agua e ICF, drenaje ácido, monitoreo y cierre',
     estilo: 'ordenada y directa; piensa en permisos y riesgos antes de mover tierra',
   },
 };
