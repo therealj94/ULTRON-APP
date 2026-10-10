@@ -109,7 +109,7 @@ test('EtiquetasVoz: marcas partidas entre trozos, tope por turno y las que no ti
   assert.deepEqual(f.pasar('', true), [{ texto: '[esto no cierra' }], 'al final lo guardado sale como texto');
 });
 
-test('la llamada actúa las marcas v4 y pone el tono de la emoción delante de lo primero del cerebro', async () => {
+test('la llamada actúa las marcas v4 con la política compartida: el tono delante de lo primero del cerebro y UNA reacción', async () => {
   const s = await montar(
     async (t) => {
       t.enviar('emocion', { emocion: 'feliz' });
@@ -123,7 +123,7 @@ test('la llamada actúa las marcas v4 y pone el tono de la emoción delante de l
   try {
     const pase = paseDe(persona(), 'claudio', 'es');
     const dicho = dichoDe(await (await llm(s.base, pase, [{ role: 'user', content: '¿Me ayudas?' }])).text());
-    assert.equal(dicho.trim(), '[warmly] Claro que sí [laughs] mire. [sighs] Listo.');
+    assert.equal(dicho.trim(), '[warmly] Claro que sí [laughs] mire. Listo.', 'la segunda reacción ([suspiro]) no suena');
   } finally {
     await s.cerrar();
   }

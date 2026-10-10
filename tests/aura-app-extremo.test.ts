@@ -596,7 +596,8 @@ test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rá
     // Y en la llamada, un timer también va por el camino rápido (sin cerebro), con la hora dicha.
     alNodo.length = 0;
     const timerVoz = await voz(paseDe(), [{ role: 'user', content: 'ponme un timer de 5 minutos' }]);
-    assert.match(timerVoz.dicho, /^Listo, te llamo en 5 minutos, (mañana )?a las? \d{1,2}:\d{2} [ap]\. m\.$/);
+    // La hora, dicha como en Honduras (server/habla.ts hondurenoAVoz): «a las diez y media de la mañana».
+    assert.match(timerVoz.dicho, /^Listo, te llamo en 5 minutos, (mañana )?a las? [a-záéíóúñ ]+ (de la (mañana|tarde|noche|madrugada)|del mediodía)\.$/);
     assert.equal(alNodo.length, 0, 'sin cerebro también en la llamada');
   } finally {
     await tel.cerrar();
@@ -681,7 +682,7 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
 
     // «llámame a las 5 para recordarme…» por voz: se pregunta; con el «sí», la orden con llamada.
     const pideLlamada = await voz(pase, [{ role: 'user', content: 'llámame a las 11 de la noche para recordarme la pastilla' }]);
-    assert.match(pideLlamada.dicho, /^¿Te llamo (hoy|mañana) a las 11:00 de la noche para recordarte «La pastilla»\?$/);
+    assert.match(pideLlamada.dicho, /^¿Te llamo (hoy|mañana) a las once de la noche para recordarte «La pastilla»\?$/);
     const siLlamada = await voz(pase, [{ role: 'user', content: 'sí' }]);
     assert.match(siLlamada.dicho, /^Listo, te llamo /);
     assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'recordatorio' && a.llamada === true && a.texto === 'La pastilla')));

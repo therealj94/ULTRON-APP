@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { VOCES_ELEVEN, _reiniciarFrenoEleven, hzPcm, modeloDeLocucion } from '../server/eleven';
+import { VOCES_ELEVEN, _reiniciarFrenoEleven, hzPcm, modeloEleven } from '../server/eleven';
 import { _vaciarCacheVoz, pcmDeWav } from '../server/voz';
 import { montarVozPcm, type PeticionVozPcm } from '../server/voz-pcm';
 import { clipPublicoPermitido, exigirMesaOClip, mesaDeskAutorizada } from '../server/seguridad';
@@ -169,7 +169,7 @@ test('llega A TROZOS antes del final: el primer trozo sale mientras ElevenLabs t
   const ll = llamadas[0];
   assert.match(ll.url, new RegExp(`/text-to-speech/${VOCES_ELEVEN.aura.es}/stream\\?output_format=pcm_22050$`), 'la voz de AU-RA de siempre, por /stream, en PCM');
   assert.equal(ll.accept, 'audio/pcm');
-  assert.equal(ll.cuerpo.model_id, modeloDeLocucion({ texto, plataforma: 'ultron' }), 'el mismo modelo que /api/tts (la primera frase con el rápido)');
+  assert.equal(ll.cuerpo.model_id, modeloEleven(), 'el mismo modelo que /api/tts: todo el turno con v4');
   assert.equal(ll.cuerpo.language_code, 'es');
 });
 

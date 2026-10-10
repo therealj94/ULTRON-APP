@@ -311,14 +311,31 @@ public sealed class AuraApi : IDisposable
         return new Respuesta(Expresiones.Quitar(todo).Trim(), todo, emocion, "incompleto");
     }
 
-    /// <summary>La voz del avatar para un texto (con sus [risa]…); la elige el servidor por avatar e idioma.</summary>
-    public async Task<Audio> Voz(string texto, string emocion, string avatar, string idioma, CancellationToken ct = default)
+    /// <summary>
+    /// La voz del avatar para un texto (con sus [risa]…); la elige el servidor por avatar e idioma. <paramref name="previo"/> y
+    /// <paramref name="siguiente"/>: la frase de antes y la que viene en el mismo turno (ElevenLabs enlaza la entonación y no
+    /// arranca cada frase como un comienzo; el servidor les quita las marcas y las recorta). Por /api/tts/stream y sin los
+    /// tiempos por letra: la boca de Windows sigue el volumen, y el audio sale del /stream de ElevenLabs en vez de esperar
+    /// al de tiempos, que es más lento (10-oct).
+    /// </summary>
+    public async Task<Audio> Voz(string texto, string emocion, string avatar, string idioma, CancellationToken ct = default, string? previo = null, string? siguiente = null)
     {
-        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/tts", new { text = texto, emocion, performance = "speak", avatar, idioma, tiempos = "1" }, "audio/*"), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        var cuerpo = new Dictionary<string, string> { ["text"] = texto, ["emocion"] = emocion, ["performance"] = "speak", ["avatar"] = avatar, ["idioma"] = idioma };
+        if (!string.IsNullOrWhiteSpace(previo)) cuerpo["previo"] = Vecino(previo, true);
+        if (!string.IsNullOrWhiteSpace(siguiente)) cuerpo["siguiente"] = Vecino(siguiente, false);
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/tts/stream", cuerpo, "audio/*"), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
         var bytes = await r.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         string motor = r.Headers.TryGetValues("X-Ultron-TTS", out var m) ? m.FirstOrDefault() ?? "" : "";
         string? al = r.Headers.TryGetValues("X-Ultron-Alineacion", out var a) ? a.FirstOrDefault() : null;
         return new Audio(bytes, r.Content.Headers.ContentType?.MediaType ?? "audio/mpeg", motor, al);
+    }
+
+    /// <summary>Lo de antes (su final) o lo que viene (su comienzo), sin marcas y corto: lo mismo que el servidor manda a ElevenLabs.</summary>
+    public static string Vecino(string texto, bool final, int max = 100)
+    {
+        var t = Regex.Replace(Expresiones.Quitar(texto ?? ""), @"\s+", " ").Trim();
+        if (t.Length <= max) return t;
+        return final ? t[^max..].Trim() : t[..max].Trim();
     }
 
     /// <summary>Lo que se dijo (WAV 16 kHz mono) en texto, con el oído del servidor (Whisper/Scribe).</summary>
@@ -524,7 +541,9 @@ public sealed class LectorSse
 public static class Expresiones
 {
     static readonly Regex Etiqueta = new(@"^\s*\[(?:EMO:)?(?<e>[a-záéíóú_]+)\]\s*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    static readonly Regex Marcas = new(@"\[[^\]\n]{1,40}\]", RegexOptions.CultureInvariant);
+    // Solo las marcas de voz ([risa], [con ternura], [softly, warm], [EMO:feliz]): minúsculas y sin cifras. Un [1], un
+    // [Anexo A] o un enlace [texto](url) se quedan (lib/etiquetas-voz.ts quitarEtiquetasVoz, 10-oct).
+    static readonly Regex Marcas = new(@"[ \t]*\[(?:EMO:[A-Za-z_]+|[a-záéíóúüñ][a-záéíóúüñ ,'\-]{0,38})\](?!\()", RegexOptions.CultureInvariant);
     static readonly HashSet<string> Emociones = new(StringComparer.OrdinalIgnoreCase)
     { "neutral", "feliz", "risa", "sorpresa", "curioso", "pensando", "preocupado", "triste", "molesto", "cansado", "carino", "orgullo", "travieso", "canto", "oracion", "escepticismo", "alarma", "firme", "seco" };
 
@@ -535,7 +554,7 @@ public static class Expresiones
         return (null, texto ?? "");
     }
 
-    public static string Quitar(string texto) => Regex.Replace(Marcas.Replace(texto ?? "", ""), @"[ \t]{2,}", " ");
+    public static string Quitar(string texto) => Regex.Replace(Regex.Replace(Marcas.Replace(texto ?? "", ""), @"[ \t]+([,.;:!?…])", "$1"), @"[ \t]{2,}", " ");
 }
 
 /// <summary>

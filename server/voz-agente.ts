@@ -46,7 +46,8 @@ import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { interruptor } from '../lib/interruptores';
 import { avisarFaltaEnv } from '../lib/datos-privados';
 import { autoridadSinSesion, devolverCupo, firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
-import { apiEleven, etiquetaV4, normalizarAvatar, normalizarIdioma, TONO_V4, type AvatarVoz, type Idioma } from './eleven';
+import { apiEleven, etiquetaV4, normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
+import { EtiquetasTurno } from '../lib/etiquetas-voz';
 import { modoValido } from './desk';
 import { aparatoValido, empujarAmbiente, empujarOrdenPc, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
 import { FiltroOrdenes, quitarMarcas } from '../lib/ordenes-pc';
@@ -452,13 +453,26 @@ export function continuaLaFrase(viejo: string, nuevo: string): boolean {
  * Las marcas de expresión del cerebro, para la voz de la llamada (eleven_v4_turbo con modo expresivo).
  * Antes se quitaban todas (`quitarExpresiones`) y la llamada sonaba plana, como leer el chat: la mesa
  * web sí las actúa. El texto llega a trozos, así que una marca puede venir partida («… [ri» + «sa] …»):
- * lo que queda de un corchete abierto se guarda hasta el trozo siguiente. Como mucho `max` por turno
- * (más suena sobreactuado) y solo las que tienen etiqueta v4 (eleven.etiquetaV4); las demás se quitan.
+ * lo que queda de un corchete abierto se guarda hasta el trozo siguiente. Cuáles suenan lo decide la política de
+ * siempre (lib/etiquetas-voz.ts EtiquetasTurno: un tono al comienzo y una reacción, nada en lo serio); con un número,
+ * como mucho ese tanto (las pruebas y quien no tiene emoción). Solo las que tienen etiqueta v4; las demás se quitan.
  */
 export class EtiquetasVoz {
   private resto = '';
   private usadas = 0;
-  constructor(private readonly max: number) {}
+  /** Ya salió texto con letras: lo que venga ya no está «al comienzo» (un tono ahí no cabe). */
+  private dichoAlgo = false;
+  constructor(private politica: number | EtiquetasTurno) {}
+
+  /** La política del turno cuando se supo su emoción (antes de que el cerebro dijera nada). */
+  usar(politica: EtiquetasTurno) {
+    if (!this.dichoAlgo) this.politica = politica;
+  }
+
+  private texto(out: Array<{ etiqueta: string } | { texto: string }>, t: string) {
+    if (/[\p{L}\p{N}]/u.test(t)) this.dichoAlgo = true;
+    out.push({ texto: t });
+  }
 
   /** Parte el trozo en texto y etiquetas. `fin`: no queda nada por llegar (lo guardado sale como texto). */
   pasar(t: string, fin = false): Array<{ etiqueta: string } | { texto: string }> {
@@ -468,21 +482,27 @@ export class EtiquetasVoz {
     for (;;) {
       const i = s.indexOf('[');
       if (i < 0) {
-        if (s) out.push({ texto: s });
+        if (s) this.texto(out, s);
         break;
       }
-      if (i > 0) out.push({ texto: s.slice(0, i) });
+      if (i > 0) this.texto(out, s.slice(0, i));
       const j = s.indexOf(']', i + 1);
       if (j < 0) {
         // Corchete sin cerrar: se espera el resto, salvo al final o si ya es demasiado largo para marca.
         if (!fin && s.length - i <= 80) this.resto = s.slice(i);
-        else out.push({ texto: s.slice(i) });
+        else this.texto(out, s.slice(i));
         break;
       }
-      const v4 = etiquetaV4(s.slice(i + 1, j));
-      if (v4 && this.usadas < this.max) {
-        this.usadas++;
-        out.push({ etiqueta: v4 });
+      const marca = s.slice(i + 1, j);
+      if (typeof this.politica === 'number') {
+        const v4 = etiquetaV4(marca);
+        if (v4 && this.usadas < this.politica) {
+          this.usadas++;
+          out.push({ etiqueta: v4 });
+        }
+      } else {
+        const v4 = this.politica.marca(marca, !this.dichoAlgo);
+        if (v4) out.push({ etiqueta: v4 });
       }
       s = s.slice(j + 1);
     }
@@ -1799,8 +1819,10 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
      * turno pone su tono delante de lo primero que dice el cerebro, como la mesa web (eleven.guionEleven).
      */
     const actuar = conEtiquetas && interruptor('etiquetasVoz');
-    const MAX_ETIQUETAS_TURNO = 2;
-    const etiquetas = new EtiquetasVoz(actuar ? MAX_ETIQUETAS_TURNO : 0);
+    /** La política compartida (lib/etiquetas-voz.ts): un tono al comienzo + una reacción; nada en lo serio. */
+    const politicaDe = (emocion?: string) => new EtiquetasTurno(emocion, { contexto: mensaje, activo: actuar });
+    let emocionTurno: string | undefined;
+    const etiquetas = new EtiquetasVoz(politicaDe());
     let tono = '';
     /** Une texto y etiquetas con un solo espacio entre medio (una marca quitada no deja dobles). */
     const unir = (partes: Array<{ etiqueta: string } | { texto: string }>) => {
@@ -1818,7 +1840,7 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     const paraVoz = (t: string, fin = false) => unir(etiquetas.pasar(t, fin));
     /** Un texto entero (un `replace` o el `done` sin trozos), con su tono, sin tocar el estado de los trozos. */
     const paraVozEntera = (t: string) => {
-      const v = unir(new EtiquetasVoz(actuar ? MAX_ETIQUETAS_TURNO : 0).pasar(t, true));
+      const v = unir(new EtiquetasVoz(politicaDe(emocionTurno)).pasar(t, true));
       return tono && v.trim() && !v.trimStart().startsWith('[') ? `[${tono}] ${v.trimStart()}` : v;
     };
     /** El tono va una vez, delante de lo primero del cerebro (si no empieza ya con su etiqueta). */
@@ -1832,11 +1854,17 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     const enviar = (evento: string, datos: any) => {
       if (terminado || senal.aborted) return;
       if (evento === 'emocion') {
-        // El tono de la emoción del turno (TONO_V4); `neutral` no lleva: la voz ya es serena.
-        const t = actuar ? TONO_V4[String(datos?.emocion || '') as keyof typeof TONO_V4] : undefined;
-        if (t && dicho.length <= inicioCerebro) tono = t;
+        // El tono de la emoción del turno, por la política compartida; `neutral` y lo serio no llevan.
+        if (dicho.length <= inicioCerebro) {
+          emocionTurno = String(datos?.emocion || '') || undefined;
+          const politica = politicaDe(emocionTurno);
+          etiquetas.usar(politica);
+          tono = politica.tono() || '';
+        }
       } else if (evento === 'delta') {
-        const crudo = sinRelleno(paraVoz(String(datos?.voz ?? datos?.text ?? '')));
+        let crudo = sinRelleno(paraVoz(String(datos?.voz ?? datos?.text ?? '')));
+        // Una marca quitada al empezar el trozo deja su espacio: si lo dicho ya termina en uno, no se dobla.
+        if (/\s$/.test(dicho)) crudo = crudo.replace(/^[ \t]+/, '');
         // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
         decirCerebro(dicho.length > inicioCerebro ? crudo : conTono(crudo.replace(/^\s+/, '')));
       } else if (evento === 'replace') {
