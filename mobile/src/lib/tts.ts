@@ -243,6 +243,11 @@ export function callarPorConversacion(on: boolean) {
   if (on) void stopSpeaking();
 }
 
+/** ¿La conversación en vivo tiene la voz? (la burbuja del asistente no habla encima: dice que AURA está en llamada). */
+export function vozDeConversacion(): boolean {
+  return callaPorConversacion;
+}
+
 /** El nivel de boca de una voz que no suena por aquí (la conversación fluida, por WebRTC). */
 export function nivelExterno(v01: number) {
   emitLevel(v01);

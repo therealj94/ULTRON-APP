@@ -36,6 +36,7 @@ import { cargarFuentes } from '../../ui/tipografia';
 import type { RaizParams } from '../rutas';
 import { reiniciarA, reiniciarAClave } from '../rutas';
 import { bienvenidaVista, entrarCon, fijarUsuario, soltarSesionCaida, type Compartido } from '../sesion';
+import { buzonHablar } from '../../entrada/enlace';
 
 type Props = NativeStackScreenProps<RaizParams, 'Intro'>;
 
@@ -190,11 +191,15 @@ export function Intro(_: Props) {
       destino.current = () => reiniciarA('Entrar', { desdeIntro: true, aviso: m, codigo });
     } else destino.current = () => reiniciarA(vista ? 'Entrar' : 'Bienvenida', { desdeIntro: true });
 
-    // La apertura se ve entera (más corta con sesión); con red lenta, lo que tarde la carga.
-    const minimo = sesion ? 1_150 : 2_300;
+    // La apertura se ve entera (más corta con sesión); con red lenta, lo que tarde la carga. Si la abrieron para HABLAR
+    // (`ultronfp://hablar`, el «Abrir en AURA» de la burbuja) y hay sesión, sin espera: a la mesa en cuanto cargó, que
+    // la persona ya está hablando (entrada/hablar.ts). Sin sesión, la entrada de siempre.
+    const paraHablar = !!sesion && !caida && !!buzonHablar.pendiente(Date.now());
+    if (paraHablar) miga('intro: la abrieron para hablar; sin la espera mínima');
+    const minimo = paraHablar ? 0 : sesion ? 1_150 : 2_300;
     const falta = minimo - (Date.now() - inicio);
     if (falta > 0) await espera(falta);
-    if (!salud) await espera(700);
+    if (!salud && !paraHablar) await espera(700);
     setSalir(true);
   }, []);
 

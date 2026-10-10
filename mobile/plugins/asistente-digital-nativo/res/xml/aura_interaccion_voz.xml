@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AU-RA como asistente digital (plugins/asistente-digital.js). La sesión abre la burbuja; el reconocedor le pasa el
+  dictado al reconocedor de verdad del teléfono (ReconocedorAura.kt). Sin abrir desde la pantalla de bloqueo: Android
+  pide desbloquear primero (privacidad).
+-->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="__PAQUETE__.asistente.SesionAuraServicio"
+    android:recognitionService="__PAQUETE__.asistente.ReconocedorAura"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false"
+    android:supportsLocalInteraction="false" />
