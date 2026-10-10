@@ -18,6 +18,7 @@ import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Margen, typ
 import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, colorEstado, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
+import { cumpleFiltroIndice } from './indice';
 import { colorMuestra, pesoMuestra, radioMuestra, type ElementoMuestra } from './muestras';
 import { rellenoProsp } from './prospectividad';
 import mlcontour from 'maplibre-contour';
@@ -74,6 +75,10 @@ type Props = {
   enfoque?: { encuadre: [number, number, number, number]; etiqueta?: string } | null;
   /** Dónde está quien usa la app (lon, lat), si dio permiso de ubicación: un punto azul que respira. */
   yo?: [number, number] | null;
+  /** El contorno de Honduras (capa base 000001 del índice): siempre visible, debajo de todo. */
+  perimetro?: unknown | null;
+  /** El catastro (104001 del índice): si se ve y qué filtro de estado/tipo lleva. */
+  catastro?: { visible: boolean; filtro?: unknown[] | null };
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -157,7 +162,28 @@ function introDesdeElEspacio(m: maplibregl.Map) {
  */
 const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: null, resaltada: null };
 /** Las capas encendidas, por el mismo motivo: si el estilo se recarga, se reponen desde aquí. */
-const pintadoExtra = new Map<string, { rol: string; geojson: unknown }>();
+const pintadoExtra = new Map<string, { rol: string; geojson: unknown; opacidad?: number; filtro?: unknown[] | null; color?: string }>();
+/** El perímetro de Honduras y el estado del catastro en el índice de capas. Fuera de React por lo mismo. */
+let pintadoPerimetro: unknown = null;
+const catastroIndice: { visible: boolean; filtro: unknown[] | null } = { visible: true, filtro: null };
+/** Las capas de dibujo del catastro (y sus traslapes), que se apagan juntas. */
+const CAPAS_CATASTRO = ['concesiones-relleno', 'concesiones-borde', 'concesiones-borde-tramite', 'concesiones-nombre', 'concesiones-alerta', 'traslapes-rayado', 'traslapes-borde'];
+
+function aplicarCatastroVisible(m: maplibregl.Map) {
+  const v = catastroIndice.visible ? 'visible' : 'none';
+  for (const id of CAPAS_CATASTRO) if (m.getLayer(id) && m.getLayoutProperty(id, 'visibility') !== v) m.setLayoutProperty(id, 'visibility', v);
+}
+
+/** Lleva a las capas de dibujo ya puestas lo que cambió de una capa encendida (transparencia, filtro). */
+function aplicarExtra(m: maplibregl.Map, fuente: string, x: { rol: string; opacidad?: number; filtro?: unknown[] | null; color?: string }) {
+  for (const c of capasDeExtra(fuente, x.rol, x) as any[]) {
+    if (!m.getLayer(c.id)) continue;
+    if (c.filter && JSON.stringify(m.getFilter(c.id) ?? null) !== JSON.stringify(c.filter)) m.setFilter(c.id, c.filter);
+    for (const [k, v] of Object.entries(c.paint || {})) {
+      if (JSON.stringify(m.getPaintProperty(c.id, k as any) ?? null) !== JSON.stringify(v)) m.setPaintProperty(c.id, k as any, v as any);
+    }
+  }
+}
 const fuenteExtra = (id: number) => `extra-${id}`;
 /** Los mapas escaneados encendidos, clave → transparencia. Fuera de React por lo mismo que `pintado`. */
 const pintadoRaster = new Map<string, { opacidad: number; zoomMax?: number; vector?: RasterEscaneado['vector'] }>();
@@ -218,13 +244,26 @@ function asegurarCapas(m: maplibregl.Map) {
   }
   aplicarCurvas(m);
   aplicarRelleno(m);
+  // El perímetro de Honduras: la capa base del índice, siempre visible y debajo de todo lo demás.
+  if (pintadoPerimetro) {
+    if (!m.getSource('perimetro')) {
+      for (const id of ['perimetro-relleno', 'perimetro-borde']) if (m.getLayer(id)) m.removeLayer(id);
+      m.addSource('perimetro', { type: 'geojson', data: pintadoPerimetro as any });
+    }
+    const primera = m.getStyle().layers.find((l) => l.id.startsWith('raster-') || l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id;
+    if (!m.getLayer('perimetro-relleno')) m.addLayer({ id: 'perimetro-relleno', type: 'fill', source: 'perimetro', paint: { 'fill-color': AMBAR, 'fill-opacity': 0.03 } } as any, primera);
+    if (!m.getLayer('perimetro-borde'))
+      m.addLayer({ id: 'perimetro-borde', type: 'line', source: 'perimetro', paint: { 'line-color': '#FFE7B8', 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.4, 10, 2.4], 'line-opacity': 0.9 } } as any, primera);
+  }
+  aplicarCatastroVisible(m);
   // Las capas encendidas van DEBAJO del catastro: la concesión se sigue leyendo encima de la roca.
-  for (const [fuente, { rol, geojson }] of pintadoExtra) {
+  for (const [fuente, x] of pintadoExtra) {
+    const { rol, geojson } = x;
     if (!m.getSource(fuente)) {
       for (const c of capasDeExtra(fuente, rol)) if (m.getLayer(c.id)) m.removeLayer(c.id);
       m.addSource(fuente, { type: 'geojson', data: geojson as any });
     }
-    for (const c of capasDeExtra(fuente, rol)) if (!m.getLayer(c.id)) m.addLayer(c as any, 'concesiones-relleno');
+    for (const c of capasDeExtra(fuente, rol, x)) if (!m.getLayer(c.id)) m.addLayer(c as any, 'concesiones-relleno');
   }
   /*
    * Los mapas escaneados, DEBAJO de todo lo vectorial: un mapa geológico de 1980 es papel, y encima
@@ -673,7 +712,8 @@ function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown)
     capa = new G.Data();
     capa.setStyle(cual === 'concesiones' ? ESTILO_CONCESIONES_GOOGLE : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 });
     capasGoogle[cual] = capa;
-    if (cual === 'concesiones' && filtroGoogle) filtrarGoogle(filtroGoogle);
+    // El catastro en Google también obedece al índice: apagado o filtrado por estado/tipo.
+    if (cual === 'concesiones') filtrarGoogle(filtroGoogle);
     if (cual === 'concesiones') {
       capa.addListener('click', (ev: any) => {
         const id = Number(ev.feature?.getProperty('id'));
@@ -712,18 +752,32 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
   for (const x of extras) {
     const f = fuenteExtra(x.id);
-    if (extrasGoogle.has(f)) continue;
-    const e = ESTILO_ROL[x.rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
-    const capa = new G.Data();
-    capa.setStyle((feat: any) => ({
+    // Transparencia, color y filtro del índice: si cambió alguno, se vuelve a estilar la capa.
+    const base = ESTILO_ROL[x.rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
+    const e = x.color ? { ...base, color: x.color } : base;
+    const op = x.opacidad ?? 1;
+    const estilo = (feat: any) => ({
+      visible: cumpleFiltroIndice((k) => feat.getProperty(k), x.filtro),
       fillColor: x.rol === 'litologia' ? COLOR_ROCA[feat.getProperty('clase')] || COLOR_ROCA.otra : e.color,
-      fillOpacity: e.relleno,
+      fillOpacity: e.relleno * op,
       strokeColor: x.rol === 'litologia' ? '#000000' : e.color,
-      strokeOpacity: x.rol === 'litologia' ? 0.4 : 0.95,
+      strokeOpacity: (x.rol === 'litologia' ? 0.4 : 0.95) * op,
       strokeWeight: Math.max(1, e.ancho),
       zIndex: 0,
-      icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: e.color, fillOpacity: 1, strokeColor: '#000', strokeWeight: 1 },
-    }));
+      icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: e.color, fillOpacity: op, strokeColor: '#000', strokeWeight: 1 },
+    });
+    const clave = JSON.stringify([x.opacidad ?? null, x.filtro ?? null, x.color ?? null]);
+    const ya = extrasGoogle.get(f);
+    if (ya) {
+      if (ya.__clave !== clave) {
+        ya.setStyle(estilo);
+        ya.__clave = clave;
+      }
+      continue;
+    }
+    const capa = new G.Data();
+    capa.__clave = clave;
+    capa.setStyle(estilo);
     try {
       capa.addGeoJson(x.geojson as any);
     } catch {
@@ -774,7 +828,10 @@ function filtrarGoogle(mineral: string | null) {
   if (!capa) return;
   capa.setStyle((f: any) => ({
     ...ESTILO_CONCESIONES_GOOGLE,
-    visible: !filtroGoogle || cumpleFiltro({ clase: f.getProperty('clase'), minerales: f.getProperty('minerales') }, filtroGoogle),
+    visible:
+      catastroIndice.visible &&
+      (!filtroGoogle || cumpleFiltro({ clase: f.getProperty('clase'), minerales: f.getProperty('minerales') }, filtroGoogle)) &&
+      cumpleFiltroIndice((k) => f.getProperty(k), catastroIndice.filtro),
   }));
 }
 
@@ -786,7 +843,9 @@ function aplicarFiltro(m: maplibregl.Map, mineral: string | null) {
   for (const id of capas) {
     if (!filtrosOriginales.has(id)) filtrosOriginales.set(id, m.getFilter(id) ?? null);
     const orig = filtrosOriginales.get(id);
-    const f = mineral ? (orig ? ['all', orig, condicionFiltro(mineral)] : condicionFiltro(mineral)) : orig;
+    // El filtro del índice (estado, tipo) se suma al de mineral y al propio de cada capa.
+    const partes = [orig, mineral ? condicionFiltro(mineral) : null, catastroIndice.filtro].filter(Boolean);
+    const f = partes.length > 1 ? ['all', ...partes] : (partes[0] ?? null);
     // Solo si cambia: poner el mismo filtro dispara `styledata`, y el efecto que lo repone escucha eso.
     if (JSON.stringify(m.getFilter(id) ?? null) !== JSON.stringify(f ?? null)) m.setFilter(id, f ?? null);
   }
@@ -831,7 +890,7 @@ function alfiler(nombre: string, detalle?: string): HTMLElement {
   return el;
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true, enfoque = null, yo = null }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true, enfoque = null, yo = null, perimetro = null, catastro }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -887,6 +946,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     // escala le asomaba por detrás como un recorte de papel blanco.
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
     if (introPendiente) m.once('style.load', () => prepararGlobo(m));
+    // El índice de capas avisa «acérquese» a las capas que solo se ven de cerca.
+    m.on('zoomend', () => window.dispatchEvent(new CustomEvent('electrum:zoom', { detail: m.getZoom() })));
     m.on('load', () => {
       // Las fuentes nacen vacías: el contenido llega cuando una herramienta lo manda.
       asegurarCapas(m);
@@ -932,8 +993,14 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       if (c) return tocarRef.current?.({ tipo: 'concesion', id: Number(c.properties!.id), nombre: c.properties?.nombre, lngLat });
       // Entre varias capas encendidas gana la de arriba: puntos, luego líneas, luego polígonos.
       const orden = (id: string) => (id.endsWith('-punto') ? 0 : id.endsWith('-borde') ? 1 : 2);
-      const r = extra.filter((f) => Number.isFinite(Number(f.properties?.eid))).sort((a, b) => orden(a.layer.id) - orden(b.layer.id))[0];
-      if (r) return tocarRef.current?.({ tipo: 'rasgo', eid: Number(r.properties!.eid), nombre: r.properties?.nombre, lngLat });
+      // Una concesión de una cartera (las zonas de Indexa) abre su ficha de concesión.
+      const ck = extra.find((f) => Number(f.properties?.concesion) > 0);
+      if (ck) return tocarRef.current?.({ tipo: 'concesion', id: Number(ck.properties!.concesion), nombre: ck.properties?.nombre, lngLat });
+      const r = extra.filter((f) => Number(f.properties?.eid) > 0).sort((a, b) => orden(a.layer.id) - orden(b.layer.id))[0];
+      if (r) {
+        const capa = Number(r.properties?.layer_id);
+        return tocarRef.current?.({ tipo: 'rasgo', eid: Number(r.properties!.eid), nombre: r.properties?.nombre, lngLat, ...(capa > 0 ? { capa } : {}) });
+      }
       tocarRef.current?.({ tipo: 'punto', lngLat });
     });
     let bajo: number | null = null;
@@ -1046,6 +1113,39 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     }
   }, [fondo, motor]);
 
+  /* ---------------------------------------------------------------- índice de capas: perímetro y catastro */
+
+  useEffect(() => {
+    pintadoPerimetro = perimetro;
+    const m = mapa.current;
+    if (!m || !listo) return;
+    if (perimetro && m.getSource('perimetro')) (m.getSource('perimetro') as any).setData(perimetro);
+    asegurarCapas(m);
+  }, [perimetro, listo]);
+
+  const filtroCatastro = JSON.stringify(catastro?.filtro ?? null);
+  const verCatastro = catastro?.visible ?? true;
+  useEffect(() => {
+    catastroIndice.visible = verCatastro;
+    catastroIndice.filtro = JSON.parse(filtroCatastro);
+    if (google.current) filtrarGoogle(filtroGoogle);
+    const m = mapa.current;
+    if (!m || !listo) return;
+    const poner = () => {
+      try {
+        aplicarCatastroVisible(m);
+        aplicarFiltro(m, filtro?.mineral ?? null);
+      } catch {
+        /* las capas todavía no están: el próximo styledata lo pone */
+      }
+    };
+    poner();
+    m.on('styledata', poner);
+    return () => {
+      m.off('styledata', poner);
+    };
+  }, [verCatastro, filtroCatastro, listo, filtro]);
+
   /* ---------------------------------------------------------------- capas encendidas y tocada */
 
   useEffect(() => {
@@ -1057,7 +1157,14 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         if (m && listo) quitarExtra(m, f, v.rol);
       }
     }
-    for (const [f, x] of quedan) pintadoExtra.set(f, { rol: x.rol, geojson: x.geojson });
+    for (const [f, x] of quedan) {
+      const antes = pintadoExtra.get(f);
+      const nueva = { rol: x.rol, geojson: x.geojson, opacidad: x.opacidad, filtro: x.filtro ?? null, color: x.color };
+      pintadoExtra.set(f, nueva);
+      // Misma capa, otra transparencia u otro filtro: se cambia en sitio, sin rehacer la fuente.
+      if (m && listo && antes && antes.geojson === x.geojson) aplicarExtra(m, f, nueva);
+      else if (m && listo && antes && m.getSource(f)) (m.getSource(f) as any).setData(x.geojson);
+    }
     if (m && listo) asegurarCapas(m);
     if (google.current && motor === 'google') pintarExtrasGoogle(google.current, extras);
   }, [extras, listo, motor]);

@@ -19,7 +19,7 @@ import { callar, desbloquear, escucharEscena, hablar, hablarDialogo, msDeLectura
 import { fijarRecorrido } from '../personajes/mesa';
 import type { CapaExtra, Fondo, Margen, OrdenMapa, RasterEncendido, RasterEscaneado, Tocado } from '../mapa/captura';
 import { catastroGuardado } from '../mapa/captura';
-import type { MuestrasEncendidas } from '../mapa/CapasControl';
+import type { MuestrasEncendidas } from '../mapa/captura';
 import { Contador, pedirTablero, type DatosTablero } from '../mapa/Tablero';
 import { analisisDeFicha, centroDe, concesionesEn, enOracion, focoDeOro, fold, nombreParaDecir, vencimientos, zonaMasRica, type Ficha } from './guion';
 import { ALTURAS } from '../preferencias';
@@ -31,7 +31,7 @@ const HONDURAS: [number, number, number, number] = [-89.4, 12.9, -83.1, 16.6];
 /** Durante el recorrido el mapa se lleva casi toda la pantalla: es la función. */
 const ALTO_RECORRIDO = 0.12;
 
-type Estado = { fondo: Fondo; alto: number; rasters: RasterEncendido[]; muestras: MuestrasEncendidas | null; extras: CapaExtra[]; prospectividad: boolean };
+type Estado = { fondo: Fondo; alto: number; rasters: RasterEncendido[]; muestras: MuestrasEncendidas | null; extras: CapaExtra[]; prospectividad: boolean; catastro: boolean };
 
 export type Controles = {
   orden: (o: OrdenMapa) => void;
@@ -44,6 +44,8 @@ export type Controles = {
   rasters: (r: RasterEncendido[]) => void;
   muestras: (m: MuestrasEncendidas | null) => void;
   prospectividad: (v: boolean) => void;
+  /** El catastro (104001 del índice): el recorrido lo enseña aunque estuviera apagado, y al final lo deja como estaba. */
+  catastro: (v: boolean) => void;
   fondo: (f: Fondo) => void;
   alto: (a: number) => void;
   estado: () => Estado;
@@ -332,6 +334,7 @@ export function Recorrido({
         c.current.fondo('satelite');
         c.current.tocar(null);
         c.current.tresD(true);
+        c.current.catastro(true);
 
         /*
          * Cada recorrido pide solo lo que va a contar: el de herramientas no necesita el tablero
@@ -652,13 +655,13 @@ export function Recorrido({
             hay: politicas.length > 0,
             correr: async () => {
               limpiar();
-              capitulo(++i, { titulo: 'El mapa de Honduras, por capas', chips: ['Mapa político', 'Geología', 'Yacimientos', 'Ambiente', 'Ríos y poblados', 'Topográficos', 'Satélite', 'Proyectos'] });
+              capitulo(++i, { titulo: 'El índice de capas', chips: ['1 Información GIS', '2 Geología', '3 Proyectos Indexa', '4 Historia', '8 Otros'] });
               c.current.capas(() => politicas);
               mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 0, giro: 0, ms: 4500 });
               await pausa(1200);
               await conversar([
-                { quien: 'electrum', texto: '[warmly] El mapa arranca limpio: el catastro sobre el mapa político, los dieciocho departamentos y sus municipios, con sus nombres.' },
-                { quien: 'electrum', texto: 'Todo lo demás está ordenado por categorías y se enciende cuando usted lo pide: tocando la categoría en el botón de capas, o diciéndolo. «Muéstrame los ríos», «esconde la geología», «deja solo el mapa político».' },
+                { quien: 'electrum', texto: '[warmly] El mapa arranca limpio: solo el contorno de Honduras. Aquí le enciendo el mapa político, los dieciocho departamentos y sus municipios, con sus nombres.' },
+                { quien: 'electrum', texto: 'Todo lo demás está en el índice de capas, con el mismo orden y los mismos números del índice maestro: información GIS, geología, los proyectos de Indexa, la historia y otros. Se enciende tocando la casilla, se filtra por mineral, por estado o por lo que traiga cada capa, o se lo pide de palabra: «muéstrame los ríos», «esconde la geología», «deja solo el catastro».' },
                 { quien: 'chema', texto: '[curious] ¿Así nomás, hablándole?' },
                 { quien: 'electrum', texto: '[warmly] Así nomás. Y si me pregunta qué capas hay, se las listo con lo que tiene cada una.' },
               ]);
@@ -1290,6 +1293,7 @@ export function Recorrido({
           c.current.muestras(antes.muestras);
           c.current.capas(() => antes.extras);
           c.current.prospectividad(antes.prospectividad);
+          c.current.catastro(antes.catastro);
           c.current.fondo(antes.fondo);
           c.current.alto(antes.alto);
           c.current.tocar(null);
@@ -1322,6 +1326,7 @@ export function Recorrido({
       c0.muestras(antes.muestras);
       c0.capas(() => antes.extras);
       c0.prospectividad(antes.prospectividad);
+      c0.catastro(antes.catastro);
       c0.fondo(antes.fondo);
       c0.alto(antes.alto);
       c0.cara('IDLE');

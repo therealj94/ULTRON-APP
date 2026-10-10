@@ -127,7 +127,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
     tocado.tipo === 'concesion'
       ? 'Concesión'
       : tocado.tipo === 'rasgo'
-        ? (datos as Rasgo | null)?.capa || 'Capa'
+        ? `${tocado.capa ? `${String(tocado.capa).padStart(6, '0')} · ` : ''}${(datos as Rasgo | null)?.capa || 'Capa'}`
         : tocado.tipo === 'muestra'
           ? 'Muestra geoquímica · JICA'
           : '¿Qué hay aquí?';

@@ -21,7 +21,8 @@ import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
 import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
-import { CapasControl, type MuestrasEncendidas, type PedidoCapas } from './mapa/CapasControl';
+import { IndiceCapas } from './mapa/IndiceCapas';
+import type { MuestrasEncendidas, PedidoCapas } from './mapa/captura';
 import { Tablero } from './mapa/Tablero';
 import { Recorrido, prepararRecorrido, salirPantallaCompleta, entrarPantallaCompleta, type Controles, type ModoRecorrido } from './demo/Recorrido';
 import { Preguntas } from './demo/Preguntas';
@@ -295,9 +296,9 @@ export default function App() {
   const [rasters, setRasters] = useState<RasterEncendido[]>([]);
   const [muestras, setMuestras] = useState<MuestrasEncendidas | null>(null);
   const [traslapes, setTraslapes] = useState<unknown | null>(null);
-  /** Apagadas al abrir: el mapa arranca con el catastro y el mapa político, y lo demás se pide. */
+  /** Apagadas al abrir: el mapa arranca solo con el perímetro de Honduras, y lo demás se pide en el índice. */
   const [curvas, setCurvas] = useState(false);
-  /** Lo último que se pidió de palabra sobre las capas («muéstrame los ríos»); lo resuelve CapasControl. */
+  /** Lo último que se pidió de palabra sobre las capas («muéstrame los ríos»); lo resuelve el índice de capas. */
   const [pedidoCapas, setPedidoCapas] = useState<PedidoCapas | null>(null);
   const pedirCapas = useCallback((p: Omit<PedidoCapas, 'n'>) => setPedidoCapas({ ...p, n: Date.now() + Math.random() }), []);
   // Solo se dice en voz alta cuando no se pudo: lo que sí se hizo se ve en el mapa.
@@ -305,6 +306,11 @@ export default function App() {
     if (!ok) void hablar(texto, 'neutral', headersElectrum());
   }, []);
   const [prospectividad, setProspectividad] = useState(false);
+  /** El índice de capas: al abrir solo se ve el perímetro de Honduras; el catastro es la capa 104001 y se enciende. */
+  const [perimetro, setPerimetro] = useState<unknown | null>(null);
+  const [catastroVista, setCatastroVista] = useState<{ visible: boolean; filtro: unknown[] | null }>({ visible: false, filtro: null });
+  /** El recorrido enseña el catastro aunque esté apagado en el índice; al terminar vuelve como estaba. */
+  const [catastroRecorrido, setCatastroRecorrido] = useState<boolean | null>(null);
   const encuadrarRaster = useCallback((encuadre: [number, number, number, number]) => setOrden({ accion: 'encuadrar', encuadre, ms: 1600 }), []);
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
   const nPedido = useRef(0);
@@ -358,8 +364,8 @@ export default function App() {
    * fondo y el reparto de la pantalla como los tenía quien lo lanzó (el 3D se queda puesto).
    * `alto` va con `setAlto` y no con `cambiarAlto`: agrandar el mapa para la demo no es una preferencia.
    */
-  const estadoRef = useRef({ fondo, alto, rasters, muestras, extras, prospectividad });
-  estadoRef.current = { fondo, alto, rasters, muestras, extras, prospectividad };
+  const estadoRef = useRef({ fondo, alto, rasters, muestras, extras, prospectividad, catastro: false });
+  estadoRef.current = { fondo, alto, rasters, muestras, extras, prospectividad, catastro: catastroVista.visible };
   const controlesRecorrido = useMemo<Controles>(
     () => ({
       orden: setOrden,
@@ -371,6 +377,7 @@ export default function App() {
       rasters: setRasters,
       muestras: setMuestras,
       prospectividad: setProspectividad,
+      catastro: (v: boolean) => setCatastroRecorrido(v === estadoRef.current.catastro ? null : v),
       fondo: setFondo,
       alto: setAlto,
       estado: () => estadoRef.current,
@@ -749,6 +756,8 @@ export default function App() {
         setOrden({ accion: 'lugar', centro: d.centro as [number, number], zoom: Number(d.zoom) || 12, nombre: String(d.nombre || ''), detalle: [d.tipo, d.departamento].filter(Boolean).join(' · ') || undefined });
       } else if (d.accion === 'filtrar') {
         setOrden({ accion: 'filtrar', mineral: typeof d.mineral === 'string' ? d.mineral : null });
+        // Filtrar el catastro con el catastro apagado no muestra nada: se enciende en el índice.
+        if (d.mineral) pedirCapas({ mostrar: true, que: 'catastro' });
       } else if (d.accion === 'capa' && d.geojson) {
         setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
       } else if (d.accion === 'capas' && typeof d.que === 'string') {
@@ -971,6 +980,8 @@ export default function App() {
               muestras={motor === 'maplibre' ? muestras : null}
               traslapes={traslapes}
               curvas={curvas}
+              perimetro={perimetro}
+              catastro={catastroRecorrido == null ? catastroVista : { visible: catastroRecorrido, filtro: catastroVista.filtro }}
               prospectividad={prospectividad}
               visible={enTrabajo}
               enfoque={enfoque}
@@ -978,7 +989,18 @@ export default function App() {
             />
           </Suspense>
           </SinMapa>
-          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} prospectividad={prospectividad} onProspectividad={setProspectividad} pedido={pedidoCapas} onRespuesta={alResponderCapas} />
+          <IndiceCapas
+            onExtras={setExtras}
+            onRasters={setRasters}
+            onCatastro={setCatastroVista}
+            onMuestras={setMuestras}
+            onPerimetro={setPerimetro}
+            onEncuadrar={encuadrarRaster}
+            prospectividad={prospectividad}
+            onProspectividad={setProspectividad}
+            pedido={pedidoCapas}
+            onRespuesta={alResponderCapas}
+          />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
           <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md" data-tour="barra-mapa">
             {[

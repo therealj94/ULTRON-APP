@@ -59,6 +59,7 @@ import { analizarCartera, carteraEnTexto, carteras } from './cartera';
 import { sqlDocumentoVisible } from './organizacion';
 import { indiceTeselas } from './teselas';
 import { inventarioCapas } from './explorar';
+import { manifiestoPara, type EntradaIndice } from './indice-capas';
 import { CATEGORIAS, categoriaDeRaster, categoriaDeRol } from '../../src-electrum/mapa/categorias';
 
 const NOMBRE_CATEGORIA = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c.nombre])) as Record<string, string>;
@@ -665,6 +666,31 @@ const capas_listar: Herramienta = {
   async ejecutar({ buscar }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const q = String(buscar || '').trim().toLowerCase();
+    /*
+     * Con el Índice Maestro de Capas en el cubo, se lista ESO: cada capa con su ID de seis dígitos,
+     * en el orden del índice, y si se puede encender. Es lo que José ve en la pestaña.
+     */
+    const m = await manifiestoPara().catch(() => null);
+    if (m) {
+      const por = new Map<number, EntradaIndice>(m.capas.map((c) => [c.id, c]));
+      const ruta = (c: EntradaIndice): string => (c.padre && por.get(c.padre) ? `${ruta(por.get(c.padre)!)} › ` : '') + c.nombre;
+      const xs = m.capas
+        .filter((c) => c.id !== 900000 && c.padre !== 900000 && (!q || c.nombre.toLowerCase().includes(q) || String(c.id).padStart(6, '0').includes(q) || ruta(c).toLowerCase().includes(q)))
+        .sort((a, b) => a.id - b.id);
+      if (!xs.length) return { ok: true, texto: `No hay nada en el índice que se llame como «${buscar}».` };
+      const linea = (c: EntradaIndice) => {
+        const id = String(c.id).padStart(6, '0');
+        if (c.tipo === 'grupo') return `\n${id} ${c.nombre}`;
+        const sin = c.tipo !== 'documento' && (!c.fuentes?.length || c.ruta_web === null);
+        const filtros = (c.filtros || []).map((f) => f.etiqueta || f.campo).join(', ');
+        return `- ${id} ${c.nombre}${c.num_entidades ? ` · ${c.num_entidades} rasgos` : ''}${c.tipo === 'documento' ? ' · plano (se abre en el visor)' : ''}${filtros ? ` · filtra por ${filtros}` : ''}${sin ? ' · NO disponible' : ''}`;
+      };
+      const lineas = xs.map(linea);
+      return {
+        ok: true,
+        texto: `Índice Maestro de Capas v${m.version}: ${m.capas.filter((c) => c.tipo !== 'grupo').length} capas y planos. Para encender una, mapa_capas con su nombre o su ID.\n${lineas.slice(0, 220).join('\n')}${lineas.length > 220 ? `\n… y ${lineas.length - 220} más (pedí con «buscar»)` : ''}`,
+      };
+    }
     const capas = (await inventarioCapas()).filter((c) => !q || c.nombre.toLowerCase().includes(q) || c.rol.includes(q));
     const { rasters } = await indiceTeselas().catch(() => ({ rasters: [] as Array<{ clave: string; nombre: string; grupo?: string; vector?: unknown }> }));
     const teselas = rasters.filter((x) => !q || `${x.clave} ${x.nombre}`.toLowerCase().includes(q));
