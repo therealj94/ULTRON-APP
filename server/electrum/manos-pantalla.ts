@@ -18,7 +18,14 @@ import { manifiesto } from './indice-capas';
 import { indiceTeselas } from './teselas';
 
 type Accion = 'fondo' | 'tres_d' | 'vista' | 'abrir' | 'ficha' | 'mesa' | 'silencio' | 'reparto' | 'pantalla_completa' | 'cerrar';
-const SI = /^(si|sí|true|1|activar|encender|on|abrir)$/i;
+const SI = /^(si|sí|true|1|activar|activa|encender|enciende|on|abrir|abre|prender)$/i;
+const NO = /^(no|false|0|desactivar|desactiva|apagar|apaga|off|cerrar|cierra|quitar|quita)$/i;
+/** Un interruptor: sí o no dicho de verdad; si falta o no se entiende, no se adivina (revisión de Codex en #170). */
+function interruptor(v: string, nombre: string): boolean | { error: string } {
+  if (SI.test(v)) return true;
+  if (NO.test(v)) return false;
+  return { error: `${nombre}: valor «si» o «no».` };
+}
 
 /** Lo pedido → el comando que la pantalla ya sabe ejecutar (src-electrum/panel/comandos.ts). */
 export function comandoDePantalla(accion: string, valor: string): Record<string, unknown> | { error: string } {
@@ -26,8 +33,10 @@ export function comandoDePantalla(accion: string, valor: string): Record<string,
   switch (accion as Accion) {
     case 'fondo':
       return /cal|mapa|vial/.test(v) ? { accion: 'fondo', cual: 'calles' } : /sat/.test(v) ? { accion: 'fondo', cual: 'satelite' } : { error: 'fondo: «satelite» o «calles».' };
-    case 'tres_d':
-      return { accion: 'tresD', activar: SI.test(v) || /relieve|3d/.test(v) };
+    case 'tres_d': {
+      const x = interruptor(v, 'tres_d');
+      return typeof x === 'boolean' ? { accion: 'tresD', activar: x } : x;
+    }
     case 'vista': {
       const m: Record<string, Record<string, unknown>> = {
         pais: { accion: 'pais' }, honduras: { accion: 'pais' }, norte: { accion: 'norte' }, cenital: { accion: 'cenital' }, inclinar: { accion: 'inclinar' },
@@ -45,14 +54,20 @@ export function comandoDePantalla(accion: string, valor: string): Record<string,
       const ok = ['pdf', 'geologico', 'timelapse', 'analizar'];
       return ok.includes(v) ? { accion: 'ficha', que: v } : { error: `ficha: ${ok.join(', ')}.` };
     }
-    case 'mesa':
-      return { accion: 'mesa', abrir: SI.test(v) };
-    case 'silencio':
-      return { accion: 'silencio', activar: SI.test(v) };
+    case 'mesa': {
+      const x = interruptor(v, 'mesa');
+      return typeof x === 'boolean' ? { accion: 'mesa', abrir: x } : x;
+    }
+    case 'silencio': {
+      const x = interruptor(v, 'silencio');
+      return typeof x === 'boolean' ? { accion: 'silencio', activar: x } : x;
+    }
     case 'reparto':
       return ['mapa', 'mitad', 'chat'].includes(v) ? { accion: 'reparto', alto: v } : { error: 'reparto: mapa, mitad o chat.' };
-    case 'pantalla_completa':
-      return { accion: 'pantalla', entrar: SI.test(v) };
+    case 'pantalla_completa': {
+      const x = interruptor(v, 'pantalla_completa');
+      return typeof x === 'boolean' ? { accion: 'pantalla', entrar: x } : x;
+    }
     case 'cerrar':
       return { accion: 'cerrar' };
   }
@@ -78,7 +93,9 @@ export const pantalla: Herramienta = {
     required: ['accion'],
   },
   plataformas: ['electrum'],
-  async ejecutar({ accion, valor }) {
+  async ejecutar({ accion, valor }, ctx) {
+    // Sin pantalla con mapa (Telegram, MCP) no hay nada que mover: se dice, no se finge (revisión de Codex en #170).
+    if (ctx?.canal !== 'mesa' || !ctx?.mapa) return { ok: false, texto: 'Esta conversación no tiene la pantalla del mapa abierta: no puedo cambiarla desde aquí. Decilo así.' };
     const c = comandoDePantalla(String(accion || ''), String(valor ?? ''));
     if ('error' in c) return { ok: false, texto: `No hice nada: ${c.error}` };
     const extra = c.accion === 'ficha' ? ' (necesita una concesión abierta: si no hay, primero mapa_volar a la concesión)' : '';

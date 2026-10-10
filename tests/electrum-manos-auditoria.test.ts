@@ -20,13 +20,20 @@ test('pantalla: lo pedido es el mismo comando que ya ejecuta la voz', () => {
   assert.deepEqual(comandoDePantalla('mesa', 'no'), { accion: 'mesa', abrir: false });
   assert.ok('error' in comandoDePantalla('fondo', 'marciano'));
   assert.ok('error' in comandoDePantalla('borrar', 'todo'), 'lo que no es un control no se hace');
+  // Un interruptor sin valor no se adivina: no apaga el 3D por omisión.
+  for (const a of ['tres_d', 'mesa', 'silencio', 'pantalla_completa']) assert.ok('error' in comandoDePantalla(a, ''), a);
+  assert.deepEqual(comandoDePantalla('tres_d', 'no'), { accion: 'tresD', activar: false });
 });
 
 test('pantalla: manda la orden a la interfaz y no dice que hizo lo que no hizo', async () => {
-  const r = await pantalla.ejecutar({ accion: 'fondo', valor: 'satelite' }, {} as any);
+  const web = { canal: 'mesa', mapa: { capas: [] } } as any;
+  const tg = await pantalla.ejecutar({ accion: 'fondo', valor: 'satelite' }, { canal: 'telegram' } as any);
+  assert.equal(tg.ok, false, 'en Telegram no hay pantalla que cambiar');
+  assert.equal(tg.ui, undefined);
+  const r = await pantalla.ejecutar({ accion: 'fondo', valor: 'satelite' }, web);
   assert.equal(r.ok, true);
   assert.deepEqual(r.ui, { accion: 'comando', comando: { accion: 'fondo', cual: 'satelite' } });
-  const mal = await pantalla.ejecutar({ accion: 'vista', valor: 'nada' }, {} as any);
+  const mal = await pantalla.ejecutar({ accion: 'vista', valor: 'nada' }, web);
   assert.equal(mal.ok, false);
   assert.equal(mal.ui, undefined);
 });
