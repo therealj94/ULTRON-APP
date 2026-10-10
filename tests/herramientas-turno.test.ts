@@ -103,8 +103,9 @@ test('lo del teléfono ya no se queda sin manos: lleva las del teléfono (HERRAM
   assert.equal(sinExtra.todas, false);
   assert.ok(sinExtra.grupos.includes('telefono'));
   assert.ok(sinExtra.nombres.length > 1, 'antes: solo buscar_web');
-  // Cuando el otro equipo conecte sus manos, van solas.
+  // Una mano nueva del teléfono entra sola en el núcleo.
   const falsa = { toolSpec: { name: 'musica_telefono', description: 'x', inputSchema: { json: { type: 'object', properties: {} } } } } as any;
+  const antes = [...HERRAMIENTAS_NUCLEO_EXTRA];
   HERRAMIENTAS_NUCLEO_EXTRA.push('musica_telefono');
   try {
     assert.ok(nombresDelNucleo().includes('musica_telefono'));
@@ -114,7 +115,7 @@ test('lo del teléfono ya no se queda sin manos: lleva las del teléfono (HERRAM
       assert.equal(e.todas, false, m);
     }
   } finally {
-    HERRAMIENTAS_NUCLEO_EXTRA.length = 0;
+    HERRAMIENTAS_NUCLEO_EXTRA.splice(0, HERRAMIENTAS_NUCLEO_EXTRA.length, ...antes);
   }
 });
 
@@ -155,4 +156,10 @@ test('server.ts: la línea por turno, la re-pregunta con todas y sin filtro de t
   const trozo = s.slice(i, i + 1600);
   assert.match(trozo, /herramientasTodas,\s*senal/);
   assert.doesNotMatch(trozo, /if \(fueraDeTema\(h\.nombre, h\.input\)\) return false/);
+});
+
+test('las manos del teléfono del núcleo son las mismas que define el cerebro (lib/cerebro-manos.ts HERRAMIENTAS_TELEFONO)', async () => {
+  const { HERRAMIENTAS_NUCLEO_EXTRA } = await import('../lib/herramientas-turno');
+  const { HERRAMIENTAS_TELEFONO } = await import('../lib/cerebro-manos');
+  assert.deepEqual([...HERRAMIENTAS_NUCLEO_EXTRA].sort(), [...HERRAMIENTAS_TELEFONO].sort());
 });

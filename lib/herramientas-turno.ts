@@ -85,7 +85,7 @@ export const HERRAMIENTAS_NUCLEO: readonly string[] = [
  * van aquí (se lee en cada turno, no al cargar el módulo) y entran en el núcleo; un pedido del teléfono («pon música»,
  * «abre Spotify») ya no se queda sin manos: lleva estas y el núcleo. Vacía hasta que lleguen.
  */
-export const HERRAMIENTAS_NUCLEO_EXTRA: string[] = [];
+export const HERRAMIENTAS_NUCLEO_EXTRA: string[] = ['abrir_en_telefono', 'alarma_telefono', 'sms_telefono', 'evento_telefono'];
 
 /** Las herramientas que van siempre (el núcleo y las del teléfono). */
 export function nombresDelNucleo(): string[] {
