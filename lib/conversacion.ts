@@ -184,6 +184,12 @@ export function fusionarHilo(opts: {
   /** Caracteres por mensaje (la voz usa menos: cada ficha es tiempo antes de hablar). */
   maxCaracteres?: number;
   /**
+   * Caracteres de los últimos mensajes (los 2 últimos de AU-RA y los 2 últimos de la persona): lo que se acaba de decir
+   * no se corta a media frase (auditoría del 10-oct: en la voz, 600 cortaban la oferta que su «sí» contestaba). Nunca
+   * menos que `maxCaracteres`.
+   */
+  maxCaracteresRecientes?: number;
+  /**
    * Lo que SÍ contestó en turnos cuya respuesta no quedó en la memoria (una herramienta incierta o parcial, AUR07; una
    * respuesta cortada): `respuestasSinMemoria`. Va en su lugar del hilo, así esas frases no salen como «sin respuesta».
    */
@@ -193,35 +199,44 @@ export function fusionarHilo(opts: {
   const cliente = opts.cliente || [];
   const src = durable.length >= 2 ? durable : [...cliente, ...durable];
   const tope = opts.maxCaracteres ?? 1800;
+  const topeReciente = Math.max(tope, opts.maxCaracteresRecientes ?? tope);
+  // Se arma con el texto hasta el tope de los recientes; al final, cada uno con su tope (viejo o reciente).
   const msgs: MsgHilo[] = [];
   for (const t of src.slice(-(opts.max ?? 16))) {
-    const content = String(t.texto || '').trim().slice(0, tope);
+    const content = String(t.texto || '').trim().slice(0, topeReciente);
     if (!content) continue;
     const role: 'user' | 'assistant' = t.rol === 'ultron' || t.rol === 'assistant' ? 'assistant' : 'user';
     msgs.push({ role, content });
   }
+  const corto = (x: string) => x.slice(0, tope);
   // Revisión independiente (7-oct, M3): la respuesta que sí dio y no quedó en la memoria vuelve a su lugar (detrás de la
   // frase que contestó, si no tiene ya una respuesta): esa frase no estaba «sin respuesta».
   const respondidas = [...(opts.respondidas || [])];
   if (respondidas.length) {
     for (let k = 0; k < msgs.length; k++) {
       if (msgs[k].role !== 'user' || msgs[k + 1]?.role === 'assistant') continue;
-      const j = respondidas.findIndex((r) => String(r.dijo || '').trim().slice(0, tope) === msgs[k].content);
+      const j = respondidas.findIndex((r) => String(r.dijo || '').trim().slice(0, tope) === corto(msgs[k].content));
       if (j < 0) continue;
-      msgs.splice(k + 1, 0, { role: 'assistant', content: String(respondidas[j].respuesta || '').trim().slice(0, tope) });
+      msgs.splice(k + 1, 0, { role: 'assistant', content: String(respondidas[j].respuesta || '').trim().slice(0, topeReciente) });
       respondidas.splice(j, 1);
       k++;
     }
   }
   const actual = String(opts.mensaje || '').trim().slice(0, tope);
-  if (msgs.length && msgs[msgs.length - 1].role === 'user' && msgs[msgs.length - 1].content === actual) {
+  if (msgs.length && msgs[msgs.length - 1].role === 'user' && corto(msgs[msgs.length - 1].content) === actual) {
     msgs.pop();
+  }
+  // Cada uno con su tope: los 2 últimos de cada lado, el de los recientes; los demás, el de siempre.
+  const vistos = { user: 0, assistant: 0 };
+  for (let k = msgs.length - 1; k >= 0; k--) {
+    const reciente = ++vistos[msgs[k].role] <= 2;
+    if (!reciente) msgs[k] = { ...msgs[k], content: corto(msgs[k].content) };
   }
   // Las frases suyas del final que quedaron sin respuesta de AU-RA, antes de la de ahora (José, 7-oct): van juntas y
   // marcadas como de antes, no sueltas (sin mensaje de ahora, como para precalentar, el hilo queda tal cual).
   let i = msgs.length;
   while (i > 0 && msgs[i - 1].role === 'user') i--;
-  if (actual && i < msgs.length) msgs.splice(i, msgs.length - i, { role: 'user', content: notaSinRespuesta(msgs.slice(i).map((m) => m.content)) });
+  if (actual && i < msgs.length) msgs.splice(i, msgs.length - i, { role: 'user', content: notaSinRespuesta(msgs.slice(i).map((m) => corto(m.content))) });
   return msgs;
 }
 

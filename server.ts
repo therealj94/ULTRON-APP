@@ -18,7 +18,7 @@ import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server
 import { montarMotorVoz, motorDe } from './server/voz-motor';
 import { anotarDesdeRuta } from './server/voz-medidas';
 import { interruptor, precargarInterruptores } from './lib/interruptores';
-import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
+import { LIMITES_TEXTO, LIMITES_VOZ, TEXTO_CARACTERES_HILO, VOZ_CARACTERES_HILO, VOZ_CARACTERES_RECIENTES, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
@@ -202,7 +202,7 @@ import { esFraseDeRelleno } from './mobile/src/lib/fraseNueva';
 import { diceQueYaLoDijo, guardaRepeticion, mismaPreguntaQue, notaNoRepetir, pideRepetir, previasDe, vaRepitiendo } from './lib/repeticion';
 // ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
 import { esCharlaParaRuta, esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
-import { herramientasSegunFrase } from './lib/herramientas-turno';
+import { herramientasDeLaOferta, herramientasSegunFrase, lineaHerramientasOfrecidas } from './lib/herramientas-turno';
 import { acotarPedido } from './lib/tope-pedido';
 import { abrirEspeculativo, confirmarEspeculativoConDetalle, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
 import { TOPE_ENRIQUECER_VOZ_MS, plazoDeEnriquecer } from './server/enriquecer-voz';
@@ -3218,7 +3218,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     cliente: clienteHilo,
     mensaje: message,
     max: ventana,
-    maxCaracteres: compacto ? 600 : 1800,
+    maxCaracteres: compacto ? VOZ_CARACTERES_HILO : TEXTO_CARACTERES_HILO,
+    maxCaracteresRecientes: compacto ? VOZ_CARACTERES_RECIENTES : undefined,
     // Lo que sí contestó en turnos que no quedaron en la memoria (AUR07, cortados): esas frases no van como «sin respuesta» (M3).
     respondidas: respuestasSinMemoria(claveHiloTurno(body, quienMem)),
   });
@@ -6062,13 +6063,19 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
    * PENDIENTES INSISTENTES (José, 7-oct): el WhatsApp a alguien que quedó pendiente empujaba la herramienta en turnos que
    * no hablaban de mensajes. Una herramienta fuera de tema no se corre (lib/cerebro-manos.ts herramientaFueraDeTema).
    */
+  // Auditoría del 10-oct: un «sí», «dale», «mándalo» a la oferta de AU-RA, o lo que sigue a un WhatsApp sin palabras de
+  // mensajes («y que traiga pan»), conserva las herramientas de esa oferta (lib/herramientas-turno.ts herramientasDeLaOferta).
+  const anteriorDelHilo = [...hilo].reverse().find((m) => m.role === 'assistant')?.content;
+  const deLaOferta = new Set(herramientasDeLaOferta(p.crudo || message, anteriorDelHilo, (p.contextoApp?.contactos || []).map((c) => String(c?.nombre || ''))));
   const fueraDeTema = (nombre: string, input: Record<string, any>) =>
-    herramientaFueraDeTema(nombre, input, {
-      mensaje: p.crudo || message,
-      anterior: [...hilo].reverse().find((m) => m.role === 'assistant')?.content,
-      afirma: respuestaPura(p.crudo || message) === 'si',
-      esperaWhatsapp: !!p.dueno && (!!borradorWhatsappDe(p.dueno, p.ambito) || apartadosWhatsappDe(p.dueno, p.ambito).length > 0),
-    });
+    deLaOferta.has(nombre)
+      ? null
+      : herramientaFueraDeTema(nombre, input, {
+          mensaje: p.crudo || message,
+          anterior: anteriorDelHilo,
+          afirma: respuestaPura(p.crudo || message) === 'si',
+          esperaWhatsapp: !!p.dueno && (!!borradorWhatsappDe(p.dueno, p.ambito) || apartadosWhatsappDe(p.dueno, p.ambito).length > 0),
+        });
   const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, cierre: Cierre = COMPLETO, quien?: { modelo?: string; proveedor?: string }, corrioHerramienta = false) => {
     // Turno especulativo: las acciones, la memoria y el `done` esperan el «sí» del teléfono.
     if (!(await sigueEspeculativo())) return;
@@ -6349,6 +6356,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         })
       : null;
     const herramientasManos = eleccionManos ? eleccionManos.herramientas : herramientasTodas;
+    if (eleccionManos) console.log(`[cerebro manos] ${lineaHerramientasOfrecidas(eleccionManos, herramientasTodas.length)}`);
     const usarManos = !!p.systemManos && !p.foto && !/```/.test(message) && cerebroRapidoActivo();
     if (usarManos) {
       // La re-pregunta de «prometió y no lo hizo» va después de una respuesta ya completa: si esa falla, no es corte.
@@ -6429,8 +6437,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           enRepregunta = true;
           // Con TODAS las manos del turno (no solo las que eligió la frase): lo prometido se cumple aunque su herramienta
           // no hubiera ido en la primera vuelta, y «desde aquí no tengo cómo» solo sale si de verdad ninguna lo hace.
-          const sinElegir = eleccionManos && !eleccionManos.todas ? herramientasTodas.filter((t) => !herramientasManos.includes(t)).length : 0;
-          if (sinElegir) console.log(`[cerebro manos] prometió sin herramienta con ${herramientasManos.length} de ${herramientasTodas.length}: la re-pregunta va con todas`);
+          // Y SIN el filtro de «fuera de tema» (auditoría del 10-oct: con WhatsApp filtrado, la re-pregunta no podía
+          // recuperar nada): ya lo prometió; cumplirlo es lo honesto.
+          let saltoFiltro = false;
+          console.log(`[cerebro manos] prometió sin herramienta con ${herramientasManos.length} de ${herramientasTodas.length}: la re-pregunta va con todas (${herramientasTodas.length}), sin filtro de tema`);
           promesa = await cumplirLoDicho({
             dicho,
             disponibles: herramientasTodas.map((t) => String(t.toolSpec?.name || '')),
@@ -6444,9 +6454,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
                 senal
               ),
             usar: (h) => {
-              if (fueraDeTema(h.nombre, h.input)) return false;
               const linea = lineaDeHerramienta(h.nombre, h.input, Date.now(), opcionesManos(p.manosTurno));
               if (!linea) return false;
+              if (fueraDeTema(h.nombre, h.input)) saltoFiltro = true;
               usoManos = true;
               procesar(`\n${linea}\n`);
               return true;
@@ -6455,7 +6465,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           medida.correccion = promesa.correccion;
           if (promesa.correccion === 'repregunta') medida.repreguntaMs = promesa.ms;
           console.log(
-            `[cerebro manos] prometió sin herramienta; ${promesa.correccion === 'local' ? 'ninguna herramienta del turno lo cumple: se corrige sin volver a preguntar' : promesa.cumplida ? 'la usó al pedírsela' : 'no usó ninguna al pedírsela'}`
+            `[cerebro manos] prometió sin herramienta; ${promesa.correccion === 'local' ? 'ninguna herramienta del turno lo cumple: se corrige sin volver a preguntar' : promesa.cumplida ? 'la usó al pedírsela' : 'no usó ninguna al pedírsela'}${saltoFiltro ? ' (re-pregunta saltó el filtro de tema)' : ''}`
           );
         }
       } catch (e: any) {

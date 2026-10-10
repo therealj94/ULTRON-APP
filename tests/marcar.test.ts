@@ -213,5 +213,6 @@ test('llamar_numero va solo cuando la frase pide llamar (o es un número)', () =
   assert.ok(herramientasDelTurno(MANOS_TURNO).some((t) => t.toolSpec?.name === 'llamar_numero'));
   assert.ok(!herramientasDelTurno({ ...MANOS_TURNO, manos: MANOS.filter((m) => m !== 'marcar') }).some((t) => t.toolSpec?.name === 'llamar_numero'), 'sin la mano, no está');
   for (const m of ['llama a don Carlos del banco', 'márcale al 9876 5432', 'llámale a mi compadre por WhatsApp', 'el 9876 5432']) assert.ok(nombres(m).includes('llamar_numero'), m);
-  for (const m of ['¿cómo estás?', 'cuéntame un chiste', '¿cuánto está el dólar hoy?']) assert.ok(!nombres(m).includes('llamar_numero'), m);
+  // Auditoría del 10-oct: llamar_numero va en el núcleo (siempre); la charla no pide el GRUPO de llamada.
+  for (const m of ['¿cómo estás?', 'cuéntame un chiste', '¿cuánto está el dólar hoy?']) assert.ok(!herramientasSegunFrase(herramientasDelTurno(MANOS_TURNO), { mensaje: m }).grupos.includes('llamada'), m);
 });

@@ -192,8 +192,14 @@ export const CONGELAR_MAX_NUEVOS = 24;
 export const HILO_BASE = 16;
 /**
  * En la voz, menos hilo: 8 mensajes de base y la foto se rehace a los 12 nuevos (máximo 20 mensajes,
- * cada uno de hasta 600 caracteres en server.ts). Cada ficha del prompt es tiempo antes de hablar.
+ * cada uno de hasta VOZ_CARACTERES_HILO en server.ts; los 2 últimos de AU-RA y de la persona, hasta
+ * VOZ_CARACTERES_RECIENTES). Cada ficha del prompt es tiempo antes de hablar.
  */
+export const VOZ_CARACTERES_HILO = 600;
+/** Auditoría del 10-oct: lo que se acaba de decir (la oferta que su «sí» contesta) no se corta a los 600. */
+export const VOZ_CARACTERES_RECIENTES = 1_200;
+/** Escrito: caracteres por mensaje del hilo. */
+export const TEXTO_CARACTERES_HILO = 1_800;
 export type LimitesHilo = { base: number; maxNuevos: number };
 export const LIMITES_TEXTO: LimitesHilo = { base: HILO_BASE, maxNuevos: CONGELAR_MAX_NUEVOS };
 export const LIMITES_VOZ: LimitesHilo = { base: 8, maxNuevos: 12 };

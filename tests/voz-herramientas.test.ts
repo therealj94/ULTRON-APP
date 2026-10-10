@@ -28,6 +28,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { EventStreamCodec } from '@smithy/core/event-streams';
 import { fichasEstimadas } from '../lib/tiempos-turno';
+import { nombresDelNucleo } from '../lib/herramientas-turno';
 
 const RAIZ = process.cwd();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aura-voz-herramientas-'));
@@ -224,9 +225,12 @@ after(() => {
   if (tabla.length) console.log(`\n[herramientas voz] el pedido de cada frase hablada:\n${tabla.join('\n')}\n`);
 });
 
-/** El presupuesto de la charla: herramientas y fichas del pedido entero. */
-const CHARLA_MAX_HERRAMIENTAS = 3;
-const CHARLA_MAX_FICHAS = 5_500;
+/**
+ * El presupuesto de la charla: herramientas y fichas del pedido entero. Auditoría del 10-oct: el núcleo
+ * (lib/herramientas-turno.ts HERRAMIENTAS_NUCLEO, ~9 200 car., ~2,6 k fichas) va siempre; antes, solo buscar_web.
+ */
+const CHARLA_MAX_HERRAMIENTAS = nombresDelNucleo().length + 2;
+const CHARLA_MAX_FICHAS = 6_500;
 
 /* ------------------------------------------------------------------ las pruebas */
 
@@ -253,7 +257,8 @@ test('la charla, los saludos y las preguntas simples van con pocas herramientas 
     anotar(frase, m);
     assert.ok(m.nombres.length <= CHARLA_MAX_HERRAMIENTAS, `${frase}: ${m.nombres.length} herramientas (${m.nombres.join(', ')})`);
     assert.ok(m.fichas <= CHARLA_MAX_FICHAS, `${frase}: ~${m.fichas} fichas > ${CHARLA_MAX_FICHAS}`);
-    for (const privada of ['whatsapp', 'correo', 'computadora', 'crear_documento', 'llamar_contacto']) assert.ok(!m.nombres.includes(privada), `${frase}: lleva «${privada}»`);
+    // WhatsApp, el correo y las llamadas van en el núcleo (10-oct); lo pesado que la charla no pide, no.
+    for (const pesada of ['computadora', 'crear_documento', 'investigar', 'chat_aura', 'circulo']) assert.ok(!m.nombres.includes(pesada), `${frase}: lleva «${pesada}»`);
     // Lo que cuida a la persona va igual (las reglas de MANOS están en el system, no en las herramientas).
     assert.match(m.system, /Nunca digas que algo salió, se creó o se hizo si el resultado de la herramienta no lo dice/);
   }
@@ -298,8 +303,11 @@ test('José, 7-oct 00:30: WhatsApp no va si la frase no habla de mensajes, aunqu
   const { nuevos } = await turno('Bueno, y cuéntame algo bonito para relajarme');
   assert.ok(nuevos.length >= 1);
   anotar('(tras «pendiente un WhatsApp») cuéntame algo bonito', medir(nuevos[0]));
-  // Ni en la primera vuelta ni en otra (la de «no repitas» va sin herramientas).
-  for (const m of nuevos.map(medir)) assert.ok(!m.nombres.includes('whatsapp'), `lleva whatsapp: ${m.nombres.join(', ')}`);
+  // WhatsApp va en el núcleo (auditoría del 10-oct), pero la INTENCIÓN del turno no es de mensajes: el grupo no se arrastra
+  // (y si el modelo lo usara, el filtro de «fuera de tema» no lo corre).
+  const ofrecidas = stdout.split('\n').filter((l) => /herramientas ofrecidas/.test(l)).at(-1) || '';
+  assert.match(ofrecidas, /intención (?!.*(whatsapp|mensajes))/, ofrecidas);
+  for (const m of nuevos.map(medir)) assert.ok(!m.nombres.includes('chat_aura') && !m.nombres.includes('leer_mensajes'), `lleva el grupo de mensajes: ${m.nombres.join(', ')}`);
   // Un «sí» a una propuesta de mensaje de AU-RA sí lo lleva (la decisión pendiente es de un mensaje).
   contestar = (ultimo) => (/Marisol/i.test(ultimo) ? '[EMO: neutral] ¿Le escribo a Marisol que la reunión pasa a las 3?' : '[EMO: neutral] Va.');
   await turno('Hay que avisarle a Marisol lo de la reunión');
