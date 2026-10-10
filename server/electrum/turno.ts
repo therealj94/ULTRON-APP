@@ -233,7 +233,7 @@ export const REGLAS_MAPA =
 /** ¿Habla del mapa? Entonces van las herramientas del índice de capas (modo mapa) y no los especialistas. */
 // Solo cuando nombra el mapa o sus capas: «muéstrame los vencimientos» es del catastro, no del mapa
 // (revisión de Codex en #169: un verbo suelto se llevaba las herramientas del especialista).
-const DEL_MAPA = /\b(capas?|mapa|indice de capas|leyenda|filtr\w*)\b/;
+const DEL_MAPA = /\b(capas?|mapa|indice de capas|leyenda|filtr\w*|satelite|relieve|3d|timelapse|pantalla|vertices|poligono)\b/;
 
 /**
  * Lo que dice internet sobre la pregunta: los mejores resultados y el texto de las dos primeras

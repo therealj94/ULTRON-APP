@@ -22,6 +22,9 @@ import type { Emocion } from '../lib/emocion';
 import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
 import { IndiceCapas, type OrdenIndice } from './mapa/IndiceCapas';
+
+/** Lo que Dr Electrum puede accionar en pantalla (server/electrum/manos-pantalla.ts). Ni salir ni el micrófono. */
+const COMANDOS_DEL_CEREBRO = new Set(['fondo', 'tresD', 'pais', 'norte', 'cenital', 'inclinar', 'orbitar', 'ubicacion', 'zoom', 'rotar', 'mover', 'abrir', 'ficha', 'mesa', 'silencio', 'reparto', 'pantalla', 'cerrar']);
 import type { MuestrasEncendidas, PedidoCapas } from './mapa/captura';
 import { Tablero } from './mapa/Tablero';
 import { Recorrido, prepararRecorrido, salirPantallaCompleta, entrarPantallaCompleta, type Controles, type ModoRecorrido } from './demo/Recorrido';
@@ -570,6 +573,10 @@ export default function App() {
     [terminarRecorrido, cambiarAlto, elegirPanel]
   );
 
+  // alUi se arma una sola vez: llega a ejecutarComando por una referencia.
+  const ejecutarRef = useRef(ejecutarComando);
+  ejecutarRef.current = ejecutarComando;
+
   const enrutarDicho = useCallback(
     async (texto: string) => {
       setOidoUltimo(texto);
@@ -762,6 +769,10 @@ export default function App() {
         if (d.mineral) pedirCapas({ mostrar: true, que: 'catastro' });
       } else if (d.accion === 'capa' && d.geojson) {
         setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
+      } else if (d.accion === 'comando' && d.comando && typeof d.comando === 'object') {
+        // La mano «pantalla» de Dr Electrum: los mismos controles que la voz (fondo, 3D, paneles, ficha…).
+        const c = d.comando as Comando;
+        if (COMANDOS_DEL_CEREBRO.has(c.accion)) ejecutarRef.current?.(c);
       } else if (d.accion === 'indice' && Array.isArray(d.ordenes)) {
         setOrdenesIndice({ n: Date.now() + Math.random(), lista: d.ordenes as OrdenIndice[] });
       } else if (d.accion === 'capas' && typeof d.que === 'string') {

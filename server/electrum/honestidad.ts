@@ -26,7 +26,7 @@ export type ClaseAfirmacion = 'informe' | 'mapa' | 'alerta' | 'envio' | 'guardad
 /** Las herramientas de Electrum que escriben (lib/manos/memoria.ts). */
 const ESCRIBEN = new Set(['entidad_registrar', 'entidad_relacionar', 'entidad_evento']);
 /** Las órdenes que mueven el mapa (manos.ts y las garantías). */
-const ORDENES_MAPA = new Set(['volar', 'capa', 'candidatas', 'filtrar', 'resaltar', 'geologia']);
+const ORDENES_MAPA = new Set(['volar', 'capa', 'candidatas', 'filtrar', 'resaltar', 'geologia', 'indice', 'comando']);
 
 /** Los recibos de este turno: los pasos que terminaron bien y lo que llegó a la pantalla. */
 export function recibosElectrum(traza: ReadonlyArray<{ herramienta: string; ok: boolean }>, ui: ReadonlyArray<Record<string, unknown>> = []): ReciboElectrum[] {

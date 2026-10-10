@@ -223,7 +223,9 @@ export async function resolverZona(z: Zona): Promise<ZonaResuelta | { error: str
     const ids = (await capasPorRol()).filter((x) => x.rol === 'municipio').map((x) => x.id);
     if (!ids.length) return { error: 'No hay capa de municipios cargada.' };
     const [f] = await fila(
-      `SELECT ${nombreDe('municipio')} AS nombre, e.geom AS g FROM entidad_geo e
+      // Simplificado a ~50 m: el contorno a resolución completa (miles de vértices) contra todas las
+      // capas geológicas pasaba el tiempo de la consulta (auditoría de manos, 10/10/2026).
+      `SELECT ${nombreDe('municipio')} AS nombre, ST_SimplifyPreserveTopology(e.geom, 0.0005) AS g FROM entidad_geo e
         WHERE e.capa_id = ANY($2) AND unaccent(lower(${nombreDe('municipio')})) = unaccent(lower($1))`,
       [z.municipio.trim(), ids]
     );
@@ -252,7 +254,8 @@ const VALIDA = `CASE WHEN ST_IsValid(e.geom) THEN e.geom ELSE ST_CollectionExtra
 const TEXTO_UNIDAD = `(coalesce(e.atributos->>'DESCRIPCION', '') || ' ' || coalesce(e.atributos->>'DESCRIPCION_ORIGINAL', '') || ' ' || coalesce(e.nombre, ''))`;
 const ES_INTRUSIVA = `(coalesce(e.atributos->>'CLASE_ROCA', '') = 'intrusiva' OR (coalesce(e.atributos->>'CLASE_ROCA', '') = '' AND ${TEXTO_UNIDAD} ~* 'plut|intrus|granit|diorit|tonalit|batolit'))`;
 const ES_CARBONATO = `(coalesce(e.atributos->>'CLASE_ROCA', 'sedimentaria') IN ('sedimentaria', '') AND ${TEXTO_UNIDAD} ~* 'caliz|carbonat|limestone|marin')`;
-const ATR = (patron: string) => `(SELECT trim(a.v) FROM jsonb_each_text(e.atributos) AS a(k, v) WHERE a.k ~* '${patron}' AND a.v ~ '[A-Za-z]' LIMIT 1)`;
+// `description` de un KML no es un campo: es la tabla HTML de atributos (sus campos ya salen aparte).
+const ATR = (patron: string) => `(SELECT trim(a.v) FROM jsonb_each_text(e.atributos) AS a(k, v) WHERE a.k ~* '${patron}' AND a.k !~* '^description$' AND a.v ~ '[A-Za-z]' AND a.v !~ '^\\s*[{<]' LIMIT 1)`;
 /*
  * El nombre de una unidad de roca. Los mapas geológicos locales (Minas de Oro, Olancho, La Lola…)
  * no traen UNIDAD/DESCRIPCION como los de data/geologia, y la unidad salía «entidad 61» o «0 0»: el
