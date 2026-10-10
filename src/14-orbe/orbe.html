@@ -88,11 +88,19 @@ if (params.has('hud')) document.body.classList.add('hud');
 const canvas = document.getElementById('c');
 const hud = document.getElementById('hud');
 const cap = document.getElementById('cap');
-const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// «Reducir movimiento»: el del sistema (si la WebView lo pasa), el que manda la app al arrancar o después ({tipo:'movimiento'}).
+let REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches || OPC.quieto === true;
 const COARSE = matchMedia('(pointer:coarse)').matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+/* ENCUADRE «CENTRO» (la burbuja del botón lateral, José 10-oct: «mira el círculo de asistente»): el lienzo es un cuadro,
+   el orbe va ENTERO y centrado (radio = `radio` × lado menor), con su disco azul noche detrás (`disco` × lado menor) y
+   transparente alrededor (la burbuja va encima de otra app). Sin palabras de partículas: el texto lo pone la app. */
+const CENTRO = OPC.centro && typeof OPC.centro === 'object'
+  ? {radio: Math.max(0.1, Math.min(0.45, +OPC.centro.radio || 0.28)), disco: Math.max(0, Math.min(0.5, +OPC.centro.disco || 0))}
+  : null;
+if (CENTRO){ document.documentElement.style.background = 'transparent'; document.body.style.background = 'transparent'; }
 
 /* ---------- contexto ---------- */
-const ctxOpts = {alpha:false, antialias:false, depth:false, stencil:false, premultipliedAlpha:false,
+const ctxOpts = {alpha:!!CENTRO, antialias:false, depth:false, stencil:false, premultipliedAlpha:!!CENTRO,
   preserveDrawingBuffer:false, powerPreference:'high-performance'};
 let gl = params.has('webgl1') ? null : canvas.getContext('webgl2', ctxOpts);
 const GL2 = !!gl;
@@ -390,6 +398,7 @@ uniform vec2 uCenter;      // centro del orbe en px de pantalla
 uniform float uRadius;     // radio en px
 uniform vec3 uGlowCol;
 uniform float uGlow, uB1k, uB2k, uExpo, uTime;
+uniform float uCentro, uDisco;   // encuadre «centro»: 1 = transparente alrededor; radio del disco de fondo en px
 vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0);}
 float hash(vec2 p){p=fract(p*vec2(443.897,441.423));p+=dot(p,p.yx+19.19);return fract((p.x+p.y)*p.x);}
 void main(){
@@ -397,6 +406,25 @@ void main(){
   vec3 c=TEX(uScene,vUv).rgb;
   c+=TEX(uB1,vUv).rgb*uB1k+TEX(uB2,vUv).rgb*uB2k;
   float d=length(fc-uCenter)/uRadius;
+  if(uCentro>0.5){
+    // La burbuja: sin fondo propio. El orbe y su halo, un disco azul noche detrás (más claro al centro, borde suave) y
+    // una sombra tenue alrededor que lo separa de cualquier app; nada se corta contra el borde cuadrado del lienzo.
+    c+=uGlowCol*(uGlow*exp(-d*d*28.0)*1.6+uGlow*0.30*exp(-d*d*3.2));
+    vec3 m=pow(aces(c*uExpo),vec3(1.0/2.2));
+    float rr=length(fc-uRes*0.5);
+    float borde=min(uRes.x,uRes.y)*0.5;
+    m*=1.0-smoothstep(borde*0.80,borde*0.99,rr);
+    float disco=uDisco>0.0?1.0-smoothstep(uDisco*0.965,uDisco*1.012,rr):0.0;
+    float sombra=uDisco>0.0?(1.0-smoothstep(uDisco,min(borde,uDisco*1.22),rr))*0.32:0.0;
+    vec3 navy=mix(vec3(0.050,0.068,0.135),vec3(0.016,0.022,0.052),smoothstep(0.0,uDisco+1.0,rr));
+    float aro=uDisco>0.0?exp(-pow((rr-uDisco*0.985)/(uDisco*0.012+1.0),2.0))*0.10:0.0;
+    float lm=max(m.r,max(m.g,m.b));
+    vec3 p=m+(navy*disco*0.94+vec3(0.55,0.62,0.80)*aro)*(1.0-lm);
+    float al=clamp(max(max(disco*0.94,sombra),max(p.r,max(p.g,p.b))),0.0,1.0);
+    p+=(hash(fc+fract(uTime)*91.0)-0.5)/255.0*1.5*al;
+    FRAG=vec4(min(p,vec3(al)),al);
+    return;
+  }
   // fondo: negro profundo con un velo frío muy leve
   vec3 bg=vec3(0.0015,0.0025,0.005)+vec3(0.004,0.007,0.016)*exp(-d*d*0.25);
   // núcleo luminoso y halo atmosférico
@@ -541,7 +569,7 @@ const useQuad = () => GL2 ? gl.bindVertexArray(vaoQ) : bindQuad();
 let W = 2, H = 2, CW = 1, CH = 1, DPR = 1;
 let tScene = null, tB1 = null, tB1b = null, tB2 = null, tB2b = null;
 const FOV = 30*Math.PI/180, TANF = Math.tan(FOV/2);
-const cam = {D: 5, y: 0, wpp: 0.01, zText: 0.55, orbYFrac: 0.4, rPx: 100};
+const cam = {D: 5, y: 0, wpp: 0.01, zText: 0.55, orbYFrac: 0.4, rPx: 100, energia: 1};
 /* Lo que la app tapa arriba (su estado) y abajo (la barra): el orbe y sus palabras se acomodan en el resto,
    así nada de la app queda encima de lo que dice (José, 3-oct: «lo que dice y lo que digo se pegan»). */
 const MARGEN = {arriba: Math.max(0, +(OPC.margen && OPC.margen.arriba) || 0), abajo: Math.max(0, +(OPC.margen && OPC.margen.abajo) || 0)};
@@ -562,6 +590,10 @@ function resize(){
   const UH = Math.max(CH*0.3, CH - arriba - abajo);
   cam.orbYFrac = (arriba + UH*(portrait ? 0.36 : 0.385)) / CH;
   cam.rPx = Math.min(UH*(portrait?0.215:0.255), CW*0.335);
+  if (CENTRO){ cam.orbYFrac = 0.5; cam.rPx = Math.min(CW, CH)*CENTRO.radio; }
+  // En un orbe chico (la burbuja) las mismas partículas caen en menos píxeles: menos energía por partícula para que no
+  // se queme en blanco (el de la mesa mide ~140 px de radio).
+  cam.energia = CENTRO ? Math.max(0.35, Math.min(1, cam.rPx/140)) : 1;
   const k = cam.rPx*2*TANF/CH;
   cam.D = Math.sqrt(1 + 1/(k*k));
   cam.y = -(0.5-cam.orbYFrac)*2*cam.D*TANF;
@@ -614,6 +646,32 @@ function setState(s){
 let extLevel = 0, extAt = -99, micLevel = 0, synthLevel = 0, level = 0;
 const hist = new Float32Array(32); let histAcc = 0;
 function setLevel(v){ extLevel = Math.max(0, Math.min(1, +v || 0)); extAt = clock; }
+
+/* ---------- expresiones: la emoción del turno (José, 10-oct: «nos hace falta agregar más expresiones») ----------
+   La app manda {tipo:'expresion', nombre, A, B, C, ruido, brillo, giro, respiro:[amp,hz], latido:[amp,hz], radio, pulso,
+   estados:{thinking, searching, done}, ms, fuerza} (el vocabulario vive en la app: mobile/src/orbe/expresiones.ts).
+   Va ENCIMA del estado (escucha, piensa, habla…): mezcla su color, su movimiento y el brillo del núcleo con una
+   transición suave, dura `ms` y vuelve sola a lo neutro. {tipo:'expresion', nombre:'neutral'} la suelta antes. */
+const EXPR = {w: 0, meta: 0, hasta: -1, desde: -99, p: null, nombre: ''};
+function numero(v, d, lo, hi){ v = +v; if (!Number.isFinite(v)) v = d; return Math.max(lo, Math.min(hi, v)); }
+function color3(v, d){ return Array.isArray(v) && v.length === 3 ? v.map(x => numero(x, 0.5, 0, 2)) : d; }
+function par(v, d0, d1, hiA, hiB){ v = Array.isArray(v) ? v : []; return [numero(v[0], d0, 0, hiA), numero(v[1], d1, 0, hiB)]; }
+function setExpresion(d){
+  if (!d || !d.nombre || d.nombre === 'neutral'){ EXPR.meta = 0; EXPR.hasta = -1; return; }
+  const e = d.estados || {};
+  EXPR.p = {
+    A: color3(d.A, PAL.idle.A), B: color3(d.B, PAL.idle.B), C: color3(d.C, PAL.idle.C),
+    ruido: numero(d.ruido, 1, 0, 3), brillo: numero(d.brillo, 1, 0.2, 3), giro: numero(d.giro, 0, -1, 2),
+    respiro: par(d.respiro, 0, 0, 0.08, 4), latido: par(d.latido, 0, 0, 1, 4),
+    radio: numero(d.radio, 0, -0.15, 0.15), pulso: numero(d.pulso, 0, 0, 0.3),
+    piensa: numero(e.thinking, 0, 0, 1), busca: numero(e.searching, 0, 0, 1), listo: numero(e.done, 0, 0, 1),
+  };
+  EXPR.nombre = String(d.nombre);
+  EXPR.meta = numero(d.fuerza, 1, 0, 1);
+  EXPR.desde = clock;
+  EXPR.hasta = clock + numero(d.ms, 4500, 300, 60000)/1000;
+  if (EXPR.p.listo > 0) doneAt = clock;   // su onda de luz arranca con ella
+}
 
 /* ---------- sonidos (WebAudio, sintetizados: sin archivos) ----------
    Cortos y bajitos, para acompañar y no tapar la voz ni confundir al oído:
@@ -861,6 +919,7 @@ function dissolveAll(stagger){
 }
 
 function say(text, opts){
+  if (CENTRO) return;   // en la burbuja el texto lo pone la app, no las partículas
   opts = opts || {};
   text = String(text == null ? '' : text).normalize('NFC').trim();
   if (!text) return;
@@ -964,6 +1023,8 @@ function handle(d){
     }
     case 'boca': setLevel(Number(d.n) || 0); break;
     case 'decir': say(d.texto || d.text || '', {dur: d.dur, tts: d.tts === true}); break;
+    case 'expresion': setExpresion(d); break;
+    case 'movimiento': REDUCED = d.reducido === true || matchMedia('(prefers-reduced-motion: reduce)').matches; break;
     case 'callar': silence(); break;
     case 'sonido': SFX.activar(d.activo !== false); break;
     case 'margen': {
@@ -978,8 +1039,9 @@ try { window.chrome && window.chrome.webview && window.chrome.webview.addEventLi
 window.__aura = handle;
 window.AuraFace = {
   setState, say, silence, listen,
-  setLevel, setVoz: setLevel,
+  setLevel, setVoz: setLevel, setExpresion,
   get state(){ return state; },
+  get expresion(){ return EXPR.w > 0.01 ? {nombre: EXPR.nombre, w: Math.round(EXPR.w*100)/100} : null; },
   get speech(){ return speech ? {shown: speech.next, words: speech.items.length, ended: speech.ended} : null; },
   get stats(){ return {webgl: GL2 ? 2 : 1, hdr: !!HDR, particles: LADDER[qi].n, pool: POOL, dpr: DPR, fps: Math.round(fpsShown), quality: qi}; },
 };
@@ -1034,12 +1096,18 @@ function frame(now){
   level += (raw - level)*(raw > level ? 1 - Math.exp(-dt*28) : 1 - Math.exp(-dt*9));
   histAcc += dt;
   while (histAcc > 1/30){ histAcc -= 1/30; hist.copyWithin(1, 0, 31); hist[0] = level; }
+  // la expresión: entra rápido (~0,4 s), sale despacio (~1 s) y vence sola
+  if (EXPR.hasta >= 0 && clock > EXPR.hasta){ EXPR.meta = 0; EXPR.hasta = -1; }
+  EXPR.w += (EXPR.meta - EXPR.w)*(1 - Math.exp(-dt*(EXPR.meta > EXPR.w ? 3.2 : 1.3)));
+  const E = EXPR.p, ew = E ? EXPR.w : 0;
   const W_ = wgt, mv = REDUCED ? 0.35 : 1;
-  spin += dt*(0.06 + W_.thinking*0.55 + W_.searching*0.12 + W_.speaking*0.04)*mv;
-  swirl += dt*(W_.thinking*1.0)*mv;
+  spin += dt*(0.06 + W_.thinking*0.55 + W_.searching*0.12 + W_.speaking*0.04 + (E ? E.giro*ew : 0))*mv;
+  swirl += dt*(W_.thinking*1.0 + (E ? E.piensa*ew : 0))*mv;
   band += dt*(0.12 + W_.thinking*1.1 + W_.searching*0.3)*mv;
   render();
+  if (!pintado){ pintado = true; notify({tipo:'pintado'}); }
 }
+let pintado = false;
 function drawHud(){
   const st = {idle:'reposo', listening:'escucha', thinking:'piensa', searching:'busca', speaking:'habla', done:'listo'}[state];
   hud.innerHTML = `<b>AURA</b> · <span class="st">${st}</span><br>WebGL${GL2?2:1}${HDR?' · HDR':''} · ${(LADDER[qi].n/1000).toFixed(0)}k part. · ${Math.round(fpsShown)} fps`;
@@ -1070,10 +1138,25 @@ function render(){
   const cc = [vp[12], vp[13], vp[15]];
   const cx = (cc[0]/cc[2]*0.5+0.5)*W, cy = (cc[1]/cc[2]*0.5+0.5)*H;
   const W_ = wgt;
-  const breath = (Math.sin(t*0.85)*0.028*W_.idle + Math.sin(t*1.1)*0.01) * mv;
+  const E = EXPR.p, ew = E ? EXPR.w : 0;
+  let breath = (Math.sin(t*0.85)*0.028*W_.idle + Math.sin(t*1.1)*0.01) * mv;
+  let glowK = 1, noiseK = 1, latido = 0;
+  if (ew > 0.001){
+    // respiración propia, tamaño (sorpresa crece, preocupación se recoge), el golpe del inicio y el latido del núcleo
+    const pa = t - EXPR.desde;
+    breath += ew*(E.respiro[0]*Math.sin(t*E.respiro[1]*6.2832)*mv + E.radio)
+      + E.pulso*Math.exp(-pa*3.5)*(1 - Math.exp(-pa*18))*mv;
+    latido = ew*E.latido[0]*Math.pow(0.5 + 0.5*Math.sin(t*E.latido[1]*6.2832), 4)*(REDUCED ? 0.4 : 1);
+    glowK = 1 + (E.brillo - 1)*ew;
+    noiseK = 1 + (E.ruido - 1)*ew;
+  }
   const scanY = Math.sin(t*1.25)*0.92;
   const doneAge = Math.max(0, t - doneAt);
-  const colA = mix3('A'), colB = mix3('B'), colC = mix3('C');
+  let colA = mix3('A'), colB = mix3('B'), colC = mix3('C');
+  if (ew > 0.001){
+    const lerp = (a, b) => a.map((v, i) => v + (b[i] - v)*ew);
+    colA = lerp(colA, E.A); colB = lerp(colB, E.B); colC = lerp(colC, E.C);
+  }
 
   // ---- partículas → escena HDR
   gl.bindFramebuffer(gl.FRAMEBUFFER, tScene.fb); gl.viewport(0, 0, W, H);
@@ -1086,13 +1169,13 @@ function render(){
   gl.uniform1f(u.uTime, t); gl.uniform1f(u.uLevel, level);
   gl.uniform1f(u.uSpin, spin); gl.uniform1f(u.uSwirl, swirl); gl.uniform1f(u.uBand, band);
   gl.uniform1f(u.uScanY, scanY); gl.uniform1f(u.uDoneAge, doneAge); gl.uniform1f(u.uBreath, breath);
-  gl.uniform1f(u.uNoise, mix1('noise')*mv);
+  gl.uniform1f(u.uNoise, mix1('noise')*noiseK*mv);
   gl.uniform1f(u.uPx, H/(2*TANF)); gl.uniform1f(u.uMinPx, 1.35*Math.max(1, DPR*0.85)); gl.uniform1f(u.uDpr, DPR);
   // con menos partículas, puntos un poco más grandes para mantener la densidad visual
   gl.uniform1f(u.uSizeK, Math.sqrt(NMAX/LADDER[qi].n)*(COARSE?1.05:1.0));
-  gl.uniform4f(u.uW0, W_.idle, W_.listening, W_.thinking, W_.searching);
-  gl.uniform2f(u.uW1, W_.speaking, W_.done);
-  const I = INTENSITY*(0.62*Math.sqrt(36000/LADDER[qi].n));
+  gl.uniform4f(u.uW0, W_.idle, W_.listening, Math.min(1, W_.thinking + (E ? E.piensa*ew : 0)), Math.min(1, W_.searching + (E ? E.busca*ew : 0)));
+  gl.uniform2f(u.uW1, W_.speaking, Math.min(1, W_.done + (E ? E.listo*ew : 0)));
+  const I = INTENSITY*(0.62*Math.sqrt(36000/LADDER[qi].n))*cam.energia;
   gl.uniform3f(u.uColA, colA[0]*I, colA[1]*I, colA[2]*I);
   gl.uniform3f(u.uColB, colB[0]*I, colB[1]*I, colB[2]*I);
   gl.uniform3f(u.uColCore, colC[0]*I, colC[1]*I, colC[2]*I);
@@ -1126,7 +1209,8 @@ function render(){
   gl.uniform2f(c.uRes, W, H); gl.uniform2f(c.uCenter, cx, cy); gl.uniform1f(c.uRadius, cam.rPx*DPR);
   gl.uniform3fv(c.uGlowCol, colC);
   const flash = W_.done*Math.exp(-doneAge*1.6)*0.9 + Math.exp(-Math.max(0, clock - tapAt)*4)*0.45;
-  gl.uniform1f(c.uGlow, mix1('glow')*(1 + level*0.9*W_.speaking + level*0.5*W_.listening) + flash);
+  gl.uniform1f(c.uGlow, mix1('glow')*glowK*(1 + level*0.9*W_.speaking + level*0.5*W_.listening) + flash + latido);
+  gl.uniform1f(c.uCentro, CENTRO ? 1 : 0); gl.uniform1f(c.uDisco, CENTRO ? Math.min(W, H)*CENTRO.disco : 0);
   gl.uniform1f(c.uB1k, 0.42); gl.uniform1f(c.uB2k, 0.28); gl.uniform1f(c.uExpo, 1.0); gl.uniform1f(c.uTime, t);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   gl.activeTexture(gl.TEXTURE0);

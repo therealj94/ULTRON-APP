@@ -211,9 +211,22 @@ export class AvisoBurbuja {
 export class VueltaDeLaApp {
   private fase: 'nada' | 'esperando-fondo' | 'esperando-delante' = 'nada';
 
-  /** Se cerró la burbuja: `estadoAhora` es el AppState de este momento (si dice «active», es la burbuja que se va). */
-  empezar(estadoAhora: string) {
+  /**
+   * Se cerró la burbuja: `estadoAhora` es el AppState de este momento. Si dice «active» y la cerró JS (tocar fuera,
+   * atrás, el silencio, «Abrir en AURA»), es la burbuja que se va: se espera el ciclo fondo → activa.
+   *
+   * Con `fondo` (la burbuja se desmonta porque el nativo la terminó al dejar de verse) la burbuja YA no está delante: el
+   * ciclo fondo → activa pasó ANTES de este cierre. Revisión del 10-oct (José: tras cerrar la burbuja la mesa se quedó en
+   * «Micrófono apagado»): con la app ya delante se seguía esperando un «fondo» que no llegaba hasta salir de la app, el
+   * aviso «abierta» quedaba puesto y la mesa sin su micrófono. Devuelve true si hay que soltar el aviso YA.
+   */
+  empezar(estadoAhora: string, motivo?: MotivoCierre): boolean {
+    if (motivo === 'fondo' && estadoAhora === 'active') {
+      this.fase = 'nada';
+      return true;
+    }
     this.fase = estadoAhora === 'active' ? 'esperando-fondo' : 'esperando-delante';
+    return false;
   }
 
   cancelar() {

@@ -61,4 +61,7 @@ export const IMAGENES_ICONOS: Record<NombreIcono, number> = {
   alerta: require('../../assets/iconos/alerta.png'),
   llave: require('../../assets/iconos/llave.png'),
   ayudaCirculo: require('../../assets/iconos/ayudaCirculo.png'),
+  microfonoNo: require('../../assets/iconos/microfonoNo.png'),
+  detener: require('../../assets/iconos/detener.png'),
+  subtitulos: require('../../assets/iconos/subtitulos.png'),
 };
