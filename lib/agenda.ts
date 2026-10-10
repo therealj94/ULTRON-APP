@@ -16,7 +16,8 @@
  */
 import { almacenDurable, claveDe, huellaDueno, modificarDurable, type AlmacenDurable } from './durable';
 
-export type TipoAgenda = 'tarea' | 'objetivo';
+/** `aviso` (F04): un aviso «necesito tu decisión» de la bandeja de salida (lib/avisos-decision.ts). */
+export type TipoAgenda = 'tarea' | 'objetivo' | 'aviso';
 /** `intentos`: cuántas veces el planificador intentó arrancarla sin poder (vive aquí: un reinicio no lo pierde). */
 export type EntradaAgenda = { k: string; tipo: TipoAgenda; dueno: string; id: string; cuando: number; t: number; intentos?: number };
 type Agenda = { v: 1; entradas: EntradaAgenda[] };
@@ -72,7 +73,7 @@ export async function agendar(tipo: TipoAgenda, dueno: string, id: string, cuand
 export async function leerAgenda(a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; entradas: EntradaAgenda[] } | { ok: false; detalle: string }> {
   const l = await a.leer<Agenda>(claveAgenda()).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
   if (l.ok === false) return { ok: false, detalle: l.detalle };
-  const entradas = (l.valor?.entradas || []).filter((e) => e && typeof e.k === 'string' && (e.tipo === 'tarea' || e.tipo === 'objetivo'));
+  const entradas = (l.valor?.entradas || []).filter((e) => e && typeof e.k === 'string' && (e.tipo === 'tarea' || e.tipo === 'objetivo' || e.tipo === 'aviso'));
   return { ok: true, entradas: entradas.sort((x, y) => x.cuando - y.cuando) };
 }
 

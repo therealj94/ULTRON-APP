@@ -21,6 +21,7 @@ import {
   documentosVigentes,
   etiquetaEstadoObjetivo,
   evidenciasParaCerrar,
+  lineaCancelacion,
   type ResultadoObjetivo,
   type VistaObjetivo,
 } from '../lib/objetivos';
@@ -66,7 +67,8 @@ export function HojaObjetivo({ id, onCerrar }: Props) {
   const evidencias = o ? evidenciasParaCerrar(o, elegidos) : null;
 
   const tras = (r: ResultadoObjetivo) => {
-    const m = r.ok ? null : r.conflicto ? tr('Cambió mientras tanto: te muestro la versión nueva. No apliqué nada.', 'It changed in the meantime: here is the new version. Nothing was applied.') : r.mensaje;
+    // F01: cancelar dice cuál de los cuatro estados quedó (solicitada / pendientes cancelados / ya aceptada / incierto).
+    const m = r.ok ? (r.cancelacion ? lineaCancelacion(r.cancelacion, idioma) : null) : r.conflicto ? tr('Cambió mientras tanto: te muestro la versión nueva. No apliqué nada.', 'It changed in the meantime: here is the new version. Nothing was applied.') : r.mensaje;
     setAviso(m);
     if (m) AccessibilityInfo.announceForAccessibility(m);
   };

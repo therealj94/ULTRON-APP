@@ -27,6 +27,7 @@
  */
 import { cerrarEntrada, leerAgenda, type EntradaAgenda } from '../lib/agenda';
 import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, leerDurable, modificarDurable, PROCESO_DURABLE, type AlmacenDurable, type Lease } from '../lib/durable';
+import { entregarAviso } from '../lib/avisos-decision';
 import { cambiarObjetivo, esTerminalObjetivo, leerObjetivo, type Objetivo } from '../lib/objetivos';
 import { cambiarTarea, esDelPlanificador, esTerminal, leerTarea, type RegistroTarea } from '../lib/tareas-durables';
 import { reconciliarObjetivoConTareas, type DepsObjetivos } from './objetivos';
@@ -51,6 +52,8 @@ export type DepsPlanificador = {
   maxPorVuelta?: number;
   /** Cuántas investigaciones arranca el planificador por cuenta y día (por omisión `AURA_INVESTIGACIONES_DIA` o 10). */
   topeDiario?: number;
+  /** El azar del jitter de los reintentos de avisos (pruebas: determinista). */
+  azar?: () => number;
 };
 
 export const INTERVALO_PLANIFICADOR_MS = 60_000;
@@ -110,11 +113,12 @@ export function autorizacionDeArranque(reg: Pick<RegistroTarea, 'ejecutar' | 'ob
   return { ok: true };
 }
 
-export type ResumenVuelta = { ok: boolean; vistas: number; arrancadas: number; revisadas: number; objetivos: number; ocupadas: number; inciertas: number; detalle?: string };
+export type ResumenVuelta = { ok: boolean; vistas: number; arrancadas: number; revisadas: number; objetivos: number; ocupadas: number; inciertas: number; avisos?: number; detalle?: string };
 
 type Siguiente = { quitar: true } | { cuando: number; intentos?: number } | null;
 
 const claveLeaseObjetivo = (dueno: string, id: string) => claveDe('objetivos/leases', dueno, id);
+const claveLeaseAviso = (dueno: string, id: string) => claveDe('avisos/leases', dueno, id);
 
 /** Una vuelta del planificador. Nunca lanza. */
 export async function vueltaPlanificador(d: DepsPlanificador): Promise<ResumenVuelta> {
@@ -130,8 +134,8 @@ export async function vueltaPlanificador(d: DepsPlanificador): Promise<ResumenVu
   const objetivos = new Map<string, { dueno: string; id: string }>();
   for (const e of tocan) {
     r.vistas++;
-    const clave = e.tipo === 'tarea' ? claveLeaseTarea(e.dueno, e.id) : claveLeaseObjetivo(e.dueno, e.id);
-    const hecho = await conLease(clave, titular, d.leaseMs ?? LEASE_PLANIFICADOR_MS, (lease) => (e.tipo === 'tarea' ? trabajarTarea(e, lease, d, a, reloj, r, objetivos) : trabajarObjetivo(e, d, a, reloj, r)), { almacen: a, ahora: reloj }).catch(
+    const clave = e.tipo === 'tarea' ? claveLeaseTarea(e.dueno, e.id) : e.tipo === 'aviso' ? claveLeaseAviso(e.dueno, e.id) : claveLeaseObjetivo(e.dueno, e.id);
+    const hecho = await conLease(clave, titular, d.leaseMs ?? LEASE_PLANIFICADOR_MS, (lease) => (e.tipo === 'tarea' ? trabajarTarea(e, lease, d, a, reloj, r, objetivos) : e.tipo === 'aviso' ? trabajarAviso(e, d, a, reloj, r, titular) : trabajarObjetivo(e, d, a, reloj, r)), { almacen: a, ahora: reloj }).catch(
       (err) => ({ ok: false as const, detalle: String(err?.message || err) })
     );
     if (hecho.ok === false) {
@@ -284,10 +288,21 @@ async function trabajarObjetivo(e: EntradaAgenda, d: DepsPlanificador, a: Almace
   const l = await leerObjetivo(e.dueno, e.id, a);
   if (l.ok === false) return null;
   const obj = l.objetivo;
-  if (!obj || esTerminalObjetivo(obj.estado) || obj.estado !== 'incierto') return { quitar: true };
+  if (!obj || esTerminalObjetivo(obj.estado) || (obj.estado !== 'incierto' && obj.estado !== 'esperando-decision')) return { quitar: true };
   r.objetivos++;
+  // Esperando decisión: reconciliar encola sus avisos (crear una vez) y los intenta; los reintentos ya van por su cuenta.
   const final = await reconciliarObjetivoConTareas(e.dueno, obj, { revisarTarea: d.revisar, avisarDecision: d.avisarDecision, almacen: a, ahora: reloj() });
   return final.estado === 'incierto' ? { cuando: reloj() + OBJETIVO_INCIERTO_MS } : { quitar: true };
+}
+
+/** Un aviso de la bandeja de salida: un intento de entrega (reclamo con CAS dentro). */
+async function trabajarAviso(e: EntradaAgenda, d: DepsPlanificador, a: AlmacenDurable, reloj: () => number, r: ResumenVuelta, titular: string): Promise<Siguiente> {
+  const s = await entregarAviso(e.dueno, e.id, { transporte: d.avisarDecision, almacen: a, ahora: reloj(), azar: d.azar, titular });
+  r.avisos = (r.avisos || 0) + 1;
+  if (s.estado === 'pendiente' || s.estado === 'esperando') return { cuando: s.proximoIntento ?? reloj() + REINTENTO_MS };
+  // Otro lo tiene reclamado, o no se pudo leer/cerrar: la entrada se queda para la próxima vuelta.
+  if (s.estado === 'ocupado' || s.estado === 'almacen') return null;
+  return { quitar: true };
 }
 
 /* ------------------------------------------------------------------ el reloj */

@@ -15,14 +15,13 @@ import { idAparato } from '../lib/aparato';
 import { idiomaActual } from '../i18n';
 import type { Pedir } from '../lib/trabajos';
 import {
-  anotarVista,
+  crearAlmacenObjetivos,
   crearClienteObjetivos,
   decisionesSinElegir,
-  desdeParaCambios,
   lineaQueCambio,
   objetivoReciente,
-  type CambiosObjetivo,
   type DecisionObjetivo,
+  type EstadoAlmacenObjetivos,
   type ResultadoObjetivo,
   type VistaObjetivo,
   type VistosObjetivos,
@@ -49,88 +48,41 @@ export const SONDEO_OBJETIVOS_MS = 45_000;
 
 /* ------------------------------------------------------------------ el almacén compartido */
 
-type Estado = {
-  objetivos: VistaObjetivo[];
-  cargado: boolean;
-  error: string | null;
-  vistos: VistosObjetivos;
-  /** Lo último que dijo `cambios` por objetivo, con la revisión desde la que se pidió. */
-  cambios: Record<string, { desde: number; revision: number; c: CambiosObjetivo }>;
-};
-
-let estado: Estado = { objetivos: [], cargado: false, error: null, vistos: {}, cambios: {} };
-const oyentes = new Set<() => void>();
-function poner(cambio: Partial<Estado>) {
-  estado = { ...estado, ...cambio };
-  for (const f of oyentes) f();
-}
-const suscribir = (f: () => void) => {
-  oyentes.add(f);
-  return () => {
-    oyentes.delete(f);
-  };
-};
-const foto = () => estado;
-
-let vistosLeidos = false;
-async function leerVistos() {
-  if (vistosLeidos) return;
-  vistosLeidos = true;
-  try {
+/**
+ * F05: el almacén vive en lib/objetivos.ts (sin React, probado en Node): respuestas de otra generación de sesión no se
+ * aplican, la lista se funde por entidad y revisión (nunca hacia atrás) y una lista parcial no borra.
+ */
+const almacen = crearAlmacenObjetivos(clienteObjetivos, {
+  leerVistos: async () => {
     const s = await AsyncStorage.getItem(CLAVE_VISTOS);
-    const v = s ? (JSON.parse(s) as VistosObjetivos) : {};
-    if (v && typeof v === 'object') poner({ vistos: { ...v, ...estado.vistos } });
-  } catch {
-    /* sin lo guardado: todo cuenta como nuevo, que es lo honesto */
-  }
-}
+    return s ? (JSON.parse(s) as VistosObjetivos) : {};
+  },
+  guardarVistos: (v) => void AsyncStorage.setItem(CLAVE_VISTOS, JSON.stringify(v)).catch(() => undefined),
+});
+type Estado = EstadoAlmacenObjetivos;
+const estadoActual = () => almacen.foto();
 
 /** Este teléfono ya vio el objetivo en esta revisión (abrió su hoja o decidió desde la tarjeta). */
 export function marcarVisto(o: Pick<VistaObjetivo, 'id' | 'revision'>) {
-  const v = anotarVista(estado.vistos, o.id, o.revision, Date.now());
-  if (v === estado.vistos || JSON.stringify(v) === JSON.stringify(estado.vistos)) return;
-  poner({ vistos: v });
-  void AsyncStorage.setItem(CLAVE_VISTOS, JSON.stringify(v)).catch(() => undefined);
+  almacen.marcarVisto(o);
 }
 
-/** Lo que contestó el servidor (una acción o el objetivo de ahora de un 409) reemplaza lo que había. */
-export function aplicarObjetivo(o: VistaObjetivo | null | undefined) {
-  if (!o || typeof o.id !== 'string') return;
-  const previo = estado.objetivos.find((x) => x.id === o.id);
-  if (previo && previo.revision > o.revision) return;
-  const objetivos = [o, ...estado.objetivos.filter((x) => x.id !== o.id)].sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0));
-  poner({ objetivos });
+/**
+ * Lo que contestó el servidor (una acción o el objetivo de ahora de un 409), solo si es más nuevo que lo que se tiene y
+ * de la misma sesión (`generacion`: la de cuando se pidió).
+ */
+export function aplicarObjetivo(o: VistaObjetivo | null | undefined, generacion?: number) {
+  almacen.aplicar(o, generacion);
 }
 
-let enVuelo: Promise<void> | null = null;
-/** Pregunta la lista (una a la vez) y los cambios del más reciente. */
+/** Pregunta la lista (una a la vez por sesión) y los cambios del más reciente. */
 export function refrescarObjetivos(): Promise<void> {
-  if (enVuelo) return enVuelo;
-  enVuelo = (async () => {
-    await leerVistos();
-    const r = await clienteObjetivos.listar();
-    if (r.ok === false) {
-      if (r.sinSesion) poner({ objetivos: [], cargado: true, error: null, cambios: {} });
-      else poner({ error: r.mensaje });
-      return;
-    }
-    poner({ objetivos: r.objetivos, cargado: true, error: null });
-    const rec = objetivoReciente(r.objetivos);
-    if (!rec) return;
-    const desde = desdeParaCambios(estado.vistos, rec);
-    const ya = estado.cambios[rec.id];
-    if (ya && ya.desde === desde && ya.revision === rec.revision) return;
-    const c = await clienteObjetivos.cambios(rec.id, desde);
-    if (c) poner({ cambios: { ...estado.cambios, [rec.id]: { desde, revision: rec.revision, c } } });
-  })().finally(() => {
-    enVuelo = null;
-  });
-  return enVuelo;
+  return almacen.refrescar();
 }
 
-/** Al salir de la sesión: nada de la persona anterior se queda a la vista. */
+/** Al salir de la sesión: nada de la persona anterior se queda a la vista (y lo que estaba en vuelo ya no aplica). */
 export function olvidarObjetivos() {
-  poner({ objetivos: [], cargado: false, error: null, cambios: {} });
+  almacen.olvidar();
 }
 
 /* ------------------------------------------------------------------ decidir y controles */
@@ -140,9 +92,11 @@ export function olvidarObjetivos() {
  * (la hoja y la tarjeta muestran la versión nueva) y el resultado dice «Cambió mientras tanto».
  */
 export async function decidirObjetivo(o: Pick<VistaObjetivo, 'id' | 'revision'>, d: Pick<DecisionObjetivo, 'id'>, opcion: string): Promise<ResultadoObjetivo> {
+  const gen = almacen.generacion();
   const aparato = await idAparato().catch(() => '');
   const r = await clienteObjetivos.decidir(o.id, { decisionId: d.id, opcion, revisionVista: o.revision, ...(aparato ? { aparato } : {}) });
-  aplicarObjetivo(r.objetivo ?? null);
+  if (gen !== almacen.generacion()) return r; // salió de la sesión mientras tanto: nada de la anterior se aplica
+  aplicarObjetivo(r.objetivo ?? null, gen);
   if (r.ok) marcarVisto(r.objetivo || o);
   if (!r.ok && !r.objetivo && r.conflicto) void refrescarObjetivos();
   return r;
@@ -150,14 +104,17 @@ export async function decidirObjetivo(o: Pick<VistaObjetivo, 'id' | 'revision'>,
 
 /** Pausar, reanudar o cancelar con la revisión que se vio; lo que vuelva se aplica (también el objetivo de un 409). */
 export async function controlObjetivo(o: Pick<VistaObjetivo, 'id' | 'revision'>, control: 'pausar' | 'reanudar' | 'cancelar'): Promise<ResultadoObjetivo> {
+  const gen = almacen.generacion();
   const r = await clienteObjetivos[control](o.id, o.revision);
-  aplicarObjetivo(r.objetivo ?? null);
+  aplicarObjetivo(r.objetivo ?? null, gen);
+  if (!r.ok && !r.objetivo && r.conflicto && gen === almacen.generacion()) void refrescarObjetivos();
   return r;
 }
 
 export async function cerrarObjetivo(o: Pick<VistaObjetivo, 'id' | 'revision'>, evidencias: Parameters<typeof clienteObjetivos.cerrar>[2]): Promise<ResultadoObjetivo> {
+  const gen = almacen.generacion();
   const r = await clienteObjetivos.cerrar(o.id, o.revision, evidencias);
-  aplicarObjetivo(r.objetivo ?? null);
+  aplicarObjetivo(r.objetivo ?? null, gen);
   return r;
 }
 
@@ -165,20 +122,24 @@ export async function cerrarObjetivo(o: Pick<VistaObjetivo, 'id' | 'revision'>, 
 
 /** El almacén, para quien lo pinta. */
 export function useEstadoObjetivos(): Estado {
-  return useSyncExternalStore(suscribir, foto, foto);
+  return useSyncExternalStore(almacen.suscribir, almacen.foto, almacen.foto);
 }
 
 /**
  * En la mesa: pregunta mientras `activo` (la mesa a la vista y la app delante), despacio; al volver a primer plano,
- * enseguida. Sin sesión, nada.
+ * enseguida. Sin sesión, nada. `cuenta`: la de la sesión (otra cuenta = otra generación: se olvida lo anterior).
  */
-export function useObjetivos(o: { activo: boolean; conSesion: boolean }) {
+export function useObjetivos(o: { activo: boolean; conSesion: boolean; cuenta?: string | null }) {
   const s = useEstadoObjetivos();
   useEffect(() => {
     if (!o.conSesion) {
       olvidarObjetivos();
       return;
     }
+    if (o.cuenta !== undefined) almacen.sesion(o.cuenta);
+  }, [o.conSesion, o.cuenta]);
+  useEffect(() => {
+    if (!o.conSesion) return;
     if (!o.activo) return;
     void refrescarObjetivos();
     const r = setInterval(() => {
@@ -216,7 +177,7 @@ export type ObjetivoReciente = {
 export function useObjetivoReciente(): ObjetivoReciente {
   const s = useEstadoObjetivos();
   useEffect(() => {
-    if (!estado.cargado) void refrescarObjetivos();
+    if (!estadoActual().cargado) void refrescarObjetivos();
   }, []);
   const objetivo = useMemo(() => objetivoReciente(s.objetivos), [s.objetivos]);
   const c = objetivo ? s.cambios[objetivo.id] : undefined;
@@ -240,10 +201,13 @@ export function useObjetivo(id: string | null): { objetivo: VistaObjetivo | null
     setFallo(null);
     if (!id) return;
     let vivo = true;
-    void clienteObjetivos.ver(id).then((o) => {
-      if (!vivo) return;
-      if (o) aplicarObjetivo(o);
-      else setFallo(id);
+    const gen = almacen.generacion();
+    void clienteObjetivos.leer(id).then((r) => {
+      if (!vivo || gen !== almacen.generacion()) return;
+      if (r.estado === 'ok') return aplicarObjetivo(r.objetivo, gen);
+      // «Ya no existe / no es tuyo»: se quita de la vista (la lápida del cliente). Un fallo deja lo que había.
+      if (r.estado === 'no-existe') almacen.quitar(id, gen);
+      setFallo(id);
     });
     return () => {
       vivo = false;

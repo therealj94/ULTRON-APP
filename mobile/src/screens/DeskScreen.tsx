@@ -530,7 +530,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // Los objetivos con estado (Fase 2): «Continuar trabajo» con el más reciente y su hoja. Un aviso «Necesito tu decisión»
   // tocado pide la hoja de ESE objetivo (al montarse la mesa o al instante).
   const [objetivoAbierto, setObjetivoAbierto] = useState<string | null>(null);
-  useObjetivos({ activo: mesaActiva || !!objetivoAbierto, conSesion: !!user.correo });
+  useObjetivos({ activo: mesaActiva || !!objetivoAbierto, conSesion: !!user.correo, cuenta: user.correo || null });
   useEffect(() => {
     const p = tomarPedidoObjetivo();
     if (p) setObjetivoAbierto(p);

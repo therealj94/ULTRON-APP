@@ -1,14 +1,18 @@
 /**
  * LOS OBJETIVOS CON ESTADO EN EL SERVIDOR (Fase 2; la entidad vive en lib/objetivos.ts).
  *
- *   GET  /api/objetivos                                   → { objetivos: VistaObjetivo[], completo, noLeidos }
+ *   GET  /api/objetivos                                   → { objetivos: VistaObjetivo[], completo, noLeidos, proyeccion }
+ *                                                            (F05: cada uno reconciliado con sus tareas, como el detalle)
  *   GET  /api/objetivos/:id                               → { objetivo }   (reconciliado con sus tareas)
  *   GET  /api/objetivos/:id/cambios?desde=<revision>      → { revision, desde, resync, eventos[], campos{}, objetivo? }
  *   POST /api/objetivos {requestId, titulo, criterioCierre[], meta?, proyecto?, plataforma?, restricciones?, permisos?,
  *                        topeCosto?, siguientePaso?}       → 201 { objetivo, creado: true } | 200 { objetivo, creado: false }
  *   POST /api/objetivos/:id/decisiones {decisionId, opcion, revisionVista, aparato?}
  *                                                          → { objetivo, repetida? } | 409 { codigo, revision, objetivo }
- *   POST /api/objetivos/:id/pausar | /reanudar | /cancelar {revisionVista?}   → { objetivo, sinCambio? }
+ *   POST /api/objetivos/:id/pausar | /reanudar | /cancelar {revisionVista?}   → { objetivo, sinCambio?, cancelacion? }
+ *        cancelar (F01) revoca la autoridad pendiente ANTES de cancelar cada tarea y dice qué quedó: `cancelacion.estado`
+ *        pendientes-cancelados | accion-ya-aceptada | resultado-incierto (reintentable: cancelar otra vez es idempotente).
+ *        El punto de no retorno es el reclamo del despachador común (lib/puerta-efecto.ts).
  *   POST /api/objetivos/:id/cerrar {revisionVista?, evidencias: [{criterioId, tipo, ref, etiqueta?}]}
  *                                                          → { objetivo } | 409 { codigo: 'sin-evidencia' }
  *   POST /api/objetivos/:id/documentos {archivoId, revisionVista?}            → { objetivo, documento }
@@ -43,8 +47,12 @@ import {
 } from '../lib/objetivos';
 import { claveManifiesto, type ManifiestoArchivo } from '../lib/oficina/almacen';
 import { bloqueObjetivosTurno, objetivosAlCaso, type ObjetivoParaTurno } from '../lib/objetivos-turno';
-import { pedirDecisionPorPush, type PushDecision } from '../lib/push';
+import { agendar } from '../lib/agenda';
+import { encolarAvisoDecision, entregarAviso, type RefAviso } from '../lib/avisos-decision';
+import { datosPushDecision, enviarPush, pedirDecisionPorPush, type PushDecision } from '../lib/push';
 import { autorizarEjecucion, cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea, type Vinculo } from '../lib/tareas-durables';
+import { operacionDeBorrador } from '../lib/envios';
+import { PUNTO_SIN_RETORNO, revocarAutoridad } from '../lib/puerta-efecto';
 import { descartarBorradorDurable } from './borradores-durables';
 
 export type DepsObjetivos = {
@@ -72,39 +80,46 @@ const conCorreo = (c: string) => {
 
 /* ------------------------------------------------------------------ reconciliar y avisar */
 
-/** Las opciones de la decisión de una tarea, para los botones del aviso: sin «Editar» (pide texto), lo de riesgo primero. */
-function opcionesDeTarea(reg: RegistroTarea): { id: string; etiqueta: string }[] {
-  const ops = (reg.decision?.opciones || []).filter((o) => o.id !== 'editar');
-  const orden = (id: string) => (id === 'aprobar' || id.startsWith('elegir:') ? 0 : id === 'rechazar' ? 1 : 2);
-  return [...ops].sort((x, y) => orden(x.id) - orden(y.id)).slice(0, 3).map((o) => ({ id: o.id, etiqueta: o.etiqueta }));
-}
-
 /**
- * «Necesito tu decisión» por cada decisión pendiente del objetivo y por cada tarea suya que espera aprobación. El envío
- * se deduplica por decisión + revisión (lib/push.ts): llamarlo dos veces no avisa dos veces. Nunca lanza.
+ * «Necesito tu decisión» por cada decisión pendiente del objetivo y por cada tarea suya que espera aprobación (F04): cada
+ * una queda en la bandeja de salida durable (lib/avisos-decision.ts, una vez por decisión + revisión) y se intenta
+ * entregar ya con `avisar` (el transporte). Si falla, el planificador la reintenta con espera; si la decisión cambia o se
+ * resuelve antes, no sale. Sin `avisar` solo se encola (la entrega la hace el planificador). Llamarlo dos veces no avisa
+ * dos veces. Devuelve cuántas decisiones esperan. Nunca lanza.
  */
-export async function avisarDecisionesPendientes(correo: string, obj: Objetivo, tareas: (RegistroTarea | null)[], avisar?: DepsObjetivos['avisarDecision']): Promise<number> {
-  if (!avisar || obj.estado !== 'esperando-decision' || esTerminalObjetivo(obj.estado)) return 0;
-  const pedidos: PushDecision[] = [];
-  for (const d of obj.decisiones) if (!d.elegida) pedidos.push({ objetivoId: obj.id, decisionId: d.id, revision: d.version, pregunta: d.pregunta, opciones: d.opciones.map((o) => ({ id: o.id, etiqueta: o.etiqueta })) });
+export async function avisarDecisionesPendientes(
+  correo: string,
+  obj: Objetivo,
+  tareas: (RegistroTarea | null)[],
+  avisar?: DepsObjetivos['avisarDecision'],
+  o: { almacen?: AlmacenDurable; ahora?: number } = {}
+): Promise<number> {
+  if (obj.estado !== 'esperando-decision' || esTerminalObjetivo(obj.estado)) return 0;
+  const refs: RefAviso[] = [];
+  for (const d of obj.decisiones) if (!d.elegida) refs.push({ objetivoId: obj.id, decisionId: d.id, revision: d.version });
   for (const t of tareas) {
     if (!t || esTerminal(t.estado) || t.estado !== 'awaiting_approval' || !t.decision) continue;
-    pedidos.push({ objetivoId: obj.id, tareaId: t.id, decisionId: t.decision.id, revision: t.version, pregunta: t.decision.pregunta, opciones: opcionesDeTarea(t) });
+    refs.push({ objetivoId: obj.id, tareaId: t.id, decisionId: t.decision.id, revision: t.version });
   }
-  for (const p of pedidos) await Promise.resolve(avisar(correo, p)).catch(() => undefined);
-  return pedidos.length;
+  for (const ref of refs) {
+    const e = await encolarAvisoDecision(correo, ref, { almacen: o.almacen, ahora: o.ahora }).catch(() => null);
+    if (avisar && e && e.ok && e.aviso.estado === 'pendiente') await entregarAviso(correo, e.aviso.id, { transporte: avisar, almacen: o.almacen, ahora: o.ahora }).catch(() => null);
+  }
+  return refs.length;
 }
 
 /**
- * Pone el objetivo al día con sus tareas (lib/objetivos.ts `reconciliarObjetivo`) y guarda solo si cambió. Si con eso
- * entra a `esperando-decision`, avisa (una vez por decisión + revisión). Nunca lanza: si no se pudo, devuelve el que había.
+ * Pone el objetivo al día con sus tareas (lib/objetivos.ts `reconciliarObjetivo`) y guarda solo si cambió. Si queda en
+ * `esperando-decision` (cambie o no en esta llamada: F04), sus avisos van a la bandeja de salida. Un objetivo cancelado
+ * con acciones ya aceptadas anota su resultado cuando llega, sin reactivar nada (F05). Nunca lanza: si no se pudo,
+ * devuelve el que había.
  */
 export async function reconciliarObjetivoConTareas(
   dueno: string,
   obj: Objetivo,
   o: { revisarTarea?: DepsObjetivos['revisarTarea']; avisarDecision?: DepsObjetivos['avisarDecision']; almacen?: AlmacenDurable; ahora?: number } = {}
 ): Promise<Objetivo> {
-  if (esTerminalObjetivo(obj.estado)) return obj;
+  if (esTerminalObjetivo(obj.estado)) return obj.estado === 'cancelado' && obj.enVueloAlCancelar?.length ? anotarTardios(dueno, obj, o) : obj;
   const a = o.almacen || almacenDurable();
   const leidas: (RegistroTarea | null)[] = await Promise.all(
     obj.tareas.map(async (id) => {
@@ -116,20 +131,40 @@ export async function reconciliarObjetivoConTareas(
   );
   const min: TareaParaObjetivo[] = leidas.map((t) => (t ? { id: t.id, estado: t.estado, decision: t.decision ? { id: t.decision.id } : null } : null));
   const c = reconciliarObjetivo(obj, min);
-  if (!c) return obj;
-  const r = await cambiarObjetivo(dueno, obj.id, (x) => reconciliarObjetivo(x, min), { almacen: a, ahora: o.ahora }).catch(() => null);
-  if (!r || r.ok === false) return obj;
-  if (r.cambiado && r.objetivo.estado === 'esperando-decision') await avisarDecisionesPendientes(dueno, r.objetivo, leidas, o.avisarDecision);
-  return r.objetivo;
+  let final = obj;
+  if (c) {
+    const r = await cambiarObjetivo(dueno, obj.id, (x) => reconciliarObjetivo(x, min), { almacen: a, ahora: o.ahora }).catch(() => null);
+    if (!r || r.ok === false) return obj;
+    final = r.objetivo;
+  }
+  if (final.estado === 'esperando-decision') await avisarDecisionesPendientes(dueno, final, leidas, o.avisarDecision, { almacen: a, ahora: o.ahora });
+  return final;
 }
 
-/* ------------------------------------------------------------------ cancelar: los borradores de sus tareas */
+/**
+ * F05: el objetivo se canceló con acciones ya aceptadas (`enVueloAlCancelar`). Cuando una termina (llegó su recibo de
+ * verdad), el hecho queda anotado junto con la cancelación; el objetivo sigue cancelado y nada cancelado se reactiva.
+ */
+async function anotarTardios(dueno: string, obj: Objetivo, o: { almacen?: AlmacenDurable; ahora?: number }): Promise<Objetivo> {
+  const a = o.almacen || almacenDurable();
+  let actual = obj;
+  for (const id of obj.enVueloAlCancelar || []) {
+    const l = await leerTarea(dueno, id, a).catch(() => null);
+    if (!l || l.ok === false || !l.tarea || !esTerminal(l.tarea.estado)) continue;
+    const t = l.tarea;
+    const texto = t.estado === 'completed' ? `Llegó el resultado de «${textoObjetivo(t.titulo, 60)}»: ya estaba aceptado cuando cancelaste` : `«${textoObjetivo(t.titulo, 60)}» terminó (${t.estado}) después de cancelar`;
+    const r = await cambiarObjetivo(dueno, obj.id, () => ({ tardio: { tareaId: id, estado: t.estado }, evento: texto }), { almacen: a, ahora: o.ahora }).catch(() => null);
+    if (r && r.ok) actual = r.objetivo;
+  }
+  return actual;
+}
+
+/* ------------------------------------------------------------------ cancelar: revocar la autoridad pendiente */
 
 /**
  * Cancelar el objetivo descarta el borrador (correo o WhatsApp) que esperaba el «sí» de una de sus tareas: en lo durable
  * (una marca por intento: ninguna réplica lo rehidrata) y en la memoria del proceso (`borradores.descartar`, que también
- * lo anota como rechazado: un turno de voz descartado no lo repone). Así un «sí» suelto en el chat, después, no lo manda.
- * Nunca lanza.
+ * lo anota como rechazado: un turno de voz descartado no lo repone). true solo si la marca durable quedó. Nunca lanza.
  */
 export async function descartarBorradoresDeTarea(
   dueno: string,
@@ -137,9 +172,108 @@ export async function descartarBorradoresDeTarea(
   o: { almacen?: AlmacenDurable; borradores?: DepsObjetivos['borradores']; ahora?: number } = {}
 ): Promise<boolean> {
   if (!vinc?.intento) return false;
-  await descartarBorradorDurable(vinc.canal, dueno, vinc.intento, o.almacen, o.ahora).catch(() => false);
+  const marcada = await descartarBorradorDurable(vinc.canal, dueno, vinc.intento, o.almacen, o.ahora).catch(() => false);
   if (o.borradores) await Promise.resolve(o.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento)).catch(() => undefined);
-  return true;
+  return marcada;
+}
+
+/**
+ * Lo que pasó al cancelar (F01). Los cuatro estados que ve la persona (API y apps):
+ *   · cancelación solicitada: el objetivo quedó `cancelado` (siempre que la ruta contesta 200);
+ *   · `pendientes-cancelados`: lo que no había pasado el punto de no retorno quedó revocado de forma durable;
+ *   · `accion-ya-aceptada`: alguna acción ya estaba reclamada para salir: su resultado llega y se conserva;
+ *   · `resultado-incierto`: no se pudo dejar la revocación escrita (o leer una tarea): NO se dice «cancelado» de esa
+ *     tarea; cancelar otra vez (idempotente) termina lo pendiente.
+ * El punto de no retorno: lib/puerta-efecto.ts (el reclamo de la operación en el despachador común).
+ */
+export type EstadoCancelacionTarea = 'cancelada' | 'ya-aceptada' | 'incierta' | 'sin-pendiente';
+export type Cancelacion = {
+  estado: 'pendientes-cancelados' | 'accion-ya-aceptada' | 'resultado-incierto';
+  tareas: { id: string; estado: EstadoCancelacionTarea; detalle?: string }[];
+  reintentable: boolean;
+  puntoSinRetorno: string;
+};
+
+const QUIETAS: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['created', 'planning', 'queued', 'waiting_resource', 'awaiting_approval', 'blocked', 'paused']);
+
+/**
+ * Recorre las tareas del objetivo cancelado (idempotente). Por cada una, la autoridad de su efecto pendiente se REVOCA
+ * primero (CAS sobre la misma clave que reclama el despachador) y solo después se cancela la tarea:
+ *   · revocada → `cancelled` con su recibo «antes de hacer nada con efecto» y el borrador descartado;
+ *   · ya reclamada → no se toca: está saliendo (o salió) y su recibo llega; queda en `enVueloAlCancelar`;
+ *   · el almacén no contestó → la tarea no recibe un «cancelada» definitivo y se dice incierto.
+ * Nunca lanza.
+ */
+export async function cancelarPendientesDeObjetivo(
+  dueno: string,
+  obj: Objetivo,
+  o: { almacen?: AlmacenDurable; borradores?: DepsObjetivos['borradores']; ahora?: number } = {}
+): Promise<Cancelacion> {
+  const a = o.almacen || almacenDurable();
+  const ahora = o.ahora ?? Date.now();
+  const tareas: Cancelacion['tareas'] = [];
+  for (const id of obj.tareas) {
+    const l = await leerTarea(dueno, id, a).catch(() => ({ ok: false as const, detalle: '' }));
+    if (l.ok === false) {
+      tareas.push({ id, estado: 'incierta', detalle: 'no pude leer la tarea' });
+      continue;
+    }
+    const t = l.tarea;
+    if (!t || esTerminal(t.estado)) {
+      tareas.push({ id, estado: 'sin-pendiente' });
+      continue;
+    }
+    const vinc = t.decision?.vinculo?.tipo === 'borrador' ? t.decision.vinculo : null;
+    // La operación de efecto pendiente: la del borrador que espera, o la que ya autorizó una aprobación en marcha.
+    const efecto = vinc ? operacionDeBorrador(vinc.canal, vinc.intento) : [...(t.resueltas || [])].reverse().find((x) => x.efecto)?.efecto;
+    if (!QUIETAS.has(t.estado)) {
+      // En marcha: si su efecto todavía no se reclamó, la revocación lo impide (la tarea terminará «no salió»).
+      if (!efecto) {
+        tareas.push({ id, estado: 'ya-aceptada', detalle: 'ya estaba en marcha' });
+        continue;
+      }
+      const r = await revocarAutoridad(dueno, efecto, { motivo: 'objetivo-cancelado', revision: obj.revision, almacen: a, ahora });
+      tareas.push(r.resultado === 'incierto' ? { id, estado: 'incierta', detalle: r.detalle } : r.resultado === 'ya-aceptada' ? { id, estado: 'ya-aceptada' } : { id, estado: 'cancelada', detalle: 'su envío se revocó antes de salir' });
+      continue;
+    }
+    if (efecto) {
+      const r = await revocarAutoridad(dueno, efecto, { motivo: 'objetivo-cancelado', revision: obj.revision, almacen: a, ahora });
+      if (r.resultado === 'incierto') {
+        tareas.push({ id, estado: 'incierta', detalle: `no pude dejar la cancelación registrada: ${r.detalle}` });
+        continue;
+      }
+      if (r.resultado === 'ya-aceptada') {
+        tareas.push({ id, estado: 'ya-aceptada' });
+        continue;
+      }
+    }
+    let vista: EstadoTarea | null = null;
+    const c = await cambiarTarea(
+      dueno,
+      id,
+      (x) => {
+        vista = x.estado;
+        if (esTerminal(x.estado) || !QUIETAS.has(x.estado)) return null;
+        return { estado: 'cancelled', pasoActual: null, decision: null, resultado: { id: `${x.id}:resultado`, resumen: 'Cancelada con su objetivo antes de hacer nada con efecto.', evidencias: [], parcial: [], pendiente: [], t: ahora } };
+      },
+      { almacen: a, ahora }
+    ).catch(() => null);
+    if (!c || c.ok === false) {
+      tareas.push({ id, estado: 'incierta', detalle: 'no pude cancelar la tarea' });
+      continue;
+    }
+    if (c.tarea.estado !== 'cancelled') {
+      tareas.push({ id, estado: vista && esTerminal(vista) ? 'sin-pendiente' : 'ya-aceptada' });
+      continue;
+    }
+    // La lápida (y fuera de la memoria de esta réplica): la autoridad ya está revocada; esto es para que ninguna réplica
+    // lo vuelva a poner a esperar.
+    if (vinc) await descartarBorradoresDeTarea(dueno, vinc, { almacen: a, borradores: o.borradores, ahora });
+    tareas.push({ id, estado: 'cancelada' });
+  }
+  const incierta = tareas.some((x) => x.estado === 'incierta');
+  const aceptada = tareas.some((x) => x.estado === 'ya-aceptada');
+  return { estado: incierta ? 'resultado-incierto' : aceptada ? 'accion-ya-aceptada' : 'pendientes-cancelados', tareas, reintentable: incierta, puntoSinRetorno: PUNTO_SIN_RETORNO };
 }
 
 /* ------------------------------------------------------------------ el bloque del turno de AU-RA */
@@ -255,7 +389,24 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
     const l = await listarObjetivos(dueno, alm()).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
     if (l.ok === false) return almacenCaido(res);
     if (!l.objetivos.length && l.noLeidos.length) return almacenCaido(res);
-    return res.json({ objetivos: l.objetivos.map(vistaObjetivo), completo: l.noLeidos.length === 0, noLeidos: l.noLeidos.length, honesto: true });
+    // F05: la lista es la MISMA proyección que el detalle (reconciliada con sus tareas, que son la fuente de verdad), no el
+    // agregado guardado tal cual: un evento perdido (una tarea que terminó en otro aparato) no deja la lista atrás. De a 5.
+    const t0 = ahora();
+    const vivos = l.objetivos;
+    const proyectados: Objetivo[] = new Array(vivos.length);
+    for (let i = 0; i < vivos.length; i += 5) {
+      const tanda = vivos.slice(i, i + 5);
+      const hechos = await Promise.all(tanda.map((x) => (!esTerminalObjetivo(x.estado) || x.enVueloAlCancelar?.length ? reconciliado(dueno, x) : Promise.resolve(x))));
+      hechos.forEach((x, j) => (proyectados[i + j] = x));
+    }
+    return res.json({
+      objetivos: proyectados.sort((x, y) => y.actualizado - x.actualizado).map(vistaObjetivo),
+      completo: l.noLeidos.length === 0,
+      noLeidos: l.noLeidos.length,
+      // Cuándo se proyectó (el cliente compara revisiones por objetivo; esto dice qué tan fresca es la lista entera).
+      proyeccion: { reconciliada: true, leidoEn: t0 },
+      honesto: true,
+    });
   });
 
   app.get('/api/objetivos/:id', ...d.exigir, d.limitar(120), async (req, res) => {
@@ -334,8 +485,15 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
       if (e.tipo === 'almacen') return almacenCaido(res);
       if (e.tipo === 'no') return noEsta(res);
       const obj = e.obj;
-      // Idempotente: lo que ya está así (o ya terminó, para pausar/reanudar) vuelve tal cual.
-      const ya = (control === 'pausar' && obj.pausado) || (control === 'reanudar' && !obj.pausado) || (control === 'cancelar' && obj.estado === 'cancelado') || (control !== 'cancelar' && esTerminalObjetivo(obj.estado));
+      // Cancelar otra vez repite el recorrido (idempotente): un reintento del transporte, o el que sigue a un «incierto»,
+      // termina lo que quedó pendiente.
+      if (control === 'cancelar' && obj.estado === 'cancelado') {
+        const cancelacion = await cancelarPendientesDeObjetivo(dueno, obj, { almacen: alm(), borradores: d.borradores, ahora: ahora() });
+        const final = await anotarEnVuelo(dueno, obj, cancelacion);
+        return res.json({ objetivo: vistaObjetivo(final), sinCambio: true, cancelacion, honesto: true });
+      }
+      // Idempotente: lo que ya está así (o ya terminó) vuelve tal cual.
+      const ya = (control === 'pausar' && obj.pausado) || (control === 'reanudar' && !obj.pausado) || esTerminalObjetivo(obj.estado);
       if (ya) return res.json({ objetivo: vistaObjetivo(obj), sinCambio: true, honesto: true });
       const cambio: CambioObjetivo =
         control === 'pausar'
@@ -345,30 +503,24 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
             : { estado: 'cancelado', evento: 'Cancelaste el objetivo: no hago nada más; lo que ya se hizo queda anotado' };
       const r = await cambiarObjetivo(dueno, obj.id, () => cambio, { almacen: alm(), ahora: ahora(), revisionEsperada });
       if (r.ok === false) return responderError(res, r.error);
-      // Cancelar impide lo que todavía no empezó (tareas en cola, propuestas esperando); lo que está a medio efecto se
-      // reconcilia por su cuenta (no se finge que se paró).
-      if (control === 'cancelar' && r.cambiado) {
-        const quietas: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['created', 'planning', 'queued', 'waiting_resource', 'awaiting_approval', 'blocked', 'paused']);
-        for (const id of r.objetivo.tareas) {
-          // El borrador que esperaba el «sí» de esta tarea (lo que tenía al cancelarla, no lo de un reintento anterior).
-          let vinc: Extract<Vinculo, { tipo: 'borrador' }> | null = null;
-          const c = await cambiarTarea(
-            dueno,
-            id,
-            (t) => {
-              vinc = null;
-              if (esTerminal(t.estado) || !quietas.has(t.estado)) return null;
-              vinc = t.decision?.vinculo?.tipo === 'borrador' ? t.decision.vinculo : null;
-              return { estado: 'cancelled', pasoActual: null, decision: null, resultado: { id: `${t.id}:resultado`, resumen: 'Cancelada con su objetivo antes de hacer nada con efecto.', evidencias: [], parcial: [], pendiente: [], t: ahora() } };
-            },
-            { almacen: alm(), ahora: ahora() }
-          ).catch(() => null);
-          if (c?.ok) await descartarBorradoresDeTarea(dueno, vinc, { almacen: alm(), borradores: d.borradores, ahora: ahora() });
-        }
-      }
       olvidarObjetivosDelTurno(dueno);
+      // Cancelar: el objetivo ya dice «cancelado» (la cancelación quedó solicitada, durable). Ahora se revoca lo que no
+      // pasó el punto de no retorno; lo que ya pasó se dice «ya aceptada» y su recibo se conserva (lib/puerta-efecto.ts).
+      if (control === 'cancelar') {
+        const cancelacion = await cancelarPendientesDeObjetivo(dueno, r.objetivo, { almacen: alm(), borradores: d.borradores, ahora: ahora() });
+        const final = await anotarEnVuelo(dueno, r.objetivo, cancelacion);
+        return res.json({ objetivo: vistaObjetivo(final), ...(r.cambiado ? {} : { sinCambio: true }), cancelacion, honesto: true });
+      }
       return res.json({ objetivo: vistaObjetivo(r.objetivo), ...(r.cambiado ? {} : { sinCambio: true }), honesto: true });
     });
+  }
+
+  /** Las tareas cuya acción ya estaba aceptada quedan anotadas en el objetivo: su recibo llega después (F05). */
+  async function anotarEnVuelo(dueno: string, obj: Objetivo, c: Cancelacion): Promise<Objetivo> {
+    const ids = c.tareas.filter((x) => x.estado === 'ya-aceptada').map((x) => x.id);
+    if (!ids.length) return obj;
+    const r = await cambiarObjetivo(dueno, obj.id, () => ({ enVueloAlCancelar: ids, evento: 'Ya estaba en camino cuando cancelaste: anoto su resultado cuando llegue' }), { almacen: alm(), ahora: ahora() }).catch(() => null);
+    return r && r.ok ? r.objetivo : obj;
   }
 
   /* ---------------------------------------------------------------- cerrar (con evidencia) */
@@ -492,10 +644,13 @@ export async function pedirDecisionObjetivo(
 ): Promise<{ ok: true; objetivo: Objetivo; decisionId: string } | { ok: false; error: ErrorObjetivo }> {
   const dueno = conCorreo(correo);
   if (!dueno) return { ok: false, error: new ErrorObjetivo('invalido', 'Sin cuenta no hay objetivos.') };
+  // F04: la intención de avisar va ANTES del cambio (la agenda del planificador): si el proceso muere entre la decisión
+  // y su aviso, la próxima vuelta encola el aviso; si el cambio no llegó a escribirse, no hay nada que avisar.
+  await agendar('objetivo', dueno, objetivoId, o.ahora ?? Date.now(), { almacen: o.almacen, ahora: o.ahora }).catch(() => false);
   const r = await pedirDecision(dueno, objetivoId, d, { almacen: o.almacen, ahora: o.ahora, revisionEsperada: o.revisionEsperada });
   if (r.ok === false) return r;
   olvidarObjetivosDelTurno(dueno);
   const nueva = [...r.objetivo.decisiones].reverse().find((x) => !x.elegida)!;
-  await avisarDecisionesPendientes(dueno, r.objetivo, [], o.avisarDecision ?? ((c, p) => pedirDecisionPorPush(c, p, { almacen: o.almacen })));
+  await avisarDecisionesPendientes(dueno, r.objetivo, [], o.avisarDecision ?? ((c, p) => enviarPush(c, datosPushDecision(p))), { almacen: o.almacen, ahora: o.ahora });
   return { ok: true, objetivo: r.objetivo, decisionId: nueva.id };
 }

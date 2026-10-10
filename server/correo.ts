@@ -45,6 +45,7 @@ import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrad
 import { dentroDe, intervaloDeCorreo, sinTiempo, type Intervalo } from '../lib/correo/intervalo';
 import { presentadoEnChat } from './presentacion-decision';
 import { anotarDescarteDurable, guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
+import { borradorRevocado } from '../lib/puerta-efecto';
 import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
@@ -1110,7 +1111,14 @@ export function editarBorradorCorreo(quien: string, ambito: string, intento: str
  * decide, el chat no). true si espera (ya estaba o volvió).
  */
 export async function rehidratarBorradorCorreo(quien: string, ambito: string, intento: string, huella: string): Promise<boolean> {
-  if (borradorCorreoPorIntento(quien, ambito, intento)) return true;
+  if (borradorCorreoPorIntento(quien, ambito, intento)) {
+    // F01: la caché de esta réplica no contesta sola: si en lo durable se revocó (otra réplica canceló), se suelta.
+    if ((await borradorRevocado(quien, 'correo', intento).catch(() => 'incierto' as const)) !== true) return true;
+    const k = llave(quien, ambito);
+    APARTADOS.quitar(k, intento);
+    if (BORRADORES.get(k)?.intento === intento) BORRADORES.delete(k);
+    return false;
+  }
   if (!huella || rechazadoEnPanel(intento)) return false;
   const g = await leerBorradorDurable<BorradorGuardado>('correo', quien, ambito, intento, huella).catch(() => null);
   if (!g || g.intento !== intento || g.huella !== huella || huellaCorreo(g) !== huella || motivoBorrador(g, quien)) return false;
@@ -1374,6 +1382,8 @@ function hechoDeEnvioCorreo(b: BorradorGuardado, r: ResultadoEnvio<DatosEnvioCor
   const aceptadoPor = `ENTREGA: aceptado por el servidor de salida de ${b.desde}; eso no confirma que ya esté en su bandeja ni que lo leyó. Díselo en una frase (que salió; no digas que ya le llegó).`;
   if (r.motivo === 'aprobacion-no-coincide') return fallo('CORREO: NO se mandó: esa aprobación era para otro correo (otro destinatario, contenido o cuenta). Hace falta su decisión otra vez: léele el borrador y pregúntale.', 'aprobacion');
   if (r.motivo === 'almacen') return fallo('CORREO: NO lo mandé: no pude dejar registrado el envío antes de mandarlo (así no se arriesga a salir dos veces). Dile que lo intente en un momento.', 'almacen');
+  // F01: la puerta del efecto no lo dejó salir (cancelado, vencido, sin acceso, otro ejecutor). No salió nada.
+  if (r.motivo === 'sin-autoridad') return fallo(`CORREO: NO se mandó: ${String(r.detalle || 'ya no estaba autorizado').slice(0, 140)}. No salió nada; díselo así.`, r.autoridad === 'revocada' ? 'cancelado' : 'aprobacion');
   if (r.motivo === 'repeticion-incierta') {
     return fallo(
       `CORREO: NO lo mandé todavía: un correo igual (a ${para}, «${b.asunto}») de hace un rato quedó sin confirmar — no sé si salió — y no lo encuentro en Enviados. ` +
@@ -1465,6 +1475,9 @@ export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado,
     operacion,
     huella: b.huella,
     contenido: b.huella,
+    // F01: la puerta del efecto vuelve a mirar el vencimiento y el acceso (lib/puerta-efecto.ts).
+    vence: b.vence,
+    preparado: b.creado,
     // Aceptar el riesgo de repetir es la respuesta de la persona en el chat a esa pregunta; un «Aprobar» del panel
     // (decidido antes de saber que lo de antes quedó incierto) no la da (revisión externa, 4-oct).
     repeticionAceptada: o.desdePanel ? undefined : b.repeticionAceptada,

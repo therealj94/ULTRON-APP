@@ -54,6 +54,7 @@ import { presentadoEnChat } from './presentacion-decision';
 import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { anotarDescarteDurable, guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
+import { borradorRevocado } from '../lib/puerta-efecto';
 import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 import { leerAdjunto, tipoEnPalabras, MAX_ADJUNTO_BYTES } from '../lib/leer-adjunto';
 import { adjuntoReciente, recordarAdjunto } from '../lib/adjunto-reciente';
@@ -1295,7 +1296,14 @@ export function editarBorradorWhatsapp(quien: string, ambito: string, intento: s
  * esta réplica (como apartado del panel) si lo guardado sigue valiendo y su huella recalculada es la misma.
  */
 export async function rehidratarBorradorWhatsapp(quien: string, ambito: string, intento: string, huella: string): Promise<boolean> {
-  if (borradorWhatsappPorIntento(quien, ambito, intento)) return true;
+  if (borradorWhatsappPorIntento(quien, ambito, intento)) {
+    // F01: la caché de esta réplica no contesta sola: si en lo durable se revocó (otra réplica canceló), se suelta.
+    if ((await borradorRevocado(quien, 'whatsapp', intento).catch(() => 'incierto' as const)) !== true) return true;
+    const k = llave(quien, ambito);
+    APARTADOS.quitar(k, intento);
+    if (BORRADORES.get(k)?.intento === intento) BORRADORES.delete(k);
+    return false;
+  }
   if (!huella || rechazadoEnPanel(intento)) return false;
   const g = await leerBorradorDurable<BorradorGuardado>('whatsapp', quien, ambito, intento, huella).catch(() => null);
   if (!g || g.intento !== intento || g.huella !== huella || huellaWhatsapp(g) !== huella || motivoBorrador(g, quien)) return false;
@@ -1397,6 +1405,8 @@ function hechoDeEnvioWA(b: BorradorGuardado, r: ResultadoEnvio<DatosEnvioWA>): R
   const aceptado = 'ENTREGA: aceptado por WhatsApp (salió de su cuenta); no consta todavía que le llegó ni que lo leyó. Díselo en una frase (que salió; no digas que ya le llegó).';
   if (r.motivo === 'aprobacion-no-coincide') return fallo('WHATSAPP: NO se mandó: esa aprobación era para otro mensaje (otro chat, texto o cuenta). Hace falta su decisión otra vez.', 'aprobacion');
   if (r.motivo === 'almacen') return fallo('WHATSAPP: NO lo mandé: no pude dejar registrado el envío antes de mandarlo (así no se arriesga a salir dos veces). Dile que lo intente en un momento.', 'almacen');
+  // F01: la puerta del efecto no lo dejó salir (cancelado, vencido, sin acceso, otro ejecutor). No salió nada.
+  if (r.motivo === 'sin-autoridad') return fallo(`WHATSAPP: NO se mandó: ${String(r.detalle || 'ya no estaba autorizado').slice(0, 140)}. No salió nada; díselo así.`, r.autoridad === 'revocada' ? 'cancelado' : 'aprobacion');
   if (r.motivo === 'repeticion-incierta') {
     return fallo(
       `WHATSAPP: NO lo mandé todavía: un mensaje igual a ${b.nombre} de hace un rato quedó sin confirmar — no sé si salió — y no lo encuentro en el chat. ` +
@@ -1485,6 +1495,9 @@ export async function enviarBorradorWhatsappAprobado(quien: string, b: BorradorG
     operacion,
     huella: b.huella,
     contenido: b.huella,
+    // F01: la puerta del efecto vuelve a mirar el vencimiento y el acceso (lib/puerta-efecto.ts).
+    vence: b.vence,
+    preparado: b.creado,
     // Aceptar el riesgo de repetir es la respuesta de la persona en el chat a esa pregunta; un «Aprobar» del panel
     // (decidido antes de saber que lo de antes quedó incierto) no la da (revisión externa, 4-oct).
     repeticionAceptada: o.desdePanel ? undefined : b.repeticionAceptada,
@@ -1815,6 +1828,8 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
     const comun = { operacion: r.operacion, honesto: true };
     if (r.motivo === 'aprobacion-no-coincide') return res.status(409).json({ error: 'Ese toque era para otro mensaje (otro chat o texto): no mandé nada. Confírmalo otra vez.', code: 'confirmacion_de_otro_envio', ...comun });
     if (r.motivo === 'almacen') return res.status(503).json({ error: 'No pude registrar el envío antes de mandarlo; no mandé nada. Prueba en un momento.', ...comun });
+    // F01: la puerta del efecto (acceso de la cuenta, vencimiento) no lo dejó salir.
+    if (r.motivo === 'sin-autoridad') return res.status(403).json({ error: `No lo mandé: ${String(r.detalle || 'ya no estaba autorizado').slice(0, 160)}.`, code: 'sin_autoridad', ...comun });
     if (r.estado === 'succeeded') return res.json({ ...(mensaje ? { mensaje } : {}), entrega: r.entrega, ...(r.repetido ? { repetido: true } : {}), ...comun });
     if (r.estado === 'unknown') return res.status(202).json({ ok: false, estado: 'incierto', error: 'No he podido confirmar el envío: el puente de WhatsApp no contestó a tiempo y no lo encuentro en el chat. No lo volví a mandar; revísalo en tu WhatsApp.', ...comun });
     const status = Number(r.datos?.status) || 502;

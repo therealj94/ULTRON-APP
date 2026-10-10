@@ -25,7 +25,10 @@ import {
   esTerminalObjetivo,
   etiquetaEstadoObjetivo,
   evidenciasParaCerrar,
+  fusionarListaObjetivos,
+  fusionarObjetivo,
   hayNovedad,
+  lineaCancelacion,
   lineaQueCambio,
   ultimaVista,
   type CambiosObjetivo,
@@ -71,6 +74,8 @@ export function useObjetivosWeb(o: { conSesion: boolean; cuenta?: string | null;
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
   const clave = o.conSesion ? String(o.cuenta || '') : '';
   const gen = useRef(0);
+  const claveActual = useRef(clave);
+  claveActual.current = clave;
   useEffect(() => {
     gen.current++;
     setObjetivos([]);
@@ -83,8 +88,9 @@ export function useObjetivosWeb(o: { conSesion: boolean; cuenta?: string | null;
   const refrescar = useCallback(async () => {
     const g = gen.current;
     const r = await clienteObjetivos.listar();
-    if (g !== gen.current) return;
-    if (r.ok === true) setObjetivos(r.objetivos);
+    if (g !== gen.current) return; // de otra sesión o cuenta: se descarta
+    // F05: por entidad y revisión (una lista vieja no pisa una decisión ya confirmada); una lista parcial no borra.
+    if (r.ok === true) setObjetivos((xs) => fusionarListaObjetivos(xs, r.objetivos, { completo: r.completo }));
     else if (r.sinSesion) setObjetivos([]);
   }, []);
   useEffect(() => {
@@ -94,14 +100,15 @@ export function useObjetivosWeb(o: { conSesion: boolean; cuenta?: string | null;
     return () => clearInterval(t);
   }, [o.conSesion, clave, visible, o.panelAbierto, refrescar]);
   /** Lo que contestó el servidor (o el objetivo de ahora de un 409) reemplaza lo que había, nunca hacia atrás. */
-  const aplicar = useCallback((x: VistaObjetivo | null | undefined) => {
-    if (!x || typeof x.id !== 'string') return;
-    setObjetivos((xs) => {
-      const previo = xs.find((y) => y.id === x.id);
-      if (previo && previo.revision > x.revision) return xs;
-      return [x, ...xs.filter((y) => y.id !== x.id)].sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0));
-    });
-  }, []);
+  // Cada `aplicar` queda atado a la cuenta con que se creó (la que tenía el panel al empezar la acción): lo que conteste
+  // una acción empezada antes de cambiar de cuenta (o de salir) no se aplica. Nunca hacia atrás (por revisión).
+  const aplicar = useCallback(
+    (x: VistaObjetivo | null | undefined) => {
+      if (!x || typeof x.id !== 'string' || clave !== claveActual.current) return;
+      setObjetivos((xs) => fusionarObjetivo(xs, x));
+    },
+    [clave]
+  );
   const marcarVisto = useCallback((x: Pick<VistaObjetivo, 'id' | 'revision'>) => {
     setVistos((v) => {
       const n = anotarVista(v, x.id, x.revision, Date.now());
@@ -226,7 +233,8 @@ function HojaObjetivoWeb({ o, desde, onObjetivo, marcarVisto, onRefrescar }: { k
 
   const tras = (r: ResultadoObjetivo) => {
     if (r.ok === true) {
-      setAviso(null);
+      // F01: cancelar dice cuál de los cuatro estados quedó (solicitada / pendientes cancelados / ya aceptada / incierto).
+      setAviso(r.cancelacion ? lineaCancelacion(r.cancelacion) : null);
       onObjetivo(r.objetivo);
       if (!r.objetivo) onRefrescar();
     } else {
