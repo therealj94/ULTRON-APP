@@ -135,14 +135,25 @@ export async function conversarCapas(mensaje: string, x: Entorno): Promise<Respu
   }
   if (p?.tipo === 'elegir') {
     const opciones = p.ids.map((i) => por.get(i)).filter((e): e is EntradaCatalogo => !!e);
-    if (/\b(las dos|los dos|ambas|ambos|todas|todos|las tres)\b/.test(t)) return abrirVarias(x, opciones);
+    // «Deja solo las zonas de reserva» → «Áreas protegidas»: el «solo» de la pregunta se cumple al contestar.
+    const conSolo = async (es: EntradaCatalogo[], r: (y: Entorno) => Promise<Respuesta>): Promise<Respuesta> => {
+      if (!p.solo) return r(x);
+      const ids = es.flatMap((e) => (e.tipo === 'grupo' ? hojasCat(x.capas, e.id) : [e])).map((h) => h.id);
+      const res = await r({ ...x, estado: { capas: x.estado.capas.filter((c) => ids.includes(c.id)) } });
+      if (res.ordenes.length) {
+        res.ordenes.unshift({ op: 'solo', ids });
+        res.texto = res.texto.replace(/^(Listo, abrí|Abrí|Agregué)/, 'Dejé solo');
+      }
+      return res;
+    };
+    if (/\b(las dos|los dos|ambas|ambos|todas|todos|las tres)\b/.test(t)) return conSolo(opciones, (y) => abrirVarias(y, opciones));
     const ord = t.match(/\b(primera|primero|segunda|segundo|tercera|tercero)\b/);
     if (ord) {
       const i = { primera: 0, primero: 0, segunda: 1, segundo: 1, tercera: 2, tercero: 2 }[ord[1]]!;
-      if (opciones[i]) return abrir(x, opciones[i], filtrosEnTexto(opciones[i], t) || undefined, false);
+      if (opciones[i]) return conSolo([opciones[i]], (y) => abrir(y, opciones[i], filtrosEnTexto(opciones[i], t) || undefined, false));
     }
     const sub = opciones.filter((e) => buscarCapas([e, ...x.capas.filter((c) => c.padre === e.id)], t).length || normalizar(e.nombre).split(' ').some((w) => w.length > 4 && t.includes(w)));
-    if (sub.length === 1) return abrir(x, sub[0], filtrosEnTexto(sub[0], t) || undefined, false);
+    if (sub.length === 1) return conSolo(sub, (y) => abrir(y, sub[0], filtrosEnTexto(sub[0], t) || undefined, false));
   }
   if (p?.tipo === 'ofrecer') {
     if (/\b(minerales|que hay|cuales|muestrame|si|dale)\b/.test(t) && !/\botros\b/.test(t)) return listarMinerales(x);

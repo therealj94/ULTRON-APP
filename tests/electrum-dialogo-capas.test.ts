@@ -108,6 +108,14 @@ test('contexto: «quítalas» es la última abierta; «solo» y «limpia» sí a
   assert.deepEqual(c.estado.capas, []);
 });
 
+test('«deja solo» con una pregunta de por medio: al contestar, lo demás se apaga', async () => {
+  const c = conversacion();
+  await c.decir('abre las fichas de oro');
+  assert.match((await c.decir('deja solo las zonas de reserva'))!, /¿Cuál quieres, o las dos\?$/);
+  assert.match((await c.decir('Áreas protegidas'))!, /^Dejé solo «Áreas protegidas»/);
+  assert.deepEqual(c.estado.capas.map((x) => x.id), [101001]);
+});
+
 test('funciona con otras capas filtrables, cuenta y dice qué hay encendido', async () => {
   const c = conversacion();
   assert.match((await c.decir('abre los depósitos de antimonio'))!, /^Abrí solo los depósitos de antimonio: 9 puntos, en violeta\.$/);

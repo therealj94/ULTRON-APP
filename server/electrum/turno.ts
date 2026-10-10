@@ -231,7 +231,9 @@ export const REGLAS_MAPA =
   'MAPA: para abrir capas usá buscar_capas y encender_capa con el ID. Una coincidencia: abrila. Varias: preguntá cuál nombrándolas. Ninguna: decilo, nunca inventes una capa. Si la capa tiene filtro y no lo dijeron, ofrecé los valores reales de valores_filtro; «todas» = sin filtro. Las capas se suman: no apagues otras salvo «solo», «quita», «cierra» o «limpia». Confirmá en una frase con datos (qué, filtro, cuántas). «Ahora las de plata» es la última capa con filtro; «quítalas», la última abierta (estado_mapa). Nunca digas que abriste algo si la herramienta falló.';
 
 /** ¿Habla del mapa? Entonces van las herramientas del índice de capas (modo mapa) y no los especialistas. */
-const DEL_MAPA = /\b(capas?|mapa|indice de capas|filtr\w*|enciend\w*|apag\w*|abre\w*|abrir|muestra\w*|ensena\w*|quita\w*|cierra\w*|encuadr\w*|acerca\w*|limpia\w*|esconde\w*|oculta\w*|leyenda)\b/;
+// Solo cuando nombra el mapa o sus capas: «muéstrame los vencimientos» es del catastro, no del mapa
+// (revisión de Codex en #169: un verbo suelto se llevaba las herramientas del especialista).
+const DEL_MAPA = /\b(capas?|mapa|indice de capas|leyenda|filtr\w*)\b/;
 
 /**
  * Lo que dice internet sobre la pregunta: los mejores resultados y el texto de las dos primeras
