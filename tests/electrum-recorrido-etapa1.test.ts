@@ -63,6 +63,10 @@ test('las lecturas salen de los datos y no llaman recurso a un indicio', () => {
   assert.match(ind, /114 muestras/);
   assert.match(ind, /más de 10 gramos por tonelada, el tope del laboratorio: es una muestra puntual, no la ley de un depósito/);
   assert.match(lecturaHallazgos(T), /El Naranjo, a 0,4 km/);
+  // El total, no la lista recortada que se manda para mostrar.
+  const muchas = { ...T, ocurrencias: T.ocurrencias.slice(0, 8), ocurrenciasTotal: 40, ocurrenciasTope: true };
+  assert.match(lecturaIndicios(muchas), /hay al menos 40 ocurrencias/);
+  assert.match(fichaFactibilidad(muchas).filas[1].resultado, /^al menos 40 ocurrencias en 5 km/);
   assert.match(lecturaHallazgos({ ...T, geologia: { ...T.geologia!, yacimientos: [] } }), /lo primero que se verifica en campo/);
   assert.match(lecturaRestricciones(T), /no se superpone.*Yerba Buena, está a 28,2 km al norte.*3,1 km al sur/);
   assert.match(lecturaCatastro(T), /libres.*«Cantagallo», en estado solicitud de exploración, a 1,5 km al norte/);
@@ -104,6 +108,9 @@ test('el área del target: ~500 ha, libre solo si nada la pisa; rumbos y UTM 16N
   assert.ok(estaLibre({ ha: 500, libreHa: 500, entorno: { areasProtegidas: ok, microcuencas: ok, forestal: ok } }));
   assert.ok(!estaLibre({ ha: 500, libreHa: 400, entorno: { areasProtegidas: ok, microcuencas: ok, forestal: ok } }), 'una concesión la pisa');
   assert.ok(!estaLibre({ ha: 500, libreHa: 500, entorno: { areasProtegidas: { estado: 'ok', pisa: [{}] }, microcuencas: ok, forestal: ok } }));
+  assert.ok(!estaLibre({ ha: 500, libreHa: 496, entorno: { areasProtegidas: ok, microcuencas: ok, forestal: ok } }), 'ni 4 ha de traslape');
+  assert.ok(!estaLibre({ ha: 500, libreHa: 500, entorno: { areasProtegidas: { estado: 'no-cargada' }, microcuencas: ok, forestal: ok } }), 'sin revisar no es libre');
+  assert.ok(!estaLibre({ ha: 500, libreHa: 500, entorno: { areasProtegidas: ok, microcuencas: { estado: 'error' }, forestal: ok } }));
   assert.equal(rumboDe(0), 'norte');
   assert.equal(rumboDe(44), 'noreste');
   assert.equal(rumboDe(181), 'sur');

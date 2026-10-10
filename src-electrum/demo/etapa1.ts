@@ -34,6 +34,8 @@ export type TargetEjemplo = {
   rios: { kmDentro: number; masCercano: { nombre: string; km: number } | null };
   carreteraKm: number | null;
   ocurrencias: Array<{ nombre: string; km: number; detalle: string | null }>;
+  ocurrenciasTotal?: number;
+  ocurrenciasTope?: boolean;
   jica?: { muestras: number; mejorAu: { codigo: string; tipo: string; ppb: number; sobreTope: boolean; km: number } | null } | null;
   geologia: {
     unidad: string | null;
@@ -78,6 +80,12 @@ export const MENSAJES = [
   { titulo: 'Todo el ciclo', texto: 'Del target al recurso, la planta, la mina y la bolsa.' },
   { titulo: 'Aprendemos contigo', texto: 'Cada consulta mejora el sistema.' },
 ] as const;
+
+/** Cuántas ocurrencias a 5 km (el total, no la lista que se muestra), y cómo decirlo. */
+export function ocurrenciasCerca(t: TargetEjemplo): { n: number; dicho: string } {
+  const n = t.ocurrenciasTotal ?? t.ocurrencias.length;
+  return { n, dicho: t.ocurrenciasTope ? `al menos ${n}` : String(n) };
+}
 
 /** Lo que se le puede pedir después (sección 7), para ofrecerlo al cerrar. */
 export const PREGUNTAS_DESPUES = [
@@ -131,9 +139,8 @@ export function lecturaPremisas(t: TargetEjemplo): string {
 
 /** Paso 2: los indicios (ocurrencias registradas cerca). */
 export function lecturaIndicios(t: TargetEjemplo): string {
-  const n = t.ocurrencias.length;
-  const cerca = t.ocurrencias.filter((o) => o.km <= 5).length || n;
-  const ocurr = n ? `En un radio de cinco kilómetros hay ${cerca} ocurrencias minerales registradas en los inventarios históricos.` : 'Ocurrencias registradas alrededor, la base no tiene.';
+  const o = ocurrenciasCerca(t);
+  const ocurr = o.n ? `En un radio de cinco kilómetros hay ${o.dicho} ocurrencias minerales registradas en los inventarios históricos.` : 'Ocurrencias registradas alrededor, la base no tiene.';
   const j = t.jica;
   if (!j) return ocurr;
   const mejor = j.mejorAu ? ` La de más oro, la ${deletrear(j.mejorAu.codigo)}, dio ${leyOroDicha(j.mejorAu.ppb, j.mejorAu.sobreTope)}: es una muestra puntual, no la ley de un depósito.` : '';
@@ -231,9 +238,10 @@ export type FilaFicha = { criterio: string; resultado: string; marca: 'ok' | 'av
 export function fichaFactibilidad(t: TargetEjemplo): { filas: FilaFicha[]; dictamen: string; factible: boolean } {
   const g = t.geologia;
   const modelo = tipoProbable(t);
-  const ocurr = t.ocurrencias.filter((o) => o.km <= 5).length || t.ocurrencias.length;
+  const oc = ocurrenciasCerca(t);
+  const ocurr = oc.n;
   const ys = g?.yacimientos.length || 0;
-  const libre = t.libreHa >= t.ha * 0.99;
+  const libre = t.ha > 0 && t.ha - t.libreHa <= 0.01;
   const masCerca = [t.protegida, t.microcuenca].filter((x): x is Cercana => !!x).sort((a, b) => a.km - b.km)[0];
   const { agua } = lecturaAguaYVias(t);
   const filas: FilaFicha[] = [
@@ -244,7 +252,7 @@ export function fichaFactibilidad(t: TargetEjemplo): { filas: FilaFicha[]; dicta
     },
     {
       criterio: 'Indicios',
-      resultado: [ocurr ? `${ocurr} ocurrencias en 5 km` : null, t.jica ? `${t.jica.muestras} muestras JICA` : null].filter(Boolean).join(' · ') || 'Sin ocurrencias registradas',
+      resultado: [ocurr ? `${oc.dicho} ocurrencias en 5 km` : null, t.jica ? `${t.jica.muestras} muestras JICA` : null].filter(Boolean).join(' · ') || 'Sin ocurrencias registradas',
       marca: ocurr || t.jica ? 'ok' : 'aviso',
     },
     { criterio: 'Hallazgos', resultado: ys ? `${ys} yacimientos registrados cerca` : 'Por verificar en campo', marca: ys ? 'ok' : 'aviso' },

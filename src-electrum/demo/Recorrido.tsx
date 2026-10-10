@@ -26,7 +26,7 @@ import { ALTURAS } from '../preferencias';
 import type { OrdenIndice } from '../mapa/IndiceCapas';
 import { estadoMapa } from '../mapa/estado-mapa';
 import { Escenario, Flujo, MarcoMapa, type Escena, type Marco, type Quien } from './Escenas';
-import { PASOS, fechaMapa, fichaFactibilidad, km, lecturaAguaYVias, lecturaCatastro, lecturaHallazgos, lecturaIndicios, lecturaPolitica, lecturaPremisas, lecturaRestricciones, nombreFicha, tipoProbable, type TargetEjemplo } from './etapa1';
+import { PASOS, fechaMapa, fichaFactibilidad, km, lecturaAguaYVias, lecturaCatastro, lecturaHallazgos, lecturaIndicios, lecturaPolitica, lecturaPremisas, lecturaRestricciones, nombreFicha, ocurrenciasCerca, tipoProbable, type TargetEjemplo } from './etapa1';
 
 export { nombreParaDecir } from './guion';
 
@@ -667,7 +667,7 @@ export function Recorrido({
           e1Paso2: {
             hay: e1,
             correr: async () => {
-              paso(2, T?.jica ? { cifras: [{ valor: T.ocurrencias.filter((o) => o.km <= 5).length || T.ocurrencias.length, etiqueta: 'ocurrencias a 5 km' }, { valor: T.jica.muestras, etiqueta: 'muestras JICA' }] } : {});
+              paso(2, T?.jica ? { cifras: [{ valor: ocurrenciasCerca(T).n, etiqueta: T.ocurrenciasTope ? 'ocurrencias a 5 km (o más)' : 'ocurrencias a 5 km' }, { valor: T.jica.muestras, etiqueta: 'muestras JICA' }] } : {});
               solo([209001, 110002, 110003, 110004, 401005, 800140], { 401005: { elemento: ['au'] }, 800140: { PAIS: ['Honduras'] } });
               marcoDe('Mapa 1 · Indicios', [
                 { color: '#FFD400', texto: 'Ocurrencias de oro', forma: 'punto' },
@@ -700,7 +700,7 @@ export function Recorrido({
               setEscena({
                 tipo: 'ecuacion',
                 premisas: T?.geologia?.unidad ? `${T.geologia.unidad}${T.geologia.fallasDentro ? ` · ${T.geologia.fallasDentro} fallas` : ''}` : 'Geología, fallas y metalogenia',
-                indicios: T ? [T.ocurrencias.length ? `${T.ocurrencias.filter((o) => o.km <= 5).length || T.ocurrencias.length} ocurrencias` : null, T.jica ? `${T.jica.muestras} muestras JICA` : null].filter(Boolean).join(' · ') || 'Inventarios históricos' : 'JICA · ONU · USGS · DEFOMIN',
+                indicios: T ? [ocurrenciasCerca(T).n ? `${ocurrenciasCerca(T).dicho} ocurrencias` : null, T.jica ? `${T.jica.muestras} muestras JICA` : null].filter(Boolean).join(' · ') || 'Inventarios históricos' : 'JICA · ONU · USGS · DEFOMIN',
                 hallazgos: T?.geologia?.yacimientos.length ? `${T.geologia.yacimientos.length} yacimientos registrados` : 'Labores y muestreos recientes',
               });
               await conversar([

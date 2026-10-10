@@ -44,6 +44,10 @@ export type TargetEjemplo = {
   rios: { kmDentro: number; masCercano: { nombre: string; km: number } | null };
   carreteraKm: number | null;
   ocurrencias: Array<{ nombre: string; km: number; detalle: string | null }>;
+  /** Cuántas ocurrencias hay a 5 km (la lista de arriba es solo una muestra para mostrar). */
+  ocurrenciasTotal: number;
+  /** Si el conteo llegó al tope de la consulta (entonces son «al menos» tantas). */
+  ocurrenciasTope: boolean;
   /** Las muestras geoquímicas de JICA a 5 km (los indicios del paso 2) y la de más oro. */
   jica: { muestras: number; mejorAu: { codigo: string; tipo: string; ppb: number; sobreTope: boolean; km: number } | null } | null;
   geologia: {
@@ -84,12 +88,16 @@ export function cuadrado([lon, lat]: [number, number], ha = 500): Polygon {
   return { type: 'Polygon', coordinates: [[[o, s], [e, s], [e, n], [o, n], [o, s]]] };
 }
 
-/** ¿Sirve como target libre? Sin concesión encima, fuera de áreas protegidas, microcuencas y forestal. */
+/**
+ * ¿Sirve como target libre? Ni una hectárea con concesión encima (tolerancia de redondeo, no de
+ * traslape), y las tres restricciones REVISADAS con éxito y sin tocarla: una capa que no se cargó o
+ * que falló no cuenta como «libre», porque el recorrido lo diría así.
+ */
 export function estaLibre(a: { ha: number; libreHa: number; entorno?: any }): boolean {
   const e = a.entorno;
-  if (!e || a.ha <= 0 || a.libreHa < a.ha * 0.99) return false;
-  const pisa = (s: any) => s?.estado === 'ok' && (s.pisa?.length || 0) > 0;
-  return !pisa(e.areasProtegidas) && !pisa(e.microcuencas) && !pisa(e.forestal);
+  if (!e || a.ha <= 0 || a.ha - a.libreHa > 0.01) return false;
+  const limpia = (s: any) => s?.estado === 'ok' && !(s.pisa?.length > 0);
+  return limpia(e.areasProtegidas) && limpia(e.microcuencas) && limpia(e.forestal);
 }
 
 const n1 = (x: number) => Math.round(x * 10) / 10;
@@ -207,6 +215,9 @@ export async function armarTarget(): Promise<TargetEjemplo | { error: string }> 
       rios: ok(e.rios) ? { kmDentro: n1(e.rios.kmDentro), masCercano: e.rios.masCercano ? { nombre: e.rios.masCercano.nombre || 'sin nombre', km: n1(e.rios.masCercano.km) } : null } : { kmDentro: 0, masCercano: null },
       carreteraKm: ok(e.carretera) && e.carretera.km != null ? n1(e.carretera.km) : null,
       ocurrencias: ok(e.ocurrencias) ? e.ocurrencias.lista.slice(0, 8).map((o: any) => ({ nombre: o.nombre, km: n1(o.km), detalle: o.detalle })) : [],
+      ocurrenciasTotal: ok(e.ocurrencias) ? e.ocurrencias.lista.length : 0,
+      // entorno.ts trae hasta 40 puntos cercanos.
+      ocurrenciasTope: ok(e.ocurrencias) && e.ocurrencias.lista.length >= 40,
       jica,
       geologia: gg
         ? {
