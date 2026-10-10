@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import { clave } from './boveda';
 import { AlmacenNoDisponible, cajonPorCorreo } from './misiones';
 import { aparatoDeOtro, enviarPushWeb, marcarDuenoAparato } from './push-web';
-import { claveDe } from './durable';
+import { almacenDurable, claveDe, crearUnaVez, type AlmacenDurable } from './durable';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -38,8 +38,13 @@ import { claveDe } from './durable';
  * {canal, titulo, texto (una línea), sugerencia, chat, nombre, abrir}. Al tocarlo, la app abre ese chat con la respuesta
  * sugerida como BORRADOR en la caja de texto (no sale nada sin que la persona toque «Enviar»).
  */
-export type TipoPush = 'llamada' | 'mensaje' | 'propuesta' | 'recordatorio' | 'computadora' | 'mensaje-externo';
-export const TIPOS_PUSH: readonly TipoPush[] = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora', 'mensaje-externo'];
+/**
+ * `decision` (Fase 2): «necesito tu decisión» de un objetivo con estado o de una de sus tareas (lib/objetivos.ts):
+ * {objetivoId, decisionId, revision, pregunta, opciones: [{id, etiqueta}] (≤3, cortas)} para que el teléfono pinte un
+ * botón por opción. Se manda una sola vez por decisión + revisión (`pedirDecisionPorPush`).
+ */
+export type TipoPush = 'llamada' | 'mensaje' | 'propuesta' | 'recordatorio' | 'computadora' | 'mensaje-externo' | 'decision';
+export const TIPOS_PUSH: readonly TipoPush[] = ['llamada', 'mensaje', 'propuesta', 'recordatorio', 'computadora', 'mensaje-externo', 'decision'];
 
 export type Plataforma = 'android' | 'ios' | 'web';
 export type Dispositivo = { token: string; aparato: string; plataforma: Plataforma; app: string; fecha: number };
@@ -357,9 +362,9 @@ export async function enviarPush(correo: string, datos: DatosPush, o: { ttlS?: n
 function enviarComoWeb(correo: string, datos: DatosPush, o: { ttlS?: number; ahora?: () => number }) {
   if (!TIPOS_PUSH.includes(datos?.tipo)) return Promise.resolve(null);
   const txt = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
-  const titulos: Record<TipoPush, string> = { llamada: 'AURA te llama', mensaje: txt(datos.titulo) || 'AURA', propuesta: 'AURA te propone algo', recordatorio: 'Recordatorio', computadora: 'Tu computadora', 'mensaje-externo': txt(datos.titulo) || 'Mensaje importante' };
-  const texto = datos.tipo === 'llamada' ? txt(datos.motivo) || 'Quiere hablar contigo.' : txt(datos.texto);
-  const abrir = txt(datos.abrir) || (datos.tipo === 'computadora' ? 'computadora' : 'mesa');
+  const titulos: Record<TipoPush, string> = { llamada: 'AURA te llama', mensaje: txt(datos.titulo) || 'AURA', propuesta: 'AURA te propone algo', recordatorio: 'Recordatorio', computadora: 'Tu computadora', 'mensaje-externo': txt(datos.titulo) || 'Mensaje importante', decision: 'Necesito tu decisión' };
+  const texto = datos.tipo === 'llamada' ? txt(datos.motivo) || 'Quiere hablar contigo.' : datos.tipo === 'decision' ? txt(datos.pregunta) : txt(datos.texto);
+  const abrir = txt(datos.abrir) || (datos.tipo === 'computadora' ? 'computadora' : datos.tipo === 'decision' ? 'objetivos' : 'mesa');
   const ahora = (o.ahora || Date.now)();
   const id = /^[A-Za-z0-9_.:-]{1,80}$/.test(String(datos.id || '')) ? String(datos.id) : nuevoId();
   return enviarPushWeb(
@@ -489,6 +494,62 @@ export function recordarPorPush(correo: string, texto: string, id?: string): Pro
  */
 export function avisarComputadoraPorPush(correo: string, tareaId: string, texto: string, o: { titulo?: string } = {}): Promise<ResultadoPush> {
   return enviarPush(correo, { tipo: 'computadora', id: tareaId, texto, ...(o.titulo ? { titulo: o.titulo } : {}) });
+}
+
+/** Lo que viaja en un aviso `decision` (Fase 2). */
+export type PushDecision = {
+  objetivoId: string | null;
+  decisionId: string;
+  revision: number;
+  pregunta: string;
+  opciones: { id: string; etiqueta: string }[];
+  /** Si la decisión es de una tarea del objetivo (su aprobación), su id. */
+  tareaId?: string;
+};
+
+/** Cuántas opciones lleva el aviso como mucho, y de qué largo (un botón de notificación es corto). */
+export const MAX_OPCIONES_PUSH = 3;
+export const MAX_ETIQUETA_PUSH = 24;
+
+/** La forma exacta del aviso `decision` (pura): ≤3 opciones con etiquetas cortas, la pregunta en una línea. */
+export function datosPushDecision(p: PushDecision): DatosPush {
+  const corta = (s: unknown, n: number) => {
+    const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+    return t.length <= n ? t : `${t.slice(0, n - 1).trimEnd()}…`;
+  };
+  const opciones = p.opciones
+    .filter((o) => o && /^[A-Za-z0-9_:.-]{1,60}$/.test(String(o.id)))
+    .slice(0, MAX_OPCIONES_PUSH)
+    .map((o) => ({ id: String(o.id), etiqueta: corta(o.etiqueta, MAX_ETIQUETA_PUSH) }));
+  return {
+    tipo: 'decision',
+    id: `dec-${p.decisionId}-r${p.revision}`.replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 80),
+    objetivoId: p.objetivoId || '',
+    ...(p.tareaId ? { tareaId: p.tareaId } : {}),
+    decisionId: p.decisionId,
+    revision: String(p.revision),
+    pregunta: corta(p.pregunta, 200),
+    opciones,
+  };
+}
+
+/**
+ * «Necesito tu decisión» (Fase 2): manda el aviso `decision` UNA vez por decisión + revisión (la marca va en lo durable
+ * ANTES de mandar: dos réplicas o un reintento no lo repiten). Una revisión nueva de la misma decisión (cambiaron las
+ * opciones) sí avisa otra vez. Nunca lanza. `enviar` es para las pruebas.
+ */
+export async function pedirDecisionPorPush(
+  correo: string,
+  p: PushDecision,
+  o: { almacen?: AlmacenDurable; enviar?: (correo: string, datos: DatosPush) => Promise<ResultadoPush> } = {}
+): Promise<{ repetido: true } | { repetido: false; resultado: ResultadoPush }> {
+  const datos = datosPushDecision(p);
+  const a = o.almacen || almacenDurable();
+  const marca = await crearUnaVez(claveDe('push/decisiones', correo, `${p.decisionId}-r${p.revision}`), { t: Date.now() }, a).catch(() => null);
+  // Sin almacén no se sabe si ya se avisó: se avisa (un aviso de más es mejor que una decisión que nadie ve).
+  if (marca && marca.ok && !marca.creado) return { repetido: true };
+  const resultado = await (o.enviar || ((c: string, d: DatosPush) => enviarPush(c, d)))(correo, datos).catch((e: any) => conEntrega({ enviados: 0, fallidos: 1, quitados: 0, configurado: true, detalle: String(e?.message || e).slice(0, 80) }));
+  return { repetido: false, resultado };
 }
 
 /*

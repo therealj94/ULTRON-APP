@@ -473,6 +473,27 @@ export async function soltarLease(lease: Lease): Promise<boolean> {
 }
 
 /**
+ * Toma el lease de `clave`, corre `f` con él y lo suelta al terminar (también si `f` lanza). Si otro lo tiene vigente
+ * (`ocupado`) o el almacén no contestó (`detalle`), `f` NO corre. Quien hace un efecto dentro pasa el lease a
+ * `ejecutarUnaVez`: si mientras tanto lo perdió (venció y otro lo tomó con un token mayor), el efecto no se despacha.
+ */
+export async function conLease<R>(
+  clave: string,
+  titular: string,
+  ms: number,
+  f: (lease: Lease) => Promise<R>,
+  o: { almacen?: AlmacenDurable; ahora?: () => number } = {}
+): Promise<{ ok: true; valor: R; token: number } | { ok: false; ocupado?: RegistroLease; detalle?: string }> {
+  const l = await tomarLease(clave, titular, ms, o);
+  if (l.ok === false) return 'ocupado' in l ? { ok: false, ocupado: l.ocupado } : { ok: false, detalle: l.detalle };
+  try {
+    return { ok: true, valor: await f(l.lease), token: l.lease.token };
+  } finally {
+    await soltarLease(l.lease).catch(() => false);
+  }
+}
+
+/**
  * FENCING: ¿este token sigue siendo el vigente? Se mira justo antes de iniciar un efecto. Con S3 hay una
  * ventana entre esta lectura y el efecto; por eso el token también viaja con la operación (y al nodo), que
  * rechaza tokens menores al último visto.
