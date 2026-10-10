@@ -5,11 +5,11 @@ name: Abrir AU-RA hasta la entrada
 ---
 - runFlow: cerrar-anr.yaml
 - extendedWaitUntil:
-    visible: "Saltar|Otras formas de entrar|Entra con tu identidad|Mensaje|Más opciones.*|.*isn't responding.*"
+    visible: "Saltar|Otras formas de entrar|Entra a AU-RA|Entra con tu identidad|Mensaje|Más opciones.*|.*isn't responding.*"
     timeout: 120000
 - runFlow: cerrar-anr.yaml
 - extendedWaitUntil:
-    visible: "Saltar|Otras formas de entrar|Entra con tu identidad|Mensaje|Más opciones.*"
+    visible: "Saltar|Otras formas de entrar|Entra a AU-RA|Entra con tu identidad|Mensaje|Más opciones.*"
     timeout: 30000
 - runFlow:
     when:
@@ -18,5 +18,5 @@ name: Abrir AU-RA hasta la entrada
       - tapOn: "Saltar"
 - runFlow: cerrar-anr.yaml
 - extendedWaitUntil:
-    visible: "Entra con tu identidad|Otras formas de entrar|Mensaje|Más opciones.*"
+    visible: "Entra a AU-RA|Entra con tu identidad|Otras formas de entrar|Mensaje|Más opciones.*"
     timeout: 30000

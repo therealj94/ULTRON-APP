@@ -18,6 +18,15 @@
  *      comprueba con la wallet, lo suelta y abre una sesión de miembro (server/veta-entrar.ts). Una clave
  *      mala nunca llega aquí. Sin chat PULSE2CHAT por este camino (pide un pase de Genesis ID).
  *
+ *   4c. EL PASE QUE AU-RA NO ACEPTA (10-oct, «pase no válido» al instante con correo y contraseña de la wallet):
+ *      la wallet dio un pase pero AU-RA lo rechazó al canjearlo (`PASE_INVALIDO`: p. ej. el backend de la wallet
+ *      no le pasa a Genesis el destino `aura` ni el reto, y el pase sale sin destino; Genesis sin verificar; la
+ *      clave de AU-RA mal configurada; Genesis caído). El login de la wallet SÍ salió bien, así que se entra
+ *      igual por 4b: el token va UNA vez a `/api/veta/entrar` y el SERVIDOR lo comprueba con la wallet. Nunca se
+ *      confía en lo que diga el teléfono, y un pase sin destino `aura` sigue sin dar una identidad de Genesis:
+ *      la sesión es de miembro `veta:<dirección>`. Una identidad bloqueada, suspendida o en revisión del
+ *      padrón NO pasa por aquí (canjeFallidoSeEntraIgual).
+ *
  * LA CONTRASEÑA va de este teléfono al backend de la wallet y a ningún otro lado: nunca al servidor de
  * AU-RA, nunca a un registro, nunca a SecureStore. Este módulo no guarda nada en variables de módulo; la
  * clave vive solo en el argumento de esta llamada, y la pantalla la borra de su estado al terminar.
@@ -77,7 +86,23 @@ export type Dependencias<R> = {
 export function sinPaseSeEntraIgual(status: number, codigo: unknown): boolean {
   if (codigo === 'GID_SIN_IDENTIDAD' || codigo === 'GID_PENDIENTE' || codigo === 'CORREO_NO_VERIFICADO' || codigo === 'CUENTA_NO_VINCULADA' || codigo === 'GENESIS_RED') return true;
   if (typeof codigo === 'string' && codigo) return false;
-  return status === 404 || status >= 500;
+  // Sin código: un backend de la wallet de antes (contesta «Todavía no hay una identidad verificada» con 403 y sin
+  // código, o pasa tal cual el 400/403 de Genesis). Es «no hay pase para ti», no «tu identidad está bloqueada»
+  // (eso llega con su código, IDENTIDAD_BLOQUEADA / GID_NO_DISPONIBLE): se entra igual. 401 sigue siendo «la
+  // wallet no aceptó la sesión».
+  return status === 400 || status === 403 || status === 404 || status >= 500;
+}
+
+/**
+ * La wallet SÍ dio un pase, pero AU-RA no lo pudo canjear: ¿se entra igual con la cuenta de la wallet (4c)?
+ * Sí cuando el problema es el pase o Genesis, no la persona: `PASE_INVALIDO` (sin destino `aura`, reto que no
+ * casa, ya usado), `GID_PENDIENTE` (Genesis la tiene sin verificar), `MAL_CONFIGURADO` / `SIN_GENESIS` (la
+ * clave de AU-RA) y `GENESIS_CAIDO`. NO: `BLOQUEADA`, `SUSPENDIDA`, `PENDIENTE` (el padrón la conoce y la
+ * deja fuera), `CUENTA_SIN_COMPROBAR`, `LIMITE`, `SIN_CONEXION` (AU-RA no contestó: la otra puerta es la misma
+ * casa) ni `VENCIDO`.
+ */
+export function canjeFallidoSeEntraIgual(codigo: unknown): boolean {
+  return codigo === 'PASE_INVALIDO' || codigo === 'GID_PENDIENTE' || codigo === 'SIN_VERIFICAR' || codigo === 'MAL_CONFIGURADO' || codigo === 'SIN_GENESIS' || codigo === 'GENESIS_CAIDO';
 }
 
 /**
@@ -296,7 +321,16 @@ export async function entrarConClave<R>(datos: { correo: string; clave: string }
   if (!elPase) return { ok: false, ...errorDeWallet('fallo') };
 
   // 3. El camino de siempre. El token de la wallet se queda aquí y se suelta al volver (sin /auth/logout).
-  return d.canjear(elPase, verificador);
+  const canje: any = await d.canjear(elPase, verificador);
+  // 3b. AU-RA no aceptó el pase, pero la cuenta de la wallet es buena: se entra igual como miembro (4c). El
+  //     servidor vuelve a comprobar el token con la wallet; aquí no se decide nada por la persona.
+  if (canje && canje.ok === false && d.entrarSinGenesis && canjeFallidoSeEntraIgual(canje.codigo)) {
+    const r: any = await d.entrarSinGenesis(token);
+    // Camino cerrado en AU-RA (AURA_VETA_ABIERTO=0): lo que dijo el canje, como antes.
+    if (r && r.ok === false && r.codigo === 'VETA_CERRADO') return canje as R;
+    return r as R;
+  }
+  return canje as R;
 }
 
 /**

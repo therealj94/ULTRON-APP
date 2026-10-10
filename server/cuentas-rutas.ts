@@ -22,6 +22,7 @@ import { identificar, personaPorCorreoExacto, puedeEntrar, type Nivel, type Plat
 import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esDeComunidad, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
 import { correoDeCodigo } from './cuentas';
 import { avisarFaltaEnv } from '../lib/datos-privados';
+import { montarVigilancia } from './registro-entrada';
 import {
   HORAS_CODIGO,
   NIVELES,
@@ -32,6 +33,7 @@ import {
   revocarCodigo,
   crearEnlace,
   crearSolicitud,
+  confirmarCorreoCuenta,
   cuentaDe,
   cuentasDisponibles,
   decidirSolicitud,
@@ -113,6 +115,8 @@ const RESPUESTA_SOLICITUD = 'Recibimos tu solicitud. Cuando sea revisada te escr
 export function montarRutasCuentas(app: Express, d: DepsCuentas) {
   const prod = producto(d.plataforma);
   const origen = () => origenPublico(d.plataforma);
+  // Una línea por intento en el registro (server/registro-entrada.ts): correo enmascarado, nunca la clave.
+  montarVigilancia(app, [...['olvide', 'restablecer', 'cambiar'].map((r) => `/api/ultron/clave/${r}`), '/api/ultron/cuentas/solicitar', '/api/ultron/entrar-codigo']);
 
   function esAprobador(req: Request): string | null {
     const s = sesionDe(req);
@@ -173,6 +177,9 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     const cuenta = await cuentaDe(e.correo);
     const { nombre, rol } = d.nombreYRol(e.correo, cuenta?.nombre);
     await fijarClave(e.correo, clave, nombre);
+    // El enlace llegó a ese buzón: el correo queda probado (una cuenta propia sin confirmar, confirmada; y si otro
+    // se había adelantado a registrar este correo, su clave ya no vale y sus sesiones se cerraron con fijarClave).
+    await confirmarCorreoCuenta(e.correo).catch(() => {});
     // La clave queda guardada igual, pero la sesión solo se abre si esta plataforma le corresponde y la cuenta no
     // está suspendida (revisión 7, G3: alguien del padrón con la cuenta suspendida recuperaba la clave y entraba).
     const s = cuenta?.estado !== 'suspendida' && puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }, { comunidad: esDeComunidad(e.correo, d.plataforma) }) : null;

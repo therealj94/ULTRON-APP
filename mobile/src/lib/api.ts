@@ -350,8 +350,37 @@ export async function olvideClave(correo: string): Promise<string> {
 }
 
 /**
- * «Crear cuenta»: en AU-RA nadie entra solo. Se manda una solicitud y José (o quien apruebe) la
- * revisa; si la aprueba, llega un correo para crear la contraseña.
+ * «Crear cuenta» de la comunidad (server/registro-cuentas.ts): la cuenta y la sesión de miembro EN EL ACTO. El
+ * token se guarda solo si el intento sigue siendo el último (como cualquier entrada). `confirmacion`: 'enviado'
+ * si salió el código al correo; si no ('sin_correo', 'fallo'), se entra igual y se confirma después.
+ */
+export async function crearCuenta(nombre: string, correo: string, clave: string, intento: Intento) {
+  exigirIntento(intento);
+  const data = await api<{ miembro?: { nombre?: string; rol?: string; correo?: string }; token?: string; confirmacion?: string; correoConfirmado?: boolean }>(
+    '/api/ultron/cuentas/crear',
+    { method: 'POST', body: JSON.stringify({ nombre: nombre.replace(/\s+/g, ' ').trim(), correo: String(correo).trim().toLowerCase(), clave }) },
+    20_000,
+    false
+  );
+  await guardarTokenDe(data.token, intento);
+  return data;
+}
+
+/** El código de 6 cifras del correo, con la sesión recién abierta. */
+export async function confirmarCodigoCorreo(codigo: string): Promise<boolean> {
+  const data = await api<{ correoConfirmado?: boolean }>('/api/ultron/cuentas/confirmar', { method: 'POST', body: JSON.stringify({ codigo }) }, 15_000, false);
+  return !!data.correoConfirmado;
+}
+
+/** Otro código al correo de la sesión. */
+export async function reenviarCodigoCorreo(): Promise<{ confirmado: boolean }> {
+  const data = await api<{ correoConfirmado?: boolean }>('/api/ultron/cuentas/reenviar', { method: 'POST', body: '{}' }, 15_000, false);
+  return { confirmado: !!data.correoConfirmado };
+}
+
+/**
+ * «Solicitar acceso»: para quien necesita MÁS que la cuenta de la comunidad (nivel de la junta).
+ * Se manda una solicitud y José (o quien apruebe) la revisa; si la aprueba, llega un correo.
  */
 export async function pedirCuenta(nombre: string, correo: string, motivo: string): Promise<string> {
   const data = await api<{ message?: string }>(

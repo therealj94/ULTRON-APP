@@ -11,6 +11,32 @@ El servidor de AU-RA nunca ve la contraseña de la wallet, la frase semilla ni l
 correo y la contraseña de Veta Wallet** dentro de la app (caso e: el teléfono habla directo con la wallet)
 y, **sin Genesis ID**, como miembro con la sola cuenta de la wallet (caso f).
 
+## 10-oct: la entrada abierta (cuenta propia primero)
+
+José: «nadie normal puede entrar». Desde ahora lo primero de «Entrar» (app y web) es la **cuenta de AU-RA**:
+correo + contraseña + «Entrar», y **«Crear cuenta»** a la vista. Veta Wallet y Orden Global quedan como opciones.
+
+- **Crear cuenta** (`server/registro-cuentas.ts`): `POST /api/ultron/cuentas/crear {nombre, correo, clave}` abre
+  la cuenta propia (`cuentas.cuenta`, `aprobada_por='registro'`, sin acceso en el padrón) y la sesión de **miembro**
+  en el acto (marca `comunidad`, igual que Genesis abierto). El correo se confirma después con un código de 6 cifras
+  (`/confirmar`, `/reenviar`, con la sesión) por el remitente de SES de siempre; sin correo configurado se entra
+  igual y la cuenta queda sin confirmar. La junta, el padrón o un correo con cuenta contestan lo mismo (409
+  `CORREO_NO_DISPONIBLE`). Solo AU-RA (en Dr Electrum, 404). Los niveles altos siguen saliendo del padrón; la cola de
+  José («Solicitar acceso») queda para eso.
+- **Quien se adelanta a registrar el correo de otro** no se queda con él: si el dueño entra con Genesis ID (prueba
+  el correo) o usa «¿Olvidaste tu contraseña?» (el enlace le llega a él), la clave de la cuenta sin confirmar deja de
+  valer y sus sesiones se cierran (`reclamarCuentaSinConfirmar`, `restablecer`).
+- **«Pase no válido» con correo y contraseña de la wallet**: la wallet daba un pase y AU-RA lo rechazaba al
+  canjearlo (lo más probable: el backend de la wallet en Heroku no le pasa a Genesis `aud`/`reto` —la versión de
+  `genesisPuente.js` de la rama `claude/wallet-publicada-aura` reenvía solo `{gid, cuenta}`— y el pase sale sin
+  destino: `PASE_INVALIDO` «sin destino aura»). Ahora, si el login de la wallet salió bien y AU-RA no acepta el pase
+  (`PASE_INVALIDO`, sin verificar, mal configurado, Genesis caído), la app manda el token de la wallet UNA vez a
+  `/api/veta/entrar` (caso f, el servidor lo comprueba con la wallet) y entra como miembro `veta:<dirección>`. Un pase
+  sin destino `aura` sigue sin dar identidad de Genesis; una identidad bloqueada (`BLOQUEADA`) no busca otra puerta.
+- **El registro** (`server/registro-entrada.ts`): cada intento en cada ruta de entrar o crear cuenta deja UNA línea
+  `[entrada] ruta=… status=… resultado=… detalle="…" ms=… quien=j***@dominio` (correo enmascarado, la wallet como
+  huella; nunca tokens, pases ni contraseñas).
+
 ## Las piezas y dónde vive cada una
 
 | Pieza | Repositorio y archivo | Despliegue |

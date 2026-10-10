@@ -28,6 +28,7 @@
 import type { Express, RequestHandler } from 'express';
 import { recogerVuelta, registrarIntentoWeb, VIDA_INTENTO_MS } from './sso-web';
 import { comprobarSuspension, TOPE_SUSPENSION_MS } from './veta-entrar';
+import { anotarDetalle, montarVigilancia } from './registro-entrada';
 
 const RETO = /^[A-Za-z0-9_-]{43}$/;
 const GID = /^GEN-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]$/;
@@ -51,7 +52,7 @@ export const genesisAbierto = () => !/^(0|false|no|cerrado)$/i.test(String(proce
  * `gid.cumple`. Si no viene (la app no lo tiene, o la persona no lo dio), no pasa nada.
  */
 export type PaseVerificado = { gid: string; correo: string; nombre: string; nombreCompleto: string; cumple: string | null };
-export type FalloPase = { estado: 401 | 503; codigo: 'SIN_GENESIS' | 'GENESIS_CAIDO' | 'PASE_INVALIDO' | 'SIN_VERIFICAR' | 'MAL_CONFIGURADO'; detalle?: string };
+export type FalloPase = { estado: 401 | 403 | 503; codigo: 'SIN_GENESIS' | 'GENESIS_CAIDO' | 'PASE_INVALIDO' | 'SIN_VERIFICAR' | 'MAL_CONFIGURADO' | 'BLOQUEADA'; detalle?: string };
 
 /** El primer nombre para saludar; el nombre legal completo no hace falta en la mesa. */
 function nombreCorto(legal: unknown): string {
@@ -99,7 +100,13 @@ export async function verificarPase(pase: string, verificador: string, f: typeof
   }
   const j: any = await r.json().catch(() => ({}));
   if (r.status >= 500) return { estado: 503, codigo: 'GENESIS_CAIDO', detalle: `HTTP ${r.status}` };
-  if (!r.ok || j?.valido !== true) return { estado: 401, codigo: 'PASE_INVALIDO', detalle: String(j?.codigo || j?.error || r.status) };
+  /* Genesis dice por qué (10-oct: antes todo era «pase no válido» y no quedaba rastro del motivo). Una identidad
+     bloqueada no es «vuelve a tocar el botón»: es BLOQUEADA, y la app no busca otra puerta. La que dejó de estar
+     verificada es SIN_VERIFICAR. La clave de AU-RA rechazada (401 sin `valido`) es culpa nuestra: MAL_CONFIGURADO. */
+  if (r.status === 403 && j?.codigo === 'IDENTIDAD_BLOQUEADA') return { estado: 403, codigo: 'BLOQUEADA', detalle: 'IDENTIDAD_BLOQUEADA' };
+  if (r.status === 403 && j?.valido === false) return { estado: 401, codigo: 'SIN_VERIFICAR', detalle: `HTTP 403 ${String(j?.error || '').slice(0, 60)}`.trim() };
+  if ((r.status === 401 || r.status === 403) && j?.valido === undefined) return { estado: 503, codigo: 'MAL_CONFIGURADO', detalle: `clave de aura rechazada (HTTP ${r.status})` };
+  if (!r.ok || j?.valido !== true) return { estado: 401, codigo: 'PASE_INVALIDO', detalle: String(j?.codigo || j?.error || `HTTP ${r.status}`).slice(0, 80) };
   /* Un pase sin destino es el de siempre: vale en cualquier casa y las veces que sea. Aquí no, o
      cualquier app del ecosistema que recibiera uno podría entrar a AU-RA con la identidad de otro. */
   if (!Array.isArray(j.aud) || !j.aud.includes('aura')) return { estado: 401, codigo: 'PASE_INVALIDO', detalle: 'sin destino aura' };
@@ -107,8 +114,10 @@ export async function verificarPase(pase: string, verificador: string, f: typeof
   const correo = String(j.correo || '').trim().toLowerCase();
   // Sin perfil o sin correo es la clave de AU-RA mal configurada en Genesis (le faltan
   // gid.perfil / gid.correo): es culpa nuestra y se dice como tal, no se deja entrar a ciegas.
-  if (!j.perfil || typeof j.perfil !== 'object' || !correo.includes('@') || !GID.test(gid)) return { estado: 503, codigo: 'MAL_CONFIGURADO' };
-  if (j.perfil.verificada !== true) return { estado: 401, codigo: 'SIN_VERIFICAR' };
+  if (!j.perfil || typeof j.perfil !== 'object' || !correo.includes('@') || !GID.test(gid)) {
+    return { estado: 503, codigo: 'MAL_CONFIGURADO', detalle: !j.perfil || typeof j.perfil !== 'object' ? 'sin perfil (falta gid.perfil)' : !correo.includes('@') ? 'sin correo (falta gid.correo)' : 'gid con otra forma' };
+  }
+  if (j.perfil.verificada !== true) return { estado: 401, codigo: 'SIN_VERIFICAR', detalle: 'perfil sin verificar' };
   return { gid, correo, nombre: nombreCorto(j.perfil.nombre), nombreCompleto: nombreCompleto(j.perfil.nombre), cumple: cumpleDeGenesis(j.perfil.cumple) };
 }
 
@@ -134,6 +143,13 @@ export type DepsGenesis = {
   suspendida?: (correo: string) => Promise<boolean>;
   /** Lo más que se espera la consulta de suspensión (TOPE_SUSPENSION_MS; las pruebas lo acortan). */
   topeSuspensionMs?: number;
+  /**
+   * Genesis acaba de probar que esta persona es la dueña del correo. Si alguien había creado una cuenta propia
+   * con ese correo SIN confirmarlo (server/registro-cuentas.ts), su contraseña deja de valer aquí, ANTES de
+   * emitir la sesión: quien se adelantó a registrar el correo de otro no se queda con la cuenta. Un fallo no
+   * impide entrar.
+   */
+  reclamarCorreo?: (correo: string) => Promise<unknown>;
   /** Deja la solicitud de acceso para que la apruebe José. Devuelve false si no se pudo guardar. */
   pedirAcceso: (s: { nombre: string; correo: string; motivo: string }) => Promise<boolean>;
   /**
@@ -159,9 +175,12 @@ const MENSAJE: Record<FalloPase['codigo'], string> = {
   GENESIS_CAIDO: 'No se pudo comprobar tu Genesis ID. Probá de nuevo en un momento.',
   PASE_INVALIDO: 'El pase no es válido o ya se usó. Volvé a tocar «Entrar con Genesis ID».',
   SIN_VERIFICAR: 'Tu identidad todavía no está verificada en Genesis ID.',
+  BLOQUEADA: 'El acceso de tu Genesis ID está bloqueado.',
 };
 
 export function montarRutasGenesis(app: Express, d: DepsGenesis) {
+  // Una línea por intento en el registro (server/registro-entrada.ts): antes un pase rechazado no dejaba rastro.
+  montarVigilancia(app, ['/api/genesis/entrar', '/api/genesis/web/recoger']);
   /** Lo que la app necesita saber para ofrecer el botón (nada secreto). */
   app.get('/api/genesis/config', (_req, res) => {
     res.json({ disponible: genesisConfigurado(), walletWeb: `${walletWeb()}/#sso-aura`, abierto: genesisAbierto() });
@@ -174,6 +193,8 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
       return res.status(400).json({ ok: false, error: 'Falta el pase de Genesis ID.', codigo: 'SIN_PASE' });
     }
     const r = await entrarConPase(pase, verificador, 'desde la app AU-RA FP');
+    if (r.detalle) anotarDetalle(res, r.detalle);
+    if (r.quien) res.locals.quienEntrada = r.quien;
     return res.status(r.status).json(r.body);
   });
 
@@ -203,17 +224,24 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
     if (r.estado === 'reto') return res.status(403).json({ ok: false, estado: 'error', codigo: 'RETO', error: 'Esta entrada no la empezó este navegador.' });
     if (r.estado === 'error') return res.status(400).json({ ok: false, estado: 'error', codigo: r.error, error: 'Tu wallet no completó la entrada.' });
     const e = await entrarConPase(r.pase, verificador, 'desde la web de AU-RA FP');
+    if (e.detalle) anotarDetalle(res, e.detalle);
+    if (e.quien) res.locals.quienEntrada = e.quien;
     return res.status(e.status).json(e.body);
   });
 
   /** El canje del pase (la app y la web): la misma decisión de siempre, con su estado HTTP y su cuerpo. */
-  async function entrarConPase(pase: string, verificador: string, desde: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  async function entrarConPase(pase: string, verificador: string, desde: string): Promise<{ status: number; body: Record<string, unknown>; detalle?: string; quien?: string }> {
     const v = await verificarPase(pase, verificador, d.fetch);
     if ('codigo' in v) {
       if (v.estado === 503) console.error(`[genesis] ${v.codigo}${v.detalle ? `: ${v.detalle}` : ''}`);
-      return { status: v.estado, body: { ok: false, error: MENSAJE[v.codigo], codigo: v.codigo } };
+      return { status: v.estado, body: { ok: false, error: MENSAJE[v.codigo], codigo: v.codigo }, detalle: v.detalle };
     }
     const correo = d.normalizarCorreo(v.correo);
+    const r = await decidir(v, correo, desde);
+    return { ...r, quien: correo };
+  }
+
+  async function decidir(v: PaseVerificado, correo: string, desde: string): Promise<{ status: number; body: Record<string, unknown>; detalle?: string }> {
     // Una cuenta suspendida no entra por Genesis (con Genesis abierto entraba como miembro).
     // Revisión 7 (G3): si la consulta falla o tarda NO se entra (antes un error contaba como «no suspendida»).
     if (d.suspendida) {
@@ -248,6 +276,9 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
         },
       };
     }
+    // Antes de la sesión: una contraseña puesta por otro en una cuenta sin confirmar con este correo deja de valer
+    // (y con ella sus sesiones), y la sesión que se emite abajo ya es posterior.
+    if (d.reclamarCorreo) await Promise.resolve().then(() => d.reclamarCorreo!(correo)).catch((e: any) => console.warn('[genesis] no pude reclamar el correo', String(e?.message || e).slice(0, 120)));
     const { nombre, rol } = d.nombreYRol(correo, v.nombre);
     const s = d.emitirSesion({ correo, nombre, rol }, { comunidad: comoMiembro });
     console.log(`[genesis] ${v.gid} entró a AU-RA${comoMiembro ? ' como miembro' : ''}`);

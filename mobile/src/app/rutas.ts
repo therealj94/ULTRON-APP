@@ -2,7 +2,7 @@
  * LAS RUTAS DE LA APP (native-stack) y la referencia a la navegación para quien no es pantalla: el
  * bus de acciones de AURA («vete atrás», «abre ajustes»), la sesión al cerrarse, la intro al terminar.
  *
- *   Intro → Bienvenida (primera vez sin sesión) → Entrar ⇄ CrearGenesis / OtrasFormas
+ *   Intro → Bienvenida (primera vez sin sesión) → Entrar ⇄ CrearCuenta / CrearGenesis / OtrasFormas
  *        → PrimeraVez (si el perfil no está completado) → Mesa ⇄ Ajustes ⇄ Perfil
  *                                                           Mesa ⇄ Chats ⇄ Conversacion
  */
@@ -15,6 +15,8 @@ export type RaizParams = {
   /** `reintentar`: pedir el pase al llegar (cambia en cada pedido, como `Chats.whatsapp`). */
   Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string; reintentar?: number } | undefined;
   CrearGenesis: { motivo?: 'sin-gid' } | undefined;
+  /** «Crear cuenta» de AU-RA (correo y contraseña), con la confirmación del correo por código. `correo`: el ya escrito. */
+  CrearCuenta: { correo?: string } | undefined;
   /** `aviso`: lo que se dice al llegar (la sesión terminó y hay clave o huella guardada en este teléfono). */
   OtrasFormas: { aviso?: string } | undefined;
   PrimeraVez: { desdeIntro?: boolean } | undefined;
