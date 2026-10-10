@@ -229,7 +229,7 @@ for cid in ids_capa:
 
 # catastro (concesiones): estado, departamento, tipo, mineral
 cat = {}
-for campo in ('estado', 'departamento', 'tipo', 'mineral'):
+for campo in ('estado', 'tipo'):  # solo lo que trae cada concesión del mapa (db.ts catastroGeojson)
     v = [r[0] for r in psql(f"SELECT DISTINCT trim({campo}) FROM concesion WHERE coalesce(trim({campo}),'') <> '' ORDER BY 1 LIMIT 60")]
     if 2 <= len(v) <= 40:
         cat[campo] = v

@@ -224,7 +224,7 @@ for k, (i, n) in enumerate(G1, 1):
                     ruta='1_informacion_gis/104000_derechos_mineros/104001_derechos_mineros.shp', ruta_web='/api/electrum/catastro.geojson',
                     crs_original='EPSG:26716 (NAD27 UTM 16N)', geometria='Polygon', num_entidades=1076,
                     archivos_origen=[os.path.basename(r['rel']) for r in rs], fuentes=[dict(catastro=True)],
-                    filtros=[dict(campo=k, etiqueta=k.capitalize(), valores=v) for k, v in d['catastro'].items()],
+                    filtros=[dict(campo=k, etiqueta=k.capitalize(), valores=v) for k, v in d['catastro'].items() if k in ('estado', 'tipo')],  # lo que trae el mapa
                     caja=[-89.36, 12.98, -83.13, 16.52], notas='El catastro vigente: 1076 concesiones (base: tabla concesion).')
         for r in rs:
             for rel in [r['rel']] + r['hermanos']:

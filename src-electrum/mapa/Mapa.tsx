@@ -18,6 +18,7 @@ import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Margen, typ
 import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, colorEstado, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
+import { cumpleFiltroIndice } from './indice';
 import { colorMuestra, pesoMuestra, radioMuestra, type ElementoMuestra } from './muestras';
 import { rellenoProsp } from './prospectividad';
 import mlcontour from 'maplibre-contour';
@@ -711,7 +712,8 @@ function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown)
     capa = new G.Data();
     capa.setStyle(cual === 'concesiones' ? ESTILO_CONCESIONES_GOOGLE : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 });
     capasGoogle[cual] = capa;
-    if (cual === 'concesiones' && filtroGoogle) filtrarGoogle(filtroGoogle);
+    // El catastro en Google también obedece al índice: apagado o filtrado por estado/tipo.
+    if (cual === 'concesiones') filtrarGoogle(filtroGoogle);
     if (cual === 'concesiones') {
       capa.addListener('click', (ev: any) => {
         const id = Number(ev.feature?.getProperty('id'));
@@ -750,18 +752,32 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
   for (const x of extras) {
     const f = fuenteExtra(x.id);
-    if (extrasGoogle.has(f)) continue;
-    const e = ESTILO_ROL[x.rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
-    const capa = new G.Data();
-    capa.setStyle((feat: any) => ({
+    // Transparencia, color y filtro del índice: si cambió alguno, se vuelve a estilar la capa.
+    const base = ESTILO_ROL[x.rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
+    const e = x.color ? { ...base, color: x.color } : base;
+    const op = x.opacidad ?? 1;
+    const estilo = (feat: any) => ({
+      visible: cumpleFiltroIndice((k) => feat.getProperty(k), x.filtro),
       fillColor: x.rol === 'litologia' ? COLOR_ROCA[feat.getProperty('clase')] || COLOR_ROCA.otra : e.color,
-      fillOpacity: e.relleno,
+      fillOpacity: e.relleno * op,
       strokeColor: x.rol === 'litologia' ? '#000000' : e.color,
-      strokeOpacity: x.rol === 'litologia' ? 0.4 : 0.95,
+      strokeOpacity: (x.rol === 'litologia' ? 0.4 : 0.95) * op,
       strokeWeight: Math.max(1, e.ancho),
       zIndex: 0,
-      icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: e.color, fillOpacity: 1, strokeColor: '#000', strokeWeight: 1 },
-    }));
+      icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: e.color, fillOpacity: op, strokeColor: '#000', strokeWeight: 1 },
+    });
+    const clave = JSON.stringify([x.opacidad ?? null, x.filtro ?? null, x.color ?? null]);
+    const ya = extrasGoogle.get(f);
+    if (ya) {
+      if (ya.__clave !== clave) {
+        ya.setStyle(estilo);
+        ya.__clave = clave;
+      }
+      continue;
+    }
+    const capa = new G.Data();
+    capa.__clave = clave;
+    capa.setStyle(estilo);
     try {
       capa.addGeoJson(x.geojson as any);
     } catch {
@@ -812,7 +828,10 @@ function filtrarGoogle(mineral: string | null) {
   if (!capa) return;
   capa.setStyle((f: any) => ({
     ...ESTILO_CONCESIONES_GOOGLE,
-    visible: !filtroGoogle || cumpleFiltro({ clase: f.getProperty('clase'), minerales: f.getProperty('minerales') }, filtroGoogle),
+    visible:
+      catastroIndice.visible &&
+      (!filtroGoogle || cumpleFiltro({ clase: f.getProperty('clase'), minerales: f.getProperty('minerales') }, filtroGoogle)) &&
+      cumpleFiltroIndice((k) => f.getProperty(k), catastroIndice.filtro),
   }));
 }
 
@@ -1109,6 +1128,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
   useEffect(() => {
     catastroIndice.visible = verCatastro;
     catastroIndice.filtro = JSON.parse(filtroCatastro);
+    if (google.current) filtrarGoogle(filtroGoogle);
     const m = mapa.current;
     if (!m || !listo) return;
     const poner = () => {

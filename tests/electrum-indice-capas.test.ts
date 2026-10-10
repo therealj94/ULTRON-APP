@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { arbolDe, colorDe, encendible, expresionFiltro, hayFiltro, hojasDe, resolverIndice, rolDe, type EntradaIndice } from '../src-electrum/mapa/indice';
+import { arbolDe, colorDe, cumpleFiltroIndice, encendible, expresionFiltro, hayFiltro, hojasDe, resolverIndice, rolDe, type EntradaIndice } from '../src-electrum/mapa/indice';
 import { validarManifiesto } from '../server/electrum/indice-capas';
 import { comandoDe } from '../src-electrum/panel/comandos';
 
@@ -63,6 +63,19 @@ test('índice: el filtro marcado es una expresión de MapLibre; sin marcar, todo
   assert.equal(dos.length, 3);
   assert.equal(hayFiltro({ mineral: ['Oro'] }), true);
   assert.equal(hayFiltro({ mineral: [] }), false);
+});
+
+test('índice: el filtro también en JavaScript (el mapa de Google no tiene expresiones)', () => {
+  const p = (o: Record<string, unknown>) => (k: string) => o[k];
+  assert.equal(cumpleFiltroIndice(p({ mineral: 'Oro' }), null), true);
+  const oro = expresionFiltro({ mineral: ['Oro'] });
+  assert.equal(cumpleFiltroIndice(p({ mineral: 'Oro' }), oro), true);
+  assert.equal(cumpleFiltroIndice(p({ mineral: 'Plata' }), oro), false);
+  assert.equal(cumpleFiltroIndice(p({}), oro), false);
+  const dos = expresionFiltro({ estado: ['Otorgada'], tipo: ['Metálica'] });
+  assert.equal(cumpleFiltroIndice(p({ estado: 'Otorgada', tipo: 'Metálica' }), dos), true);
+  assert.equal(cumpleFiltroIndice(p({ estado: 'Otorgada', tipo: 'No metálica' }), dos), false);
+  assert.equal(cumpleFiltroIndice(p({ ph: 6 }), expresionFiltro({ ph: ['6'] })), true, 'como to-string');
 });
 
 test('índice: lo que se pide de palabra', () => {
@@ -138,6 +151,16 @@ test('índice contra PostGIS: una capa de varios archivos, con su layer_id, su m
   assert.ok(oro.every((f: any) => typeof f.properties.ESTADO === 'string'), 'el campo de filtro viaja');
   assert.ok(fs.every((f: any) => !('SECRETO' in f.properties)), 'lo que no se filtra no viaja');
   assert.equal(fs.find((f: any) => f.properties.mineral === 'Plata').properties.nombre, 'Platera');
+  // Un plano: su documento manda; sin documento, solo la casa (revisión de Codex en #168).
+  const { planoVisible } = await import('../server/electrum/indice-capas');
+  const { conOrganizacion, asegurarOrganizacion } = await import('../server/electrum/organizacion') as any;
+  if (typeof asegurarOrganizacion === 'function') await asegurarOrganizacion();
+  const [doc] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, organizacion) VALUES ('Plano 374-I.pdf', 'orden-global') RETURNING id::int`);
+  const plano = (documento: number | null) => ({ id: 301011, nombre: 'Plano', tipo: 'documento' as const, padre: 301000, orden: 1, fuentes: [{ plano: 'biblioteca/mapas/planos/301011.pdf', documento }] });
+  assert.equal(await conOrganizacion('orden-global', () => planoVisible(plano(doc.id))), true, 'la casa lo ve');
+  assert.equal(await conOrganizacion('cliente-x', () => planoVisible(plano(doc.id))), false, 'otra organización no');
+  assert.equal(await conOrganizacion('cliente-x', () => planoVisible(plano(null))), false, 'sin documento: solo la casa');
+  assert.equal(await conOrganizacion('orden-global', () => planoVisible(plano(null))), true);
   const t = await capaDelIndice(103001);
   assert.equal((t as any).status, 404, 'las teselas no se sirven desde la base');
   assert.equal(((await capaDelIndice(999999)) as any).status, 404);

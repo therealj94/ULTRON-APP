@@ -17,7 +17,7 @@ import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
 import { esInvitado, exigirPlataforma, limitar } from '../seguridad';
 import { conTextoReparado, consultaConTope, hayBase, type RolCapa } from './db';
 import { capasPorRol, nombreDe } from './entorno';
-import { sqlCarteraVisible } from './organizacion';
+import { CASA, organizacionActual, sqlCarteraVisible, sqlDocumentoVisible } from './organizacion';
 
 const PREFIJO = 'biblioteca/mapas/';
 /** Más rasgos que esto no se manda entero a un teléfono: va por teselas. */
@@ -116,6 +116,23 @@ export function usarManifiesto(m: Manifiesto | null) {
 }
 
 /**
+ * ¿Puede esta organización abrir este plano? Si su texto está en el cerebro, manda la visibilidad de
+ * ese documento (la misma regla que en todas las rutas de documentos). Si no hay documento (una
+ * imagen sin texto), es material de la casa: solo la casa.
+ */
+export async function planoVisible(e: EntradaIndice): Promise<boolean> {
+  const f = (e.fuentes || []).find((x) => typeof x.plano === 'string');
+  if (!f) return false;
+  const org = organizacionActual();
+  if (f.documento) {
+    if (!hayBase()) return !org || org === CASA;
+    const [d] = await consultaConTope<{ id: string }>(`SELECT d.id::text FROM documento d WHERE d.id = $1${sqlDocumentoVisible('d')}`, [f.documento], 6000);
+    return !!d;
+  }
+  return !org || org === CASA;
+}
+
+/**
  * El manifiesto para esta persona: las capas de la base que su organización no ve quedan sin
  * fuente (se muestran en gris, como las faltantes), y no se dice de qué capa interna salen.
  */
@@ -123,9 +140,12 @@ export async function manifiestoPara(): Promise<Manifiesto | null> {
   const m = await manifiesto();
   if (!m) return null;
   const visibles = new Set((hayBase() ? await capasPorRol() : []).map((c) => c.id));
+  // Los planos que esta organización no puede abrir no se listan (revisión de Codex en #168).
+  const planos = await Promise.all(m.capas.filter((c) => c.tipo === 'documento').map(async (c) => [c.id, await planoVisible(c)] as const));
+  const ocultos = new Set(planos.filter(([, ok]) => !ok).map(([id]) => id));
   return {
     ...m,
-    capas: m.capas.map((c) => {
+    capas: m.capas.filter((c) => !ocultos.has(c.id)).map((c) => {
       const fuentes = (c.fuentes || []).filter((f) => !f.capa || visibles.has(f.capa));
       const sinBase = (c.fuentes || []).some((f) => f.capa) && !fuentes.some((f) => f.capa || f.cartera);
       // Al frontal le basta saber QUÉ tipo de fuente es; los ids internos de capa se quedan aquí.
@@ -264,6 +284,8 @@ export function montarRutasIndice(app: Express, enviar: (req: Request, res: Resp
     const e = m?.capas.find((c) => c.id === id && c.tipo === 'documento');
     const clave = e?.fuentes?.find((f) => typeof f.plano === 'string')?.plano;
     if (!e || !clave || !/^biblioteca\/mapas\/planos\/\d{6}\.(pdf|jpe?g|png)$/.test(clave)) return res.status(404).json({ error: 'Ese plano no está en el índice.', honesto: true });
+    // De otra organización: como si no existiera.
+    if (!(await planoVisible(e).catch(() => false))) return res.status(404).json({ error: 'Ese plano no está en el índice.', honesto: true });
     const r = await bajarExpediente(clave);
     if (!r.ok) return res.status(404).json({ error: 'Ese plano no está en el cubo.', honesto: true });
     const ext = clave.split('.').pop()!.toLowerCase();

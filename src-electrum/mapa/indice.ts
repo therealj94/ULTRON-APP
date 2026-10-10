@@ -115,6 +115,22 @@ export function expresionFiltro(marcados: Record<string, string[]> | undefined):
   return partes.length === 1 ? partes[0] : ['all', ...partes];
 }
 
+/**
+ * El mismo filtro, evaluado en JavaScript: el mapa de Google no entiende expresiones de MapLibre.
+ * Solo entiende lo que arma `expresionFiltro` (`in` sobre un campo y `all` de varios).
+ */
+export function cumpleFiltroIndice(valor: (campo: string) => unknown, filtro: unknown[] | null | undefined): boolean {
+  if (!filtro) return true;
+  if (filtro[0] === 'all') return (filtro.slice(1) as unknown[][]).every((f) => cumpleFiltroIndice(valor, f));
+  if (filtro[0] === 'in') {
+    const campo = ((filtro[1] as unknown[])?.[1] as unknown[])?.[1] as string;
+    const vals = ((filtro[2] as unknown[])?.[1] as unknown[]) || [];
+    const v = valor(campo);
+    return v != null && vals.includes(String(v));
+  }
+  return true;
+}
+
 export const hayFiltro = (marcados: Record<string, string[]> | undefined) => Object.values(marcados || {}).some((v) => v.length > 0);
 
 /** Las capas de la base que pesan: más que esto se avisa antes de encender un grupo entero. */
