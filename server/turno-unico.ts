@@ -35,10 +35,11 @@
  *     Antes el reintento de la app (para eso reintenta) corría el turno otra vez y repetía el envío o la tarea.
  *   · Un turno hecho que despachó algo repite su respuesta aunque pase su vida: con efectos, nunca vuelve a correr.
  * El registro guarda la respuesta ya dada (la misma que va a su memoria) para repetirla; conviene una regla de
- * ciclo de vida sobre `ultron/durable/turnos/`.
+ * ciclo de vida sobre `ultron/durable/turnos/`. Los de Dr Electrum (`electrum:<quién>`) van bajo su propio prefijo,
+ * `electrum/durable/turnos/` (lib/durable.ts almacenDurableElectrum), leyendo el viejo como respaldo.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { almacenDurable, claveDe, crearUnaVez, PROCESO_DURABLE, type AlmacenDurable } from '../lib/durable';
+import { almacenDurable, almacenDurableElectrum, claveDe, crearUnaVez, PROCESO_DURABLE, type AlmacenDurable } from '../lib/durable';
 
 /** Lo que se repite de un turno: lo mismo que lleva el `done` del stream y el JSON de /api/turno. */
 export type TurnoGuardado = {
@@ -162,6 +163,8 @@ type Propio = {
 
 type Config = {
   almacen: () => AlmacenDurable;
+  /** El de los turnos de Dr Electrum (claves `electrum:<quién>`): su propio prefijo. Si solo se da `almacen`, ese. */
+  almacenElectrum: () => AlmacenDurable;
   leaseMs: number;
   renovarMs: number;
   sondeoMs: number;
@@ -175,7 +178,17 @@ const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * crean varios para simular réplicas sobre el mismo almacén.
  */
 export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string } = {}) {
-  const cfg: Config = { almacen: almacenDurable, leaseMs: LEASE_MS, renovarMs: RENOVAR_MS, sondeoMs: SONDEO_MS, ahora: Date.now, ...opciones };
+  const cfg: Config = {
+    almacen: almacenDurable,
+    almacenElectrum: opciones.almacen && !opciones.almacenElectrum ? opciones.almacen : almacenDurableElectrum,
+    leaseMs: LEASE_MS,
+    renovarMs: RENOVAR_MS,
+    sondeoMs: SONDEO_MS,
+    ahora: Date.now,
+    ...opciones,
+  };
+  /** Dr Electrum en su prefijo; AU-RA en el de siempre. */
+  const almacenDe = (quien: string) => (quien.startsWith('electrum:') ? cfg.almacenElectrum() : cfg.almacen());
   let proceso = opciones.proceso || PROCESO_DURABLE;
   let reinicios = 0;
   const turnos = new Map<string, Entrada>();
@@ -301,7 +314,7 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
     let a: AlmacenDurable;
     let k: string;
     try {
-      a = cfg.almacen();
+      a = almacenDe(quien);
       k = claveDe('turnos', quien, id);
     } catch (e: any) {
       console.warn('[turno-unico] sin almacén durable:', String(e?.message || e).slice(0, 120));
@@ -464,7 +477,7 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
     let a: AlmacenDurable;
     let k: string;
     try {
-      a = cfg.almacen();
+      a = almacenDe(quien);
       k = claveDe('turnos', quien, id);
     } catch {
       return { noExiste: true, motivo: 'sin_almacen' };
@@ -509,7 +522,7 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
       await Promise.all([...activos].map((p) => p.cola));
     },
     configurar(c: Partial<Config>) {
-      Object.assign(cfg, c);
+      Object.assign(cfg, c.almacen && !c.almacenElectrum ? { ...c, almacenElectrum: c.almacen } : c);
     },
   };
 }

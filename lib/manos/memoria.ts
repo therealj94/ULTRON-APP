@@ -2,7 +2,9 @@
  * LAS MANOS DE LA MEMORIA ESTRUCTURADA — buscar, leer y alimentar las fichas.
  *
  * Existen en las dos plataformas, pero cada una lee y escribe SOLO su memoria: la plataforma sale
- * del contexto del turno, nunca de un argumento que el modelo pueda inventar.
+ * del contexto del turno, nunca de un argumento que el modelo pueda inventar. En Dr Electrum, además, solo las fichas de
+ * la organización de quien pregunta (el ámbito de la petición; lib/cognitivo/entidades.ts organizacionDeFichas), también
+ * por MCP: un cliente no busca, lee, relaciona ni anota en las fichas de otro.
  *
  * Leer es libre. Escribir (registrar, relacionar, anotar un evento) es `escritura`: pasa por el motor
  * de reglas como todo lo demás, así que quien tiene acceso de consulta no alimenta la memoria, y con

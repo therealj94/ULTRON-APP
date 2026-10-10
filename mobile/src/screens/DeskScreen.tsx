@@ -1143,7 +1143,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [say]);
 
   const askBrain = useCallback(
-    async (cmd: string, opts?: { image?: string; visto?: string; foco?: FocoVision; ficha?: FichaTurno }) => {
+    async (cmd: string, opts?: { image?: string; visto?: string; vistoTomadaEn?: number; foco?: FocoVision; ficha?: FichaTurno }) => {
       // La ficha de ESTE turno (la de «¿qué ves?» si la trae; si esa ya se cortó o la reemplazó otra, no sale): todo lo de
       // abajo pregunta a ella.
       if (opts?.ficha && !opts.ficha.vigente) return;
@@ -1178,6 +1178,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         memoria: longMemory.current,
         image: opts?.image,
         visto: opts?.visto,
+        // Cuándo se sacó la foto de lo visto: viaja como su edad (una vista reutilizada no es «ahora mismo»).
+        vistoTomadaEn: opts?.vistoTomadaEn,
         foco: opts?.foco,
         escena: vista.escena,
         ...(vista.quienHabla ? { quienHabla: vista.quienHabla } : {}),
@@ -1593,7 +1595,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (etiquetas.length) setObjects(etiquetas);
         // Solo la de «¿qué ves?» queda como vista fresca: el hecho de «léeme esto» lleva otra instrucción.
         if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: vt.alSacar.lado, personas: vt.alSacar.personas, foto: vt.foto });
-        await askBrain(pedido, { visto: vt.visto, foco, ficha: tk });
+        // La hora de captura: la fresca trae su edad; la recién vista, lo que se esperó al servidor.
+        await askBrain(pedido, { visto: vt.visto, vistoTomadaEn: Date.now() - (vt.tipo === 'fresca' ? vt.edadMs : vt.esperaMs), foco, ficha: tk });
         if (vt.foto) cerrarVisorEn(VISOR_MS);
         return;
       }

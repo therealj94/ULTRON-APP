@@ -23,7 +23,7 @@ import path from 'node:path';
 import { s3GetJson, s3GetJsonConEtag, s3ListarClaves, s3Listo, s3PutJson, s3PutJsonCondicional } from './s3';
 import { MODELO_VOZ, similitud } from './voces-motor';
 import { filaPorCuenta, Generaciones } from './fila-por-cuenta';
-import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, horaDeAlta, sanearDurable, siguiente, type Durable } from './biometria-durable';
+import { aplicarLapidas, repararCopiaS3, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, horaDeAlta, sanearDurable, siguiente, type Durable } from './biometria-durable';
 import { abrirBiometria, esSobre, hayLlaveBiometria, migrarAlSobre, resellarS3, sellarBiometria, SobreIlegible, type ResultadoMigracion } from './biometria-sobre';
 import { consentimientoDeAlta, consentimientoValido, reconocible, unirConsentimiento, type ConsentimientoBio } from './biometria-consentimiento';
 
@@ -298,7 +298,24 @@ function repararS3(c: string, cajon: CajonVoces, g: number) {
   const previa = colas.get(c) || Promise.resolve();
   const paso = previa.then(async () => {
     if (generaciones.cambioDesde(c, g)) return;
-    await s3.put(claveS3(c), aGuardar(c, cajon)).catch(() => null);
+    // Con la condición del ETag de una relectura (lib/biometria-durable.ts repararCopiaS3): si otra instancia guardó entre
+    // medio (una lápida nueva), se fusiona con lo suyo y se reintenta; nunca se pisa una copia más nueva.
+    const clave = claveS3(c);
+    const getEtag = s3Lee.getEtag;
+    const putCond = s3.putCond;
+    const condicional = !!(getEtag && putCond);
+    const r = await repararCopiaS3<PersonaVoz, CajonVoces>({
+      cajon,
+      leer: condicional ? () => getEtag!(clave) : () => s3Lee.get(clave),
+      abrir: (x) => deS3(c, x),
+      escribirSi: condicional ? (k, cond) => putCond!(clave, aGuardar(c, k), cond) : undefined,
+      escribir: (k) => s3.put(clave, aGuardar(c, k)),
+    });
+    // Lo fusionado puede traer una lápida que la otra instancia acababa de guardar: la caché no se queda con la persona.
+    if (r.estado !== 'fallo' && !generaciones.cambioDesde(c, g)) {
+      cache.set(c, r.cajon);
+      leidoEn.set(c, Date.now());
+    }
   });
   colas.set(c, paso.catch(() => undefined));
 }

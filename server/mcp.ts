@@ -34,7 +34,7 @@ import { COMPARTIDAS } from '../lib/manos/compartidas';
 import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
 import { MAPA, TODAS } from './electrum/manos';
 import { conOrganizacion, organizacionDePersona } from './electrum/organizacion';
-import { ALCANCE, montarOauthMcp, quienPorTokenMcp, urlMetadatosRecurso } from './mcp-oauth';
+import { ALCANCE, autoridadMcp, montarOauthMcp, quienPorTokenMcp, urlMetadatosRecurso } from './mcp-oauth';
 
 export const VERSIONES_MCP = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'informe_pdf', ...CAPAS_PANTALLA]);
@@ -192,13 +192,25 @@ export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFO
     .filter(Boolean);
   const hs = new Map(herramientasMcp(plataforma).map((h) => [h.nombre, h]));
 
-  /** A nombre de quién va esta llamada: el token fijo de MCP_QUIEN, o el de quien entró por OAuth. */
-  const quienLlama = (dado: string): Config | null => {
+  /**
+   * A nombre de quién va esta llamada: el token fijo de MCP_QUIEN, o el de quien entró por OAuth. En CADA petición se
+   * vuelve a mirar el padrón y la autoridad vigente de la cuenta (SEC-04): MCP_QUIEN se validó al arrancar, pero si
+   * después le quitan el acceso o suspenden su cuenta, el token fijo deja de valer sin redesplegar.
+   */
+  const quienLlama = async (dado: string): Promise<{ c: Config } | { negado: 'suspendida' | 'desconocida' } | null> => {
     if (!dado) return null;
-    if (fija && mismoToken(fija.token, dado)) return fija;
+    if (fija && mismoToken(fija.token, dado)) {
+      const persona = personaPorId(fija.quien);
+      const nivel = persona ? nivelDe(persona, plataforma) : null;
+      if (!persona || !nivel) return null;
+      const a = await autoridadMcp(persona.correos);
+      return a === 'permitida' ? { c: { ...fija, nivel } } : { negado: a };
+    }
     if (!oauth) return null;
     const q = quienPorTokenMcp(dado, plataforma);
-    return q ? { token: '', quien: q.quien, nivel: q.nivel, plataforma, origenes } : null;
+    if (!q) return null;
+    const a = await autoridadMcp(q.correo);
+    return a === 'permitida' ? { c: { token: '', quien: q.quien, nivel: q.nivel, plataforma, origenes } } : { negado: a };
   };
 
   app.all('/mcp', async (req, res) => {
@@ -208,7 +220,15 @@ export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFO
     if (origen && !origenes.includes(origen)) return res.status(403).json(fallo(null, -32000, 'Origen no permitido'));
     const auth = String(req.headers.authorization || '');
     const dado = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-    const c = quienLlama(dado);
+    const quien = await quienLlama(dado).catch(() => ({ negado: 'desconocida' as const }));
+    if (quien && 'negado' in quien) {
+      // SEC-04: el token es válido pero la cuenta no tiene autoridad vigente. Suspendida: 403 (volver a entrar no sirve);
+      // desconocida: 503 (falla cerrado, como /api).
+      return quien.negado === 'suspendida'
+        ? res.status(403).json(fallo(null, -32001, 'Esta cuenta está suspendida.'))
+        : res.status(503).json(fallo(null, -32001, 'No pude comprobar que la cuenta siga activa; inténtalo en un momento.'));
+    }
+    const c = quien && 'c' in quien ? quien.c : null;
     if (!c) {
       // Con OAuth, el 401 dice dónde está la puerta (RFC 9728): así Claude sabe a dónde mandar a entrar.
       res.setHeader('WWW-Authenticate', oauth ? `Bearer resource_metadata="${urlMetadatosRecurso(req)}", scope="${ALCANCE}"` : 'Bearer realm="mcp"');

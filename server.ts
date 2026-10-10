@@ -17,7 +17,7 @@ import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, saludEl
 import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server/voz-agente';
 import { montarMotorVoz, motorDe } from './server/voz-motor';
 import { anotarDesdeRuta } from './server/voz-medidas';
-import { interruptor } from './lib/interruptores';
+import { interruptor, precargarInterruptores } from './lib/interruptores';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
@@ -177,7 +177,7 @@ import { iniciarCentinela } from './lib/centinela';
 import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
-import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
+import { edadDeVista, etiquetasDeVista, focoDePregunta, focoValido, hechoVisionDelTelefono, vistaAHechos } from './lib/vision-estructurada';
 import { hechoCaras, preguntaPorVer as preguntaPorVerCamara } from './lib/caras-turno';
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, PRESUPUESTO_VISION_TURNO_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
@@ -3586,7 +3586,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // pregunta: se acota y se le quitan las marcas de acción, como a la escena.
     const visto = typeof body?.visto === 'string' ? neutralizarMarca(body.visto.replace(/\s+/g, ' ').trim().slice(0, 2600)) : '';
     if (visto && !image) {
-      hechos.push(`VISION (la cámara del teléfono, ahora mismo): ${visto}`);
+      // Con su frescura (`vistoEdadMs` de la app): la app reutiliza una vista de hasta 20 s; «ahora mismo» solo si lo es.
+      hechos.push(hechoVisionDelTelefono(visto, edadDeVista(body?.vistoEdadMs)));
       tools.push('vision');
     }
     // Preguntan qué ve y no llegó ni foto ni escena de la cámara: se le da la verdad al modelo. Sin
@@ -7043,6 +7044,10 @@ async function startServer() {
     });
   }
 
+  // Los interruptores guardados ANTES de aceptar turnos (lib/interruptores.ts): un interruptor que la junta apagó no se
+  // vuelve a encender solo con un reinicio. Con tope corto; si S3 no contesta, los últimos conocidos (o lo seguro).
+  const precarga = await precargarInterruptores();
+  if (precarga !== 's3' && precarga !== 'sin_s3') console.warn(`[interruptores] arranque con ${precarga === 'copia' ? 'la copia local' : 'lo seguro'}`);
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(
       `[${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}] :${PORT} — sirviendo ${PAGINA_RAIZ}` +
