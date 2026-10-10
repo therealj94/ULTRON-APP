@@ -1,5 +1,5 @@
 // Servidor AU-RA SIMULADO para las pruebas del .exe en el CI de Windows (127.0.0.1:18788).
-// Habla el mismo contrato que server.ts: /api/health, /api/turno/stream (SSE), /api/tts, /api/stt,
+// Habla el mismo contrato que server.ts: /api/health, /api/turno/stream (SSE), /api/tts (y /api/tts/stream), /api/stt,
 // /api/windows/intencion. No es el cerebro ni la voz de verdad: solo prueba el cliente.
 import http from 'node:http';
 
@@ -31,7 +31,8 @@ http.createServer(async (req, res) => {
     ev('done', { reply: 'Hola, José. Aquí estoy, lista para ayudarte.', voz: partes.join(''), emocion: 'feliz', ms: 120, via: 'fixture' });
     return res.end();
   }
-  if (url.pathname === '/api/tts') { res.writeHead(200, { 'content-type': 'audio/wav', 'X-Ultron-TTS': 'fixture' }); return res.end(wav); }
+  // La voz de Windows sale por /api/tts/stream (sin tiempos por letra, 10-oct); /api/tts sigue para lo demás.
+  if (url.pathname === '/api/tts' || url.pathname === '/api/tts/stream') { res.writeHead(200, { 'content-type': 'audio/wav', 'X-Ultron-TTS': 'fixture' }); return res.end(wav); }
   if (url.pathname === '/api/stt') return json({ text: String(body.audioBase64 || '').startsWith('data:audio/wav;base64,UklGR') ? 'abre la calculadora' : '' });
   if (url.pathname === '/api/windows/intencion') {
     if (req.headers['x-ultron-sesion'] !== 'sesion-de-prueba') return json({ error: 'sesión' }, 401);
