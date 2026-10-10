@@ -18,6 +18,7 @@ import { appEsperandoDe, contextoDe } from '../lib/acciones-app';
 import { analizarRespuesta, decidirPendiente, type Decidido, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
 import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
 import { anotarRechazoDePanel, gastarVencidos, llaveConversacion, resumenTexto, tomarVencidos, verVencidos } from './borradores-cola';
+import { anotarDescarteDurable } from './borradores-durables';
 import type { RetencionAcciones } from './voz-agente';
 import { otraVozDelTurno } from '../lib/voces-miembro';
 import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
@@ -542,7 +543,11 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
 export async function resolverBorradorDesdePanel(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, respuesta: 'sí' | 'no', huella?: string): Promise<SalidaEnvio> {
   // Revisión 9: rechazado en su panel o su ventana, ningún turno de voz descartado lo repone después (ni si ahora mismo
   // un «no» hablado sin confirmar lo tiene quitado).
-  if (respuesta === 'no') anotarRechazoDePanel(intento);
+  if (respuesta === 'no') {
+    anotarRechazoDePanel(intento);
+    // Revisión de fases: también durable (la lápida): tras un reinicio, rehidratar no lo revive.
+    await anotarDescarteDurable(correo, intento, 'rechazado');
+  }
   const principal = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
   const b = principal && principal.intento === intento ? principal : canal === 'correo' ? borradorCorreoPorIntento(correo, ambito, intento) : borradorWhatsappPorIntento(correo, ambito, intento);
   if (!b || b.intento !== intento) return { estado: 'stale', resumen: 'El borrador ya no era el aprobado; no se envió nada.' };

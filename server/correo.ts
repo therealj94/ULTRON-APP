@@ -44,7 +44,7 @@ import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo
 import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { dentroDe, intervaloDeCorreo, sinTiempo, type Intervalo } from '../lib/correo/intervalo';
 import { presentadoEnChat } from './presentacion-decision';
-import { guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
+import { anotarDescarteDurable, guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
 import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
@@ -960,6 +960,10 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = '', 
   BORRADORES.set(k, guardado);
   // Fase 2: también durable (server/borradores-durables.ts): su aprobación vale tras un reinicio o desde otra réplica.
   guardarBorradorDurable('correo', quien, ambito, guardado);
+  // Revisión de fases: lo que este reemplazó (el que esperaba, si no quedó apartado, y sus versiones viejas) deja su lápida:
+  // tras un reinicio no revive desde lo durable.
+  const apartado = !!previo && previo.soloPanel && !motivoBorrador(previo, quien) && !mismos(previo);
+  for (const x of [...(previo && !apartado ? [previo] : []), ...viejas]) if (x.intento !== guardado.intento) void anotarDescarteDurable(quien, x.intento, 'reemplazado');
   // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
   presentadoEnChat(quien, ambito, { canal: 'correo', intento: vigencia.intento, huella });
   const aviso =
@@ -1062,6 +1066,7 @@ export async function resolverApartadoCorreo(quien: string, ambito: string, inte
   if (!b) return null;
   if (respuesta === 'no') {
     APARTADOS.quitar(k, intento);
+    void anotarDescarteDurable(quien, intento, 'rechazado');
     return exito(`CORREO: no se mandó; el borrador para ${b.para.join(', ')} quedó descartado.`, { efecto: 'ninguno', codigo: 'descartado' });
   }
   const motivo = motivoPanel(b, huellaCorreo(b), huella);
@@ -1093,6 +1098,8 @@ export function editarBorradorCorreo(quien: string, ambito: string, intento: str
   if (BORRADORES.get(k)?.intento === intento) BORRADORES.set(k, nuevo);
   else APARTADOS.reemplazar(k, intento, nuevo);
   guardarBorradorDurable('correo', quien, ambito, nuevo);
+  // El de antes ya no se puede mandar: su lápida (no revive tras un reinicio).
+  void anotarDescarteDurable(quien, intento, 'reemplazado');
   return { ok: true, borrador: nuevo };
 }
 

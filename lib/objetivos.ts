@@ -40,8 +40,12 @@ export type EstadoObjetivo = (typeof ESTADOS_OBJETIVO)[number];
 export const TERMINALES_OBJETIVO: ReadonlySet<EstadoObjetivo> = new Set<EstadoObjetivo>(['completado', 'cancelado', 'fallido']);
 export const esTerminalObjetivo = (e: EstadoObjetivo) => TERMINALES_OBJETIVO.has(e);
 
-/** Lo que AURA puede hacer por este objetivo sin preguntar otra vez. Lista cerrada: lo demás no existe. */
-export const PERMISOS_OBJETIVO = ['preparar-borradores', 'enviar-correo', 'enviar-whatsapp', 'agendar', 'usar-computadora', 'gastar'] as const;
+/**
+ * Lo que AURA puede hacer por este objetivo sin preguntar otra vez. Lista cerrada: lo demás no existe. `investigar`: el
+ * planificador puede arrancar SOLO una investigación (búsquedas + el cerebro, cuesta) para una tarea del objetivo creada
+ * con `ejecutar: true`, dentro de su `topeCosto` (server/planificador.ts).
+ */
+export const PERMISOS_OBJETIVO = ['preparar-borradores', 'enviar-correo', 'enviar-whatsapp', 'agendar', 'usar-computadora', 'gastar', 'investigar'] as const;
 export type PermisoObjetivo = (typeof PERMISOS_OBJETIVO)[number];
 export const PERMISOS_POR_OMISION: readonly PermisoObjetivo[] = ['preparar-borradores'];
 

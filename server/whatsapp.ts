@@ -53,7 +53,7 @@ import { cuentaSuspendida, cuentasDisponibles } from './cuentas';
 import { presentadoEnChat } from './presentacion-decision';
 import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
-import { guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
+import { anotarDescarteDurable, guardarBorradorDurable, leerBorradorDurable } from './borradores-durables';
 import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 import { leerAdjunto, tipoEnPalabras, MAX_ADJUNTO_BYTES } from '../lib/leer-adjunto';
 import { adjuntoReciente, recordarAdjunto } from '../lib/adjunto-reciente';
@@ -1121,6 +1121,10 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   BORRADORES.set(k, guardado);
   // Fase 2: también durable (server/borradores-durables.ts), salvo un archivo (sus bytes solo viven en la memoria).
   if (!b.media || b.media.tipo === 'nota') guardarBorradorDurable('whatsapp', quien, ambito, guardado);
+  // Revisión de fases: lo que este reemplazó (el que esperaba, si no quedó apartado, y sus versiones viejas) deja su lápida:
+  // tras un reinicio no revive desde lo durable.
+  const apartado = !!previo && previo.soloPanel && !motivoBorrador(previo, quien) && !mismoChat(previo);
+  for (const x of [...(previo && !apartado ? [previo] : []), ...viejas]) if (x.intento !== guardado.intento) void anotarDescarteDurable(quien, x.intento, 'reemplazado');
   // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
   presentadoEnChat(quien, ambito, { canal: 'whatsapp', intento: vigencia.intento, huella });
   const para = destinoWhatsapp({ ...b, numero });
@@ -1249,6 +1253,7 @@ export async function resolverApartadoWhatsapp(quien: string, ambito: string, in
   if (!b) return null;
   if (respuesta === 'no') {
     APARTADOS.quitar(k, intento);
+    void anotarDescarteDurable(quien, intento, 'rechazado');
     return exito(`WHATSAPP: no se mandó; el borrador para ${destinoWhatsapp(b)} quedó descartado.`, { efecto: 'ninguno', codigo: 'descartado' });
   }
   const motivo = motivoPanel(b, huellaWhatsapp(b), huella);
@@ -1280,6 +1285,8 @@ export function editarBorradorWhatsapp(quien: string, ambito: string, intento: s
   if (BORRADORES.get(k)?.intento === intento) BORRADORES.set(k, nuevo);
   else APARTADOS.reemplazar(k, intento, nuevo);
   if (!nuevo.media || nuevo.media.tipo === 'nota') guardarBorradorDurable('whatsapp', quien, ambito, nuevo);
+  // El de antes ya no se puede mandar: su lápida (no revive tras un reinicio).
+  void anotarDescarteDurable(quien, intento, 'reemplazado');
   return { ok: true, borrador: nuevo };
 }
 

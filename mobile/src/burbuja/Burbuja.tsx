@@ -53,7 +53,7 @@ import {
 } from '../lib/speech';
 import { buzonHablar, enlaceHablar, GuardiaInvocacion, guardiaHablar, leerEnlace, lineaEntrada, momentoInvocacion, type OrigenEntrada } from '../entrada/enlace';
 import { medirHastaEscuchar } from '../entrada/hablar';
-import { burbujaAbierta, cierreBurbuja, debeCerrarPorSilencio, hiloCompartido, preguntaDeFoto, sinConversacion, textoEstado, type EstadoBurbuja, type MotivoCierre } from './logica';
+import { burbujaAbierta, ControlCierre, debeCerrarPorSilencio, hiloCompartido, preguntaDeFoto, sinConversacion, textoEstado, VueltaDeLaApp, type EstadoBurbuja, type MotivoCierre } from './logica';
 import { turnoBurbuja } from './turnoBurbuja';
 import { registrarTrabajoActivo } from '../lib/barreraOta';
 
@@ -72,28 +72,28 @@ export function RaizBurbuja(props: Props) {
   );
 }
 
-const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 // Con la burbuja abierta, la OTA no recarga el JS (lib/ota.ts «al volver»: la burbuja delante cuenta como volver).
 registrarTrabajoActivo('burbuja', () => burbujaAbierta.abierta());
 
 /**
- * El aviso «la burbuja está abierta» se suelta cuando la app vuelve a estar DELANTE (la mesa toma el micrófono si le
- * toca). Si la burbuja se cerró sobre otra app, la mesa de atrás no reabre su oído en segundo plano por el rato de
- * gracia de lib/appDelante.ts: espera a que la persona vuelva a AURA.
+ * El aviso «la burbuja está abierta» se suelta cuando la app vuelve a estar DELANTE DE VERDAD (la mesa toma el micrófono
+ * si le toca): después de cerrarse la burbuja, un ciclo fondo → activa (burbuja/logica.ts `VueltaDeLaApp`). Revisión de
+ * fases: antes, si al cerrar AppState todavía decía «active» —era la burbuja, terminando, la que estaba delante— se
+ * soltaba en el acto y la mesa reabría su micrófono en segundo plano, encima de la otra app.
  */
+const vuelta = new VueltaDeLaApp();
 let esperandoVolver: { remove(): void } | null = null;
-function soltarAvisoBurbuja() {
+function dejarDeEsperarVuelta() {
+  vuelta.cancelar();
   esperandoVolver?.remove();
   esperandoVolver = null;
-  if (AppState.currentState === 'active') {
-    burbujaAbierta.fijar(false);
-    return;
-  }
+}
+function soltarAvisoBurbuja() {
+  dejarDeEsperarVuelta();
+  vuelta.empezar(AppState.currentState);
   esperandoVolver = AppState.addEventListener('change', (s) => {
-    if (s !== 'active') return;
-    esperandoVolver?.remove();
-    esperandoVolver = null;
+    if (!vuelta.cambio(s)) return;
+    dejarDeEsperarVuelta();
     burbujaAbierta.fijar(false);
   });
 }
@@ -119,7 +119,8 @@ function Burbuja({ origen, invocadaEn }: Props) {
   const devolverOido = useRef<(() => void) | null>(null);
   const cancelarTurno = useRef<(() => void) | null>(null);
   const foto = useRef<string | null>(null);
-  const cerrada = useRef(false);
+  /** Cerrada una vez (y abierta otra vez solo si «Abrir en AURA» no abrió la app). */
+  const control = useRef(new ControlCierre()).current;
   const ultimaActividad = useRef(Date.now());
   const guardia = useRef(new GuardiaInvocacion()).current;
   /** Cada invocación (la primera y las de después con la burbuja abierta) mide la suya; una nueva corta la anterior. */
@@ -133,17 +134,15 @@ function Burbuja({ origen, invocadaEn }: Props) {
 
   // Antes que nada (antes de que React avise «app activa»): el micrófono es de la burbuja, la mesa de atrás lo suelta.
   useLayoutEffect(() => {
-    esperandoVolver?.remove();
-    esperandoVolver = null;
+    dejarDeEsperarVuelta();
     burbujaAbierta.fijar(true);
   }, []);
 
   /* ── cerrar ───────────────────────────────────────────────────────────────────────────────── */
 
   const cerrar = useCallback((motivo: MotivoCierre) => {
-    if (cerrada.current) return;
-    cerrada.current = true;
-    const c = cierreBurbuja(motivo);
+    const c = control.cerrar(motivo);
+    if (!c) return;
     medida.current++;
     cancelarTurno.current?.();
     cancelarTurno.current = null;
@@ -174,7 +173,7 @@ function Burbuja({ origen, invocadaEn }: Props) {
   const escuchar = useCallback(
     async (o: string, desde: number) => {
       const yo = ++medida.current;
-      const vigente = () => !cerrada.current && medida.current === yo;
+      const vigente = () => !control.cerrada() && medida.current === yo;
       const ok = await ensureSpeechPermissions();
       if (!vigente()) return;
       if (!ok) {
@@ -183,11 +182,13 @@ function Burbuja({ origen, invocadaEn }: Props) {
         return;
       }
       if (!devolverOido.current) {
-        // La app estaba abierta detrás: un respiro para que su mesa suelte el micrófono (OidoMesa.aplicar) antes de
-        // abrirlo aquí; si no, su muteMic tardío cerraría el de la burbuja.
+        // La app estaba abierta detrás: se espera el ACUSE de su mesa (OidoMesa.aplicar → burbujaAbierta.acusar: ya soltó
+        // el micrófono, o no lo tenía) antes de abrirlo aquí; si no, su muteMic tardío cerraría el de la burbuja. Antes
+        // era un respiro fijo de 150 ms (una carrera). Con tope: una mesa colgada no deja sorda a la burbuja.
         const conMesa = hiloCompartido.hayMesa();
-        if (conMesa) await espera(150);
-        else if (motor.current && motor.current !== currentSttEngine()) await setSttEngine(motor.current);
+        if (conMesa) {
+          if (!(await burbujaAbierta.esperarAcuse())) miga('burbuja: la mesa no acusó a tiempo que soltó el micrófono; se abre igual');
+        } else if (motor.current && motor.current !== currentSttEngine()) await setSttEngine(motor.current);
         if (!vigente()) return;
         devolverOido.current = prestarOido({
           onSpeechStart: () => actividad(),
@@ -230,7 +231,7 @@ function Burbuja({ origen, invocadaEn }: Props) {
       miga(`[entrada] origen=${origen}: burbuja (${recibida - desde} ms hasta React)`);
       const actual = usuarioActual();
       const [ajustes, sesion] = await Promise.all([loadSettings(), actual ? Promise.resolve(actual) : loadSession()]);
-      if (cerrada.current) return;
+      if (control.cerrada()) return;
       fijarIdioma(ajustes.idioma);
       setAvatarVoz(ajustes.avatar);
       motor.current = ajustes.sttEngine;
@@ -257,7 +258,7 @@ function Burbuja({ origen, invocadaEn }: Props) {
     // Otra invocación con la burbuja abierta (el botón otra vez, el mosaico): llega como enlace.
     const sub = Linking.addEventListener('url', ({ url }) => {
       const e = leerEnlace(url);
-      if (!e || e.destino !== 'burbuja' || cerrada.current) return;
+      if (!e || e.destino !== 'burbuja' || control.cerrada()) return;
       const t = momentoInvocacion(e.invocadaEn, Date.now());
       if (!guardia.aceptar(t)) {
         miga(`[entrada] origen=${e.origen}: segunda invocación en menos de 1,5 s, ignorada`);
@@ -304,7 +305,7 @@ function Burbuja({ origen, invocadaEn }: Props) {
   const enviar = useCallback(
     async (texto: string, escritoAMano = false) => {
       const u = usuario.current;
-      if (!u || cerrada.current) return;
+      if (!u || control.cerrada()) return;
       const imagen = foto.current;
       const q = imagen ? preguntaDeFoto(texto, en) : texto.trim();
       if (!q) return;
@@ -324,13 +325,13 @@ function Burbuja({ origen, invocadaEn }: Props) {
         { message: q, mode: 'GUARDIAN', userName: u.name, correo: u.correo, historial, memoria: memoria.current, ...(imagen ? { image: imagen } : {}), hablado: !escritoAMano },
         {
           alFrase: (f) => f && setRespuesta(f),
-          alHablar: (on) => on && !cerrada.current && setEstado('hablando'),
+          alHablar: (on) => on && !control.cerrada() && setEstado('hablando'),
         }
       );
       cancelarTurno.current = t.cancelar;
       const r = await t.promise;
       if (cancelarTurno.current === t.cancelar) cancelarTurno.current = null;
-      if (cerrada.current || r.cortado) return;
+      if (control.cerrada() || r.cortado) return;
       actividad();
       if (r.texto) {
         hiloCompartido.anotar(u.correo, { rol: 'ultron', texto: r.texto });
@@ -354,7 +355,7 @@ function Burbuja({ origen, invocadaEn }: Props) {
 
   const volverAEscuchar = useCallback(async () => {
     actividad();
-    if (!usuario.current || cerrada.current) return;
+    if (!usuario.current || control.cerrada()) return;
     pauseMicForTts(false);
     setEstado('escuchando');
     if (devolverOido.current && !oidoEscuchando()) void reabrirMic();
@@ -424,9 +425,22 @@ function Burbuja({ origen, invocadaEn }: Props) {
   const abrirApp = () => {
     // Primero se cierra (suelta el micrófono y deja lo hablado para la mesa); después la app, en la mesa, escuchando.
     // El pedido va también al buzón (mismo motor de JS): si el enlace llega tarde o no llega, la mesa igual lo atiende.
+    // Es INTERNO: el único «hablar» que puede quitar el silencio que la persona dejó en la mesa (entrada/enlace.ts).
     cerrar('abrir-app');
-    if (usuario.current && guardiaHablar.aceptar(Date.now())) buzonHablar.pedir('burbuja', Date.now());
-    void Linking.openURL(enlaceHablar('burbuja')).catch(() => undefined);
+    if (usuario.current && guardiaHablar.aceptar(Date.now())) buzonHablar.pedir('burbuja', Date.now(), { interno: true });
+    void Linking.openURL(enlaceHablar('burbuja')).catch((e) => {
+      // No abrió la app: la burbuja sigue delante. Vuelve a estar abierta (el aviso, el pedido fuera del buzón) para que
+      // «atrás» o tocar fuera la cierren como siempre (antes quedaba trabada: cerrada por dentro, sin salida).
+      if (!control.falloAbrirApp()) return;
+      miga(`burbuja: «Abrir en AURA» no abrió la app (${String((e as Error)?.message || e).slice(0, 60)})`);
+      buzonHablar.tomar(Date.now());
+      dejarDeEsperarVuelta();
+      burbujaAbierta.fijar(true);
+      burbujaAbierta.acusar();
+      actividad();
+      setRespuesta(tr('No pude abrir AURA. Toca el orbe para seguir aquí, o cierra.', 'I couldn’t open AURA. Tap the orb to keep going here, or close.'));
+      setEstado('error');
+    });
   };
 
   const darPermiso = () => {

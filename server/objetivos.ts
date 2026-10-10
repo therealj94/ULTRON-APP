@@ -43,7 +43,7 @@ import {
 } from '../lib/objetivos';
 import { claveManifiesto, type ManifiestoArchivo } from '../lib/oficina/almacen';
 import { pedirDecisionPorPush, type PushDecision } from '../lib/push';
-import { cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea } from '../lib/tareas-durables';
+import { autorizarEjecucion, cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea } from '../lib/tareas-durables';
 
 export type DepsObjetivos = {
   /** Las puertas de siempre: la sesión de la mesa y `exigirPlataforma('ultron')` (Dr Electrum no entra). */
@@ -355,10 +355,15 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
     if (esTerminalObjetivo(e.obj.estado)) return responderError(res, new ErrorObjetivo('terminal', 'El objetivo ya terminó: no le agrego tareas.', e.obj));
     const t = await crearTarea(
       dueno,
-      { requestId: `obj-${e.obj.id}-${requestId}`, titulo, objetivo: textoObjetivo(b.objetivo, 400) || titulo, estado: 'queued', entorno: { kind: 'chat', id: 'api', displayName: 'AURA' }, origen: { kind: 'api' }, objetivoId: e.obj.id },
+      // Solo con `ejecutar: true` (y el permiso `investigar` del objetivo) el planificador la empieza sola.
+      { requestId: `obj-${e.obj.id}-${requestId}`, titulo, objetivo: textoObjetivo(b.objetivo, 400) || titulo, estado: 'queued', entorno: { kind: 'chat', id: 'api', displayName: 'AURA' }, origen: { kind: 'api' }, objetivoId: e.obj.id, ejecutar: b.ejecutar === true },
       { almacen: alm(), ahora: ahora() }
     ).catch(() => null);
     if (!t || t.ok === false) return almacenCaido(res);
+    if (!t.creada && b.ejecutar === true && t.tarea.estado === 'queued' && !t.tarea.ejecutar) {
+      const au = await autorizarEjecucion(dueno, t.tarea.id, { almacen: alm(), ahora: ahora() }).catch(() => null);
+      if (au && au.ok) t.tarea = au.tarea;
+    }
     const r = await cambiarObjetivo(dueno, e.obj.id, (obj) => (obj.tareas.includes(t.tarea.id) ? null : { tarea: t.tarea.id, estado: obj.estado === 'abierto' ? 'en-curso' : undefined, evento: `Sumé la tarea «${textoObjetivo(t.tarea.titulo, 80)}»` }), { almacen: alm(), ahora: ahora() });
     if (r.ok === false) return responderError(res, r.error);
     return res.status(t.creada ? 201 : 200).json({ objetivo: vistaObjetivo(r.objetivo), tarea: vistaTarea(t.tarea, ahora()), honesto: true });

@@ -15,11 +15,20 @@
  *    lease vencido que otro tomó con un token mayor no despacha nada (fencing).
  *  · Idempotente: correr dos vueltas seguidas, o dos réplicas a la vez, no arranca nada dos veces.
  *  · Un objetivo en pausa no arranca sus tareas (espera); uno terminado cancela las que seguían en cola.
+ *  · Solo toca lo SUYO (`esDelPlanificador`: origen y entorno `api`). Una misión de la computadora que pasa por `queued`
+ *    se quita de la agenda sin tocarla.
+ *  · Arrancar cuesta (una investigación son búsquedas y el cerebro): solo con autorización explícita. La tarea tuvo que
+ *    crearse (o autorizarse) con `ejecutar: true` y, si es de un objetivo, el objetivo tiene que tener el permiso
+ *    `investigar`. Topes: el `topeCosto` del objetivo y `AURA_INVESTIGACIONES_DIA` por cuenta y día (10 por omisión).
+ *    Como todavía no hay un costo real por investigación, cada arranque cuenta como UNA unidad de costo: un `topeCosto`
+ *    de 3 son 3 investigaciones (0, ninguna; sin tope, solo el diario). El contador es durable y se reserva ANTES de
+ *    arrancar (dos réplicas no se pasan del tope); si no arrancó se devuelve; si el proceso murió a medias queda gastado
+ *    (de más, nunca de menos). Sin autorización la tarea sigue en cola con «Esperando que lo autorices».
  */
 import { cerrarEntrada, leerAgenda, type EntradaAgenda } from '../lib/agenda';
-import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, PROCESO_DURABLE, type AlmacenDurable, type Lease } from '../lib/durable';
-import { esTerminalObjetivo, leerObjetivo } from '../lib/objetivos';
-import { cambiarTarea, esTerminal, leerTarea, type RegistroTarea } from '../lib/tareas-durables';
+import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, leerDurable, modificarDurable, PROCESO_DURABLE, type AlmacenDurable, type Lease } from '../lib/durable';
+import { cambiarObjetivo, esTerminalObjetivo, leerObjetivo, type Objetivo } from '../lib/objetivos';
+import { cambiarTarea, esDelPlanificador, esTerminal, leerTarea, type RegistroTarea } from '../lib/tareas-durables';
 import { reconciliarObjetivoConTareas, type DepsObjetivos } from './objetivos';
 import { claveLeaseTarea } from './trabajos';
 
@@ -40,6 +49,8 @@ export type DepsPlanificador = {
   leaseMs?: number;
   /** Cuántas cosas trabaja una vuelta como mucho (el resto, en la siguiente). */
   maxPorVuelta?: number;
+  /** Cuántas investigaciones arranca el planificador por cuenta y día (por omisión `AURA_INVESTIGACIONES_DIA` o 10). */
+  topeDiario?: number;
 };
 
 export const INTERVALO_PLANIFICADOR_MS = 60_000;
@@ -48,6 +59,56 @@ export const LEASE_PLANIFICADOR_MS = 60_000;
 export const MAX_INTENTOS_ARRANQUE = 5;
 const REINTENTO_MS = 5 * 60_000;
 const OBJETIVO_INCIERTO_MS = 5 * 60_000;
+/** Lo que dice una tarea en cola que el planificador no arranca sin permiso. */
+export const PASO_SIN_AUTORIZACION = 'Esperando que lo autorices';
+export const TOPE_DIARIO_POR_OMISION = 10;
+/** Honduras (UTC−6, sin horario de verano): el «día» del tope diario. */
+const DESFASE_DIA_MS = -6 * 3600_000;
+
+export function topeDiarioInvestigaciones(d: Pick<DepsPlanificador, 'topeDiario'> = {}): number {
+  const n = d.topeDiario ?? Number(process.env.AURA_INVESTIGACIONES_DIA ?? TOPE_DIARIO_POR_OMISION);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : TOPE_DIARIO_POR_OMISION;
+}
+const diaDe = (t: number) => new Date(t + DESFASE_DIA_MS).toISOString().slice(0, 10);
+/** El inicio del día siguiente (en ms de verdad): cuando se vuelve a intentar lo que topó con el tope diario. */
+const mananaDe = (t: number) => Date.parse(`${diaDe(t)}T00:00:00Z`) - DESFASE_DIA_MS + 86_400_000;
+const claveConsumoObjetivo = (dueno: string, objetivoId: string) => claveDe('planificador/consumo', dueno, objetivoId);
+const claveConsumoDia = (dueno: string, dia: string) => claveDe('planificador/dia', dueno, dia);
+type Consumo = { usadas: number };
+
+/** Reserva una unidad si quedan (atómico, CAS). 'tope' si ya no quedan; 'almacen' si no se pudo escribir. */
+async function reservarUnidad(clave: string, tope: number, a: AlmacenDurable): Promise<'ok' | 'tope' | 'almacen'> {
+  let lleno = false;
+  const r = await modificarDurable<Consumo>(
+    clave,
+    (c) => {
+      const usadas = Math.max(0, Math.floor(Number(c?.usadas) || 0));
+      lleno = usadas >= tope;
+      return lleno ? undefined : { usadas: usadas + 1 };
+    },
+    a
+  ).catch(() => ({ ok: false as const }));
+  if (r.ok === false) return 'almacen';
+  return lleno ? 'tope' : 'ok';
+}
+async function devolverUnidad(clave: string, a: AlmacenDurable): Promise<void> {
+  await modificarDurable<Consumo>(clave, (c) => (c && c.usadas > 0 ? { usadas: c.usadas - 1 } : undefined), a).catch(() => null);
+}
+
+/** Cuántas unidades de costo (investigaciones que arrancó el planificador) lleva el objetivo. */
+export async function consumoObjetivo(dueno: string, objetivoId: string, a: AlmacenDurable = almacenDurable()): Promise<number> {
+  const r = await leerDurable<Consumo>(claveConsumoObjetivo(dueno, objetivoId), a).catch(() => null);
+  return r && r.ok && r.valor ? Math.max(0, Math.floor(Number(r.valor.usadas) || 0)) : 0;
+}
+
+type Autorizacion = { ok: true } | { ok: false; paso: string };
+
+/** ¿Puede arrancarla sola? Puro: lo que pidió la persona (`ejecutar`) y lo que permite su objetivo. */
+export function autorizacionDeArranque(reg: Pick<RegistroTarea, 'ejecutar' | 'objetivoId'>, obj: Pick<Objetivo, 'permisos'> | null): Autorizacion {
+  if (reg.ejecutar !== true) return { ok: false, paso: `${PASO_SIN_AUTORIZACION}: no la empiezo sola sin que me lo pidas.` };
+  if (reg.objetivoId && !obj?.permisos?.includes('investigar')) return { ok: false, paso: `${PASO_SIN_AUTORIZACION}: su objetivo no me deja investigar sola.` };
+  return { ok: true };
+}
 
 export type ResumenVuelta = { ok: boolean; vistas: number; arrancadas: number; revisadas: number; objetivos: number; ocupadas: number; inciertas: number; detalle?: string };
 
@@ -97,19 +158,23 @@ async function trabajarTarea(e: EntradaAgenda, lease: Lease, d: DepsPlanificador
   if (l.ok === false) return null;
   const reg = l.tarea;
   if (!reg || esTerminal(reg.estado)) return { quitar: true };
+  // No es suya (una misión de la computadora que pasó por `queued`, una tarea del chat): fuera de la agenda, sin tocarla.
+  if (!esDelPlanificador(reg)) return { quitar: true };
   if (reg.objetivoId) objetivos.set(`${e.dueno}\u0000${reg.objetivoId}`, { dueno: e.dueno, id: reg.objetivoId });
   const ahora = reloj();
   // Su objetivo manda: en pausa, espera; terminado, lo que seguía en cola ya no se arranca.
+  let objetivo: Objetivo | null = null;
   if (reg.objetivoId) {
     const o = await leerObjetivo(e.dueno, reg.objetivoId, a).catch(() => ({ ok: false as const, detalle: '' }));
     if (o.ok === false) return null;
+    objetivo = o.objetivo;
     if (o.objetivo && esTerminalObjetivo(o.objetivo.estado) && reg.estado === 'queued') {
       await cambiarTarea(e.dueno, reg.id, (t) => (t.estado !== 'queued' ? null : { estado: 'cancelled', pasoActual: null, resultado: { id: `${t.id}:resultado`, resumen: 'Su objetivo terminó antes de que empezara: no se hizo nada.', evidencias: [], parcial: [], pendiente: [], t: ahora } }), { almacen: a, ahora }).catch(() => null);
       return { quitar: true };
     }
     if (o.objetivo?.pausado && reg.estado === 'queued') return { cuando: ahora + REINTENTO_MS };
   }
-  if (reg.estado === 'queued') return arrancar(e, reg, lease, d, a, ahora, r);
+  if (reg.estado === 'queued') return arrancar(e, reg, objetivo, lease, d, a, ahora, r);
   if (reg.proximaRevision && reg.proximaRevision <= ahora) {
     r.revisadas++;
     const vista = d.revisar ? await d.revisar(e.dueno, reg).catch(() => reg) : reg;
@@ -122,13 +187,57 @@ async function trabajarTarea(e: EntradaAgenda, lease: Lease, d: DepsPlanificador
   return { quitar: true };
 }
 
-async function arrancar(e: EntradaAgenda, reg: RegistroTarea, lease: Lease, d: DepsPlanificador, a: AlmacenDurable, ahora: number, r: ResumenVuelta): Promise<Siguiente> {
+/** Sin permiso (o sin tope que alcance): la tarea sigue en cola y dice por qué; su objetivo, que espera tu autorización. */
+async function esperarAutorizacion(e: EntradaAgenda, reg: RegistroTarea, objetivo: Objetivo | null, paso: string, a: AlmacenDurable, ahora: number): Promise<void> {
+  await cambiarTarea(e.dueno, reg.id, (t) => (t.estado !== 'queued' || t.pasoActual === paso ? null : { pasoActual: paso }), { almacen: a, ahora }).catch(() => null);
+  if (objetivo && !esTerminalObjetivo(objetivo.estado))
+    await cambiarObjetivo(e.dueno, objetivo.id, (o) => (o.siguientePaso === PASO_SIN_AUTORIZACION ? null : { siguientePaso: PASO_SIN_AUTORIZACION, evento: `«${reg.titulo.slice(0, 60)}» espera que la autorices` }), { almacen: a, ahora }).catch(() => null);
+}
+
+async function arrancar(e: EntradaAgenda, reg: RegistroTarea, objetivo: Objetivo | null, lease: Lease, d: DepsPlanificador, a: AlmacenDurable, ahora: number, r: ResumenVuelta): Promise<Siguiente> {
+  const permiso = autorizacionDeArranque(reg, objetivo);
+  if (permiso.ok === false) {
+    // Sigue en cola; vuelve a la agenda cuando la autoricen (`ejecutar` encendido: lib/tareas-durables.ts agendarSiToca).
+    await esperarAutorizacion(e, reg, objetivo, permiso.paso, a, ahora);
+    return { quitar: true };
+  }
+  // Los topes (cada arranque = una unidad de costo): se reservan ANTES; si no arranca, se devuelven.
+  const reservas: string[] = [];
+  const devolver = async () => {
+    for (const k of reservas.splice(0)) await devolverUnidad(k, a);
+  };
+  if (objetivo && typeof objetivo.topeCosto === 'number') {
+    const k = claveConsumoObjetivo(e.dueno, objetivo.id);
+    const x = await reservarUnidad(k, Math.floor(objetivo.topeCosto), a);
+    if (x === 'almacen') return null;
+    if (x === 'tope') {
+      await esperarAutorizacion(e, reg, objetivo, `${PASO_SIN_AUTORIZACION}: su objetivo llegó a su tope de costo.`, a, ahora);
+      return { quitar: true };
+    }
+    reservas.push(k);
+  }
+  {
+    const k = claveConsumoDia(e.dueno, diaDe(ahora));
+    const x = await reservarUnidad(k, topeDiarioInvestigaciones(d), a);
+    if (x !== 'ok') await devolver();
+    if (x === 'almacen') return null;
+    if (x === 'tope') {
+      await cambiarTarea(e.dueno, reg.id, (t) => (t.estado !== 'queued' ? null : { pasoActual: 'Llegué al tope de investigaciones de hoy: la empiezo mañana.' }), { almacen: a, ahora }).catch(() => null);
+      return { cuando: mananaDe(ahora) };
+    }
+    reservas.push(k);
+  }
   const intento = intentoDe(e);
   const requestId = `plan-${reg.id}-a${intento}`;
   const out = await ejecutarUnaVez<SalidaEjecutor>({ dueno: e.dueno, requestId, tipo: 'planificador.arranque', argsHash: hashArgumentos({ tarea: reg.id, intento }), lease, almacen: a }, async () => {
     const x = await d.ejecutar(e.dueno, reg, lease);
     return x === 'empezada' ? { estado: 'succeeded', resultado: x, recibo: { efecto: 'confirmed', proveedor: 'planificador', detalle: 'arrancada' } } : { estado: 'failed', resultado: x, recibo: { efecto: 'none', proveedor: 'planificador', detalle: x } };
+  }).catch(async (err) => {
+    await devolver();
+    throw err;
   });
+  // Solo lo que arrancó de verdad queda gastado (si ESTE proceso muere a medias, su reserva queda: de más, nunca de menos).
+  if (!(out.corrio && out.resultado === 'empezada')) await devolver();
   if (out.corrio) {
     const x = out.resultado;
     if (x === 'empezada') {

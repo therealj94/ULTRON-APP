@@ -27,8 +27,9 @@ import {
   modoDeArranque,
   momentoInvocacion,
   origenValido,
+  oidoParaHablar,
 } from '../mobile/src/entrada/enlace';
-import { AvisoBurbuja, CIERRE_POR_SILENCIO_MS, HiloCompartido, TOPE_HILO, cierreBurbuja, debeCerrarPorSilencio, preguntaDeFoto, quiereOido, sinConversacion, textoEstado } from '../mobile/src/burbuja/logica';
+import { AvisoBurbuja, CIERRE_POR_SILENCIO_MS, ControlCierre, HiloCompartido, TOPE_HILO, VueltaDeLaApp, cierreBurbuja, debeCerrarPorSilencio, preguntaDeFoto, quiereOido, sinConversacion, textoEstado } from '../mobile/src/burbuja/logica';
 import { OidoMesa, duenoAudio, oidoPropio } from '../mobile/src/compa/duenoAudio';
 
 const requerir = createRequire(import.meta.url);
@@ -375,4 +376,138 @@ test('la app lee las piezas: App.tsx bifurca por el modo, la mesa usa el dueño 
   const turno = leer('src/burbuja/turnoBurbuja.ts');
   assert.match(turno, /turnoStream\(base,/);
   assert.match(turno, /new StreamSpeaker\(/);
+});
+
+/* ------------------------------------------------------------------ revisión de fases */
+
+test('cerrar la burbuja sobre otra app NO suelta el aviso hasta un ciclo fondo → activa (la mesa no reabre el micrófono en segundo plano)', () => {
+  const v = new VueltaDeLaApp();
+  // Al cerrarse, AppState todavía dice «active»: es la burbuja que se va. Eso no es «la app volvió».
+  v.empezar('active');
+  assert.equal(v.cambio('active'), false, 'un «active» sin haber pasado por el fondo no cuenta');
+  assert.equal(v.esperando(), true);
+  assert.equal(v.cambio('background'), false, 'la burbuja terminó: la otra app está delante');
+  assert.equal(v.cambio('background'), false);
+  assert.equal(v.cambio('active'), true, 'la persona volvió a AURA: ahora sí');
+  assert.equal(v.esperando(), false);
+  assert.equal(v.cambio('active'), false, 'una sola vez');
+  // Se cerró estando ya en el fondo (la burbuja dejó de verse): basta con que vuelva delante.
+  v.empezar('background');
+  assert.equal(v.cambio('active'), true);
+  // Una burbuja nueva cancela la espera.
+  v.empezar('active');
+  v.cancelar();
+  assert.equal(v.cambio('background'), false);
+  assert.equal(v.cambio('active'), false);
+});
+
+test('el traspaso del micrófono: la burbuja espera el ACUSE de la mesa (sin respiro fijo); sin micrófono abierto, la mesa no hace muteMic', async () => {
+  const aviso = new AvisoBurbuja();
+  const hechos: string[] = [];
+  let terminarMute: () => void = () => undefined;
+  let querido = true;
+  const oido = new OidoMesa({
+    muteMic: () => {
+      hechos.push('mute');
+      return new Promise<void>((ok) => (terminarMute = () => (hechos.push('mute-hecho'), ok())));
+    },
+    unmuteMic: () => void hechos.push('unmute'),
+    reabrirMic: () => void hechos.push('reabrir'),
+    pauseMicForTts: () => undefined,
+    stopSpeaking: () => undefined,
+    cancelarTurno: () => undefined,
+    micQuerido: () => querido,
+    acusarBurbuja: () => (hechos.push('acuse'), aviso.acusar()),
+  });
+  // La mesa tenía el micrófono abierto: la burbuja no abre el suyo hasta que el muteMic de la mesa TERMINÓ.
+  oido.fijar('mesa');
+  aviso.fijar(true);
+  let listo = false;
+  const espera = aviso.esperarAcuse(5_000).then((x) => ((listo = true), x));
+  assert.equal(oido.aplicar('burbuja'), 'suelta');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(listo, false, 'mientras la mesa no termina de soltarlo, la burbuja espera');
+  terminarMute();
+  assert.equal(await espera, true);
+  assert.deepEqual(hechos, ['mute', 'mute-hecho', 'acuse']);
+  // La mesa no lo estaba usando (la app venía del fondo: dueño «nadie»): ni un muteMic que cerraría el de la burbuja.
+  aviso.fijar(false);
+  hechos.length = 0;
+  oido.fijar('nadie');
+  aviso.fijar(true);
+  assert.equal(oido.aplicar('burbuja'), 'suelta');
+  assert.deepEqual(hechos, ['acuse']);
+  assert.equal(await aviso.esperarAcuse(10), true);
+  // Silenciada por la persona: tampoco.
+  aviso.fijar(false);
+  hechos.length = 0;
+  oido.fijar('mesa');
+  querido = false;
+  aviso.fijar(true);
+  oido.aplicar('burbuja');
+  assert.deepEqual(hechos, ['acuse']);
+  // Ya era de la burbuja (otra apertura sobre la misma espera): acusa en el acto.
+  hechos.length = 0;
+  oido.aplicar('burbuja');
+  assert.deepEqual(hechos, ['acuse']);
+  // Sin acuse (una mesa colgada): el tope, y la burbuja abre igual.
+  const b = new AvisoBurbuja();
+  b.fijar(true);
+  assert.equal(await b.esperarAcuse(20), false);
+  assert.equal(await new AvisoBurbuja().esperarAcuse(20), true, 'sin burbuja abierta no hay nada que esperar');
+  // En la burbuja ya no hay un respiro fijo.
+  const burbuja = fs.readFileSync(path.join(raizMovil, 'src/burbuja/Burbuja.tsx'), 'utf8');
+  assert.doesNotMatch(burbuja, /espera\(150\)/);
+  assert.match(burbuja, /burbujaAbierta\.esperarAcuse\(\)/);
+  assert.match(fs.readFileSync(path.join(raizMovil, 'src/screens/DeskScreen.tsx'), 'utf8'), /acusarBurbuja: \(\) => burbujaAbierta\.acusar\(\)/);
+});
+
+test('un enlace ultronfp://hablar de fuera NO quita el silencio que la persona dejó; solo el pedido interno de la burbuja', () => {
+  const b = new BuzonHablar();
+  assert.equal(b.pedir('burbuja', 1_000).interno, false, 'un enlace que dice origen=burbuja sigue siendo de fuera');
+  assert.equal(b.pedir('burbuja', 2_000, { interno: true }).interno, true);
+  assert.equal(oidoParaHablar({ interno: false }, true), 'respetar-silencio');
+  assert.equal(oidoParaHablar({ interno: true }, true), 'quitar-silencio');
+  assert.equal(oidoParaHablar({ interno: false }, false), 'abrir', 'sin silencio, el enlace abre la app escuchando');
+  assert.equal(oidoParaHablar({ interno: true }, false), 'abrir');
+  // Las piezas: el oyente de enlaces nunca pide interno; la burbuja sí; la mesa decide con oidoParaHablar.
+  const leer = (r: string) => fs.readFileSync(path.join(raizMovil, r), 'utf8');
+  assert.doesNotMatch(leer('src/entrada/hablar.ts'), /interno: true/);
+  assert.match(leer('src/burbuja/Burbuja.tsx'), /buzonHablar\.pedir\('burbuja', Date\.now\(\), \{ interno: true \}\)/);
+  assert.match(leer('src/screens/DeskScreen.tsx'), /oidoParaHablar\(p, micMutedRef\.current\)/);
+});
+
+test('«Abrir en AURA» que no abre la app: la burbuja vuelve a poder cerrarse con «atrás» o tocando fuera', () => {
+  const c = new ControlCierre();
+  assert.ok(c.cerrar('abrir-app'));
+  assert.equal(c.cerrada(), true);
+  assert.equal(c.cerrar('atras'), null, 'cerrada por dentro: así quedaba trabada');
+  assert.equal(c.falloAbrirApp(), true);
+  assert.equal(c.cerrada(), false);
+  const atras = c.cerrar('atras');
+  assert.ok(atras && atras.terminarActividad, '«atrás» la termina como siempre');
+  // Un cierre de verdad no se deshace.
+  assert.equal(c.falloAbrirApp(), false);
+  assert.equal(c.cerrada(), true);
+  const f = new ControlCierre();
+  assert.ok(f.cerrar('fuera'));
+  assert.equal(f.falloAbrirApp(), false);
+  assert.match(fs.readFileSync(path.join(raizMovil, 'src/burbuja/Burbuja.tsx'), 'utf8'), /control\.falloAbrirApp\(\)/);
+});
+
+test('Android: la burbuja destruida no deja al motor apuntándola; el reconocedor prefiere el de Google y pasa la consulta de soporte', () => {
+  const nativo = path.join(raizMovil, 'plugins/asistente-digital-nativo/java');
+  const burbuja = fs.readFileSync(path.join(nativo, 'BurbujaActivity.kt'), 'utf8');
+  // Con el motor ya en MainActivity, el ciclo normal; apuntando a la burbuja, se desmonta su superficie y el motor la olvida.
+  assert.match(burbuja, /contexto\.currentActivity !== actividad\) return super\.onDestroy\(\)/);
+  assert.match(burbuja, /MotorReact\.olvidarActividad\(host, contexto, actividad\)/);
+  assert.match(burbuja, /compareAndSet\(actividad, null\)/, 'solo si sigue siendo ESA actividad');
+  assert.doesNotMatch(burbuja, /if \(actividad\.laAppSigueAbierta\(\)\) reactDelegate\?\.unloadApp\(\) else super\.onDestroy\(\)/);
+  const rec = fs.readFileSync(path.join(nativo, 'ReconocedorAura.kt'), 'utf8');
+  assert.match(rec, /listOf\(GOOGLE, EN_EL_TELEFONO, "com\.google\.android\.tts"\)/, 'un pedido normal: primero la app de Google');
+  assert.match(rec, /if \(sinRed\) listOf\(EN_EL_TELEFONO, GOOGLE/, 'sin red: primero el del dispositivo');
+  assert.match(rec, /override fun onCheckRecognitionSupport\(recognizerIntent: Intent, supportCallback: SupportCallback\)/);
+  assert.match(rec, /@RequiresApi\(Build\.VERSION_CODES\.TIRAMISU\)/);
+  assert.match(rec, /checkRecognitionSupport\(\s*recognizerIntent,/);
+  assert.match(rec, /for \(destino in candidatos\(context, intent\)\)/, 'si el preferido no se deja crear, el siguiente');
 });
