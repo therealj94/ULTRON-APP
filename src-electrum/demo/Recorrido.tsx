@@ -23,6 +23,10 @@ import type { MuestrasEncendidas } from '../mapa/captura';
 import { Contador, pedirTablero, type DatosTablero } from '../mapa/Tablero';
 import { analisisDeFicha, centroDe, concesionesEn, enOracion, focoDeOro, fold, nombreParaDecir, vencimientos, zonaMasRica, type Ficha } from './guion';
 import { ALTURAS } from '../preferencias';
+import type { OrdenIndice } from '../mapa/IndiceCapas';
+import { estadoMapa } from '../mapa/estado-mapa';
+import { Escenario, Flujo, MarcoMapa, type Escena, type Marco, type Quien } from './Escenas';
+import { PASOS, fechaMapa, fichaFactibilidad, km, lecturaAguaYVias, lecturaCatastro, lecturaHallazgos, lecturaIndicios, lecturaPolitica, lecturaPremisas, lecturaRestricciones, nombreFicha, ocurrenciasCerca, tipoProbable, type TargetEjemplo } from './etapa1';
 
 export { nombreParaDecir } from './guion';
 
@@ -55,9 +59,11 @@ export type Controles = {
   enfocar: (e: { encuadre: [number, number, number, number]; etiqueta?: string } | null) => void;
   /** Abre un mapa o PDF en el visor a pantalla completa (null lo cierra). */
   visor: (f: { tipo: 'imagen' | 'pdf'; nombre: string; url: string; titulo?: string } | null) => void;
+  /** Órdenes al índice de capas: lo que se enciende queda marcado en «Capas», como si lo hubiera hecho la persona. */
+  indice?: (lista: OrdenIndice[]) => void;
 };
 
-export type ModoRecorrido = 'completo' | 'geologico' | 'legal' | 'herramientas';
+export type ModoRecorrido = 'etapa1' | 'completo' | 'geologico' | 'legal' | 'herramientas';
 
 type Cifra = { valor: number; etiqueta: string; d?: number };
 type Capitulo = { titulo: string; cifras?: Cifra[]; chips?: string[] };
@@ -164,6 +170,10 @@ export function Recorrido({
   const [foco, setFoco] = useState<string | null>(null);
   /** El título grande de cada capítulo, que aparece un momento al centro, como en una película. */
   const [titular, setTitular] = useState<{ n: number; titulo: string; clave: number } | null>(null);
+  /** Etapa 1: la escena sobre el mapa, el paso del flujo (1–12) y el rótulo del mapa. */
+  const [escena, setEscena] = useState<Escena | null>(null);
+  const [paso, setPaso] = useState<number | null>(null);
+  const [marco, setMarco] = useState<Marco | null>(null);
   const restaurado = useRef(false);
   const caja = useRef<HTMLDivElement>(null);
   const vivo = useRef(0);
@@ -227,6 +237,17 @@ export function Recorrido({
     const mio = ++vivo.current;
     const sigue = () => vivo.current === mio;
     const antes = c.current.estado();
+    // Lo encendido en el índice de capas, para dejarlo igual al terminar (la Etapa 1 lo usa).
+    const indiceAntes = estadoMapa();
+    /** Deshace lo propio de la Etapa 1: las escenas, el target dibujado y las capas del índice. */
+    const deshacerEtapa1 = (c0: Controles) => {
+      setEscena(null);
+      setPaso(null);
+      setMarco(null);
+      if (modo !== 'etapa1') return;
+      c0.orden({ accion: 'target', geojson: null });
+      if (indiceAntes) c0.indice?.([{ op: 'solo', ids: [...indiceAntes.capas.map((x) => x.id), 104001] }, ...indiceAntes.capas.map((x) => ({ op: 'encender' as const, id: x.id, filtros: x.filtros }))]);
+    };
     setPos(null);
     setChico(false);
 
@@ -334,7 +355,8 @@ export function Recorrido({
         c.current.fondo('satelite');
         c.current.tocar(null);
         c.current.tresD(true);
-        c.current.catastro(true);
+        // En la Etapa 1 el catastro aparece en su paso (el 8): antes distrae.
+        c.current.catastro(modo !== 'etapa1');
 
         /*
          * Cada recorrido pide solo lo que va a contar: el de herramientas no necesita el tablero
@@ -514,7 +536,385 @@ export function Recorrido({
         let i = 0;
 
         type Cap = { hay: boolean; correr: () => Promise<void> };
+        /*
+         * ETAPA 1 — EL RECORRIDO (el documento de octubre de 2026). Los 12 pasos en su orden, los seis
+         * mensajes clave y las reglas de conducta: el target de ejemplo es real (sale de la base) y se
+         * presenta siempre como «ejemplo ilustrativo» y «probable proyecto». Las capas se encienden
+         * por el índice (lo que la persona ve marcado en «Capas» es lo que está en el mapa).
+         */
+        const e1 = modo === 'etapa1';
+        const [T, resumen, nMuestras] = e1
+          ? await Promise.all([
+              json<{ target: TargetEjemplo }>('/api/electrum/recorrido/target').then((j) => j.target).catch(() => null),
+              json<{ documentos: number; capas: number; fragmentos: number; carpetas: number }>('/api/electrum/biblioteca/resumen').catch(() => null),
+              json<{ features?: unknown[] }>('/api/electrum/mapa/muestras').then((j) => j.features?.length || 0).catch(() => 0),
+            ])
+          : [null, null, 0];
+        if (!sigue()) return;
+        /** El catastro del índice no se toca: su vista la maneja el recorrido aparte (c.catastro). */
+        const CATASTRO_INDICE = 104001;
+        const solo = (ids: number[], filtros: Record<number, Record<string, string[]>> = {}) =>
+          c.current.indice?.([{ op: 'solo', ids: [...ids, CATASTRO_INDICE] }, ...ids.map((id) => ({ op: 'encender' as const, id, filtros: filtros[id] || {} }))]);
+        const ampliar = (b: [number, number, number, number], km: number): [number, number, number, number] => {
+          const dLat = km / 110.574;
+          const dLon = km / (111.32 * Math.cos((((b[1] + b[3]) / 2) * Math.PI) / 180));
+          return [b[0] - dLon, b[1] - dLat, b[2] + dLon, b[3] + dLat];
+        };
+        const verTarget = (km: number, inclinacion = 52, giro = -18, ms = 4200) => T && mover({ accion: 'encuadrar', encuadre: ampliar(T.caja, km), inclinacion, giro, ms });
+        const dibujarTarget = async () => {
+          if (!T) return;
+          c.current.orden({ accion: 'target', geojson: T.poligono as any, centro: T.centro, etiqueta: 'Target Ejemplo' });
+          await espera(120);
+        };
+        const fecha = fechaMapa();
+        const utm = T?.utm ? { este: T.utm.este, norte: T.utm.norte } : null;
+        const marcoDe = (titulo: string, leyenda: Marco['leyenda'], fuentes: string[]) =>
+          setMarco({ titulo, subtitulo: T ? `Target Ejemplo · ${[T.municipio, T.departamento].filter(Boolean).join(', ')}` : undefined, leyenda: T ? [...leyenda, { color: '#FF2D2D', texto: 'Target y área propuesta', forma: 'estrella' }] : leyenda, fuentes, fecha, utm, ejemplo: !!T });
+        const paso = (n: number, k: Omit<Capitulo, 'titulo'> = {}) => {
+          setPaso(n);
+          setEscena(null);
+          capitulo(++i, { titulo: `Paso ${n} · ${PASOS[n - 1].titulo}`, ...k });
+        };
+        const nombreT = T ? nombreFicha(T.ficha.nombre) : '';
+        const vistos: Quien[] = [];
+        const E1: Record<string, Cap> = {
+          e1Apertura: {
+            hay: e1,
+            correr: async () => {
+              solo([]);
+              c.current.catastro(false);
+              setEscena({ tipo: 'apertura' });
+              capitulo(++i, { titulo: 'Bienvenida' });
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 60, giro: -28, ms: 6000 });
+              await pausa(2200);
+              orbitar(30, 34_000);
+              await conversar([{ quien: 'electrum', texto: '[warmly] ¡Bienvenido! Soy el Doctor Electrum, y lo acompañaré en este recorrido por la minería de Honduras. Antes de empezar, le presento a mi equipo.' }]);
+            },
+          },
+          e1Equipo: {
+            hay: e1,
+            correr: async () => {
+              capitulo(++i, { titulo: 'El equipo' });
+              const ver = (q: Quien) => () => {
+                if (!vistos.includes(q)) vistos.push(q);
+                setEscena({ tipo: 'equipo', habla: q, vistos: [...vistos] });
+              };
+              ver('electrum')();
+              await conversar([
+                { quien: 'tatiana', al: ver('tatiana'), texto: '[warmly] Mucho gusto, soy Tatiana, ingeniera en minas. Me encargo del diseño y plan de minado y de todo el desarrollo civil: caminos, plataformas, infraestructura y obras del proyecto.' },
+                { quien: 'chema', al: ver('chema'), texto: '[warmly] Hola, soy Chema, ingeniero metalurgista. Me ocupo de todas las pruebas metalúrgicas, del diseño de la planta de proceso y, cuando el proyecto crece, del aumento de capacidad de planta.' },
+                { quien: 'electrum', al: ver('super'), texto: '[thoughtful] Y trabajamos junto con una superinteligencia: cruza las capas, lee las leyes, genera mapas e informes, y aprende con cada consulta.' },
+              ]);
+            },
+          },
+          e1Riesgo: {
+            hay: e1,
+            correr: async () => {
+              capitulo(++i, { titulo: 'Administradores del riesgo' });
+              setEscena({ tipo: 'formula', fase: 1 });
+              await conversar([
+                { quien: 'electrum', texto: '[serious] Con ella comprendimos algo fundamental: la minería es un negocio de mucha rentabilidad, pero también de alto riesgo. Como dice la economía, a mayor riesgo, mayor utilidad.' },
+                { quien: 'electrum', al: () => setEscena({ tipo: 'formula', fase: 2 }), texto: '[thoughtful] Y nosotros aprendimos la otra mitad de la ecuación: a mayor información, menor riesgo.' },
+                { quien: 'electrum', al: () => setEscena({ tipo: 'formula', fase: 3 }), texto: '[warmly] Por eso creamos la fórmula para obtener la mayor información posible y convertirnos en administradores del riesgo.' },
+              ]);
+              const cifras = [
+                resumen?.documentos ? { valor: resumen.documentos.toLocaleString('es-HN'), etiqueta: 'documentos leídos' } : null,
+                resumen?.capas ? { valor: resumen.capas.toLocaleString('es-HN'), etiqueta: 'capas de mapa' } : null,
+                nMuestras ? { valor: nMuestras.toLocaleString('es-HN'), etiqueta: 'muestras geoquímicas JICA' } : null,
+                { valor: '12', etiqueta: 'pasos, de la premisa a la decisión' },
+              ].filter((x): x is { valor: string; etiqueta: string } => !!x);
+              setEscena({ tipo: 'base', cifras });
+              // Toda la base a la vez, por un momento: las ocurrencias, las muestras de JICA y el USGS.
+              solo([110002, 401005, 800140], { 800140: { PAIS: ['Honduras'] } });
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 45, giro: -10, ms: 4000 });
+              await conversar([
+                { quien: 'electrum', texto: '[warmly] Hemos construido una base de datos de toda la estructura geológico-minera de Honduras: los estudios de JICA, de Naciones Unidas, del USGS, los informes históricos, los mapas geológicos y estructurales, y el catastro.' },
+                { quien: 'chema', texto: '[curious] Todo eso que brilla en el mapa, doctor, ¿es lo que ya está en la base?' },
+                { quien: 'electrum', texto: '[warmly] Así es, ingeniero: lo acumulamos, lo procesamos, lo interpretamos y lo ponemos a disposición. Le muestro cómo trabajamos, paso por paso.' },
+              ]);
+            },
+          },
+          e1Paso1: {
+            hay: e1,
+            correr: async () => {
+              paso(1);
+              solo([208001, 203001]);
+              marcoDe('Mapa 1 · Premisas geológicas', [
+                { color: '#C98BFF', texto: 'Mapa metalogenético' },
+                { color: '#111111', texto: 'Fallas regionales', forma: 'linea' },
+              ], ['Mapa metalogenético', 'Fallas USGS / GEM']);
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 50, giro: 8, ms: 4500 });
+              await conversar([
+                { quien: 'electrum', texto: '[thoughtful] Primero, las premisas geológicas: la base científica. El mapa metalogenético de Honduras, y las grandes fallas centroamericanas: el sistema Motagua–Polochic, Guayape, el graben de Honduras central.' },
+                { quien: 'electrum', texto: 'Todo en su contexto regional: las placas Caribe, Cocos y Norteamérica, el bloque Chortís y el arco volcánico.' },
+                {
+                  quien: 'electrum',
+                  al: () => {
+                    solo([209001, 206001, 203001]);
+                    marcoDe('Mapa 1 · Premisas geológicas', [
+                      { color: '#E8B04A', texto: 'Geología 1:500.000' },
+                      { color: '#8A6B3A', texto: 'Estructural 1:50.000', forma: 'linea' },
+                      { color: '#111111', texto: 'Fallas regionales', forma: 'linea' },
+                    ], ['Mapa geológico 1:500.000', 'Mapa estructural 1:50.000', 'USGS']);
+                    void dibujarTarget().then(() => verTarget(9, 58, -22, 6000));
+                  },
+                  texto: T ? `Y bajamos a detalle, con la geología a escala 1:500.000 y 1:50.000. Le traigo un ejemplo real de la base, un target de oro en ${T.municipio || 'el sur del país'}.` : 'Y bajamos a detalle, con los mapas geológicos a escala 1:500.000 y 1:50.000.',
+                },
+                ...(T ? [{ quien: 'electrum' as const, texto: lecturaPremisas(T) }] : []),
+              ]);
+            },
+          },
+          e1Paso2: {
+            hay: e1,
+            correr: async () => {
+              paso(2, T?.jica ? { cifras: [{ valor: ocurrenciasCerca(T).n, etiqueta: T.ocurrenciasTope ? 'ocurrencias a 5 km (o más)' : 'ocurrencias a 5 km' }, { valor: T.jica.muestras, etiqueta: 'muestras JICA' }] } : {});
+              solo([209001, 110002, 110003, 110004, 401005, 800140], { 401005: { elemento: ['au'] }, 800140: { PAIS: ['Honduras'] } });
+              marcoDe('Mapa 1 · Indicios', [
+                { color: '#FFD400', texto: 'Ocurrencias de oro', forma: 'punto' },
+                { color: '#C0C0C0', texto: 'Ocurrencias de plata', forma: 'punto' },
+                { color: '#FF8A3D', texto: 'Muestras JICA (Au)', forma: 'punto' },
+              ], ['JICA', 'USGS MRDS', 'DEFOMIN', 'Fichas de ocurrencia']);
+              verTarget(5, 55, 14, 4500);
+              await conversar([
+                { quien: 'electrum', texto: '[curious] Segundo, los indicios: información antigua o indirecta que sugiere mineralización. Los informes de JICA, de Naciones Unidas, del USGS, de DEFOMIN, y los muestreos de proyectos anteriores.', al: () => orbitar(-24, 24_000) },
+                ...(T ? [{ quien: 'electrum' as const, texto: lecturaIndicios(T) }] : []),
+                { quien: 'chema', texto: '[chuckles] Una muestra así me pone contento, doctor. Pero ya sé lo que me va a decir.' },
+                { quien: 'electrum', texto: '[warmly] Que un indicio no es un recurso, ingeniero. Es una pista.' },
+              ]);
+            },
+          },
+          e1Paso3: {
+            hay: e1,
+            correr: async () => {
+              paso(3);
+              solo([209001, 110002, 110001, 110004, 111001, 401005], { 401005: { elemento: ['au'] } });
+              marcoDe('Mapa 1 · Hallazgos', [
+                { color: '#FFD400', texto: 'Indicios (ocurrencias)', forma: 'punto' },
+                { color: '#FF6B6B', texto: 'Yacimientos y labores', forma: 'punto' },
+                { color: '#D98C4A', texto: 'Zonas de minería informal', forma: 'area' },
+              ], ['Depósitos minerales', 'DEFOMIN', 'Zonas informales', 'Catastro histórico']);
+              await conversar([
+                { quien: 'electrum', texto: 'Tercero, los hallazgos: evidencia directa y actual. Labores mineras activas o antiguas, artesanales, bocaminas y tajos; concesiones que se trabajaron con proceso de mina; y muestreos recientes con resultados de laboratorio.' },
+                ...(T ? [{ quien: 'electrum' as const, texto: lecturaHallazgos(T) }] : []),
+              ]);
+              setEscena({
+                tipo: 'ecuacion',
+                premisas: T?.geologia?.unidad ? `${T.geologia.unidad}${T.geologia.fallasDentro ? ` · ${T.geologia.fallasDentro} fallas` : ''}` : 'Geología, fallas y metalogenia',
+                indicios: T ? [ocurrenciasCerca(T).n ? `${ocurrenciasCerca(T).dicho} ocurrencias` : null, T.jica ? `${T.jica.muestras} muestras JICA` : null].filter(Boolean).join(' · ') || 'Inventarios históricos' : 'JICA · ONU · USGS · DEFOMIN',
+                hallazgos: T?.geologia?.yacimientos.length ? `${T.geologia.yacimientos.length} yacimientos registrados` : 'Labores y muestreos recientes',
+              });
+              await conversar([
+                { quien: 'electrum', texto: '[serious] Premisas, más indicios, más hallazgos: eso es un target. Y quiero ser muy claro: un target es un probable proyecto. Todavía no es un proyecto.' },
+                { quien: 'tatiana', texto: '[thoughtful] Por eso todavía no diseño nada, doctor. Primero que pase los filtros.' },
+              ]);
+            },
+          },
+          e1Paso4: {
+            hay: e1,
+            correr: async () => {
+              paso(4);
+              const dep = T ? tipoProbable(T) : null;
+              setEscena({ tipo: 'clase', mineral: T?.mineral || 'Oro', deposito: dep });
+              verTarget(3, 62, -40, 5000);
+              await conversar([
+                { quien: 'electrum', texto: 'Cuarto, el tipo de target. Metálico: oro, plata, cobre, plomo, zinc, antimonio, hierro. No metálico: calizas, arcillas, agregados, yeso. O gemas y piedras preciosas, como el ópalo y el jade.' },
+                {
+                  quien: 'electrum',
+                  texto: T ? `Este es metálico, de ${T.mineral.toLowerCase()}${dep ? `, y la geología de la zona es compatible con un depósito ${dep.toLowerCase()}` : ''}. Probable, siempre probable, hasta que el campo diga otra cosa.` : 'Y con la geología se dice el tipo de depósito probable: epitermal, pórfido, skarn, orogénico o placer.',
+                },
+              ]);
+            },
+          },
+          e1Paso5: {
+            hay: e1,
+            correr: async () => {
+              paso(5);
+              solo([101001, 108001, 109001]);
+              marcoDe('Mapa 2 · Restricciones', [
+                { color: '#2FA84F', texto: 'Áreas protegidas (SINAPH)', forma: 'trama' },
+                { color: '#4FB3FF', texto: 'Microcuencas declaradas' },
+                { color: '#6B8E23', texto: 'Patrimonio forestal' },
+              ], ['ICF / SINAPH', 'Microcuencas declaradas', 'Patrimonio público forestal']);
+              const lejos = Math.max(6, Math.min(32, Math.max(T?.protegida?.km || 0, T?.microcuenca?.km || 0) + 3));
+              verTarget(lejos, 40, 0, 5000);
+              await conversar([
+                { quien: 'electrum', texto: '[serious] Quinto, las restricciones. Superponemos el target con las áreas protegidas del sistema nacional, el SINAPH, con las microcuencas declaradas productoras de agua y con las demás zonas de reserva.' },
+                { quien: 'tatiana', texto: '[serious] Y si cae dentro de una, se descarta o se reubica. Sin discusión.' },
+                ...(T ? [{ quien: 'electrum' as const, texto: lecturaRestricciones(T) }] : []),
+              ]);
+              if (T) {
+                setEscena({ tipo: 'sello', texto: 'Libre de restricciones', detalle: [T.protegida ? `Área protegida a ${km(T.protegida.km)}` : null, T.microcuenca ? `microcuenca a ${km(T.microcuenca.km)}` : null].filter(Boolean).join(' · ') });
+                await pausa(2600);
+              }
+            },
+          },
+          e1Paso6: {
+            hay: e1,
+            correr: async () => {
+              paso(6);
+              solo([105001, 105002, 105004, 105003]);
+              marcoDe('Mapa 3 · División política', [
+                { color: '#5A6670', texto: 'Límite departamental', forma: 'linea' },
+                { color: '#9AA6AF', texto: 'Límite municipal', forma: 'linea' },
+                { color: '#F3F6F8', texto: 'Aldeas y caseríos', forma: 'punto' },
+              ], ['INE / división política', 'Censo de caseríos']);
+              verTarget(4, 50, 24, 4500);
+              await conversar([
+                { quien: 'electrum', texto: 'Sexto, la división política: departamento, municipio, aldea y caserío. Eso define ante qué municipalidad se gestiona, y qué comunidades están en el área de influencia.' },
+                ...(T ? [{ quien: 'electrum' as const, texto: lecturaPolitica(T) }] : []),
+                { quien: 'tatiana', texto: '[serious] Y ahí empieza la licencia social, desde el primer día: la consulta y el trato con las comunidades son parte del éxito del proyecto, no un trámite.' },
+              ]);
+            },
+          },
+          e1Paso7: {
+            hay: e1,
+            correr: async () => {
+              paso(7);
+              solo([105005, 102001, 210001]);
+              marcoDe('Mapa 3 · Agua, vías y suelos', [
+                { color: '#3BA3FF', texto: 'Ríos y quebradas', forma: 'linea' },
+                { color: '#E5484D', texto: 'Carreteras primarias', forma: 'linea' },
+                { color: '#B08A5A', texto: 'Suelos (Simmons)' },
+              ], ['Red hídrica', 'Red vial primaria', 'Suelos Simmons']);
+              verTarget(3, 64, -50, 5000);
+              const av = T ? lecturaAguaYVias(T) : null;
+              await conversar([
+                { quien: 'electrum', texto: 'Séptimo: la red hídrica, las vías y los suelos.', al: () => orbitar(28, 26_000) },
+                { quien: 'chema', texto: `[thoughtful] El agua es mía, doctor: sin agua no hay proceso. ${av ? av.agua : 'Ríos, quebradas y nacientes: cuánta hay y qué riesgos ambientales trae.'}` },
+                { quien: 'tatiana', texto: `${av ? av.vias : 'Y las vías: el acceso, la distancia a la carretera pavimentada y a los poblados.'} Y los suelos y las pendientes me dicen por dónde meto los caminos y las plataformas.` },
+                { quien: 'electrum', texto: 'Con esto se decide si el target es factible para una solicitud.' },
+              ]);
+            },
+          },
+          e1Paso8: {
+            hay: e1,
+            correr: async () => {
+              paso(8);
+              solo([]);
+              c.current.catastro(true);
+              marcoDe('Mapa 4 · Catastro minero', [
+                { color: '#FF7A1A', texto: 'Derechos mineros vigentes' },
+                { color: '#FF2D2D', texto: 'Área libre propuesta', forma: 'linea' },
+              ], ['Catastro INHGEOMIN (junio 2026)']);
+              verTarget(5, 45, 10, 4500);
+              await conversar([
+                { quien: 'electrum', texto: 'Octavo, el catastro minero de INHGEOMIN, el Instituto Hondureño de Geología y Minas. Se obtiene por solicitud formal, y en nuestra base lo clasificamos por tipo de minería, escala y estado.', al: () => setEscena({ tipo: 'catastro', libre: true }) },
+                { quien: 'electrum', texto: '[warmly] Lo interesante es que el target esté libre: sin concesión ni solicitud que lo cubra.' },
+              ]);
+              setEscena(null);
+              await conversar([
+                ...(T ? [{ quien: 'electrum' as const, texto: lecturaCatastro(T) }] : []),
+                { quien: 'tatiana', texto: '[serious] Eso sí: el estado de una concesión se verifica con el catastro más reciente de INHGEOMIN antes de presentar cualquier solicitud.' },
+              ]);
+            },
+          },
+          e1Paso9: {
+            hay: e1,
+            correr: async () => {
+              paso(9);
+              setEscena({ tipo: 'legal' });
+              orbitar(40, 40_000);
+              await conversar([
+                { quien: 'electrum', texto: 'Noveno, el marco legal. La superinteligencia lee y aplica el compendio: la Ley General de Minería y su Reglamento, la Ley General del Ambiente con el licenciamiento de MiAmbiente, y la normativa municipal y de consulta comunitaria.' },
+                { quien: 'electrum', texto: 'La legislación internacional la usamos solo como referencia: se trabaja con la ley hondureña vigente.' },
+                { quien: 'tatiana', texto: '[warmly] Y no lo dejamos solo: le preparamos la solicitud, acompañamos todo el trámite y el seguimiento, y le podemos recomendar un abogado.' },
+                { quien: 'electrum', texto: '[serious] Porque la inteligencia no sustituye al abogado ni da opiniones legales vinculantes, y las leyes cambian: siempre se confirma la versión vigente.' },
+              ]);
+            },
+          },
+          e1Paso10: {
+            hay: e1,
+            correr: async () => {
+              paso(10);
+              setMarco(null);
+              c.current.catastro(false);
+              c.current.orden({ accion: 'target', geojson: null });
+              await espera(120);
+              setEscena({ tipo: 'carpeta', proyecto: 'Buena Vista – Monarka' });
+              c.current.indice?.([{ op: 'solo', ids: [107001, CATASTRO_INDICE] }, { op: 'acercar', id: 107001 }]);
+              await conversar([
+                { quien: 'electrum', texto: 'Décimo: cada proyecto abre su propia carpeta. Se alimenta de forma permanente y se vuelve carpeta propia de la casa, sin mezclar nunca los datos de un proyecto con los de otro.' },
+                { quien: 'electrum', texto: 'Ahí va todo: el mapeo geológico, las trincheras, los muestreos, la geoquímica, la geofísica con magnetometría e IP, las fotos, los KML y los planos. Esta es una carpeta real de la casa: Buena Vista – Monarka.' },
+                { quien: 'tatiana', texto: 'Y con esa carpeta se diseña el plan de exploración por etapas, hasta llegar a la perforación.' },
+              ]);
+            },
+          },
+          e1Paso11: {
+            hay: e1,
+            correr: async () => {
+              paso(11);
+              setEscena({ tipo: 'perforacion', fase: 0 });
+              const fase = (f: number) => () => setEscena({ tipo: 'perforacion', fase: f });
+              await conversar([
+                { quien: 'electrum', texto: 'Undécimo: la perforación. Diseñamos el plan de perforación,' },
+                { quien: 'electrum', al: fase(1), texto: 'logueamos los testigos, fotografiamos las cajas,' },
+                { quien: 'electrum', al: fase(2), texto: 'y mandamos los análisis químicos y geoquímicos con control de calidad, QA/QC.' },
+                { quien: 'electrum', al: fase(3), texto: 'Interpretamos, armamos las secciones, el modelo geológico en 3D y el modelo de bloques.' },
+                { quien: 'electrum', al: fase(4), texto: '[serious] Y solo cuando los datos lo permiten, estimamos el recurso: inferido, indicado o medido. Nunca llamamos recurso a lo que no tiene la información y el estándar que lo respalden.' },
+              ]);
+            },
+          },
+          e1Paso12: {
+            hay: e1,
+            correr: async () => {
+              paso(12);
+              setEscena({ tipo: 'decision', ruta: null });
+              await conversar([
+                { quien: 'electrum', texto: '[thoughtful] Y duodécimo, la decisión del inversionista. Hay dos rutas.' },
+                { quien: 'chema', al: () => setEscena({ tipo: 'decision', ruta: 'A' }), texto: '[warmly] Ruta A, explotar. Ahí entro yo con las pruebas metalúrgicas: botella, columna, gravimetría, CIL o CIP, flotación. Armo el diagrama de proceso, diseño la planta y, cuando crece, le amplío la capacidad.' },
+                { quien: 'tatiana', texto: 'Y yo hago el plan de minado, a cielo abierto o subterráneo, y diseño las obras civiles y la infraestructura.' },
+                { quien: 'electrum', al: () => setEscena({ tipo: 'decision', ruta: 'B' }), texto: 'Ruta B, la bolsa de valores. Si desde la perforación se trabaja bajo NI 43-101 de Canadá o JORC de Australia, acompañamos el cumplimiento: protocolos, QA/QC, la Persona Calificada y el informe técnico. Y le explicamos cómo se lista, por ejemplo, en la TSX o la TSX-V.' },
+              ]);
+            },
+          },
+          e1Ficha: {
+            hay: e1 && !!T,
+            correr: async () => {
+              const f = fichaFactibilidad(T!);
+              setPaso(null);
+              setMarco(null);
+              capitulo(++i, { titulo: 'Ficha de factibilidad' });
+              solo([]);
+              await dibujarTarget();
+              verTarget(2.5, 60, 30, 5000);
+              setEscena({ tipo: 'ficha', titulo: `Target Ejemplo · ${nombreT}`, filas: f.filas, dictamen: f.dictamen, factible: f.factible });
+              const avisos = f.filas.filter((x) => x.marca === 'aviso').map((x) => x.criterio.toLowerCase());
+              await conversar([
+                { quien: 'electrum', texto: `Todo el recorrido cabe en una ficha. Para nuestro target de ejemplo, ${nombreT}: premisas, indicios y hallazgos a favor, libre de restricciones y libre en el catastro.` },
+                ...(avisos.length ? [{ quien: 'tatiana' as const, texto: `[serious] Con sus advertencias, que también se dicen: ${avisos.join(', ')}. Eso se trabaja en campo y con la comunidad.` }] : []),
+                { quien: 'electrum', texto: `[warmly] Dictamen: ${f.dictamen.toLowerCase()}. Es un ejemplo ilustrativo hecho con datos reales de la base, y cada capa cita su fuente.` },
+              ]);
+            },
+          },
+          e1Cierre: {
+            hay: e1,
+            correr: async () => {
+              setPaso(null);
+              setMarco(null);
+              capitulo(++i, { titulo: '¡Bienvenido!' });
+              c.current.orden({ accion: 'target', geojson: null });
+              await espera(120);
+              solo([110002], { 110002: { mineral: ['Oro', 'Plata'] } });
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 58, giro: -20, ms: 6000 });
+              const msj = (n: number) => () => setEscena({ tipo: 'mensajes', hasta: n });
+              msj(0)();
+              await conversar([
+                { quien: 'electrum', al: msj(1), texto: '[warmly] Como ve, este es un proceso dinámico. La minería es de alta rentabilidad y de alto riesgo; por eso trabajamos proyectos específicos, cada uno con su propia carpeta, y además tenemos información general para que los inversionistas identifiquen targets, reconozcan proyectos maduros y evalúen la geología con criterio.' },
+                { quien: 'electrum', al: msj(2), texto: 'Porque en minería, a mayor información, menor riesgo. Esa es nuestra manera de administrarlo.' },
+                { quien: 'electrum', al: msj(3), texto: '[warmly] Y créame: Honduras es un país con alto potencial minero, muy rico. Desde la época colonial se construyó alrededor del oro y la plata, y hay indicios y hallazgos muy fuertes en todo el territorio.', },
+                { quien: 'electrum', al: msj(4), texto: 'Contamos con la información de JICA, de Naciones Unidas, del USGS y de muchas otras fuentes. La acumulamos, la procesamos, la interpretamos y la ponemos a su disposición.' },
+                { quien: 'chema', al: msj(5), texto: '[warmly] Le ayudamos a sacar planos, a presentar solicitudes, a preparar cualquier informe, a modelar, y a diseñar los planes de exploración, de minado y de planta.' },
+                { quien: 'tatiana', al: msj(6), texto: 'Lo que necesite, lo hacemos en conjunto. Y con cada consulta suya, aprendemos y mejoramos.' },
+              ]);
+              setEscena({ tipo: 'bienvenido' });
+              orbitar(24, 30_000);
+              await conversar([{ quien: 'electrum', texto: '[warmly] De aquí en adelante, pregúnteme lo que considere conveniente para desarrollar un proyecto minero en Honduras. Vamos con todo, cuente con nosotros. ¡Bienvenido!' }]);
+              await pausa(1500);
+            },
+          },
+        };
         const C: Record<string, Cap> = {
+          ...E1,
           intro: {
             hay: true,
             correr: async () => {
@@ -1273,6 +1673,7 @@ export function Recorrido({
           completo: ['intro', 'biblioteca', 'politico', 'potencial', 'yacimientos', 'satelite', 'historico', 'zona', 'analisis', 'oro', 'referencia', 'topografia', 'proyectos', 'campo', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
           geologico: ['intro', 'yacimientos', 'historico', 'zona', 'analisis', 'oro', 'alteracion', 'topografia', 'geologicoVivo', 'mesa', 'cierre'],
           legal: ['intro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'mesa', 'cierre'],
+          etapa1: ['e1Apertura', 'e1Equipo', 'e1Riesgo', 'e1Paso1', 'e1Paso2', 'e1Paso3', 'e1Paso4', 'e1Paso5', 'e1Paso6', 'e1Paso7', 'e1Paso8', 'e1Paso9', 'e1Paso10', 'e1Paso11', 'e1Paso12', 'e1Ficha', 'e1Cierre'],
           herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'chat', 'mesa', 'manos', 'pestanas', 'reparto', 'cierre'],
         };
         const lista = ORDEN[modo].filter((k) => C[k].hay);
@@ -1288,6 +1689,9 @@ export function Recorrido({
       } finally {
         fijarRecorrido(false);
         if (sigue()) {
+          deshacerEtapa1(c.current);
+          // La orden del target y la de la cámara van por el mismo canal: que no se pisen.
+          if (modo === 'etapa1') await espera(150);
           // Todo vuelve a como estaba, menos el 3D y la cámara: quien lo vio sigue desde ahí.
           c.current.rasters(antes.rasters);
           c.current.muestras(antes.muestras);
@@ -1333,7 +1737,10 @@ export function Recorrido({
       setFoco(null);
       // La ficha que abrió el recorrido se cierra con él (al empezar ya se había cerrado la que hubiera).
       c0.tocar(null);
-      c0.orden({ accion: 'orbitar', grados: 0, ms: 900, margen: SIN_MARGEN });
+      deshacerEtapa1(c0);
+      const orbita = () => c0.orden({ accion: 'orbitar', grados: 0, ms: 900, margen: SIN_MARGEN });
+      if (modo === 'etapa1') setTimeout(orbita, 150);
+      else orbita();
     };
   }, [activo, onTerminar, modo]);
 
@@ -1383,6 +1790,10 @@ export function Recorrido({
   return (
     <>
     <Cine titular={titular} />
+    <Escenario escena={escena} conFlujo={!!paso} />
+    <Flujo paso={paso} />
+    {/* El rótulo es del mapa: mientras una escena lo tapa, no se muestra. */}
+    <MarcoMapa marco={!escena || escena.tipo === 'sello' || escena.tipo === 'clase' ? marco : null} />
     {foco && <Foco selector={foco} />}
     <div
       ref={caja}

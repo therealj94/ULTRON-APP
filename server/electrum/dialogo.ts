@@ -23,8 +23,8 @@ export type { Personaje };
 /** Quién es cada uno y con qué voz habla. */
 export const PERSONAJES: Record<Personaje, { nombre: string; voz: string; quien: string }> = {
   electrum: { nombre: 'Dr Electrum', voz: 'Rt1JHkPO27QCUX6Nd5bV', quien: 'geólogo sénior con cuarenta años de campo, pausado y preciso' },
-  tatiana: { nombre: 'Ing. Tatiana', voz: 'irla3teuChAApguKnzms', quien: 'ingeniera civil y ambiental: construcción, relaves, permisos; ordenada y directa' },
-  chema: { nombre: 'Don Chema', voz: 'wfTWLJ20rcMqvU8gIiAB', quien: 'metalurgista y minero de planta de Olancho, práctico, habla sencillo y con refranes' },
+  tatiana: { nombre: 'Ing. Tatiana', voz: 'irla3teuChAApguKnzms', quien: 'ingeniera en minas: plan de minado, obra civil, relaves, permisos; ordenada y directa' },
+  chema: { nombre: 'Don Chema', voz: 'wfTWLJ20rcMqvU8gIiAB', quien: 'ingeniero metalurgista de Olancho: pruebas metalúrgicas y planta; práctico, habla sencillo y con refranes' },
   narrador: { nombre: 'Narrador', voz: 'sDh3eviBhiuHKi0MjTNq', quien: 'narrador sereno de documental' },
 };
 
@@ -75,7 +75,7 @@ export function partirDialogo(lineas: Linea[], tope = TOPE_TROZO): Linea[][] {
 /* ------------------------------------------------------------------ el guion */
 
 const INSTRUCCION = [
-  'Convertí el texto en un diálogo hablado, en español de Honduras, entre Dr Electrum (geólogo sénior, pausado y preciso) y la Ing. Tatiana (ingeniera civil y ambiental: pregunta lo que preguntaría quien escucha y aporta obra, permisos y riesgos). Si el texto toca planta, proceso del mineral o explotación, entra también Don Chema (metalurgista y minero de planta, práctico, con algún refrán): quien = "chema".',
+  'Convertí el texto en un diálogo hablado, en español de Honduras, entre Dr Electrum (geólogo sénior, pausado y preciso) y la Ing. Tatiana (ingeniera en minas: plan de minado y obra civil; pregunta lo que preguntaría quien escucha y aporta obra, permisos y riesgos). Si el texto toca planta, proceso del mineral o explotación, entra también Don Chema (ingeniero metalurgista, práctico, con algún refrán): quien = "chema".',
   'Reglas: entre 6 y 12 líneas cortas (una o dos frases cada una); Tatiana abre con una pregunta o un comentario; se contestan de verdad, a veces se interrumpen o se ríen; sin inventar cifras: solo las del texto; sin listas ni markdown.',
   'Marcá cómo se dice cada línea con UNA etiqueta de voz en inglés al principio cuando sume: [curious], [thoughtful], [warmly], [laughs], [chuckles], [surprised], [serious], [excited], [sighs], [whispers]. No en todas.',
   'Contestá SOLO un JSON: {"lineas":[{"quien":"tatiana","texto":"..."},{"quien":"electrum","texto":"..."}]}.',
