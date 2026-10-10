@@ -94,6 +94,14 @@ export type Objetivo = {
   tareas: string[];
   creado: number;
   actualizado: number;
+  /**
+   * F01/F05: las tareas que ya habían pasado el punto de no retorno cuando se canceló (su efecto fue aceptado). Su recibo
+   * llega después y se anota en `hechosTardios` sin reactivar nada (el objetivo sigue cancelado). Opcional: los de antes no
+   * lo tienen.
+   */
+  enVueloAlCancelar?: string[];
+  /** Lo que terminó después de cancelar (el recibo real de una acción ya aceptada): visible junto con la cancelación. */
+  hechosTardios?: { tareaId: string; estado: string; t: number }[];
 };
 
 export const MAX_EVENTOS_OBJETIVO = 100;
@@ -298,10 +306,14 @@ export type CambioObjetivo = {
   tarea?: string;
   /** Al cerrar: la evidencia de cada criterio (por su id). */
   evidencias?: { criterioId: string; tipo: EvidenciaObjetivo['tipo']; ref: string; etiqueta?: string }[];
+  /** F01: las tareas cuya acción ya estaba aceptada al cancelar (se permite sobre un objetivo ya cancelado). */
+  enVueloAlCancelar?: string[];
+  /** F05: llegó el resultado de una de esas tareas (se permite sobre un terminal: solo anota el hecho, no reactiva). */
+  tardio?: { tareaId: string; estado: string };
 };
 
 /** Los campos que se comparan para decir «qué cambió» (todo menos lo que cambia en cada escritura). */
-const CAMPOS_VISIBLES = ['proyecto', 'titulo', 'meta', 'criterioCierre', 'documentos', 'decisiones', 'restricciones', 'permisos', 'topeCosto', 'siguientePaso', 'estado', 'pausado', 'tareas'] as const;
+const CAMPOS_VISIBLES = ['proyecto', 'titulo', 'meta', 'criterioCierre', 'documentos', 'decisiones', 'restricciones', 'permisos', 'topeCosto', 'siguientePaso', 'estado', 'pausado', 'tareas', 'enVueloAlCancelar', 'hechosTardios'] as const;
 type CampoVisible = (typeof CAMPOS_VISIBLES)[number];
 
 /** ¿Esta evidencia vale para este objetivo? Un documento vigente suyo, una tarea suya o un enlace https. */
@@ -342,6 +354,7 @@ export function validarDecisionObjetivo(obj: Objetivo, p: PedidoDecisionObjetivo
  * error tipado. Lo que no cambia nada (repetir lo mismo) devuelve `cambiado: false` sin subir la revisión.
  */
 export function aplicarCambioObjetivo(obj: Objetivo, c: CambioObjetivo, ahora: number): { ok: true; objetivo: Objetivo; cambiado: boolean } | { ok: false; error: ErrorObjetivo } {
+  if (esTerminalObjetivo(obj.estado) && (c.enVueloAlCancelar || c.tardio)) return anotarSobreTerminal(obj, c, ahora);
   if (esTerminalObjetivo(obj.estado)) {
     const mismo = (c.estado === undefined || c.estado === obj.estado) && c.pausado === undefined && c.siguientePaso === undefined && !c.documento && !c.decisionNueva && !c.decidir && !c.tarea && !c.evidencias;
     return mismo ? { ok: true, objetivo: obj, cambiado: false } : { ok: false, error: new ErrorObjetivo('terminal', 'El objetivo ya terminó: no cambia.', obj) };
@@ -427,6 +440,28 @@ export function aplicarCambioObjetivo(obj: Objetivo, c: CambioObjetivo, ahora: n
   return { ok: true, objetivo: n, cambiado: true };
 }
 
+/**
+ * Lo único que se escribe sobre un objetivo terminal (puro): qué tareas seguían con su efecto aceptado al cancelar y,
+ * cuando su resultado llega, el hecho (sin cambiar el estado ni reactivar pasos cancelados). Repetirlo no escribe nada.
+ */
+function anotarSobreTerminal(obj: Objetivo, c: CambioObjetivo, ahora: number): { ok: true; objetivo: Objetivo; cambiado: boolean } {
+  const n: Objetivo = JSON.parse(JSON.stringify(obj));
+  if (c.enVueloAlCancelar) {
+    const ya = new Set((n.hechosTardios || []).map((h) => h.tareaId));
+    n.enVueloAlCancelar = [...new Set([...(n.enVueloAlCancelar || []), ...c.enVueloAlCancelar.map(String)])].filter((id) => /^[A-Za-z0-9_-]{4,64}$/.test(id) && !ya.has(id) && n.tareas.includes(id)).slice(0, MAX_TAREAS_OBJETIVO);
+  }
+  if (c.tardio && (n.enVueloAlCancelar || []).includes(c.tardio.tareaId)) {
+    n.enVueloAlCancelar = (n.enVueloAlCancelar || []).filter((id) => id !== c.tardio!.tareaId);
+    n.hechosTardios = [...(n.hechosTardios || []), { tareaId: c.tardio.tareaId, estado: textoObjetivo(c.tardio.estado, 30), t: ahora }].slice(-MAX_TAREAS_OBJETIVO);
+  }
+  const campos = CAMPOS_VISIBLES.filter((k) => JSON.stringify(n[k] ?? null) !== JSON.stringify(obj[k] ?? null));
+  if (!campos.length) return { ok: true, objetivo: obj, cambiado: false };
+  n.revision = obj.revision + 1;
+  n.actualizado = ahora;
+  n.eventos = [...n.eventos, { revision: n.revision, t: ahora, texto: textoObjetivo(c.evento, 200) || 'Anoté lo que llegó después de cancelar', campos: [...campos] }].slice(-MAX_EVENTOS_OBJETIVO);
+  return { ok: true, objetivo: n, cambiado: true };
+}
+
 /* ------------------------------------------------------------------ cambiar (durable) */
 
 export type ResultadoCambioObjetivo = { ok: true; objetivo: Objetivo; cambiado: boolean } | { ok: false; error: ErrorObjetivo };
@@ -470,6 +505,9 @@ export async function cambiarObjetivo(dueno: string, id: string, cambio: (obj: O
   const final = (cambiado ? (r.valor as Objetivo) : visto)!;
   // Lo incierto se vuelve a mirar sin esperar a que alguien abra la app (server/planificador.ts).
   if (cambiado && final.estado === 'incierto' && visto?.estado !== 'incierto') await agendar('objetivo', dueno, id, final.actualizado, { almacen: a }).catch(() => false);
+  // F04: lo que entra a «espera tu decisión» queda en la agenda: el planificador se asegura de que su aviso esté en la
+  // bandeja de salida aunque este proceso muera justo después de escribir (el hueco entre el cambio y el aviso se repara).
+  if (cambiado && final.estado === 'esperando-decision' && visto?.estado !== 'esperando-decision') await agendar('objetivo', dueno, id, final.actualizado, { almacen: a }).catch(() => false);
   return { ok: true, objetivo: final, cambiado };
 }
 

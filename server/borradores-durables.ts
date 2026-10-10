@@ -24,14 +24,19 @@
  * server/borradores-cola.ts `rechazadoEnPanel`, y el borrador revivía desde lo durable). Si la lápida no se puede leer,
  * tampoco revive (no poder rehidratar solo es un 409 «propuesta-cambiada»; revivir lo rechazado sería peor).
  */
-import { almacenDurable, claveDe, crearUnaVez, leerDurable, type AlmacenDurable } from '../lib/durable';
+import { almacenDurable, claveDe, crearUnaVez, leerDurable, modificarDurable, type AlmacenDurable } from '../lib/durable';
 import { reciboDeBorrador } from '../lib/envios';
+import { claveLapidaBorrador } from '../lib/puerta-efecto';
 
 export type CanalBorrador = 'correo' | 'whatsapp';
 type Guardado<B> = { v: 1; canal: CanalBorrador; ambito: string; intento: string; huella: string; vence: number; b: B };
 
 const claveBorrador = (canal: CanalBorrador, dueno: string, intento: string, huella: string) => claveDe(`borradores/${canal}`, dueno, `${intento}:${huella}`);
-const claveLapida = (dueno: string, intento: string) => claveDe('borradores/descartados', dueno, intento);
+const claveLapida = claveLapidaBorrador;
+/** F01 + auditoría de superficies: dónde se PRESENTÓ una propuesta exacta (intento + huella) y lo último presentado en cada superficie. */
+const clavePresentacion = (dueno: string, intento: string, huella: string, superficie: string) => claveDe('borradores/presentados', dueno, `${intento}:${huella}:${superficie}`);
+const claveUltimaPresentada = (dueno: string, superficie: string) => claveDe('borradores/presentado-en', dueno, superficie);
+export type Presentacion = { v: 1; canal: CanalBorrador; intento: string; huella: string; origen: string; superficie: string; t: number };
 export type MotivoDescarte = 'rechazado' | 'reemplazado' | 'descartado';
 type Lapida = { v: 1; intento: string; motivo: MotivoDescarte; t: number };
 const amb = (ambito: string) => String(ambito || 'general').slice(0, 80);
@@ -83,7 +88,10 @@ export async function leerBorradorDurable<B>(canal: CanalBorrador, dueno: string
   const l = await leerDurable<Guardado<B>>(claveBorrador(canal, dueno, intento, huella), a).catch(() => null);
   if (!l || l.ok === false || !l.valor) return null;
   const g = l.valor;
-  if (g.v !== 1 || g.canal !== canal || g.intento !== intento || g.huella !== huella || g.ambito !== amb(ambito)) return null;
+  if (g.v !== 1 || g.canal !== canal || g.intento !== intento || g.huella !== huella) return null;
+  // El borrador durable es de la CUENTA (dueño + intento); la superficie donde se armó es metadato (`ambito`). Desde otra
+  // superficie del mismo dueño vale solo si ESA superficie mostró exactamente esta propuesta (intento + huella).
+  if (g.ambito !== amb(ambito) && !(await borradorPresentadoEn(dueno, intento, huella, ambito, a))) return null;
   if (!((o.ahora ?? Date.now()) <= g.vence)) return null;
   // Rechazado, reemplazado o descartado (o no se sabe): no vuelve.
   if ((await borradorDescartado(dueno, intento, a)) !== false) return null;
@@ -103,6 +111,39 @@ export async function descartarBorradorDurable(_canal: CanalBorrador, dueno: str
   // La misma lápida que el rechazo del panel (una por dueño + intento): `leerBorradorDurable` la respeta igual.
   const r = await crearUnaVez<Lapida>(claveLapida(dueno, intento), { v: 1, intento, motivo: 'descartado', t: ahora }, a || almacenDurable()).catch(() => null);
   return !!r && r.ok === true;
+}
+
+/**
+ * La superficie `superficie` (un aparato, la web, Windows: el ámbito de su conversación) le MOSTRÓ a la persona esta
+ * propuesta exacta. Sin esto, aprobarla desde otra superficie no vale (la regla de «presentación válida»: quien aprueba
+ * tiene que haber visto la huella exacta). También queda como lo último presentado en esa superficie, para que un «sí,
+ * mándalo» dicho allí encuentre ESA propuesta (`ultimoPresentadoEn`).
+ *
+ * Gancho para quien pinta la tarjeta en el teléfono (lib/acciones-app.ts, otro equipo): llamar esto al mostrarla con su
+ * `correo#aparato` como superficie, y resolver el «sí» de ese aparato con `ultimoPresentadoEn`. true si quedó anotado.
+ */
+export async function anotarPresentacionBorrador(canal: CanalBorrador, dueno: string, p: { intento: string; huella: string; origen: string }, superficie: string, a?: AlmacenDurable, ahora = Date.now()): Promise<boolean> {
+  if (!dueno || !p?.intento || !p.huella || !superficie) return false;
+  const alm = a || almacenDurable();
+  const reg: Presentacion = { v: 1, canal, intento: p.intento, huella: p.huella, origen: amb(p.origen), superficie: amb(superficie), t: ahora };
+  const c = await crearUnaVez<Presentacion>(clavePresentacion(dueno, p.intento, p.huella, amb(superficie)), reg, alm).catch(() => null);
+  if (!c || c.ok === false) return false;
+  const u = await modificarDurable<Presentacion>(claveUltimaPresentada(dueno, amb(superficie)), (x) => (x && x.t > ahora ? undefined : reg), alm).catch(() => null);
+  return !!u && u.ok === true;
+}
+
+/** ¿Esa superficie mostró exactamente esa propuesta? (o es donde se armó, que la mostró al armarla). */
+export async function borradorPresentadoEn(dueno: string, intento: string, huella: string, superficie: string, a?: AlmacenDurable): Promise<boolean> {
+  if (!dueno || !intento || !huella || !superficie) return false;
+  const l = await leerDurable<Presentacion>(clavePresentacion(dueno, intento, huella, amb(superficie)), a || almacenDurable()).catch(() => null);
+  return !!(l && l.ok && l.valor && l.valor.intento === intento && l.valor.huella === huella);
+}
+
+/** Lo último que se le presentó a la persona en esa superficie (para resolver un «sí» dicho allí). null si nada. */
+export async function ultimoPresentadoEn(dueno: string, superficie: string, a?: AlmacenDurable): Promise<Presentacion | null> {
+  if (!dueno || !superficie) return null;
+  const l = await leerDurable<Presentacion>(claveUltimaPresentada(dueno, amb(superficie)), a || almacenDurable()).catch(() => null);
+  return l && l.ok && l.valor ? l.valor : null;
 }
 
 /** Solo pruebas: espera a que terminen las escrituras pendientes. */

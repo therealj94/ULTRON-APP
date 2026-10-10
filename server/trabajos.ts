@@ -34,6 +34,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import type express from 'express';
 import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, PROCESO_DURABLE, reservarPedido, type Lease } from '../lib/durable';
+import { operacionDeBorrador } from '../lib/envios';
+import { conAutoridadDeEjecutor } from '../lib/puerta-efecto';
 import {
   autorizarEjecucion,
   cambiarTarea,
@@ -255,7 +257,8 @@ async function efectoConLease<P extends { ok: boolean }>(
       if (!p.ok) return { tipo: 'previo', previo: p };
       // Desde aquí la tarea ya está `running`: pase lo que pase, se devuelve una salida (nunca se lanza).
       const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: o.requestId, tipo: o.tipo, argsHash: o.argsHash, lease }, async () => {
-        const s = await efecto();
+        // F01: el efecto sale con la autoridad de ESTE ejecutor (su lease y token): la puerta del efecto la vuelve a mirar.
+        const s = await conAutoridadDeEjecutor({ lease }, efecto);
         const estado = s.estado === 'stale' ? 'failed' : s.estado;
         return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: o.tipo, ...(s.referencia ? { referencia: s.referencia } : {}), detalle: trozo(s.resumen, 160) } };
       }).then(salidaDeOperacion, () => ({ estado: 'unknown' as const, resumen: 'No supe cómo terminó: no lo repito a ciegas.' }));
@@ -854,7 +857,7 @@ export async function cerrarDecisionPorChat(duenoCorreo: string, intento: string
       const base = cambioDeEnvio(reg, estado, String(hecho || ''), operacion);
       // En la voz el envío sale al confirmarse el turno: queda «running» hasta saberlo (o se reconcilia).
       const enCamino: Cambio = { estado: 'running', pasoActual: 'Lo aprobaste en el chat; lo estoy enviando.' };
-      return { ...(estado === 'unknown' ? enCamino : base), decision: null, resolver: { id: d.id, opcion: 'aprobar', t: ahora, operacion } };
+      return { ...(estado === 'unknown' ? enCamino : base), decision: null, resolver: { id: d.id, opcion: 'aprobar', t: ahora, operacion, efecto: operacionDeBorrador(d.vinculo.canal, intento) } };
     }
     return {
       estado: 'cancelled',
@@ -1252,7 +1255,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const operacion = `tarea-${e.reg.id}-${decision.id}`;
     // Con el lease de la tarea y su token de fencing (Fase 2): el lease ANTES de marcarla `running`; un proceso viejo no
     // despacha y, si otro la tiene, no se toca nada (409 reintentable).
-    const x = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, () => aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' }), () => d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash));
+    const x = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, () => aplicar({ resolver: { ...resolver, operacion, efecto: operacionDeBorrador(vinc.canal, vinc.intento) }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' }), () => d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash));
     if (x.tipo === 'ocupada' || x.tipo === 'almacen') return tareaNoDisponible(res, x.tipo, e.reg, ahora());
     if (x.tipo === 'previo' || !x.previo.ok) return x.previo.ok ? res.status(409).json({ error: 'La tarea cambió.', honesto: true }) : x.previo.resp();
     const s = x.salida;

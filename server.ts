@@ -117,7 +117,8 @@ import { bloqueObjetivosDelTurno, montarRutasObjetivos } from './server/objetivo
 import { iniciarPlanificador } from './server/planificador';
 import { esDelPlanificador } from './lib/tareas-durables';
 import { registrarCompromisos } from './lib/compromisos';
-import { pedirDecisionPorPush } from './lib/push';
+import { datosPushDecision, enviarPush as enviarPushDecision } from './lib/push';
+import { fijarVerificadorAcceso } from './lib/puerta-efecto';
 import { correrDocumento, montarRutasDocumentos } from './server/documentos';
 import { avisosCalendario, correrCalendarioConEstado, montarRutasCalendario, propuestaEventoDe } from './server/calendario';
 import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible, investigarTareaEnCola } from './server/investigar';
@@ -265,7 +266,7 @@ import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, en
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
-import { gastarCupo, exigirAutoridadVigente, devolverCupoDeFrase, devolverLimite } from './server/seguridad';
+import { gastarCupo, exigirAutoridadVigente, devolverCupoDeFrase, devolverLimite, autoridadSinSesion, claveCambiadaDe } from './server/seguridad';
 import { describirPoliticaAutoridad } from './server/autoridad-cuenta';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
@@ -1939,12 +1940,23 @@ montarRutasTrabajos(app, depsTrabajos);
 // Los objetivos con estado (Fase 2, server/objetivos.ts): dueños de sus tareas, documentos y decisiones; sobreviven a cerrar
 // el chat y a un reinicio, y los comparten el teléfono, la web y Windows. Solo AU-RA (la sesión de siempre + la puerta de
 // la plataforma: Dr Electrum no entra). Al entrar a «esperando decisión» sale el aviso con un botón por opción.
+// F01: la puerta del efecto (lib/puerta-efecto.ts) vuelve a mirar el acceso del dueño justo antes de despachar: sigue en
+// el padrón de AU-RA, su cuenta no está suspendida (SEC-04, falla cerrado si no se sabe) y no se le cerraron las llaves
+// después de preparar la propuesta. Una aprobación vieja de alguien a quien se le quitó el acceso ya no autoriza.
+fijarVerificadorAcceso(async ({ dueno, preparado }) => {
+  const id = identificar({ correo: dueno });
+  if (id && !nivelDe(id, 'ultron')) return false;
+  const cerradas = claveCambiadaDe(dueno);
+  if (cerradas && preparado && cerradas > preparado) return false;
+  const a = await autoridadSinSesion(dueno);
+  return a === 'permitida' ? true : a === 'suspendida' ? false : 'incierto';
+});
 montarRutasObjetivos(app, {
   exigir: [exigirMesa, exigirPlataforma('ultron')],
   limitar,
   sesionDe: (req) => sesionDe(req),
   revisarTarea: (dueno, reg) => revisarTarea(depsTrabajos, dueno, reg),
-  avisarDecision: (correo, p) => pedirDecisionPorPush(correo, p),
+  avisarDecision: (correo, p) => enviarPushDecision(correo, datosPushDecision(p)),
   // Cancelar el objetivo descarta los borradores que esperaban el «sí» de sus tareas (memoria y durable).
   borradores: depsTrabajos.borradores,
 });
@@ -7145,7 +7157,7 @@ async function startServer() {
         // planificador solo llega aquí con lo suyo y autorizado (`ejecutar: true`, permiso `investigar`, dentro de los topes).
         ejecutar: async (dueno, reg) => (esDelPlanificador(reg) ? investigarTareaEnCola(dueno, reg.id, reg.objetivo || reg.titulo) : 'sin-ejecutor'),
         revisar: (dueno, reg) => revisarTarea(depsTrabajos, dueno, reg),
-        avisarDecision: (correo, p) => pedirDecisionPorPush(correo, p),
+        avisarDecision: (correo, p) => enviarPushDecision(correo, datosPushDecision(p)),
       });
     }
     // Cada mañana a las 7:00 de Honduras, quién contestó el correo de la campaña SFSP.
