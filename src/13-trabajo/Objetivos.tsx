@@ -202,7 +202,7 @@ export function PanelObjetivos({ abierto, onCerrar, objetivos, vistos, onObjetiv
 
 /* ------------------------------------------------------------------ la hoja */
 
-function HojaObjetivoWeb({ o, desde, onObjetivo, marcarVisto, onRefrescar }: { o: VistaObjetivo; desde: number; onObjetivo: PropsPanel['onObjetivo']; marcarVisto: PropsPanel['marcarVisto']; onRefrescar: () => void }) {
+function HojaObjetivoWeb({ o, desde, onObjetivo, marcarVisto, onRefrescar }: { key?: string; o: VistaObjetivo; desde: number; onObjetivo: PropsPanel['onObjetivo']; marcarVisto: PropsPanel['marcarVisto']; onRefrescar: () => void }) {
   // «Qué cambió desde que te fuiste»: se pide UNA vez al abrir, desde lo último visto en este navegador; después se anota
   // la revisión de ahora como vista (lo de arriba sigue a la vista mientras la hoja esté abierta).
   const desdeAlAbrir = useRef(desde);
@@ -430,7 +430,7 @@ function HojaObjetivoWeb({ o, desde, onObjetivo, marcarVisto, onRefrescar }: { o
   );
 }
 
-function DecisionWeb({ o, d, onResultado }: { o: VistaObjetivo; d: DecisionObjetivo; onResultado: (r: ResultadoObjetivo) => void }) {
+function DecisionWeb({ o, d, onResultado }: { key?: string; o: VistaObjetivo; d: DecisionObjetivo; onResultado: (r: ResultadoObjetivo) => void }) {
   const [armada, setArmada] = useState(false);
   const [ocupado, setOcupado] = useState<string | null>(null);
   useEffect(() => {

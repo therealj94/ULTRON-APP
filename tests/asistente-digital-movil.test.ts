@@ -34,8 +34,21 @@ import { OidoMesa, duenoAudio, oidoPropio } from '../mobile/src/compa/duenoAudio
 
 const requerir = createRequire(import.meta.url);
 const raizMovil = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../mobile');
-const plugin = requerir(path.join(raizMovil, 'plugins/asistente-digital.js'));
-const appConfig = requerir(path.join(raizMovil, 'app.config.js'));
+/*
+ * El plugin y app.config.js necesitan `expo/config-plugins`, que solo está con las dependencias del teléfono
+ * (mobile/node_modules: el flujo de calidad del móvil las instala; el de la web, no). Sin ellas, las pruebas del
+ * manifiesto se saltan diciendo por qué; las de la lógica pura corren igual.
+ */
+let plugin: any = null;
+let appConfig: any = null;
+let sinExpo: string | false = false;
+try {
+  plugin = requerir(path.join(raizMovil, 'plugins/asistente-digital.js'));
+  appConfig = requerir(path.join(raizMovil, 'app.config.js'));
+} catch (e: any) {
+  if (e?.code !== 'MODULE_NOT_FOUND') throw e;
+  sinExpo = 'faltan las dependencias del teléfono (expo/config-plugins): corre en «Calidad (antes de publicar la app)»';
+}
 
 const PAQUETE = 'link.ordenglobal.ultronfp';
 
@@ -74,7 +87,7 @@ const app = (m: any) => m.manifest.application[0];
 const porNombre = (lista: any[] | undefined, n: string) => (lista || []).find((x) => x?.$?.['android:name'] === n);
 const acciones = (c: any) => (c['intent-filter'] || []).flatMap((f: any) => (f.action || []).map((a: any) => a.$['android:name']));
 
-test('el VoiceInteractionService: BIND_VOICE_INTERACTION, su filtro y el XML con la sesión, el reconocedor y supportsAssist', async () => {
+test('el VoiceInteractionService: BIND_VOICE_INTERACTION, su filtro y el XML con la sesión, el reconocedor y supportsAssist', { skip: sinExpo }, async () => {
   const { manifiesto, raizAndroid } = await correrPlugin();
   const vis = porNombre(app(manifiesto).service, `${PAQUETE}.asistente.ServicioAura`);
   assert.ok(vis, 'falta el VoiceInteractionService');
@@ -91,7 +104,7 @@ test('el VoiceInteractionService: BIND_VOICE_INTERACTION, su filtro y el XML con
   assert.doesNotMatch(xml, /__PAQUETE__|__ESQUEMA__/);
 });
 
-test('la sesión (BIND_VOICE_INTERACTION) y el reconocedor (android.speech.RecognitionService) están declarados', async () => {
+test('la sesión (BIND_VOICE_INTERACTION) y el reconocedor (android.speech.RecognitionService) están declarados', { skip: sinExpo }, async () => {
   const { manifiesto } = await correrPlugin();
   const sesion = porNombre(app(manifiesto).service, `${PAQUETE}.asistente.SesionAuraServicio`);
   assert.ok(sesion, 'falta el VoiceInteractionSessionService');
@@ -101,7 +114,7 @@ test('la sesión (BIND_VOICE_INTERACTION) y el reconocedor (android.speech.Recog
   assert.deepEqual(acciones(rec), ['android.speech.RecognitionService']);
 });
 
-test('la burbuja: translúcida, con ASSIST y VOICE_COMMAND (DEFAULT), tarea propia, fuera de Recientes y SIN abrirse con el teléfono bloqueado', async () => {
+test('la burbuja: translúcida, con ASSIST y VOICE_COMMAND (DEFAULT), tarea propia, fuera de Recientes y SIN abrirse con el teléfono bloqueado', { skip: sinExpo }, async () => {
   const { manifiesto, raizAndroid } = await correrPlugin();
   const b = porNombre(app(manifiesto).activity, `${PAQUETE}.asistente.BurbujaActivity`);
   assert.ok(b, 'falta BurbujaActivity');
@@ -123,7 +136,7 @@ test('la burbuja: translúcida, con ASSIST y VOICE_COMMAND (DEFAULT), tarea prop
   assert.match(estilos, /<string name="aura_hablar">Hablar con AURA<\/string>/);
 });
 
-test('el mosaico «Hablar con AURA» (BIND_QUICK_SETTINGS_TILE) y el atajo estático en MainActivity', async () => {
+test('el mosaico «Hablar con AURA» (BIND_QUICK_SETTINGS_TILE) y el atajo estático en MainActivity', { skip: sinExpo }, async () => {
   const { manifiesto, raizAndroid } = await correrPlugin();
   const m = porNombre(app(manifiesto).service, `${PAQUETE}.asistente.MosaicoAura`);
   assert.ok(m, 'falta el mosaico');
@@ -142,7 +155,7 @@ test('el mosaico «Hablar con AURA» (BIND_QUICK_SETTINGS_TILE) y el atajo está
   assert.match(atajos, /android:shortcutLongLabel="@string\/aura_hablar"/);
 });
 
-test('el Kotlin va a la carpeta del paquete, con el paquete y el esquema puestos; correr el plugin dos veces no duplica nada', async () => {
+test('el Kotlin va a la carpeta del paquete, con el paquete y el esquema puestos; correr el plugin dos veces no duplica nada', { skip: sinExpo }, async () => {
   const { manifiesto, raizAndroid } = await correrPlugin();
   const dir = path.join(raizAndroid, 'app/src/main/java', ...PAQUETE.split('.'), 'asistente');
   const kt = fs.readdirSync(dir).sort();
@@ -173,7 +186,7 @@ test('el Kotlin va a la carpeta del paquete, con el paquete y el esquema puestos
   assert.ok(porNombre(app(manifiesto).service, 'app.notifee.core.ForegroundService'), 'no toca lo que ya estaba');
 });
 
-test('solo AU-RA: Dr Electrum no trae el plugin del asistente; AU-RA sí', () => {
+test('solo AU-RA: Dr Electrum no trae el plugin del asistente; AU-RA sí', { skip: sinExpo }, () => {
   const antes = process.env.ULTRON_APP;
   try {
     const nombres = (c: any) => (c.plugins || []).map((p: any) => (Array.isArray(p) ? p[0] : p));
