@@ -22,7 +22,7 @@ import {
 } from '../server/electrum/honestidad';
 import { cortesDesde, puntoDeCorte } from '../lib/trozos';
 import { codigosAVoz } from '../server/habla';
-import { modeloDeLocucion, MODELO_PRIMERA_OMISION } from '../server/eleven';
+import { modeloEleven, modeloRespaldo } from '../server/eleven';
 
 function cortador(o: { previas?: string[] } = {}) {
   const frases: Frase[] = [];
@@ -144,13 +144,9 @@ describe('la voz de Electrum: códigos y primera frase', () => {
     assert.equal(codigosAVoz('Ley de 3,05 g/t y 1.050 t'), 'Ley de 3,05 g/t y 1.050 t');
   });
 
-  it('la primera frase rápida: en Electrum solo si el cliente la marca', () => {
-    const corta = 'Clavo Rico está vigente.';
-    assert.equal(modeloDeLocucion({ texto: corta, plataforma: 'electrum' }) === MODELO_PRIMERA_OMISION, false);
-    assert.equal(modeloDeLocucion({ texto: corta, plataforma: 'electrum', primera: true }), MODELO_PRIMERA_OMISION);
-    assert.notEqual(modeloDeLocucion({ texto: corta, plataforma: 'electrum', primera: true, previo: 'Antes.' }), MODELO_PRIMERA_OMISION);
-    assert.notEqual(modeloDeLocucion({ texto: '[thoughtful] Clavo Rico.', plataforma: 'electrum', primera: true }), MODELO_PRIMERA_OMISION);
-    assert.equal(modeloDeLocucion({ texto: corta, plataforma: 'ultron' }), MODELO_PRIMERA_OMISION, 'AU-RA como siempre');
+  it('ya no hay primera frase rápida: todo el turno con el modelo expresivo; el rápido solo de respaldo', () => {
+    assert.equal(modeloEleven(), 'eleven_v4_turbo');
+    assert.equal(modeloRespaldo(), 'eleven_flash_v2_5', 'el de respaldo, si v4 falla a mitad del turno');
   });
 });
 

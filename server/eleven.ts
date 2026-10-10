@@ -23,6 +23,7 @@ import type { Emocion } from '../lib/emocion';
 import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
 import { gastarCupoDiario } from '../lib/freno-gasto';
+import { EtiquetasTurno, esPausa, quitarEtiquetasVoz, textoVecino, TONO_EMOCION } from '../lib/etiquetas-voz';
 
 /** Jorge — Neutral Latin American Spanish (biblioteca de ElevenLabs): maduro, grave, creíble. */
 export const VOZ_ELECTRUM_ELEVEN = 'Rt1JHkPO27QCUX6Nd5bV';
@@ -45,39 +46,23 @@ export function modeloEleven(): string {
   return String(process.env.ELEVENLABS_MODELO || '').trim() || MODELO_ELEVEN;
 }
 
-/* ── latencia de la voz: la PRIMERA frase con el modelo rápido (José, 6-oct) ─────────────────────────────────────── */
+/* ── un solo modelo por turno (10-oct) ─────────────────────────────────────────────────────────────────────────── */
 
 /**
- * El teléfono pide la voz frase por frase y espera el audio ENTERO de cada una (con sus tiempos para la boca) antes de
- * sonarla. Medido el 6-oct (scripts/voz/latencia-voz.ts voz, 3 frases × 4, con tiempos): eleven_v4_turbo 625 ms de
- * mediana (p75 665), eleven_turbo_v2_5 208 ms (p75 256), eleven_flash_v2_5 209 ms (p75 227). La PRIMERA frase de una
- * respuesta (sin `previo`), corta y sin etiquetas de expresión, va con turbo v2.5: la misma voz, ~0,4 s antes, y mejor
- * calidad que flash con la misma espera. Las demás frases y toda frase con etiquetas (solo v4 las entiende; turbo v2.5
- * las leería en voz alta), con el modelo expresivo. ELEVENLABS_MODELO_PRIMERA lo cambia; «no» lo apaga.
+ * TODO EL TURNO CON EL MISMO MODELO. Hasta el 10-oct la primera frase corta de una respuesta iba con eleven_turbo_v2_5
+ * (~0,4 s antes) y las demás con v4: el timbre cambiaba entre la primera y la segunda frase, y la primera nunca llevaba
+ * el tono de la emoción (turbo v2.5 lee las etiquetas en voz alta, así que se quitaban). Además turbo v2.5 está en
+ * desuso. Ahora todas las frases van con el modelo expresivo (modeloEleven). Si v4 FALLA (no por cupo ni por la llave:
+ * eso pausa todo ElevenLabs), el resto del turno puede seguir con el rápido de respaldo, siempre sin etiquetas
+ * (server/voz.ts decide por turno). ELEVENLABS_MODELO_RESPALDO lo cambia; «no» lo apaga.
  */
-export const MODELO_PRIMERA_OMISION = 'eleven_turbo_v2_5';
-/** Más larga que esto ya no es «la primera frase» que se corta para empezar a hablar (lib/trozos: coma a los 28). */
-export const PRIMERA_MAX_CARACTERES = 140;
+export const MODELO_RESPALDO_OMISION = 'eleven_flash_v2_5';
 
-export function modeloPrimera(): string | null {
-  const v = String(process.env.ELEVENLABS_MODELO_PRIMERA ?? MODELO_PRIMERA_OMISION).trim();
-  return !v || v === 'no' ? null : v;
+export function modeloRespaldo(): string | null {
+  const v = String(process.env.ELEVENLABS_MODELO_RESPALDO ?? MODELO_RESPALDO_OMISION).trim();
+  return !v || v === 'no' || v === modeloEleven() ? null : v;
 }
-
-/**
- * El modelo para esta locución: el rápido si es la primera frase de AU-RA, corta y sin etiquetas; si no, el de siempre.
- * Dr Electrum, solo cuando su cliente la marca como la primera (`primera`, /api/electrum/voz y su PCM): su pantalla
- * habla también trozos sin `previo` que no son el comienzo de la respuesta (el dictado, la mesa), y esos siguen con el
- * modelo expresivo.
- */
-export function modeloDeLocucion(o: { texto: string; previo?: string; plataforma: 'ultron' | 'electrum'; primera?: boolean }): string {
-  const rapido = modeloPrimera();
-  const texto = String(o.texto || '');
-  const esPrimera = o.plataforma === 'ultron' || o.primera === true;
-  if (rapido && esPrimera && !String(o.previo || '').trim() && texto.length <= PRIMERA_MAX_CARACTERES && !/\[[^\]\n]{1,80}\]/.test(texto)) return rapido;
-  return modeloEleven();
-}
-/* ── fin de la primera frase rápida ── */
+/* ── fin del modelo por turno ── */
 
 /**
  * Las voces de AU-RA FP (29-sep): cuatro avatares, cada uno con su voz de ElevenLabs en español y en
@@ -213,159 +198,18 @@ export function pausaPorFallo(status: number, cuerpo: string): number {
 
 /* ---------------- El guion ---------------- */
 
-/**
- * Las marcas de expresión que escribe el cerebro (las mismas de AU-RA, lib/expresiones.ts), en la
- * etiqueta de v4 que suena a eso. Las que en boca de un doctor de minas no suman se quitan.
+/*
+ * Las marcas del cerebro en su etiqueta v4, el tono de cada emoción y cuántas suenan: UNA política para todas las
+ * superficies (lib/etiquetas-voz.ts). Aquí se reexportan con los nombres de siempre (la llamada, Dr Electrum y las
+ * pruebas los importan de este módulo).
  */
-export const EXPRESION_A_V4: Record<string, string> = {
-  risa: 'laughs',
-  risita: 'chuckles',
-  'risa tierna': 'chuckles',
-  'risa nerviosa': 'nervous laugh',
-  je: 'chuckles',
-  suspiro: 'sighs',
-  'suspiro cansado': 'sighs',
-  'suspiro aliviado': 'relieved sigh',
-  'suspiro sonador': 'wistful sigh',
-  sorpresa: 'surprised',
-  asombro: 'gasps',
-  mmm: 'thoughtful',
-  hmm: 'hesitant',
-  bostezo: 'yawns',
-  shh: 'whispers',
-  susurro: 'whispers',
-  ooh: 'impressed',
-  aww: 'tender',
-  respiro: 'inhales',
-  bufido: 'scoffs',
-  carraspeo: 'clears throat',
-  // Las de tono y de acción que v4 actúa (verificadas el 1-oct, mobile/src/compa/etiquetasVoz.ts):
-  // el cerebro las escribe en español y aquí pasan a la etiqueta.
-  tarareo: 'hums',
-  jadeo: 'gasps',
-  carcajada: 'laughs',
-  'risa burlona': 'scoffs',
-  'risa picara': 'mischievously',
-  emocionado: 'excited',
-  emocionada: 'excited',
-  entusiasmado: 'enthusiastic',
-  entusiasmada: 'enthusiastic',
-  'con ternura': 'tender',
-  'en voz baja': 'whispers',
-  bajito: 'softly',
-  pensativo: 'thoughtful',
-  pensativa: 'thoughtful',
-  curioso: 'curious',
-  curiosa: 'curious',
-  'con picardia': 'mischievously',
-  jugueton: 'playfully',
-  juguetona: 'playfully',
-  serio: 'matter-of-fact',
-  seria: 'matter-of-fact',
-  aliviado: 'relieved',
-  aliviada: 'relieved',
-  nervioso: 'nervously',
-  nerviosa: 'nervously',
-  apenado: 'sheepish',
-  apenada: 'sheepish',
-  impresionado: 'impressed',
-  impresionada: 'impressed',
-  asombrado: 'amazed',
-  asombrada: 'amazed',
-  encantado: 'delighted',
-  encantada: 'delighted',
-  tranquilizando: 'reassuring',
-  calmado: 'calm',
-  calmada: 'calm',
-  orgulloso: 'proud',
-  orgullosa: 'proud',
-  sarcastico: 'sarcastic',
-  sarcastica: 'sarcastic',
-  'sin emocion': 'deadpan',
-  titubeo: 'hesitates',
-  tartamudeo: 'stammers',
-  'con calidez': 'warmly',
-  alegre: 'cheerfully',
-  concentrado: 'focused',
-  concentrada: 'focused',
-  aja: '',
-  eso: '',
-  auch: '',
-  ups: '',
-  beso: '',
-  'mmm rico': '',
-};
+export { EXPRESION_A_V4, etiquetaV4 } from '../lib/etiquetas-voz';
 
 /**
- * El tono de cada emoción, en el registro de alguien maduro: cálido sin euforia, firme sin gritar,
- * preocupado sin dramatizar. `neutral` no lleva nada: la voz ya es serena, y una etiqueta en cada
- * frase la vuelve actuada.
+ * El tono de cada emoción (el mismo de lib/etiquetas-voz.ts TONO_EMOCION): uno solo y sencillo. `neutral` y las serias
+ * (triste, preocupado, alarma, firme, seco) no llevan nada.
  */
-export const TONO_V4: Partial<Record<Emocion, string>> = {
-  feliz: 'warmly',
-  risa: 'amused',
-  sorpresa: 'pleasantly surprised',
-  curioso: 'curious',
-  pensando: 'thoughtful',
-  preocupado: 'concerned',
-  triste: 'softly, sad',
-  molesto: 'annoyed, restrained',
-  cansado: 'tired',
-  carino: 'warmly, tender',
-  orgullo: 'proud',
-  travieso: 'playful',
-  oracion: 'softly, reverent',
-  escepticismo: 'skeptical',
-  alarma: 'serious, urgent',
-  firme: 'firm, measured',
-  seco: 'matter-of-fact',
-};
-
-const sinTildes = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-
-/**
- * Una etiqueta ya en inglés (las de los guiones de la oración: «softly, reverent», «with quiet
- * conviction») pasa si TODAS sus palabras son de este vocabulario. Mirar solo si «parece ASCII»
- * dejaba pasar «[carcajada estruendosa]», y v4 la leía en voz alta.
- */
-const VOCABULARIO_INGLES = new Set(
-  (
-    'a an and with without very slightly more less quiet quietly soft softly warm warmly tender reverent firm firmly ' +
-    'calm calmly measured slow slower fast faster rising falling low lower high deep thoughtful curious excited ' +
-    'happy sad serious urgent concerned worried relieved proud playful amused surprised pleasantly skeptical annoyed ' +
-    'restrained tired gentle gently emotion emotional conviction confident sincere hopeful nostalgic wistful ' +
-    'laughs laughing chuckles chuckle giggles sighs sigh sighing whispers whispering whisper gasps gasp inhales ' +
-    'exhales breath breathes clears throat pause short long hesitant hesitates impressed scoffs yawns nervous ' +
-    'laugh matter of fact flat dry casual friendly authoritative dramatic cheerful solemn intimate ' +
-    // Las de Eleven v4: se pueden encadenar y las sigue en orden.
-    'whispering shouting laughing ecstatic excitedly cheerfully nervously sarcastic sarcastically confidently ' +
-    'seriously dramatically proudly sadly happily curiously thoughtfully reassuring encouraging ' +
-    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling ' +
-    // Las del catálogo verificado el 1-oct (mobile/src/compa/etiquetasVoz.ts).
-    'hums mischievously deadpan delighted sheepish focused stammers playfully'
-  ).split(' ')
-);
-function esEtiquetaIngles(k: string): boolean {
-  const palabras = k.split(/[\s,'-]+/).filter(Boolean);
-  return palabras.length > 0 && palabras.length <= 8 && palabras.every((w) => VOCABULARIO_INGLES.has(w));
-}
-
-/**
- * La etiqueta v4 de una marca del cerebro («risa» → «laughs», «softly, reverent» tal cual), o null si
- * no tiene una que sume (se quita). La usa la voz de la llamada (server/voz-agente.ts), que recibe el
- * texto a trozos y no puede pasar por `guionEleven` entero.
- */
-export function etiquetaV4(marca: string): string | null {
-  const k = sinTildes(marca);
-  if (k in EXPRESION_A_V4) return EXPRESION_A_V4[k] || null;
-  return esEtiquetaIngles(k) ? k : null;
-}
+export const TONO_V4: Partial<Record<Emocion, string>> = TONO_EMOCION;
 
 /**
  * ¿El modelo actúa las etiquetas de audio ([laughs], [whispers])? Solo v3 y v4 (MODELO_ELEVEN, verificado el 1-oct). Con
@@ -376,9 +220,6 @@ export function aceptaEtiquetas(modelo = modeloEleven()): boolean {
   return /^eleven_v[3-9](_|$)/i.test(String(modelo || '').trim());
 }
 
-/** Cuántas etiquetas como mucho por trozo: más de eso suena a actor sobreactuando. */
-const MAX_ETIQUETAS = 4;
-
 /**
  * El texto que se manda a v4. `preparar` es lo mismo que Voicebox usa para la boca (markdown fuera,
  * cifras y unidades en palabras, «mmm...»): se inyecta para no duplicar esas reglas aquí.
@@ -388,37 +229,32 @@ export function guionEleven(
   emocion: Emocion,
   preparar: (t: string) => string,
   /**
-   * `tono`: poner el tono de la emoción delante. Solo en la PRIMERA frase de una respuesta: el teléfono y
-   * la web piden la voz frase por frase, y con el tono en cada una sonaba «[warmly]… [warmly]… [warmly]»
-   * (auditoría externa, 1-oct; ElevenLabs recomienda 1-2 etiquetas por línea). Quien tiene `previo`
-   * (hay frase antes) no lo pone.
+   * `tono`: es el PRIMER trozo del turno (la frase sin `previo`): ahí, y solo ahí, cabe un tono (el de la emoción o
+   * el que el cerebro puso delante). En las demás frases solo cabe una reacción. `contexto`: de qué se habla (dinero,
+   * algo legal o una pérdida: ninguna etiqueta). La política entera: lib/etiquetas-voz.ts.
    */
-  o: { tono?: boolean; modelo?: string } = {}
+  o: { tono?: boolean; modelo?: string; contexto?: string } = {}
 ): string {
   const crudo = String(texto || '');
   const conEtiquetas = aceptaEtiquetas(o.modelo ?? modeloEleven());
+  const turno = new EtiquetasTurno(emocion, { activo: conEtiquetas, primerSegmento: o.tono !== false, contexto: o.contexto ?? crudo });
   const partes = crudo.split(/\[([^\]\n]{1,80})\]/);
   const salida: string[] = [];
-  let etiquetas = 0;
+  let dichoAlgo = false;
   for (let i = 0; i < partes.length; i++) {
     const p = partes[i];
     if (i % 2 === 0) {
       const dicho = preparar(p);
       if (dicho) salida.push(dicho);
+      if (/[\p{L}\p{N}]/u.test(dicho)) dichoAlgo = true;
       continue;
     }
-    const k = sinTildes(p);
-    let v4: string | undefined = k in EXPRESION_A_V4 ? EXPRESION_A_V4[k] : undefined;
-    if (v4 === undefined) {
-      if (/^(short |long )?pause$|^pausa( corta| larga)?$/.test(k)) {
-        salida.push('...');
-        continue;
-      }
-      v4 = esEtiquetaIngles(k) ? k : '';
+    if (esPausa(p)) {
+      salida.push('...');
+      continue;
     }
-    if (!v4 || !conEtiquetas || etiquetas >= MAX_ETIQUETAS) continue;
-    etiquetas++;
-    salida.push(`[${v4}]`);
+    const v4 = turno.marca(p, !dichoAlgo);
+    if (v4) salida.push(`[${v4}]`);
   }
   let guion = salida
     .join(' ')
@@ -426,8 +262,8 @@ export function guionEleven(
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!/[\p{L}\p{N}]/u.test(guion.replace(/\[[^\]]*\]/g, ''))) return '';
-  const tono = o.tono === false || !conEtiquetas ? undefined : TONO_V4[emocion];
-  if (tono && !guion.startsWith('[')) guion = `[${tono}] ${guion}`;
+  const tono = turno.tono();
+  if (tono) guion = `[${tono}] ${guion}`;
   return guion;
 }
 
@@ -492,8 +328,14 @@ type PedidoEleven = {
   estabilidad?: number;
   /** En qué idioma se dice (la voz ya es la de ese idioma). Español si no se dice. */
   idioma?: Idioma;
-  /** El modelo de ElevenLabs (modeloDeLocucion); sin él, el de siempre. */
+  /** El modelo de ElevenLabs; sin él, el de siempre (modeloEleven). El de respaldo (modeloRespaldo) lo pide server/voz.ts. */
   modelo?: string;
+  /**
+   * Los `request-id` de las frases anteriores del mismo turno (las de este modelo, como mucho 3, la última al final):
+   * ElevenLabs enlaza el AUDIO, no solo el texto (request stitching). Con ellos, `previous_text` no se usa (así lo
+   * documenta ElevenLabs); si el modelo no los acepta, se recuerda y se manda solo el texto (estaSinEnlace).
+   */
+  previosIds?: string[];
   /**
    * El formato de salida (`output_format`). Sin él, el MP3 de siempre. `pcm_<hz>` lo pide la voz en streaming de
    * la app (PCM crudo de 16 bits mono, que el teléfono suena con el primer trozo: server/voz-pcm.ts).
@@ -539,9 +381,53 @@ export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
     // Estabilidad media: deja que la emoción se note sin que cada frase suene a otra persona.
     voice_settings: { stability: Math.min(0.9, Math.max(0.2, opts.estabilidad ?? 0.5)), similarity_boost: 0.8 },
   };
-  if (opts.previo) cuerpo.previous_text = opts.previo.slice(-300);
-  if (opts.siguiente) cuerpo.next_text = opts.siguiente.slice(0, 300);
+  // Los vecinos, sin marcas ([risa] se leía como texto dicho) y cortos (TOPE_VECINO, 100: lo que acepta también Text to
+  // Dialogue). Todas las superficies pasan por aquí: la web, el teléfono, Windows, Dr Electrum.
+  const previo = textoVecino(opts.previo, 'previo');
+  const siguiente = textoVecino(opts.siguiente, 'siguiente');
+  if (previo) cuerpo.previous_text = previo;
+  if (siguiente) cuerpo.next_text = siguiente;
+  const ids = idsParaEnlazar(String(cuerpo.model_id), opts.previosIds);
+  if (ids) cuerpo.previous_request_ids = ids;
   return cuerpo;
+}
+
+/* ---------------- El enlace de audio entre frases (request stitching) ---------------- */
+
+/**
+ * ElevenLabs no enlaza el audio con eleven_v3 (lo dice su guía de request stitching) y la de v4 Turbo no lo confirma:
+ * si un modelo rechaza `previous_request_ids` (400/422), se anota y por seis horas se manda solo `previous_text`. Nunca
+ * se queda una frase muda por esto: se reintenta en el acto sin los ids.
+ */
+const sinEnlace = new Map<string, number>();
+export const SIN_ENLACE_MS = 6 * 60 * 60_000;
+/** ELEVENLABS_ENLAZAR=no apaga el enlace por ids (queda el de texto). */
+export function enlaceActivo(modelo: string, ahora = Date.now()): boolean {
+  if (String(process.env.ELEVENLABS_ENLAZAR || '').trim() === 'no') return false;
+  if (/^eleven_v3(_|$)/i.test(modelo)) return false;
+  return (sinEnlace.get(modelo) || 0) <= ahora;
+}
+/** Solo para pruebas. */
+export function _olvidarSinEnlace() {
+  sinEnlace.clear();
+}
+function idsParaEnlazar(modelo: string, ids?: string[]): string[] | null {
+  const v = (ids || []).filter((x) => typeof x === 'string' && /^[\w-]{6,80}$/.test(x)).slice(-3);
+  return v.length && enlaceActivo(modelo) ? v : null;
+}
+/** El `request-id` de una respuesta de ElevenLabs (para enlazar la frase siguiente), o undefined. */
+export function idDePedido(r: { headers: { get(n: string): string | null } } | null | undefined): string | undefined {
+  const v = String(r?.headers?.get('request-id') || '').trim();
+  return /^[\w-]{6,80}$/.test(v) ? v : undefined;
+}
+/** ¿Este rechazo es por los ids? Entonces se anota el modelo y se reintenta sin ellos. */
+function rechazoDeEnlace(opts: PedidoEleven, status: number, ahora = Date.now()): boolean {
+  if (!(status === 400 || status === 422)) return false;
+  const modelo = opts.modelo || modeloEleven();
+  if (!idsParaEnlazar(modelo, opts.previosIds)) return false;
+  sinEnlace.set(modelo, ahora + SIN_ENLACE_MS);
+  console.warn('[voz eleven]', status, `${modelo} no enlaza por request-id: solo previous_text por 6 h`);
+  return true;
 }
 
 /**
@@ -575,6 +461,7 @@ async function abrirSinCobrar(opts: PedidoEleven): Promise<Response | null> {
     });
     if (!r.ok || !r.body) {
       const txt = (await r.text().catch(() => '')).slice(0, 240);
+      if (rechazoDeEnlace(opts, r.status)) return abrirSinCobrar({ ...opts, previosIds: undefined });
       const pausa = pausaPorFallo(r.status, txt);
       if (pausa) pausaHasta = Date.now() + pausa;
       ultimoFallo = `${r.status} ${txt.slice(0, 120)}`;
@@ -607,8 +494,7 @@ export function esOggOpus(b: Buffer | null | undefined): boolean {
 
 /** Lo que se dice en la nota: sin las marcas de expresión del cerebro ([risa]…), en una línea y con tope. */
 export function textoNotaDeVoz(texto: string, max = 900): string {
-  return String(texto || '')
-    .replace(/\[[^\]]{0,40}\]/g, ' ')
+  return quitarEtiquetasVoz(String(texto || ''))
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
@@ -659,7 +545,7 @@ export function _olvidarSinTiempos() {
   sinTiempos.clear();
 }
 
-type ConTiempos = { audio: Buffer; contentType: string; alineacion: AlineacionEleven | null };
+type ConTiempos = { audio: Buffer; contentType: string; alineacion: AlineacionEleven | null; requestId?: string };
 
 /** null: no hubo voz (sin clave, cupo, red); 'sin-tiempos': que se pida el audio solo. */
 export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
@@ -683,6 +569,7 @@ async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Prom
     });
     if (!r.ok) {
       const txt = (await r.text().catch(() => '')).slice(0, 240);
+      if (rechazoDeEnlace(opts, r.status)) return conTiemposSinCobrar({ ...opts, previosIds: undefined }, ahora);
       const pausa = pausaPorFallo(r.status, txt);
       if (pausa) {
         pausaHasta = Date.now() + pausa;
@@ -700,7 +587,7 @@ async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Prom
     const audio = Buffer.from(String(j?.audio_base64 || ''), 'base64');
     if (audio.length < 400) return 'sin-tiempos';
     const alineacion = (j?.normalized_alignment || j?.alignment || null) as AlineacionEleven | null;
-    return { audio, contentType: 'audio/mpeg', alineacion };
+    return { audio, contentType: 'audio/mpeg', alineacion, requestId: idDePedido(r) };
   } catch (e: any) {
     ultimoFallo = String(e?.message || e).slice(0, 120);
     console.warn('[voz eleven tiempos]', ultimoFallo);
@@ -712,7 +599,7 @@ async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Prom
  * La síntesis entera en memoria (para la caché, el respaldo y quien no pasa el audio en vivo). Con
  * `tiempos`, pide también los tiempos por letra; si no los dan, el audio solo, como siempre.
  */
-export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): Promise<{ audio: Buffer; contentType: string; alineacion?: AlineacionEleven | null } | null> {
+export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): Promise<{ audio: Buffer; contentType: string; alineacion?: AlineacionEleven | null; requestId?: string } | null> {
   // Una sola frase, un solo cobro: si los tiempos no vienen y se pide el audio solo, no cuenta dos veces.
   if (!cobrarEleven(opts)) return null;
   if (opts.tiempos) {
@@ -729,7 +616,8 @@ export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): 
       console.warn('[voz eleven] audio vacío:', audio.length, 'bytes');
       return null;
     }
-    return { audio, contentType: 'audio/mpeg' };
+    // El audio ya se leyó entero: su id sirve para enlazar la frase siguiente.
+    return { audio, contentType: 'audio/mpeg', requestId: idDePedido(r) };
   } catch (e: any) {
     ultimoFallo = String(e?.message || e).slice(0, 120);
     console.warn('[voz eleven]', ultimoFallo);

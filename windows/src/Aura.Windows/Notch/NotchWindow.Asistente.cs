@@ -546,6 +546,16 @@ public partial class NotchWindow
         bool conVoz = ajustes.ResponderConVoz && !redactar && !soloRender;
         string emocion = "neutral";
         int dichas = 0;
+        // La última frase que se mandó a decir en este turno: es el `previo` de la siguiente.
+        string? anterior = null;
+        void DecirFrases(IReadOnlyList<string> lote)
+        {
+            for (int i = 0; i < lote.Count; i++)
+            {
+                Decir(lote[i], emocion, vcts.Token, previo: anterior, siguiente: i + 1 < lote.Count ? lote[i + 1] : null);
+                anterior = lote[i]; dichas++;
+            }
+        }
         Respuesta? r = null;
         bool rellenoDicho = false;
         // El cerebro tarda: si a los 1,2 s no ha dicho nada, AURA dice algo corto (ya grabado: suena al instante) para
@@ -580,7 +590,7 @@ public partial class NotchWindow
                     metricas.Marcar(EtapaVoz.PrimerTexto, turno: idTurno);
                     if (burbuja != null) burbuja.Text += Expresiones.Quitar(trozo);
                     if (burbuja != null) Desplazar.ScrollToEnd();
-                    if (conVoz) foreach (var f in cortador.Agregar(trozo)) { Decir(f, emocion, vcts.Token); dichas++; }
+                    if (conVoz) DecirFrases(cortador.Agregar(trozo).ToList());
                 })),
                 alEmocion: e => Dispatcher.BeginInvoke(new Action(() => { if (g != generacion) return; emocion = e; emocionActual = e; AvatarPanel.Estado = hablandoAhora ? "speaking" : EstadoDeEmocion(e); })),
                 alReemplazo: nuevo => Dispatcher.BeginInvoke(new Action(() => { if (g == generacion && burbuja != null) burbuja.Text = FiltroAcciones.Quitar(Expresiones.Quitar(nuevo)); })),
@@ -601,7 +611,7 @@ public partial class NotchWindow
         }
         if (g != generacion) return null;
         // Lo que quedó sin cerrar con punto también se dice.
-        if (conVoz && cortador.Resto() is { } resto) { Decir(resto, emocion, vcts.Token); dichas++; }
+        if (conVoz && cortador.Resto() is { } resto) DecirFrases(new[] { resto });
         turnoEnCurso = false;
         // Si la marca llegó solo en el texto final (sin trozos), también cuenta.
         if (filtro.Ordenes.Count == 0) new FiltroAcciones().Agregar(r.Texto, Orden);
@@ -669,7 +679,8 @@ public partial class NotchWindow
         });
     }
 
-    internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default, bool relleno = false)
+    /// <param name="previo">La frase dicha justo antes en el mismo turno; <paramref name="siguiente"/>, la que viene si ya se sabe (ElevenLabs enlaza la entonación).</param>
+    internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default, bool relleno = false, string? previo = null, string? siguiente = null)
     {
         if (!ajustes.ResponderConVoz || soloRender || string.IsNullOrWhiteSpace(frase)) return false;
         var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool local = ajustes.VozDeWindows || a == null;
@@ -684,7 +695,7 @@ public partial class NotchWindow
         {
             if (!local)
             {
-                try { return (Audio?)await a!.Voz(frase, emocion, avatar, idioma, ct); }
+                try { return (Audio?)await a!.Voz(frase, emocion, avatar, idioma, ct, previo, siguiente); }
                 catch (OperationCanceledException) { return null; }
                 catch (Exception) { /* sin servidor: la voz de Windows */ }
             }

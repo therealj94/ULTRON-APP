@@ -21,8 +21,11 @@ mundo.pedidas = [];
 mundo.vivos = new Set();
 /** Cuánto tarda el reproductor en avisar que de verdad suena después de playAsync (0: en el acto). */
 mundo.confirmaMs = mundo.confirmaMs ?? 0;
+/** Las URL enteras de cada pedido (los vecinos, previo y siguiente, van en ellas). */
+mundo.urls = [];
 function bajar(url, path, tarea) {
   mundo.pedidas.push(textoDeUrl(url));
+  (mundo.urls = mundo.urls || []).push(String(url));
   return new Promise((r) => {
     const fin = () => {
       mundo.rutas.set(path, textoDeUrl(url));
@@ -157,7 +160,9 @@ module.exports = {
     ORAR_ENDPOINT: 'https://prueba/api/orar',
     sessionHeaders: async () => ({}),
     renovarTokenVoz: async () => false,
-    ttsUrl: (text) => `https://prueba/api/tts?text=${encodeURIComponent(text)}`,
+    // Los vecinos van en la URL como en la de verdad (lib/api.ts ttsUrl): la prueba mira el `siguiente`.
+    ttsUrl: (text, _p, _e, _a, _i, v = {}) =>
+      `https://prueba/api/tts?text=${encodeURIComponent(text)}${v.previo ? `&previo=${encodeURIComponent(v.previo)}` : ''}${v.siguiente ? `&siguiente=${encodeURIComponent(v.siguiente)}` : ''}`,
     ttsPcmUrl: (text) => `https://prueba/api/tts/pcm?text=${encodeURIComponent(text)}`,
   },
   constants: { expoConfig: { extra: {}, version: 'prueba' } },

@@ -114,6 +114,24 @@ export const ASENTIR: Record<Idioma, string[]> = {
   en: ['uh-huh', 'yeah', 'yes', 'ok', 'okay', 'mhm', 'right', 'sure', 'got it'],
 };
 
+/**
+ * La voz de los agentes (10-oct): el mismo modelo que la mesa (eleven_v4_turbo) y la estabilidad un poco más baja que la
+ * del HTTP (0,45: la llamada es charla, se deja variar un poco más). Sin respaldo silencioso: si ElevenLabs rechaza el
+ * modelo, el script FALLA y lo dice (antes probaba v3 conversacional y flash, y una llamada podía quedar con otra voz sin
+ * que nadie lo notara).
+ */
+export const MODELO_TTS_AGENTE = 'eleven_v4_turbo';
+export const ESTABILIDAD_AGENTE = 0.45;
+
+/** El error de un modelo rechazado: claro y con lo que hay que hacer, nunca un cambio de modelo por debajo. */
+export function modeloRechazado(nombre: string, modelo: string, status: number): Error {
+  return new Error(`${nombre}: ElevenLabs rechazó el modelo ${modelo} (${status}). No se usa otro: revisa el plan o el modelo y vuelve a correr el script.`);
+}
+
+export function configAgente(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: string = MODELO_TTS_AGENTE) {
+  return config(avatar, idioma, secretId, modeloTts);
+}
+
 function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: string) {
   const nombre = `AU-RA FP · ${NOMBRE_AVATAR[avatar][idioma]} (${idioma})`;
   return {
@@ -141,7 +159,7 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
           cascade_timeout_seconds: CASCADA_ELEVENLABS_MS / 1000,
         },
       },
-      tts: { model_id: modeloTts, voice_id: VOCES_ELEVEN[avatar][idioma] },
+      tts: { model_id: modeloTts, voice_id: VOCES_ELEVEN[avatar][idioma], stability: ESTABILIDAD_AGENTE },
       asr: { provider: 'scribe_realtime', quality: 'high', keywords: PALABRAS_ASR },
       turn: {
         turn_model: 'turn_v3',
@@ -191,26 +209,20 @@ async function main() {
     ids[avatar] = {};
     for (const idioma of ['es', 'en'] as Idioma[]) {
       let hecho: string | null = null;
-      // v4 Turbo primero (la voz de la mesa); si la API aún no lo acepta en agentes, v3 conversacional.
-      for (const modelo of ['eleven_v4_turbo', 'eleven_v3_conversational', 'eleven_flash_v2_5']) {
-        const cuerpo = config(avatar, idioma, secretId, modelo);
-        const ya = existentes.find((a) => a.name === cuerpo.name);
-        try {
-          if (ya) {
-            await api(`/convai/agents/${ya.agent_id}`, { method: 'PATCH', body: JSON.stringify(cuerpo) });
-            hecho = ya.agent_id;
-          } else {
-            hecho = (await api('/convai/agents/create', { method: 'POST', body: JSON.stringify(cuerpo) })).agent_id;
-          }
-          console.log(`✓ ${cuerpo.name}: ${hecho} (tts ${modelo})`);
-          break;
-        } catch (e: any) {
-          if (e.status === 422 || e.status === 400) {
-            console.warn(`  ${cuerpo.name}: ${modelo} no aceptado (${e.status}); pruebo el siguiente`);
-            continue;
-          }
-          throw e;
+      // Solo v4 Turbo (la voz de la mesa): si no lo acepta, falla aquí y lo dice (modeloRechazado).
+      const cuerpo = config(avatar, idioma, secretId, MODELO_TTS_AGENTE);
+      const ya = existentes.find((a) => a.name === cuerpo.name);
+      try {
+        if (ya) {
+          await api(`/convai/agents/${ya.agent_id}`, { method: 'PATCH', body: JSON.stringify(cuerpo) });
+          hecho = ya.agent_id;
+        } else {
+          hecho = (await api('/convai/agents/create', { method: 'POST', body: JSON.stringify(cuerpo) })).agent_id;
         }
+        console.log(`✓ ${cuerpo.name}: ${hecho} (tts ${MODELO_TTS_AGENTE}, estabilidad ${ESTABILIDAD_AGENTE})`);
+      } catch (e: any) {
+        if (e.status === 422 || e.status === 400) throw modeloRechazado(cuerpo.name, MODELO_TTS_AGENTE, e.status);
+        throw e;
       }
       if (!hecho) throw new Error(`No pude crear el agente ${avatar}/${idioma}`);
       ids[avatar][idioma] = hecho;

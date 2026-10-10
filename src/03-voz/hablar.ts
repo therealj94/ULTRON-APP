@@ -14,6 +14,7 @@ import { playFile, playMp3EnVivo, playWavBlob, soportaAudioEnVivo, stopVoice, ne
 import { cancionDeTexto, clipDeTexto, clipPorId, type Clip } from './banco';
 import { headersMesa } from '../10-infra/sesionCliente';
 import type { Emocion } from '../../lib/emocion';
+import { textoVecino } from '../../lib/etiquetas-voz';
 
 export type Motor = 'clip' | 'servidor' | 'silencio';
 
@@ -72,11 +73,12 @@ function reproducirClip(clip: Clip): Dicho {
 export type Vecinos = { previo?: string; siguiente?: string };
 
 function vecinos(o: Vecinos): Vecinos {
-  const v = (t?: string) => {
+  // Sin marcas ([risa] se leía como texto dicho) y cortos: lo mismo que el servidor manda a ElevenLabs (lib/etiquetas-voz.ts).
+  const v = (t: string | undefined, lado: 'previo' | 'siguiente') => {
     const x = String(t || '').trim();
-    return x && !clipDeTexto(x) ? x : undefined;
+    return x && !clipDeTexto(x) ? textoVecino(x, lado) : undefined;
   };
-  return { previo: v(o.previo), siguiente: v(o.siguiente) };
+  return { previo: v(o.previo, 'previo'), siguiente: v(o.siguiente, 'siguiente') };
 }
 
 export function hablar(texto: string, opts: { emocion?: Emocion | string; performance?: 'speak' | 'sing'; soloClip?: boolean } & Vecinos = {}): Dicho {

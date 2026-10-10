@@ -41,6 +41,7 @@ async function limpio(o = {}) {
   mundo.sonidos = [];
   mundo.descargas = [];
   mundo.pedidas = [];
+  mundo.urls = [];
 }
 
 /** Un locutor con lo que pasa anotado. */
@@ -85,6 +86,13 @@ function locutor(extra = {}) {
     L.sp.push('Primera frase completa. Segunda frase completa. Tercera frase completa.');
     await reloj.vaciar();
     ok('tres frases en un trozo: se piden las tres sin esperar a nada más', mundo.pedidas.length === 3, mundo.pedidas);
+    // Y cada una lleva la que viene detrás (next_text), porque ya llegó en el mismo trozo; la última, no (10-oct).
+    const vecino = (u, k) => decodeURIComponent((new RegExp(`[?&]${k}=([^&]*)`).exec(u) || [])[1] || '');
+    ok(
+      'tres frases en un trozo: cada una se pide con su siguiente y su previo',
+      vecino(mundo.urls[0], 'siguiente') === 'Segunda frase completa.' && vecino(mundo.urls[1], 'previo') === 'Primera frase completa.' && vecino(mundo.urls[1], 'siguiente') === 'Tercera frase completa.' && !vecino(mundo.urls[2], 'siguiente'),
+      mundo.urls
+    );
     L.sp.end();
     await reloj.avanzar(20_000);
     ok('… y suenan las tres en orden', JSON.stringify(textos()) === JSON.stringify(['Primera frase completa.', 'Segunda frase completa.', 'Tercera frase completa.']), textos());

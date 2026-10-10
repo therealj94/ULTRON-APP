@@ -24,6 +24,7 @@
 import { frases } from './promesas';
 import { sinCitas, TOPE_VOZ_LECTURA } from './cerebro-manos';
 import { expresionDe } from './expresiones';
+import { EtiquetasTurno, TEMA_SENSIBLE, etiquetaV4 } from './etiquetas-voz';
 
 /* ------------------------------------------------------------------ el prompt */
 
@@ -232,8 +233,7 @@ export function anotarApertura(clave: string, apertura: string | null, ahora = D
 /* ------------------------------------------------------------------ turnos serios */
 
 const EMOCIONES_SERIAS = new Set(['triste', 'preocupado', 'alarma', 'firme', 'seco', 'oracion', 'molesto']);
-const TEMA_SENSIBLE =
-  /\b(muri\w*|murio|fallec\w*|velorio|funeral|entierro|cancer|hospital\w*|enferm\w*|diagnost\w*|depres\w*|ansiedad|suicid\w*|me quiero morir|matar\w*|llor\w*|divorci\w*|despid\w*|accidente|violencia|abus\w*|deuda\w*|embargo|demanda\w*|abogad\w*|contrato\w*|legal|pag(ar|o|ue)\w*|transferen\w*|lempiras|dolares|dinero|banco|prestamo\w*|died|passed away|cancer|sick|depress\w*|lawyer|contract|payment|money|debt)\b/;
+// Lo que vuelve serio un turno por lo que se habla: el mismo de la política de etiquetas (lib/etiquetas-voz.ts).
 
 /** ¿Turno serio (sin risas ni suspiros actuados)? Por la emoción del turno o por lo que dijo la persona. */
 export function turnoSerio(mensaje: string, emocion?: string): boolean {
@@ -251,7 +251,10 @@ export type OpcionesPulido = {
   previas?: readonly string[];
   /** true mientras lo que se dice es literal (un borrador y su «¿Lo mando?», una lectura): no se toca el texto. */
   literal?: () => boolean;
-  /** Etiquetas de voz por turno como mucho (1). En un turno serio, ninguna. */
+  /**
+   * 0: ninguna etiqueta de voz. Si no, la política de siempre (lib/etiquetas-voz.ts): un tono al comienzo y una reacción
+   * por turno; ninguna en un turno serio, de dinero o legal.
+   */
   maxEtiquetas?: number;
   /** Para la pantalla: solo las fórmulas y la honestidad (sin viñetas, markdown ni etiquetas: la pantalla las trata). */
   pantalla?: boolean;
@@ -269,7 +272,10 @@ function esEtiquetaVoz(dentro: string): boolean {
  */
 export class PulidorVoz {
   private emocion = 'neutral';
-  private etiquetas = 0;
+  /** La política de etiquetas de este turno (se arma con la primera marca: para entonces ya llegó la emoción). */
+  private etiquetador: EtiquetasTurno | null = null;
+  /** Ya se dijo algo con letras en este turno: una marca de aquí en adelante no está «al comienzo». */
+  private dichoAlgo = false;
   private disculpas = 0;
   /** Ya salió algo que se dice (lo que sigue no es la apertura). */
   private empezado = false;
@@ -284,8 +290,15 @@ export class PulidorVoz {
     if (typeof e === 'string' && e) this.emocion = e;
   }
 
-  private maxEtiquetas(): number {
-    return turnoSerio(this.o.mensaje || '', this.emocion) ? 0 : (this.o.maxEtiquetas ?? 1);
+  /** ¿Esta marca suena? La política compartida: un tono solo al comienzo, una reacción, nada en lo serio. */
+  private dejaSonar(dentro: string): boolean {
+    if (!this.etiquetador) {
+      const activo = (this.o.maxEtiquetas ?? 1) > 0 && !turnoSerio(this.o.mensaje || '', this.emocion === 'oracion' ? 'neutral' : this.emocion);
+      this.etiquetador = new EtiquetasTurno(this.emocion, { contexto: this.o.mensaje || '', activo });
+    }
+    if (etiquetaV4(dentro)) return this.etiquetador.marca(dentro, !this.dichoAlgo) !== null;
+    // Una toma grabada sin etiqueta v4 («[ajá]»): ocupa el lugar de la reacción.
+    return !!expresionDe(dentro) && this.etiquetador.reaccion();
   }
 
   /** Un trozo del stream, tal como sale. Devuelve lo que se dice ('' si sobraba entero). */
@@ -340,7 +353,8 @@ export class PulidorVoz {
   /** Un `replace`: lo dicho se reemplaza entero, así que el turno vuelve a empezar desde aquí. */
   reemplazo(texto: string): string {
     const previa = this.apertura;
-    this.etiquetas = 0;
+    this.etiquetador = null;
+    this.dichoAlgo = false;
     this.disculpas = 0;
     this.empezado = false;
     this.mayuscula = false;
@@ -365,19 +379,28 @@ export class PulidorVoz {
     return s.replace(/(\S)[ \t]{2,}/g, '$1 ');
   }
 
-  /** Una etiqueta de voz por turno (ninguna si es serio); las demás se quitan sin sonar. */
+  /** Las etiquetas de voz del turno según la política compartida (lib/etiquetas-voz.ts); las demás se quitan sin sonar. */
   private etiquetasDelTurno(t: string): string {
-    const max = this.maxEtiquetas();
     let quito = false;
-    const s = t.replace(/[ \t]*\[([^\]\n]{1,40})\](?!\()/g, (todo: string, dentro: string) => {
-      if (!esEtiquetaVoz(dentro)) return todo;
-      if (this.etiquetas < max) {
-        this.etiquetas++;
-        return todo;
-      }
-      quito = true;
-      return '';
-    });
+    const letras = (x: string) => {
+      if (/[\p{L}\p{N}]/u.test(x)) this.dichoAlgo = true;
+    };
+    const re = /[ \t]*\[([^\]\n]{1,40})\](?!\()/g;
+    let s = '';
+    let desde = 0;
+    for (let m = re.exec(t); m; m = re.exec(t)) {
+      const antes = t.slice(desde, m.index);
+      letras(antes);
+      s += antes;
+      desde = m.index + m[0].length;
+      if (!esEtiquetaVoz(m[1])) {
+        s += m[0];
+        letras(m[1]);
+      } else if (this.dejaSonar(m[1])) s += m[0];
+      else quito = true;
+    }
+    letras(t.slice(desde));
+    s += t.slice(desde);
     if (!quito) return s;
     const limpio = s.replace(/([¿¡])[ \t]+/g, '$1').replace(/[ \t]+([,.;:!?…])/g, '$1');
     // El espacio con el que empezaba el trozo es parte del texto (se pega al anterior): se conserva.

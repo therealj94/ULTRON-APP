@@ -96,6 +96,9 @@ for (int i = 0; i < flujo.Length; i += 7) eventos.AddRange(sse.Leer(flujo.Substr
 Check(eventos.Count == 3 && eventos[0].Item1 == "emocion" && eventos[1].Item2 == "{\"voz\":\"Hola\"}", "sse");
 Check(Expresiones.PelarEtiqueta("[EMO:feliz] Hola") == ("feliz", "Hola"), "etiqueta emocion");
 Check(Expresiones.Quitar("Qué bueno [risa] verte") == "Qué bueno verte", "quitar expresiones");
+Check(Expresiones.Quitar("Mira el punto [1] y el [Anexo A], y [este enlace](https://x.hn).") == "Mira el punto [1] y el [Anexo A], y [este enlace](https://x.hn).", "quitar: [1], [Anexo A] y enlaces se quedan");
+Check(Expresiones.Quitar("[EMO:feliz] Ay [con ternura], qué bueno [risa].") == " Ay, qué bueno.", "quitar: emocion y marcas, sin espacio antes del signo");
+Check(AuraApi.Vecino("Hola [risa] José.", true) == "Hola José." && AuraApi.Vecino(new string('a', 150), false).Length == 100, "vecino: sin marcas y con tope");
 
 // ── Frases para la voz: la primera sale pronto ──
 var cf = new CortadorFrases(); var frases = new List<string>();
