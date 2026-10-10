@@ -18,7 +18,7 @@ import { convertir } from './datum';
 import { consultaConTope, hayBase } from './db';
 import { capasPorRol } from './entorno';
 import { geologiaDe } from './geologia';
-import { manifiesto } from './indice-capas';
+import { contarIndice, manifiesto } from './indice-capas';
 
 export type TargetEjemplo = {
   nombre: string;
@@ -259,7 +259,47 @@ export async function targetEjemplo(): Promise<TargetEjemplo | { error: string }
   return enCurso;
 }
 
+/**
+ * El inventario de indicios del paso 2, contado con los mismos datos que se pintan en el índice:
+ * las fichas seleccionadas y las fichas de ocurrencia minera (FOM) —en total y de oro—, los
+ * yacimientos de DEFOMIN y los depósitos del USGS (MRDS) en Honduras. null donde no se pudo contar.
+ */
+export type Inventario = {
+  fichasSeleccionadas: number | null;
+  fichasSeleccionadasOro: number | null;
+  fichasOcurrencia: number | null;
+  fichasOcurrenciaOro: number | null;
+  defomin: number | null;
+  usgsHonduras: number | null;
+};
+
+export async function inventarioIndicios(): Promise<Inventario> {
+  const c = (id: number, f: Record<string, string[]> = {}) => contarIndice(id, f).catch(() => null);
+  const [fichasSeleccionadas, fichasSeleccionadasOro, fichasOcurrencia, fichasOcurrenciaOro, defomin, usgsHonduras] = await Promise.all([
+    c(110002),
+    c(110002, { mineral: ['Oro'] }),
+    c(110003),
+    c(110003, { mineral: ['Oro'] }),
+    c(110004),
+    c(800140, { PAIS: ['Honduras'] }),
+  ]);
+  return { fichasSeleccionadas, fichasSeleccionadasOro, fichasOcurrencia, fichasOcurrenciaOro, defomin, usgsHonduras };
+}
+
+let memoriaInventario: { cuando: number; i: Inventario } | null = null;
+
 export function montarRutasRecorrido(app: Express) {
+  app.get('/api/electrum/recorrido/inventario', exigirPlataforma('electrum'), limitar(20), async (_req: Request, res: Response) => {
+    try {
+      if (!hayBase()) return res.status(503).json({ error: 'No hay base conectada.', honesto: true });
+      if (!memoriaInventario || Date.now() - memoriaInventario.cuando > 6 * 3600_000) memoriaInventario = { cuando: Date.now(), i: await inventarioIndicios() };
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      return res.json({ inventario: memoriaInventario.i, honesto: true });
+    } catch (e: any) {
+      console.error('[recorrido] inventario', String(e?.message || e).slice(0, 200));
+      return res.status(503).json({ error: 'No pude contar los indicios.', honesto: true });
+    }
+  });
   app.get('/api/electrum/recorrido/target', exigirPlataforma('electrum'), limitar(20), async (_req: Request, res: Response) => {
     try {
       const t = await targetEjemplo();
