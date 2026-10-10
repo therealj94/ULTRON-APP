@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
 
@@ -30,6 +31,40 @@ internal static class Pantalla
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+
+    // ───────────── «Estoy leyendo tu pantalla» (privacidad: la auditoría pidió que se vea) ─────────────
+    static int lecturas;
+
+    /// <summary>
+    /// Avisa cuando AURA empieza (true) o termina (false) de leer una ventana. Llega desde cualquier hilo y puede llegar
+    /// en desorden si hay dos lecturas a la vez: quien lo pinta mira <see cref="LeyendoAhora"/>, que es la verdad.
+    /// </summary>
+    public static event Action<bool>? Leyendo;
+
+    /// <summary>¿Hay ahora mismo alguna lectura de ventana en curso (texto con UI Automation u OCR)?</summary>
+    public static bool LeyendoAhora => Volatile.Read(ref lecturas) > 0;
+
+    /// <summary>
+    /// Marca una lectura en curso hasta que se suelte (using): el notch enciende su indicador al empezar la primera y
+    /// lo apaga al terminar la última, también si la lectura falla.
+    /// </summary>
+    public static IDisposable MarcarLectura()
+    {
+        if (Interlocked.Increment(ref lecturas) == 1) AvisarLectura(true);
+        return new FinLectura();
+    }
+
+    sealed class FinLectura : IDisposable
+    {
+        int hecho;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref hecho, 1) != 0) return;
+            if (Interlocked.Decrement(ref lecturas) == 0) AvisarLectura(false);
+        }
+    }
+
+    static void AvisarLectura(bool si) { try { Leyendo?.Invoke(si); } catch { } }
 
     /// <summary>La última ventana de trabajo que tuvo el foco (no la de AURA). La actualiza el notch.</summary>
     public static IntPtr UltimaAjena { get; private set; }
@@ -132,6 +167,8 @@ internal static class Pantalla
     {
         var h = Objetivo(propia);
         if (h == IntPtr.Zero) throw new InvalidOperationException("No encuentro la ventana en la que estás trabajando. Haz clic en ella y vuelve a pedírmelo.");
+        // Mientras se lee, el notch lo dice («Leyendo tu pantalla»); se apaga al terminar, salga bien o mal.
+        using var leyendo = MarcarLectura();
         GetWindowThreadProcessId(h, out var pid);
         string proceso = "", titulo = "";
         try { using var p = Process.GetProcessById((int)pid); proceso = p.ProcessName; } catch { }

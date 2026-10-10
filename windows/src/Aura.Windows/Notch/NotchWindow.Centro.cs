@@ -194,6 +194,9 @@ public partial class NotchWindow
             case "whatsapp.estado" or "whatsapp.vincular" or "whatsapp.desvincular" or "whatsapp.chats" or "whatsapp.mensajes"
                 or "whatsapp.enviar" or "whatsapp.leido" or "whatsapp.media":
                 return await ManejarWhatsApp(metodo, a);
+            // Fase 2: la lista «Trabajos» y la hoja del objetivo (NotchWindow.Objetivos.cs), con la sesión de AU-RA.
+            case "trabajos.lista" or "objetivos.abrir" or "objetivos.decidir" or "objetivos.control":
+                return await ManejarTrabajos(metodo, a);
             default:
                 throw new InvalidOperationException("Método desconocido: " + metodo);
         }

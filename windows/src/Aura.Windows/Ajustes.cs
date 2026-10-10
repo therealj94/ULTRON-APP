@@ -114,6 +114,11 @@ internal sealed class Ajustes
     public bool EfectosDeSonido { get; set; } = true;
     /// <summary>Versión de los ajustes del notch: 2 = el vidrio por defecto pasó de 0.72 a 0.5.</summary>
     public int NotchVersion { get; set; }
+    /// <summary>
+    /// «Continuar» (Fase 2): la última revisión que ESTA PC vio de cada objetivo (id → revisión). Si el servidor tiene una
+    /// más nueva de un objetivo abierto, el notch ofrece «Continuar: …». Ver Core.Continuar.
+    /// </summary>
+    public Dictionary<string, long> RevisionesVistas { get; set; } = new();
 
     void ValidarNotch()
     {
@@ -146,6 +151,7 @@ internal sealed class Ajustes
             // Cuentas de versiones sin dueño: son de quien ya estaba dentro (sin sesión, de nadie: no se usan).
             a.DuenoCuentas = Core.DuenoCuentas.Migrar(a.DuenoCuentas, Core.DuenoCuentas.Identidad(a.Token, a.Correo));
             a.AppsSilenciadas ??= new();
+            a.RevisionesVistas ??= new();
             if (a.Escucha is not ("pedir" or "palabra" or "siempre")) a.Escucha = a.PalabraActivacion ? "palabra" : "pedir";
             if (a.VozMotor is not ("agente" or "local")) a.VozMotor = "agente";
             a.ValidarNotch();

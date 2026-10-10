@@ -75,7 +75,8 @@ public partial class NotchWindow : Window
         capas[Modo.Panel] = (CapaPanel, new Resorte(0, 380, 38));
         foreach (var (capa, _) in capas.Values) { capa.HorizontalAlignment = HorizontalAlignment.Center; capa.VerticalAlignment = VerticalAlignment.Top; capa.RenderTransform = new TranslateTransform(); }
         Contenido.MouseLeftButtonUp += ClicForma;
-        MouseEnter += (_, _) => { raton = true; Recalcular(); };
+        // Pasar el ratón también mira si hay algo que continuar (con tope: NotchWindow.Objetivos.cs).
+        MouseEnter += (_, _) => { raton = true; Recalcular(); _ = RevisarContinuar("raton"); };
         MouseLeave += (_, _) => { raton = false; Recalcular(); };
         // Clic en otra ventana: el panel se recoge solo (salvo que estés hablando, escribiendo o haya algo que confirmar).
         Deactivated += (_, _) =>
@@ -92,6 +93,8 @@ public partial class NotchWindow : Window
         if (soloRender) { Aplicar(); Dibujar(); return; }
         // La cara de AU-RA: el orbe de partículas (NotchWindow.Orbe.cs). Si no llega a estar listo, el avatar de siempre.
         PrepararOrbe();
+        // «Continuar» con los objetivos y el indicador de «leyendo tu pantalla» (NotchWindow.Objetivos.cs).
+        PrepararObjetivos();
 
         SourceInitialized += (_, _) =>
         {
@@ -120,7 +123,8 @@ public partial class NotchWindow : Window
     {
         // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla; con el ratón
         // encima, más todavía para los controles (anterior, play/pausa, siguiente) sin tapar la cámara.
-        Modo.Reposo => raton ? (MusicaALaMano ? 500 : 370, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
+        // Mientras lee una ventana, el reposo se ensancha para que «Leyendo tu pantalla» quepa sin tapar nada.
+        Modo.Reposo => raton ? (MusicaALaMano ? 500 : 370, 42, 15) : ((MusicaSonando ? 290 : 236) + (LecturaVisible ? 120 : 0), 36, 13),
         Modo.Musica => (450, 94, 28),
         Modo.Escucha => (360, 58, 21),
         Modo.Piensa => (340, 58, 21),
@@ -345,6 +349,7 @@ public partial class NotchWindow : Window
         if (modo == Modo.Musica) { musicaVisible = false; }
         if (modo == Modo.Aviso) SiguienteAviso();
         AbrirPanel(true);
+        _ = RevisarContinuar("clic");
     }
 
     void MenuForma(object s, MouseButtonEventArgs e) => bandeja?.ContextMenuStrip?.Show(Forms.Cursor.Position);
@@ -448,6 +453,7 @@ public partial class NotchWindow : Window
         Centro.Registro.Anotar("salir", "cerrando AURA por completo");
         Seguro(() => CompositionTarget.Rendering -= Fotograma);
         Seguro(() => { if (!soloRender) Microsoft.Win32.SystemEvents.SessionSwitch -= AlCambiarSesion; });
+        Seguro(SoltarObjetivos);
         Seguro(() => { vigia.Stop(); relojAviso?.Stop(); });
         Seguro(() => { if (AgenteAbierto || abriendoAgente) CerrarAgente(); });
         Seguro(Terminar);

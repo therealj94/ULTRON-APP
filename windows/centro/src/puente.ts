@@ -70,6 +70,30 @@ const estadoMuestra = {
   cartera: { direccion: '' },
 };
 
+let decisionesMuestra = 0;
+/** Objetivos y tareas inventados para ver «Trabajos» sin el .exe (los mismos campos que arma NotchWindow.Objetivos.cs). */
+function muestraTrabajos() {
+  const ahora = Date.now();
+  return {
+    objetivos: [
+      { id: 'ob_muestra0001', titulo: 'Cerrar la venta con Maple', meta: 'Propuesta firmada antes del viernes', estado: 'esperando-decision', estadoTexto: 'Espera tu decisión',
+        espera: 'Tu decisión: ¿Mando la propuesta a Karla o la revisas tú primero?', pausado: false, terminal: false, revision: 7, siguientePaso: 'Enviar la propuesta', actualizado: ahora - 600_000, nuevo: true,
+        decision: { id: 'dob_muestra01', pregunta: '¿Mando la propuesta a Karla o la revisas tú primero?', opciones: [
+          { id: 'mandar', etiqueta: 'Mándala', consecuencia: 'Sale hoy desde tu correo' }, { id: 'revisar', etiqueta: 'La reviso yo', consecuencia: 'Te la dejo en borradores' }] } as null | { id: string; pregunta: string; opciones: { id: string; etiqueta: string; consecuencia: string }[] },
+        criterios: [{ texto: 'Propuesta enviada', cumplido: false }, { texto: 'Respuesta de Maple', cumplido: false }],
+        documentos: [{ nombre: 'Propuesta Maple.docx', version: 2 }],
+        eventos: [{ revision: 7, t: ahora - 600_000, texto: 'Preparé el borrador de la propuesta' }, { revision: 5, t: ahora - 7_200_000, texto: 'Leí el último correo de Karla' }] },
+      { id: 'ob_muestra0002', titulo: 'Renovar la concesión El Porvenir', meta: '', estado: 'esperando-recurso', estadoTexto: 'Esperando', espera: 'Un recurso: la constancia del INHGEOMIN',
+        pausado: false, terminal: false, revision: 3, siguientePaso: 'Pedir la constancia', actualizado: ahora - 86_400_000, nuevo: false, decision: null, criterios: [], documentos: [], eventos: [] },
+    ],
+    tareas: [
+      { id: 't1', titulo: 'Buscar el contrato de 2024', estado: 'running', estadoTexto: 'Trabajando', espera: 'Revisando tus correos de marzo', terminal: false, actualizado: new Date(ahora - 60_000).toISOString(), progreso: { hechos: 3, total: 8, unidad: 'carpetas' } as null | { hechos: number; total: number; unidad: string }, objetivo: 'Cerrar la venta con Maple' as string | null },
+      { id: 't2', titulo: 'Resumen de la junta', estado: 'completed', estadoTexto: 'Hecha', espera: '', terminal: true, actualizado: new Date(ahora - 3_600_000).toISOString(), progreso: null, objetivo: null },
+    ],
+    aviso: null, abrir: null,
+  };
+}
+
 async function muestra(metodo: string, args: any): Promise<unknown> {
   await new Promise((r) => setTimeout(r, 250));
   switch (metodo) {
@@ -87,6 +111,17 @@ async function muestra(metodo: string, args: any): Promise<unknown> {
       return { direccion: '0x12ab…9f3c', total: 1843.2, moneda: 'USD', saldos: [
         { simbolo: 'ORIGEN', cantidad: 1520.4, usd: 1321.6 }, { simbolo: 'AUKA', cantidad: 0.12, usd: 492.1 }, { simbolo: 'AGKA', cantidad: 1, usd: 29.5 }] };
     case 'spotify.estado': return { conectado: false, sonando: null };
+    case 'trabajos.lista': return muestraTrabajos();
+    case 'objetivos.abrir': return { objetivo: muestraTrabajos().objetivos.find((o) => o.id === args?.id) ?? muestraTrabajos().objetivos[0], nuevos: ['Preparé el borrador de la propuesta'] };
+    case 'objetivos.decidir': {
+      // En la muestra, la segunda vez «otro aparato» ya decidió: se ve el 409 como lo ve la persona.
+      decisionesMuestra++;
+      const despues = { ...muestraTrabajos().objetivos[0], decision: null, revision: 8, estado: 'en-curso', estadoTexto: 'En curso', espera: 'Enviar la propuesta' };
+      return decisionesMuestra > 1
+        ? { ok: false, conflicto: { codigo: 'ya-decidida', mensaje: 'Cambió desde otro aparato', detalle: 'Esa decisión ya se tomó con otra opción (quizá desde otro aparato).' }, objetivo: despues }
+        : { ok: true, conflicto: null, objetivo: despues };
+    }
+    case 'objetivos.control': return { ok: true, conflicto: null, objetivo: { ...muestraTrabajos().objetivos[0], pausado: args?.accion === 'pausar', estadoTexto: args?.accion === 'pausar' ? 'En pausa' : 'Espera tu decisión' } };
     default:
       // El WhatsApp personal: datos inventados para ver el panel sin el .exe (whatsapp/muestra.ts).
       if (metodo.startsWith('whatsapp.')) return muestraWhatsApp(metodo, args);

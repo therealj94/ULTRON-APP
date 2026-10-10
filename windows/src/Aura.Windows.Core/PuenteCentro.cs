@@ -56,6 +56,8 @@ public static class PuenteCentro
         // El WhatsApp personal (solo la cuenta dueña; el servidor lo vuelve a mirar): ver, vincular y contestar.
         "whatsapp.estado", "whatsapp.vincular", "whatsapp.desvincular", "whatsapp.chats", "whatsapp.mensajes",
         "whatsapp.enviar", "whatsapp.leido", "whatsapp.media",
+        // Fase 2: los objetivos con estado y los trabajos (lista, hoja, decidir con revisionVista, pausar/reanudar/cancelar).
+        "trabajos.lista", "objetivos.abrir", "objetivos.decidir", "objetivos.control",
     };
 
     public static bool MetodoPermitido(string? metodo) => metodo != null && Metodos.Contains(metodo);

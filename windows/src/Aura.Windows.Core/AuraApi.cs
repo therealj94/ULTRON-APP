@@ -69,7 +69,8 @@ public sealed class AuraApi : IDisposable
         return r;
     }
 
-    async Task<HttpResponseMessage> Enviar(Func<HttpRequestMessage> crear, CancellationToken ct, TimeSpan tope, HttpCompletionOption modo = HttpCompletionOption.ResponseContentRead, bool renovar = true)
+    /// <param name="aceptar">Estados que no son error para quien llama (p. ej. el 409 de los objetivos, que trae el estado de ahora).</param>
+    async Task<HttpResponseMessage> Enviar(Func<HttpRequestMessage> crear, CancellationToken ct, TimeSpan tope, HttpCompletionOption modo = HttpCompletionOption.ResponseContentRead, bool renovar = true, Func<HttpStatusCode, bool>? aceptar = null)
     {
         // Un solo reloj para todo, reintento incluido: nada de esperas sin tope.
         using var reloj = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -89,7 +90,7 @@ public sealed class AuraApi : IDisposable
             if (string.IsNullOrEmpty(Token)) throw new AuraError("Tu sesión venció. Entra otra vez en Ajustes.", HttpStatusCode.Unauthorized);
             r = await Una().ConfigureAwait(false);
         }
-        if (!r.IsSuccessStatusCode)
+        if (!r.IsSuccessStatusCode && aceptar?.Invoke(r.StatusCode) != true)
         {
             var estado = r.StatusCode;
             string msg = "";
@@ -416,6 +417,77 @@ public sealed class AuraApi : IDisposable
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new AuraError("El servidor AURA tardó demasiado."); }
         catch (IOException) { throw new AuraError("Se cortó la conexión mientras bajaba el archivo."); }
+    }
+
+    // ───────────── objetivos y trabajos (Fase 2: server/objetivos.ts, server/trabajos.ts) ─────────────
+
+    void ExigirSesion() { if (string.IsNullOrEmpty(Token)) throw new AuraError("Entra con tu cuenta en Ajustes.", HttpStatusCode.Unauthorized); }
+
+    /// <summary>La ruta de un objetivo: solo con un id como los del servidor (nada que venga de afuera arma otra ruta).</summary>
+    static string RutaObjetivo(string id, string resto = "") =>
+        Continuar.IdValido(id) ? "api/objetivos/" + id + resto : throw new AuraError("Ese objetivo no existe.");
+
+    static async Task<string> Cuerpo(HttpResponseMessage r, CancellationToken ct) => await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+    /// <summary>GET /api/objetivos → { objetivos[], completo, noLeidos }.</summary>
+    public async Task<ListaObjetivos> Objetivos(CancellationToken ct = default)
+    {
+        ExigirSesion();
+        using var r = await Enviar(() => Pedido(HttpMethod.Get, "api/objetivos"), ct, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        return ObjetivosJson.Lista(await Cuerpo(r, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>GET /api/objetivos/:id → { objetivo } (reconciliado con sus tareas).</summary>
+    public async Task<ObjetivoVista> Objetivo(string id, CancellationToken ct = default)
+    {
+        ExigirSesion();
+        var ruta = RutaObjetivo(id);
+        using var r = await Enviar(() => Pedido(HttpMethod.Get, ruta), ct, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        return ObjetivosJson.Uno(await Cuerpo(r, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>GET /api/objetivos/:id/cambios?desde=N: lo que pasó después de la revisión N (la última que vio esta PC).</summary>
+    public async Task<CambiosObjetivo> CambiosObjetivo(string id, long desde, CancellationToken ct = default)
+    {
+        ExigirSesion();
+        var ruta = RutaObjetivo(id, "/cambios?desde=" + Math.Max(0, desde).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var r = await Enviar(() => Pedido(HttpMethod.Get, ruta), ct, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        return ObjetivosJson.Cambios(await Cuerpo(r, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// POST /api/objetivos/:id/decisiones {decisionId, opcion, revisionVista, aparato}. Si otro aparato decidió antes o
+    /// el objetivo cambió, el 409 vuelve como <see cref="ResultadoObjetivo.Conflicto"/> con el objetivo de ahora (no lanza).
+    /// </summary>
+    public async Task<ResultadoObjetivo> DecidirObjetivo(string id, string decisionId, string opcion, long revisionVista, CancellationToken ct = default)
+    {
+        ExigirSesion();
+        var ruta = RutaObjetivo(id, "/decisiones");
+        if (!Continuar.DecisionValida(decisionId) || !Continuar.OpcionValida(opcion) || revisionVista < 1) throw new AuraError("Esa decisión no es válida.");
+        var cuerpo = new Dictionary<string, object> { ["decisionId"] = decisionId, ["opcion"] = opcion, ["revisionVista"] = revisionVista };
+        if (!string.IsNullOrEmpty(Aparato)) cuerpo["aparato"] = Aparato;
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, ruta, cuerpo), ct, TimeSpan.FromSeconds(20), aceptar: e => e == HttpStatusCode.Conflict).ConfigureAwait(false);
+        return ObjetivosJson.Resultado(r.StatusCode, await Cuerpo(r, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>POST /api/objetivos/:id/pausar | reanudar | cancelar {revisionVista?}. El 409 es un valor, como al decidir.</summary>
+    public async Task<ResultadoObjetivo> ControlObjetivo(string id, string control, long? revisionVista = null, CancellationToken ct = default)
+    {
+        ExigirSesion();
+        if (!Continuar.ControlValido(control)) throw new AuraError("Ese control no existe.");
+        var ruta = RutaObjetivo(id, "/" + control);
+        object cuerpo = revisionVista is long rv && rv >= 1 ? new { revisionVista = rv } : new { };
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, ruta, cuerpo), ct, TimeSpan.FromSeconds(20), aceptar: e => e == HttpStatusCode.Conflict).ConfigureAwait(false);
+        return ObjetivosJson.Resultado(r.StatusCode, await Cuerpo(r, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>GET /api/trabajos (con «x-aura-estados: respondida»: esta app ya conoce el estado nuevo).</summary>
+    public async Task<ListaTrabajos> Trabajos(CancellationToken ct = default)
+    {
+        ExigirSesion();
+        HttpRequestMessage Crear() { var p = Pedido(HttpMethod.Get, "api/trabajos"); p.Headers.TryAddWithoutValidation("x-aura-estados", "respondida"); return p; }
+        using var r = await Enviar(Crear, ct, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+        return ObjetivosJson.Trabajos(await Cuerpo(r, ct).ConfigureAwait(false));
     }
 
     public void Dispose() => http.Dispose();

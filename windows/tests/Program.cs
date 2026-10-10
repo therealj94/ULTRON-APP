@@ -1014,6 +1014,115 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
         Check(csproj.Contains("Include=\"../../../src/14-orbe/orbe.html\" Link=\"OrbeAssets/orbe.html\""), "orbe: el .exe publica la fuente de verdad como OrbeAssets/orbe.html");
     }
 }
+// ── Fase 2: objetivos con estado (server/objetivos.ts) y trabajos: el JSON del contrato, el 409 como valor y «Continuar» ──
+{
+    const string obJson = """
+    {"objetivo":{"id":"ob_lq2x9a1b2c3d4e","plataforma":"ultron","proyecto":"maple","titulo":"Cerrar la venta con Maple","meta":"Firmada el viernes",
+      "criterioCierre":[{"id":"enviada","texto":"Propuesta enviada","evidencias":[{"tipo":"documento","ref":"d_1","etiqueta":"v2","t":1700000000000}]},{"id":"c2","texto":"Respuesta","evidencias":[]}],
+      "documentos":[{"id":"d_1","nombre":"Propuesta.docx","version":2,"vigente":true,"sha256":"ab","creado":1700000000000}],
+      "decisiones":[{"id":"dob_aaa111","pregunta":"¿La mando?","opciones":[{"id":"mandar","etiqueta":"Mándala","consecuencia":"Sale hoy"},{"id":"revisar","etiqueta":"La reviso","consecuencia":"Queda en borradores"}],"version":7,"creada":1700000000000},
+                     {"id":"dob_bbb222","pregunta":"¿Antes?","opciones":[],"elegida":"si","version":3,"por":"persona","aparato":"win-0123456789abcdef","cuando":1,"creada":1}],
+      "restricciones":[],"permisos":["preparar-borradores"],"topeCosto":null,"siguientePaso":"Enviar la propuesta","estado":"esperando-decision","pausado":false,
+      "revision":7,"eventos":[{"revision":5,"t":1699990000000,"texto":"Leí el correo","campos":["siguientePaso"]},{"revision":7,"t":1700000000000,"texto":"Preparé el borrador","campos":["documentos","decisiones"]}],
+      "tareas":["t_1"],"creado":1699000000000,"actualizado":1700000000000,"terminal":false,"decisionesPendientes":1},"honesto":true}
+    """;
+    var ob = ObjetivosJson.Uno(obJson);
+    Check(ob.Id == "ob_lq2x9a1b2c3d4e" && ob.Titulo == "Cerrar la venta con Maple" && ob.Estado == "esperando-decision" && ob.Revision == 7 && !ob.Terminal && ob.DecisionesPendientes == 1, "objetivo: campos principales");
+    Check(ob.DecisionPendiente?.Id == "dob_aaa111" && ob.DecisionPendiente.Opciones.Count == 2 && ob.DecisionPendiente.Opciones[1].Consecuencia == "Queda en borradores" && ob.Decisiones[1].Elegida == "si", "objetivo: la decisión pendiente y sus opciones");
+    Check(ob.CriterioCierre[0].Cumplido && !ob.CriterioCierre[1].Cumplido && ob.Documentos[0].Vigente && ob.Eventos[1].Campos.Contains("decisiones") && ob.TopeCosto == null && ob.Tareas[0] == "t_1", "objetivo: criterios, documentos y eventos");
+    var obLista = ObjetivosJson.Lista("{\"objetivos\":[" + obJson[(obJson.IndexOf("{\"id\"", StringComparison.Ordinal))..obJson.LastIndexOf(",\"honesto\"", StringComparison.Ordinal)] + "],\"completo\":false,\"noLeidos\":2,\"honesto\":true}");
+    Check(obLista.Objetivos.Count == 1 && !obLista.Completo && obLista.NoLeidos == 2 && obLista.Objetivos[0].Revision == 7, "objetivos: la lista con completo y noLeidos");
+    Check(ObjetivosJson.Lista("{\"objetivos\":[{\"id\":\"ob_x1234567\"}]}").Objetivos[0] is { Titulo: "", Revision: 0, Decisiones.Count: 0 }, "objetivos: un campo que falta no rompe (se ve vacío)");
+    Check(Throws(() => ObjetivosJson.Lista("<html>portal</html>")) && Throws(() => ObjetivosJson.Uno("{\"honesto\":true}")), "objetivos: lo que no es el contrato es AuraError");
+    var obCambios = ObjetivosJson.Cambios("{\"revision\":9,\"desde\":5,\"resync\":false,\"eventos\":[{\"revision\":6,\"t\":1,\"texto\":\"Leí el correo\"},{\"revision\":9,\"t\":2,\"texto\":\"Karla contestó\"}],\"campos\":{\"siguientePaso\":\"Llamar a Karla\",\"estado\":\"en-curso\"},\"honesto\":true}");
+    Check(obCambios.Revision == 9 && obCambios.Desde == 5 && !obCambios.Resync && obCambios.Eventos.Count == 2 && obCambios.Campos["siguientePaso"].GetString() == "Llamar a Karla" && obCambios.Objetivo == null, "cambios: eventos y campos desde N");
+    var obResync = ObjetivosJson.Cambios("{\"revision\":9,\"desde\":1,\"resync\":true,\"eventos\":[],\"campos\":{},\"objetivo\":" + obJson[(obJson.IndexOf("{\"id\"", StringComparison.Ordinal))..obJson.LastIndexOf(",\"honesto\"", StringComparison.Ordinal)] + "}");
+    Check(obResync.Resync && obResync.Objetivo?.Revision == 7, "cambios: resync trae el objetivo entero");
+
+    // El 409 es un valor (no una excepción) con el código, la revisión y el objetivo de ahora.
+    var ob409 = ObjetivosJson.Resultado(System.Net.HttpStatusCode.Conflict, "{\"error\":\"El objetivo cambió mientras decidías.\",\"codigo\":\"revision\",\"revision\":8," + obJson[1..obJson.LastIndexOf(",\"honesto\"", StringComparison.Ordinal)] + ",\"honesto\":true}");
+    Check(!ob409.Ok && ob409.Conflicto!.Codigo == "revision" && ob409.Conflicto.Revision == 8 && ob409.Conflicto.Mensaje.StartsWith("El objetivo cambió") && ob409.Actual?.Id == "ob_lq2x9a1b2c3d4e", "409: conflicto con revisión y objetivo");
+    var ob409b = ObjetivosJson.Resultado(System.Net.HttpStatusCode.Conflict, "{\"error\":\"x\",\"codigo\":\"sin-evidencia\"}");
+    Check(!ob409b.Ok && ob409b.Conflicto!.Codigo == "sin-evidencia" && ob409b.Actual == null && ob409b.Conflicto.Revision == null, "409 sin objetivo: el código queda");
+    Check(ObjetivosJson.Resultado(System.Net.HttpStatusCode.Conflict, "") is { Ok: false, Conflicto.Codigo: "revision" }, "409 vacío: conflicto de revisión");
+    var ob200 = ObjetivosJson.Resultado(System.Net.HttpStatusCode.OK, obJson.Replace("\"honesto\":true}", "\"repetida\":true,\"honesto\":true}"));
+    Check(ob200.Ok && ob200.Repetida && !ob200.SinCambio && ob200.Objetivo?.Revision == 7, "200: el objetivo nuevo (y repetida)");
+
+    // Por HTTP: ruta, encabezados, cuerpo con revisionVista y aparato; el 409 vuelve como Conflicto, el 500 sigue siendo AuraError.
+    var obFalso = new ManejadorFalso();
+    string? obCuerpo = null;
+    var obEstado = System.Net.HttpStatusCode.Conflict;
+    obFalso.Responder = r =>
+    {
+        obCuerpo = r.Content?.ReadAsStringAsync().Result;
+        var cuerpo = obEstado == System.Net.HttpStatusCode.Conflict ? "{\"error\":\"Esa decisión ya se tomó con otra opción (quizá desde otro aparato).\",\"codigo\":\"ya-decidida\",\"revision\":8}" : "{\"error\":\"boom\"}";
+        return new HttpResponseMessage(obEstado) { Content = new StringContent(cuerpo) };
+    };
+    using var obApi = new AuraApi("https://aura.test", "tok-ob", obFalso) { Aparato = "win-0123456789abcdef" };
+    var obDec = obApi.DecidirObjetivo("ob_lq2x9a1b2c3d4e", "dob_aaa111", "mandar", 7).GetAwaiter().GetResult();
+    var obPed = obFalso.Pedidos[^1];
+    Check(obPed.Method == HttpMethod.Post && obPed.RequestUri!.AbsoluteUri == "https://aura.test/api/objetivos/ob_lq2x9a1b2c3d4e/decisiones"
+          && obPed.Headers.GetValues("x-ultron-sesion").Single() == "tok-ob" && obPed.Headers.GetValues("x-aura-origen").Single() == "windows" && obPed.Headers.GetValues("x-aura-aparato").Single() == "win-0123456789abcdef", "decidir: ruta y encabezados");
+    using (var obDoc = System.Text.Json.JsonDocument.Parse(obCuerpo!))
+        Check(obDoc.RootElement.GetProperty("decisionId").GetString() == "dob_aaa111" && obDoc.RootElement.GetProperty("opcion").GetString() == "mandar"
+              && obDoc.RootElement.GetProperty("revisionVista").GetInt64() == 7 && obDoc.RootElement.GetProperty("aparato").GetString() == "win-0123456789abcdef", "decidir: cuerpo con revisionVista y aparato");
+    Check(!obDec.Ok && obDec.Conflicto!.Codigo == "ya-decidida" && obDec.Conflicto.Revision == 8, "decidir: el 409 llega como Conflicto, sin excepción");
+    obEstado = System.Net.HttpStatusCode.InternalServerError;
+    Check(Throws(() => obApi.DecidirObjetivo("ob_lq2x9a1b2c3d4e", "dob_aaa111", "mandar", 7).GetAwaiter().GetResult()), "decidir: un 500 sigue siendo error");
+    obEstado = System.Net.HttpStatusCode.Conflict;
+    var obCtl = obApi.ControlObjetivo("ob_lq2x9a1b2c3d4e", "pausar", 7).GetAwaiter().GetResult();
+    Check(!obCtl.Ok && obFalso.Pedidos[^1].RequestUri!.AbsolutePath == "/api/objetivos/ob_lq2x9a1b2c3d4e/pausar" && obCuerpo == "{\"revisionVista\":7}", "pausar: con revisionVista; 409 como valor");
+    int obAntes = obFalso.Pedidos.Count;
+    Check(Throws(() => obApi.Objetivo("../ultron/salir").GetAwaiter().GetResult()) && Throws(() => obApi.ControlObjetivo("ob_lq2x9a1b2c3d4e", "borrar").GetAwaiter().GetResult())
+          && Throws(() => obApi.DecidirObjetivo("ob_lq2x9a1b2c3d4e", "x y", "mandar", 7).GetAwaiter().GetResult()) && Throws(() => obApi.DecidirObjetivo("ob_lq2x9a1b2c3d4e", "dob_aaa111", "mandar", 0).GetAwaiter().GetResult())
+          && obFalso.Pedidos.Count == obAntes, "objetivos: un id, control u opción raros no salen a la red");
+    obFalso.Responder = r => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(r.RequestUri!.AbsolutePath == "/api/trabajos"
+        ? "{\"tareas\":[{\"id\":\"t_1\",\"state\":\"awaiting_approval\",\"terminal\":false,\"title\":\"Mandar la propuesta\",\"decision\":{\"id\":\"d1\",\"question\":\"¿La mando?\",\"options\":[{\"id\":\"si\",\"label\":\"Sí\",\"effect\":\"Sale\",\"risk\":\"con-efecto\"}]},\"updatedAt\":\"2026-10-10T10:00:00.000Z\",\"goalId\":\"ob_lq2x9a1b2c3d4e\",\"progress\":null},"
+          + "{\"id\":\"t_2\",\"state\":\"waiting_resource\",\"terminal\":false,\"title\":\"Constancia\",\"currentStep\":\"la constancia del INHGEOMIN\",\"updatedAt\":\"2026-10-10T09:00:00.000Z\",\"progress\":{\"done\":3,\"total\":8,\"unit\":\"pasos\"}}],\"completo\":false,\"aviso\":\"No pude leer una de tus tareas.\"}"
+        : r.RequestUri.AbsolutePath == "/api/objetivos" ? "{\"objetivos\":[],\"completo\":true,\"noLeidos\":0}"
+        : "{\"revision\":9,\"desde\":5,\"resync\":false,\"eventos\":[],\"campos\":{}}") };
+    var obTrab = obApi.Trabajos().GetAwaiter().GetResult();
+    Check(obFalso.Pedidos[^1].Headers.GetValues("x-aura-estados").Single() == "respondida" && obTrab.Tareas.Count == 2 && !obTrab.Completo && obTrab.Aviso!.Contains("una de tus tareas")
+          && obTrab.Tareas[0].Decision!.Options[0].Label == "Sí" && obTrab.Tareas[0].GoalId == "ob_lq2x9a1b2c3d4e" && obTrab.Tareas[1].Progress!.Total == 8, "trabajos: TaskSnapshot leído (con x-aura-estados)");
+    Check(Trabajos.EsperaTarea(obTrab.Tareas[0]) == "Tu decisión: ¿La mando?" && Trabajos.EsperaTarea(obTrab.Tareas[1]) == "Un recurso: la constancia del INHGEOMIN" && Trabajos.EstadoTarea(obTrab.Tareas[1]) == "Esperando", "trabajos: qué espera cada tarea");
+    Check(obApi.CambiosObjetivo("ob_lq2x9a1b2c3d4e", 5).GetAwaiter().GetResult().Revision == 9 && obFalso.Pedidos[^1].RequestUri!.PathAndQuery == "/api/objetivos/ob_lq2x9a1b2c3d4e/cambios?desde=5", "cambios: ?desde=N");
+    Check(obApi.Objetivos().GetAwaiter().GetResult().Completo, "objetivos: GET /api/objetivos");
+    using var obSinSesion = new AuraApi("https://aura.test", null, obFalso);
+    obAntes = obFalso.Pedidos.Count;
+    Check(Throws(() => obSinSesion.Objetivos().GetAwaiter().GetResult()) && obFalso.Pedidos.Count == obAntes, "objetivos: sin sesión no se pregunta");
+
+    // «Continuar»: más nuevo que lo último que vio ESTA PC, solo abiertos, primero los que esperan tu decisión.
+    var obVistas = new Dictionary<string, long>();
+    ObjetivoVista Ob(string id, long rev, bool terminal = false, int pend = 0, long act = 0) => new() { Id = id, Titulo = "T " + id, Revision = rev, Terminal = terminal, DecisionesPendientes = pend, Actualizado = act };
+    var obA = Ob("ob_aaaaaaaa", 5, act: 300); var obB = Ob("ob_bbbbbbbb", 3, pend: 1, act: 100); var obC = Ob("ob_cccccccc", 9, terminal: true, act: 900);
+    Check(Continuar.HayNovedad(obA, obVistas) && !Continuar.HayNovedad(obC, obVistas), "continuar: nunca visto = novedad; terminado no cuenta");
+    Check(Continuar.Elegir(new[] { obA, obB, obC }, obVistas)?.Id == "ob_bbbbbbbb", "continuar: primero el que espera tu decisión");
+    Check(Continuar.Marcar(obVistas, "ob_bbbbbbbb", 3) && !Continuar.Marcar(obVistas, "ob_bbbbbbbb", 2) && obVistas["ob_bbbbbbbb"] == 3, "continuar: marcar solo sube");
+    Check(Continuar.Elegir(new[] { obA, obB, obC }, obVistas)?.Id == "ob_aaaaaaaa", "continuar: el visto en su revisión ya no sale");
+    Check(Continuar.HayNovedad(obB with { Revision = 4 }, obVistas), "continuar: una revisión más nueva vuelve a salir");
+    Check(Continuar.Elegir(new[] { obA }, obVistas, new Dictionary<string, long> { ["ob_aaaaaaaa"] = 5 }) == null
+          && Continuar.Elegir(new[] { obA with { Revision = 6 } }, obVistas, new Dictionary<string, long> { ["ob_aaaaaaaa"] = 5 }) != null, "continuar: lo ya ofrecido en esta sesión no se repite, salvo revisión nueva");
+    Check(!Continuar.Marcar(obVistas, "../x", 9) && !Continuar.Marcar(obVistas, "ob_aaaaaaaa", 0), "continuar: ids raros o revisión 0 no se guardan");
+    obVistas["ob_zzzzzzzz"] = 4;
+    Check(!Continuar.Podar(obVistas, new[] { obB }, listaCompleta: false) && obVistas.ContainsKey("ob_zzzzzzzz"), "continuar: con la lista incompleta no se olvida nada");
+    Check(Continuar.Podar(obVistas, new[] { obB }, listaCompleta: true) && !obVistas.ContainsKey("ob_zzzzzzzz") && obVistas.ContainsKey("ob_bbbbbbbb"), "continuar: con la lista completa se olvida lo que ya no está");
+    var obMuchas = Enumerable.Range(0, 250).ToDictionary(i => $"ob_{i:00000000}", i => (long)i + 1);
+    Check(Continuar.Podar(obMuchas, Array.Empty<ObjetivoVista>(), false, 200) && obMuchas.Count == 200, "continuar: a lo más 200 recordados");
+
+    // «Qué cambió» en una línea.
+    Check(Continuar.QueCambio(ob, null) == "Te toca decidir: ¿La mando?", "qué cambió: la decisión pendiente primero");
+    var obSinDec = ob with { Decisiones = Array.Empty<DecisionObjetivo>(), DecisionesPendientes = 0 };
+    Check(Continuar.QueCambio(obSinDec, obCambios) == "Karla contestó (+1 más)", "qué cambió: lo último desde lo visto, y cuántos más");
+    Check(Continuar.QueCambio(obSinDec, null) == "Preparé el borrador (+1 más)", "qué cambió: nunca visto, los hechos del objetivo");
+    Check(Continuar.QueCambio(obSinDec with { Eventos = Array.Empty<EventoObjetivo>() }, null) == "Sigue: Enviar la propuesta", "qué cambió: si no hay hechos, el siguiente paso");
+    Check(Continuar.QueCambio(obSinDec, obCambios, maximo: 20).Length <= 20 + 9, "qué cambió: se recorta");
+    Check(Continuar.Pildora(obSinDec, obCambios) == "Continuar: Cerrar la venta con Maple — Karla contestó (+1 más)", "píldora: «Continuar: título — qué cambió»");
+    Check(Trabajos.EsperaObjetivo(ob) == "Tu decisión: ¿La mando?" && Trabajos.EsperaObjetivo(obSinDec with { Pausado = true }) == "Que lo reanudes"
+          && Trabajos.EsperaObjetivo(obSinDec with { Terminal = true }) == "" && Trabajos.EstadoObjetivo(ob) == "Espera tu decisión", "trabajos: qué espera cada objetivo");
+
+    // El puente del Centro conoce los métodos nuevos (y nada por prefijo).
+    Check(PuenteCentro.MetodoPermitido("trabajos.lista") && PuenteCentro.MetodoPermitido("objetivos.decidir") && !PuenteCentro.MetodoPermitido("objetivos.borrar") && !PuenteCentro.MetodoPermitido("objetivos."), "puente: métodos de Trabajos");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
 /// <summary>Un servidor de mentira para AuraApi: guarda los pedidos y contesta lo que se le diga.</summary>
