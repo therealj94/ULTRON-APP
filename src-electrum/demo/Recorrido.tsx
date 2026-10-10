@@ -26,7 +26,7 @@ import { ALTURAS } from '../preferencias';
 import type { OrdenIndice } from '../mapa/IndiceCapas';
 import { estadoMapa } from '../mapa/estado-mapa';
 import { Escenario, Flujo, MarcoMapa, type Escena, type Marco, type Quien } from './Escenas';
-import { PASOS, fechaMapa, fichaFactibilidad, km, lecturaAguaYVias, lecturaCatastro, lecturaHallazgos, lecturaIndicios, lecturaPolitica, lecturaPremisas, lecturaRestricciones, nombreFicha, ocurrenciasCerca, tipoProbable, type TargetEjemplo } from './etapa1';
+import { PASOS, fechaMapa, fichaFactibilidad, km, lecturaAguaYVias, lecturaCatastro, lecturaFichas, lecturaFuentesIndicios, lecturaHallazgos, lecturaIndicios, lecturaPolitica, lecturaPremisas, lecturaRestricciones, nombreFicha, ocurrenciasCerca, tipoProbable, type Inventario, type TargetEjemplo } from './etapa1';
 
 export { nombreParaDecir } from './guion';
 
@@ -308,13 +308,20 @@ export function Recorrido({
         setTexto(`${NOMBRES[ls[Math.min(k, ls.length - 1)].quien]}: ${limpio(ls[Math.min(k, ls.length - 1)].texto)}`);
       };
       hasta(0);
+      /*
+       * Suena de verdad cuando la escena nombra a quien habla: voz.ts lo pone solo con el audio
+       * corriendo (pausado o todavía juntándose, como en el iPhone, el hablante es null).
+       */
+      let empezo = false;
       const soltar = escucharEscena((e) => {
+        if (e.hablante) empezo = true;
         if (!e.linea) return;
         const k = ls.findIndex((l, j) => j >= hechas - 1 && l.texto === e.linea);
         if (k >= 0) hasta(k);
       });
       c.current.cara('SPEAKING');
       let fallo = false;
+      let resuelto = false;
       const t0 = Date.now();
       await Promise.race([
         hablarDialogo(
@@ -323,7 +330,21 @@ export function Recorrido({
           { alFallar: () => (fallo = true) }
         ),
         new Promise<void>((r) => (despertar.current = r)),
+        /*
+         * Si la voz no arranca en 12 s (el servidor tarda, la red se cortó, el navegador está ocupado),
+         * el recorrido no se queda mudo esperando: se calla y sigue con los subtítulos.
+         */
+        new Promise<void>((r) =>
+          setTimeout(() => {
+            // Ya terminó (o se saltó): el reloj no puede callar la voz del capítulo siguiente.
+            if (empezo || resuelto || !sigue()) return;
+            fallo = true;
+            callar();
+            r();
+          }, 12_000)
+        ),
       ]);
+      resuelto = true;
       soltar();
       if (saltoEste()) callar();
       // Sin voz: se lee, con los mismos gestos en su momento.
@@ -543,13 +564,14 @@ export function Recorrido({
          * por el índice (lo que la persona ve marcado en «Capas» es lo que está en el mapa).
          */
         const e1 = modo === 'etapa1';
-        const [T, resumen, nMuestras] = e1
+        const [T, resumen, nMuestras, inventario] = e1
           ? await Promise.all([
               json<{ target: TargetEjemplo }>('/api/electrum/recorrido/target').then((j) => j.target).catch(() => null),
               json<{ documentos: number; capas: number; fragmentos: number; carpetas: number }>('/api/electrum/biblioteca/resumen').catch(() => null),
               json<{ features?: unknown[] }>('/api/electrum/mapa/muestras').then((j) => j.features?.length || 0).catch(() => 0),
+              json<{ inventario: Inventario }>('/api/electrum/recorrido/inventario').then((j) => j.inventario).catch(() => null),
             ])
-          : [null, null, 0];
+          : [null, null, 0, null];
         if (!sigue()) return;
         /** El catastro del índice no se toca: su vista la maneja el recorrido aparte (c.catastro). */
         const CATASTRO_INDICE = 104001;
@@ -667,19 +689,36 @@ export function Recorrido({
           e1Paso2: {
             hay: e1,
             correr: async () => {
-              paso(2, T?.jica ? { cifras: [{ valor: ocurrenciasCerca(T).n, etiqueta: T.ocurrenciasTope ? 'ocurrencias a 5 km (o más)' : 'ocurrencias a 5 km' }, { valor: T.jica.muestras, etiqueta: 'muestras JICA' }] } : {});
-              solo([209001, 110002, 110003, 110004, 401005, 800140], { 401005: { elemento: ['au'] }, 800140: { PAIS: ['Honduras'] } });
+              const oro = inventario?.fichasSeleccionadasOro;
+              paso(2, {
+                cifras: [
+                  ...(oro != null ? [{ valor: oro, etiqueta: 'fichas seleccionadas de oro' }] : []),
+                  ...(inventario?.fichasOcurrenciaOro != null ? [{ valor: inventario.fichasOcurrenciaOro, etiqueta: 'fichas de ocurrencia (FOM) de oro' }] : []),
+                  ...(inventario?.usgsHonduras != null ? [{ valor: inventario.usgsHonduras, etiqueta: 'depósitos USGS en Honduras' }] : []),
+                  ...(T?.jica ? [{ valor: T.jica.muestras, etiqueta: 'muestras JICA junto al target' }] : []),
+                ],
+              });
+              // Primero el país: las fichas de oro, cada una un punto en el mapa.
+              solo([110002, 110003], { 110002: { mineral: ['Oro'] }, 110003: { mineral: ['Oro'] } });
               marcoDe('Mapa 1 · Indicios', [
-                { color: '#FFD400', texto: 'Ocurrencias de oro', forma: 'punto' },
-                { color: '#C0C0C0', texto: 'Ocurrencias de plata', forma: 'punto' },
+                { color: '#FFD400', texto: 'Fichas seleccionadas de oro', forma: 'punto' },
+                { color: '#FFB020', texto: 'Fichas de ocurrencia (FOM) de oro', forma: 'punto' },
+                { color: '#C98BFF', texto: 'Depósitos USGS (MRDS)', forma: 'punto' },
                 { color: '#FF8A3D', texto: 'Muestras JICA (Au)', forma: 'punto' },
-              ], ['JICA', 'USGS MRDS', 'DEFOMIN', 'Fichas de ocurrencia']);
-              verTarget(5, 55, 14, 4500);
+              ], ['Fichas de ocurrencia minera (FOM)', 'Fichas seleccionadas', 'USGS MRDS', 'JICA', 'DEFOMIN']);
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 38, giro: -8, ms: 4500 });
               await conversar([
-                { quien: 'electrum', texto: '[curious] Segundo, los indicios: información antigua o indirecta que sugiere mineralización. Los informes de JICA, de Naciones Unidas, del USGS, de DEFOMIN, y los muestreos de proyectos anteriores.', al: () => orbitar(-24, 24_000) },
-                ...(T ? [{ quien: 'electrum' as const, texto: lecturaIndicios(T) }] : []),
-                { quien: 'chema', texto: '[chuckles] Una muestra así me pone contento, doctor. Pero ya sé lo que me va a decir.' },
-                { quien: 'electrum', texto: '[warmly] Que un indicio no es un recurso, ingeniero. Es una pista.' },
+                { quien: 'electrum', texto: '[curious] Segundo, los indicios: la información que sugiere mineralización. Y aquí está una de nuestras grandes fortalezas: las fichas de ocurrencia minera, las FOM levantadas en Honduras.', al: () => orbitar(-16, 22_000) },
+                { quien: 'electrum', texto: lecturaFichas(inventario) },
+                { quien: 'electrum', texto: '[serious] Todas se obtuvieron por análisis y digitalización hechos por geólogos profesionales calificados, ficha por ficha.' },
+                {
+                  quien: 'electrum',
+                  texto: lecturaFuentesIndicios(inventario),
+                  al: () => solo([110002, 110003, 110004, 800140, 401005], { 110002: { mineral: ['Oro'] }, 110003: { mineral: ['Oro'] }, 800140: { PAIS: ['Honduras'] }, 401005: { elemento: ['au'] } }),
+                },
+                ...(T ? [{ quien: 'electrum' as const, texto: `Ahora mire lo que hay alrededor de nuestro target. ${lecturaIndicios(T)}`, al: () => verTarget(5, 55, 14, 5000) }] : []),
+                { quien: 'chema', texto: '[chuckles] Con tantas fichas de oro alrededor me pongo contento, doctor. Pero ya sé lo que me va a decir.' },
+                { quien: 'electrum', texto: '[warmly] Que un indicio no es un recurso, ingeniero. Es una pista, y muy bien documentada.' },
               ]);
             },
           },
@@ -815,7 +854,7 @@ export function Recorrido({
               setEscena({ tipo: 'legal' });
               orbitar(40, 40_000);
               await conversar([
-                { quien: 'electrum', texto: 'Noveno, el marco legal. La superinteligencia lee y aplica el compendio: la Ley General de Minería y su Reglamento, la Ley General del Ambiente con el licenciamiento de MiAmbiente, y la normativa municipal y de consulta comunitaria.' },
+                { quien: 'electrum', texto: 'Noveno, el marco legal. La superinteligencia lee y aplica el compendio: la Ley General de Minería y su Reglamento, la Ley General del Ambiente con el licenciamiento ambiental de SERNA, y la normativa municipal y de consulta comunitaria.' },
                 { quien: 'electrum', texto: 'La legislación internacional la usamos solo como referencia: se trabaja con la ley hondureña vigente.' },
                 { quien: 'tatiana', texto: '[warmly] Y no lo dejamos solo: le preparamos la solicitud, acompañamos todo el trámite y el seguimiento, y le podemos recomendar un abogado.' },
                 { quien: 'electrum', texto: '[serious] Porque la inteligencia no sustituye al abogado ni da opiniones legales vinculantes, y las leyes cambian: siempre se confirma la versión vigente.' },
@@ -1336,7 +1375,7 @@ export function Recorrido({
                 },
                 { quien: 'electrum', texto: `[thoughtful] Esta es ${nombreParaDecir(conflicto!.concesion)}: pisa ${nf(conflicto!.ha, 1)} hectáreas de ${conflicto!.con}, el ${nf(conflicto!.pct)} por ciento de su superficie.` },
                 { quien: 'chema', texto: '[concerned] Ahí no hay planta que valga si la comunidad y el agua no están de acuerdo.' },
-                { quien: 'tatiana', texto: 'Por eso lo miramos primero. Esto, que antes eran semanas de escritorio, aquí lo tenemos al día en segundos, y es lo primero que va a preguntar MiAmbiente.' },
+                { quien: 'tatiana', texto: 'Por eso lo miramos primero. Esto, que antes eran semanas de escritorio, aquí lo tenemos al día en segundos, y es lo primero que va a preguntar SERNA.' },
               ]);
             },
           },
@@ -1463,7 +1502,7 @@ export function Recorrido({
                 { quien: 'electrum', texto: '[thoughtful] Tengo leídos los documentos legales: las reformas del Decreto 109-2019 a la Ley General de Minería y los formularios de INHGEOMIN, de exploración, explotación, beneficio, comercialización y declaración jurada.' },
                 { quien: 'chema', texto: '[curious] ¿Y está al día, doctor? Que la ley ha cambiado.' },
                 { quien: 'electrum', texto: '[serious] Al día. El Decreto 18-2024 prohibió concesiones en áreas protegidas y zonas de agua declaradas, y en junio de 2026 la Sala de lo Constitucional anuló en parte siete artículos, entre ellos los de plazos y consulta. Cuando le cito algo, le digo la fecha y la fuente.' },
-                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia de MiAmbiente, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
+                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia ambiental de SERNA, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
                 { quien: 'electrum', texto: '[warmly] Pregúntenos qué pide un trámite o qué dice un artículo y le contestamos citando el documento. En cada ficha, «Analizar» le hace el análisis legal y ambiental completo.' },
               ]);
             },

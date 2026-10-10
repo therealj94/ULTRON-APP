@@ -26,7 +26,7 @@ import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
-import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
+import { ALTO_COMPACTO_PX, ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
 import { callar, crearLocucion, desbloquear, escucharMudo, estaMudo, hablar, hablarDialogo, nuevoTurnoVoz, prepararRelleno, rellenar, silenciar, suena, tomarCortada, type LineaDialogo, type Locucion } from './voz';
 import { FrasesDelTurno, fraseDeEvento, interrumpidoDelTurno, nuevoIdTurno } from './frasesTurno';
 import { FRASES_GENERALES, FRASES_GENERALES_EN, fraseDeEspera, fraseDeTrabajo } from './trabajando';
@@ -1216,6 +1216,14 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     toda la altura.
   */
   const completo = vista !== 'chat';
+  /*
+   * «Más mapa»: el panel no puede quedar en una rendija donde la caja de preguntar se corta (en una
+   * laptop en pantalla completa, el 16 % son ~100 px y no cabían pestañas + caja). En compacto se ve
+   * lo esencial —pestañas, la última respuesta en una línea y la caja— y tocar la respuesta abre el
+   * hilo. Su alto mínimo es ALTO_COMPACTO_PX; el mapa (App.tsx) deja ese mismo espacio.
+   */
+  const compacto = !completo && alto <= ALTURAS.mapa + 0.02;
+  const ultima = compacto ? [...turnos].reverse().find((t) => t.de === 'electrum' && t.texto.trim()) : undefined;
 
   return (
     <aside
@@ -1224,7 +1232,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       }`}
       style={{
         // En Expedientes manda la clase (toda la altura); en Consulta manda la preferencia.
-        height: completo ? undefined : `${alto * 100}%`,
+        height: completo ? undefined : `max(${alto * 100}%, ${ALTO_COMPACTO_PX}px)`,
         transition: `transform .4s ease${arrastrando ? '' : ', height .25s ease'}`,
         transform: abierto ? 'none' : 'translateY(100%)',
       }}
@@ -1313,10 +1321,26 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
 
       {vista === 'chat' ? (
         <>
+          {compacto && (
+            <button
+              type="button"
+              onClick={() => onAlto(ALTURAS.dividido)}
+              className="flex w-full max-w-4xl mx-auto items-center gap-2 px-4 pt-2 text-left cursor-pointer group"
+              title="Ver la conversación"
+            >
+              <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: AMBAR }}>
+                {pensando ? 'Pensando…' : ultima ? 'Dr Electrum' : 'Consulta'}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#C9D4DA] group-hover:text-white">
+                {ultima ? ultima.texto.replace(/[*_#>`]/g, '').replace(/\s+/g, ' ') : 'Pregúntele lo que quiera; la respuesta se ve aquí.'}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-[#8FA3B0] group-hover:text-white">Ver ▴</span>
+            </button>
+          )}
           <div
             ref={hilo}
             onScroll={mirarPosicion}
-            className="relative flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto"
+            className={`relative flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto ${compacto ? 'hidden' : ''}`}
           >
             {!turnos.length && (
               <div className="space-y-3">
@@ -1529,7 +1553,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
           </div>
 
           {/* Hay algo nuevo y no estás mirando el final: se avisa, no se te arrastra. */}
-          {hayNuevo && (
+          {hayNuevo && !compacto && (
             <div className="pointer-events-none absolute inset-x-0 bottom-[68px] flex justify-center">
               <button
                 type="button"
@@ -1547,7 +1571,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               e.preventDefault();
               preguntar(texto);
             }}
-            className="flex gap-2 p-3 border-t border-white/10 w-full max-w-4xl mx-auto"
+            className={`flex gap-2 ${compacto ? 'px-3 pt-1.5 pb-2' : 'p-3 border-t border-white/10'} w-full max-w-4xl mx-auto`}
           >
             <input
               id="electrum-pregunta"
