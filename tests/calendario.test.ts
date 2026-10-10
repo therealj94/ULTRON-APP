@@ -528,6 +528,7 @@ test('cerebro: agenda y agendar van con sesión, se traducen a la línea del har
   const elegir = (mensaje: string, o: any = {}) => TURNO_H.herramientasSegunFrase(todas, { mensaje, ...o }).herramientas.map((t) => t.toolSpec?.name);
   for (const f of ['¿Qué tengo hoy?', '¿qué tengo mañana?', '¿Qué tengo el jueves?', 'agéndame una reunión con Ana el jueves a las 3', '¿Tengo algo libre el viernes en la tarde?', 'cómo está mi semana'])
     assert.ok(elegir(f).includes('agenda') && elegir(f).includes('agendar'), f);
-  assert.ok(!elegir('¿Cómo te fue hoy?').includes('agenda'), 'la charla no lleva el calendario');
+  // Auditoría del 10-oct: agenda y agendar van en el núcleo (siempre); la charla no pide el GRUPO del calendario.
+  assert.ok(!TURNO_H.herramientasSegunFrase(todas, { mensaje: '¿Cómo te fue hoy?' }).grupos.includes('calendario'), 'la charla no pide el calendario');
   assert.ok(elegir('sí', { esperaCalendario: true, esperaSi: true }).includes('agendar'), 'un «sí» a la propuesta lleva sus herramientas');
 });

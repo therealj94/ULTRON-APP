@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { AppAura } from './src/app/AppAura';
 import { ES_ELECTRUM } from './src/variante';
@@ -9,6 +9,11 @@ import { marcarActividad } from './src/lib/barreraOta';
 import { useRaizVacia } from './src/lib/recarga';
 import { modoDeArranque } from './src/entrada/enlace';
 import { RaizBurbuja } from './src/burbuja/Burbuja';
+import { fijarEntornoTelefono } from './src/telefono/capacidades';
+
+// Lo que cada superficie completa en este teléfono (F02, src/telefono/capacidades.ts): las manos del teléfono solo en
+// AU-RA y en Android. Va en cada turno (lib/api.ts), de la mesa y de la burbuja.
+fijarEntornoTelefono({ android: Platform.OS === 'android', electrum: ES_ELECTRUM });
 
 /**
  * El splash nativo (negro con el ícono) se queda hasta que la intro está pintada encima: negro sobre

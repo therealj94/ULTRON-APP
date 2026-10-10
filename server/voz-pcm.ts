@@ -39,6 +39,8 @@ export type PeticionVozPcm = {
   plataforma?: 'ultron' | 'electrum';
   vozPropia?: string;
   primera?: boolean;
+  /** La cuenta de la sesión: el hilo de la voz entre frases es solo suyo (server/voz.ts turnoDe). */
+  dueno?: string;
 };
 
 export type DepsVozPcm = {

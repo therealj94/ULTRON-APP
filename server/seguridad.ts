@@ -381,6 +381,10 @@ let claveCambiadaEn: (correo: string) => number | null = () => null;
 export function fijarClaveCambiadaEn(fn: (correo: string) => number | null) {
   claveCambiadaEn = fn;
 }
+/** F01: cuándo se le cerraron las llaves a un correo (cambio de clave, código revocado), o null. */
+export function claveCambiadaDe(correo: string): number | null {
+  return claveCambiadaEn(String(correo || '').trim().toLowerCase());
+}
 
 function anteriorALaClave(s: Sesion): boolean {
   const desde = claveCambiadaEn(s.correo.toLowerCase());

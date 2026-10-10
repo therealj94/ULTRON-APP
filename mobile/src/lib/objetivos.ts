@@ -47,7 +47,39 @@ export type VistaObjetivo = {
   actualizado: number;
   terminal: boolean;
   decisionesPendientes: number;
+  /** F01/F05: tareas cuya acción ya estaba aceptada al cancelar, y lo que terminó después (sin reactivar nada). */
+  enVueloAlCancelar?: string[];
+  hechosTardios?: { tareaId: string; estado: string; t: number }[];
 };
+
+/** F01: lo que contesta cancelar (server/objetivos.ts `Cancelacion`). Sin esto (servidor viejo): solo «solicitada». */
+export type CancelacionObjetivo = {
+  estado: 'pendientes-cancelados' | 'accion-ya-aceptada' | 'resultado-incierto';
+  tareas: { id: string; estado: 'cancelada' | 'ya-aceptada' | 'incierta' | 'sin-pendiente'; detalle?: string }[];
+  reintentable: boolean;
+  puntoSinRetorno: string;
+};
+
+/**
+ * Los cuatro estados de cancelar que se le dicen a la persona: cancelación solicitada / pendientes cancelados / acción ya
+ * aceptada (su resultado llega y se conserva) / resultado incierto (no se pudo dejar escrito: vuelve a intentarlo).
+ */
+export function lineaCancelacion(c: CancelacionObjetivo | null | undefined, idioma: 'es' | 'en' = 'es'): string {
+  const es = {
+    solicitada: 'Cancelación solicitada.',
+    'pendientes-cancelados': 'Cancelado: lo pendiente no se hará.',
+    'accion-ya-aceptada': 'Cancelado, pero una acción ya estaba aceptada: su resultado llegará y quedará anotado.',
+    'resultado-incierto': 'Pedí cancelarlo, pero no pude confirmar que todo quedó detenido. Vuelve a tocar «Cancelar» en un momento.',
+  };
+  const en = {
+    solicitada: 'Cancellation requested.',
+    'pendientes-cancelados': 'Cancelled: nothing pending will happen.',
+    'accion-ya-aceptada': 'Cancelled, but one action was already accepted: its result will arrive and be recorded.',
+    'resultado-incierto': 'I asked to cancel it but could not confirm everything stopped. Tap “Cancel” again in a moment.',
+  };
+  const t = idioma === 'en' ? en : es;
+  return t[c?.estado ?? 'solicitada'] || t.solicitada;
+}
 
 export type CambiosObjetivo = {
   revision: number;
@@ -67,7 +99,7 @@ export const ARMADO_MS = 1500;
 /* ------------------------------------------------------------------ lo que contesta el servidor */
 
 export type ResultadoObjetivo =
-  | { ok: true; objetivo: VistaObjetivo | null; repetida?: boolean; sinCambio?: boolean }
+  | { ok: true; objetivo: VistaObjetivo | null; repetida?: boolean; sinCambio?: boolean; cancelacion?: CancelacionObjetivo }
   /** `conflicto`: el objetivo cambió (409): `objetivo` es el de ahora y hay que mirarlo antes de decidir otra vez. */
   | { ok: false; codigo: string; conflicto: boolean; mensaje: string; objetivo?: VistaObjetivo | null; revision?: number };
 
@@ -108,7 +140,8 @@ const CONFLICTO = new Set(['revision', 'decision-vieja', 'ya-decidida', 'termina
  */
 export function interpretarRespuesta(r: { status: number; json: any }, idioma: 'es' | 'en' = 'es'): ResultadoObjetivo {
   const j = r.json || {};
-  if (r.status >= 200 && r.status < 300) return { ok: true, objetivo: (j.objetivo as VistaObjetivo) ?? null, ...(j.repetida ? { repetida: true } : {}), ...(j.sinCambio ? { sinCambio: true } : {}) };
+  if (r.status >= 200 && r.status < 300)
+    return { ok: true, objetivo: (j.objetivo as VistaObjetivo) ?? null, ...(j.repetida ? { repetida: true } : {}), ...(j.sinCambio ? { sinCambio: true } : {}), ...(j.cancelacion && typeof j.cancelacion === 'object' ? { cancelacion: j.cancelacion as CancelacionObjetivo } : {}) };
   const codigo = String(j.codigo || j.code || (r.status === 404 ? 'no-existe' : r.status));
   const conflicto = r.status === 409 || r.status === 404 || CONFLICTO.has(codigo);
   return {
@@ -153,6 +186,16 @@ export function crearClienteObjetivos(pedir: Pedir, idioma: () => 'es' | 'en' = 
         return r.status === 200 && r.json?.objetivo?.id === id ? (r.json.objetivo as VistaObjetivo) : null;
       } catch {
         return null;
+      }
+    },
+    /** Como `ver`, distinguiendo «ya no existe / no es tuyo» (404: se quita de la vista) de un fallo (se deja como estaba). */
+    async leer(id: string): Promise<{ estado: 'ok'; objetivo: VistaObjetivo } | { estado: 'no-existe' } | { estado: 'error' }> {
+      try {
+        const r = await pedir(`/api/objetivos/${enc(id)}`, { method: 'GET' });
+        if (r.status === 200 && r.json?.objetivo?.id === id) return { estado: 'ok', objetivo: r.json.objetivo as VistaObjetivo };
+        return r.status === 404 ? { estado: 'no-existe' } : { estado: 'error' };
+      } catch {
+        return { estado: 'error' };
       }
     },
     /** «Qué cambió desde que te fuiste»: lo nuevo después de la revisión `desde` (la última que vio este aparato). */
@@ -296,4 +339,170 @@ export function anuncioCambioEstado(antes: Pick<VistaObjetivo, 'id' | 'estado' |
   if (!antes || !ahora || antes.id !== ahora.id) return null;
   if (antes.estado === ahora.estado && antes.pausado === ahora.pausado) return null;
   return idioma === 'en' ? `${ahora.titulo}: ${etiquetaEstadoObjetivo(ahora, 'en')}` : `${ahora.titulo}: ${etiquetaEstadoObjetivo(ahora, 'es')}`;
+}
+
+/* ------------------------------------------------------------------ la vista que solo avanza (F05) */
+
+/**
+ * Un objetivo que llega (de una acción, del detalle o de una lista) entra solo si es MÁS NUEVO que el que se tiene (por
+ * su revisión, que el servidor sube en cada escritura). Una respuesta vieja que llega tarde no hace retroceder la vista.
+ * La misma revisión no reemplaza (es lo mismo; así no hay parpadeo).
+ */
+export function fusionarObjetivo(xs: readonly VistaObjetivo[], o: VistaObjetivo | null | undefined): VistaObjetivo[] {
+  if (!o || typeof o.id !== 'string') return [...xs];
+  const previo = xs.find((x) => x.id === o.id);
+  if (previo && !(Number(o.revision) > Number(previo.revision))) return [...xs];
+  return ordenar([o, ...xs.filter((x) => x.id !== o.id)]);
+}
+
+/**
+ * Una lista entera del servidor, por entidad: de cada objetivo queda el de revisión mayor (la lista vieja no pisa una
+ * decisión ya confirmada). Lo que no vino en la lista se quita SOLO si la lista es completa (`completo`): una lista
+ * parcial (algún objetivo no se pudo leer) no borra nada.
+ */
+export function fusionarListaObjetivos(xs: readonly VistaObjetivo[], lista: readonly VistaObjetivo[], o: { completo: boolean }): VistaObjetivo[] {
+  const llegan = new Map(lista.filter((x) => x && typeof x.id === 'string').map((x) => [x.id, x] as const));
+  const out: VistaObjetivo[] = [];
+  for (const x of xs) {
+    const n = llegan.get(x.id);
+    if (n) {
+      out.push(Number(n.revision) > Number(x.revision) ? n : x);
+      llegan.delete(x.id);
+    } else if (!o.completo) out.push(x);
+  }
+  for (const n of llegan.values()) out.push(n);
+  return ordenar(out);
+}
+
+/** Quita un objetivo que el servidor dijo que ya no existe (o no es de esta cuenta): la «lápida» del cliente. */
+export const quitarObjetivo = (xs: readonly VistaObjetivo[], id: string): VistaObjetivo[] => xs.filter((x) => x.id !== id);
+
+const ordenar = (xs: VistaObjetivo[]) => xs.sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0));
+
+export type EstadoAlmacenObjetivos = {
+  objetivos: VistaObjetivo[];
+  cargado: boolean;
+  error: string | null;
+  vistos: VistosObjetivos;
+  /** Lo último que dijo `cambios` por objetivo, con la revisión desde la que se pidió. */
+  cambios: Record<string, { desde: number; revision: number; c: CambiosObjetivo }>;
+  /** La cuenta de esta sesión y su generación: sube al salir o cambiar de cuenta; lo pedido antes ya no se aplica. */
+  cuenta: string | null;
+  generacion: number;
+};
+
+/**
+ * EL ALMACÉN DE LOS OBJETIVOS (sin React): lo usa el teléfono (mobile/src/objetivos/useObjetivos.ts) y se prueba en Node.
+ *  · Cada respuesta se aplica solo si es de la MISMA generación de sesión en que se pidió (salir y entrar con otra cuenta
+ *    con pedidos en vuelo no deja datos ni efectos de la anterior).
+ *  · La lista y las acciones se funden por entidad y revisión (nunca hacia atrás); una lista parcial no borra.
+ *  · Un «ya no existe» del detalle quita esa entidad.
+ */
+export function crearAlmacenObjetivos(
+  cliente: Pick<ClienteObjetivos, 'listar' | 'cambios'>,
+  o: { leerVistos?: () => Promise<VistosObjetivos | null>; guardarVistos?: (v: VistosObjetivos) => void; ahora?: () => number } = {}
+) {
+  let estado: EstadoAlmacenObjetivos = { objetivos: [], cargado: false, error: null, vistos: {}, cambios: {}, cuenta: null, generacion: 0 };
+  const oyentes = new Set<() => void>();
+  const poner = (c: Partial<EstadoAlmacenObjetivos>) => {
+    estado = { ...estado, ...c };
+    for (const f of oyentes) f();
+  };
+  const ahora = o.ahora || Date.now;
+  let vistosLeidos = false;
+  let enVuelo: { generacion: number; p: Promise<void> } | null = null;
+
+  async function leerVistos() {
+    if (vistosLeidos || !o.leerVistos) return;
+    vistosLeidos = true;
+    try {
+      const v = await o.leerVistos();
+      if (v && typeof v === 'object') poner({ vistos: { ...v, ...estado.vistos } });
+    } catch {
+      /* sin lo guardado: todo cuenta como nuevo, que es lo honesto */
+    }
+  }
+
+  const vaciar = (cuenta: string | null) => {
+    enVuelo = null;
+    poner({ objetivos: [], cargado: false, error: null, cambios: {}, cuenta, generacion: estado.generacion + 1 });
+  };
+
+  return {
+    foto: () => estado,
+    suscribir(f: () => void) {
+      oyentes.add(f);
+      return () => void oyentes.delete(f);
+    },
+    generacion: () => estado.generacion,
+    /** La sesión es de `cuenta` (null: sin sesión). Otra cuenta, o salir: se olvida todo y sube la generación. */
+    sesion(cuenta: string | null) {
+      const c = cuenta ? String(cuenta).trim().toLowerCase() : null;
+      if (c === estado.cuenta) return;
+      vaciar(c);
+    },
+    /** Al salir de la sesión: nada de la persona anterior se queda a la vista (y lo que esté en vuelo ya no aplica). */
+    olvidar() {
+      vaciar(null);
+    },
+    /** Lo que contestó el servidor (acción, detalle o el objetivo de ahora de un 409), si es de esta generación y más nuevo. */
+    aplicar(x: VistaObjetivo | null | undefined, generacion = estado.generacion) {
+      if (generacion !== estado.generacion || !x) return;
+      const objetivos = fusionarObjetivo(estado.objetivos, x);
+      if (objetivos.length !== estado.objetivos.length || objetivos.some((y, i) => y !== estado.objetivos[i])) poner({ objetivos });
+    },
+    /** El servidor dijo que ya no existe (o no es de esta cuenta). */
+    quitar(id: string, generacion = estado.generacion) {
+      if (generacion !== estado.generacion || !estado.objetivos.some((x) => x.id === id)) return;
+      poner({ objetivos: quitarObjetivo(estado.objetivos, id) });
+    },
+    marcarVisto(x: Pick<VistaObjetivo, 'id' | 'revision'>) {
+      const v = anotarVista(estado.vistos, x.id, x.revision, ahora());
+      if (JSON.stringify(v) === JSON.stringify(estado.vistos)) return;
+      poner({ vistos: v });
+      o.guardarVistos?.(v);
+    },
+    /** Pregunta la lista (una a la vez por generación) y los cambios del más reciente. */
+    refrescar(): Promise<void> {
+      if (enVuelo && enVuelo.generacion === estado.generacion) return enVuelo.p;
+      const gen = estado.generacion;
+      const p: Promise<void> = (async () => {
+        await leerVistos();
+        const r = await cliente.listar();
+        if (gen !== estado.generacion) return; // de otra sesión: se descarta
+        if (r.ok === false) {
+          if (r.sinSesion) poner({ objetivos: [], cargado: true, error: null, cambios: {} });
+          else poner({ error: r.mensaje });
+          return;
+        }
+        poner({ objetivos: fusionarListaObjetivos(estado.objetivos, r.objetivos, { completo: r.completo }), cargado: true, error: null });
+        const rec = objetivoReciente(estado.objetivos);
+        if (!rec) return;
+        const desde = desdeParaCambios(estado.vistos, rec);
+        const ya = estado.cambios[rec.id];
+        if (ya && ya.desde === desde && ya.revision === rec.revision) return;
+        const c = await cliente.cambios(rec.id, desde);
+        if (gen !== estado.generacion || !c) return;
+        poner({ cambios: { ...estado.cambios, [rec.id]: { desde, revision: rec.revision, c } } });
+      })().finally(() => {
+        if (enVuelo?.p === p) enVuelo = null;
+      });
+      enVuelo = { generacion: gen, p };
+      return p;
+    },
+  };
+}
+
+export type AlmacenObjetivos = ReturnType<typeof crearAlmacenObjetivos>;
+
+/**
+ * F04: ¿el aviso «decision» que se tocó sigue valiendo? Solo si el objetivo de ahora (pedido al abrir) tiene esa decisión
+ * sin elegir y en esa revisión. Si no, se abre el objetivo y se dice «cambió mientras tanto» (no se aplica el botón).
+ * Para quien maneja los avisos en el teléfono (otro equipo): el servidor ya lo verifica al mandar; esto es al abrir.
+ */
+export function avisoDecisionVigente(aviso: { objetivoId?: string; decisionId?: string; revision?: number | string; tareaId?: string }, actual: VistaObjetivo | null | undefined): boolean {
+  if (!actual || actual.id !== aviso.objetivoId || esTerminalObjetivo(actual)) return false;
+  if (aviso.tareaId) return actual.tareas.includes(String(aviso.tareaId));
+  const d = actual.decisiones.find((x) => x.id === aviso.decisionId);
+  return !!d && !d.elegida && Number(d.version) === Number(aviso.revision);
 }

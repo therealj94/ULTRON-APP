@@ -28,6 +28,7 @@
  */
 import crypto from 'node:crypto';
 import { almacenDurable, avanzarOperacion, claveDe, crearUnaVez, hashArgumentos, leerDurable, leerOperacion, modificarDurable, registrarOperacion, type AlmacenDurable, type Operacion, type ReciboOperacion } from './durable';
+import { pasarPuerta, type MotivoPuerta } from './puerta-efecto';
 
 export type CanalEnvio = 'correo' | 'whatsapp';
 export type Entrega = 'aceptado' | 'entregado' | 'fallido' | 'incierto';
@@ -55,7 +56,9 @@ export type ResultadoEnvio<R = unknown> = {
   detalle?: string;
   datos?: R;
   /** Por qué no se intentó. */
-  motivo?: 'aprobacion-no-coincide' | 'almacen' | 'en-curso' | 'repeticion-incierta';
+  motivo?: 'aprobacion-no-coincide' | 'almacen' | 'en-curso' | 'repeticion-incierta' | 'sin-autoridad';
+  /** F01: por qué la puerta del efecto no lo dejó salir (lib/puerta-efecto.ts). Con `sin-autoridad` (o `almacen`). */
+  autoridad?: MotivoPuerta;
   /** `repeticion-incierta`: la operación igual de antes que sigue sin constar. */
   previa?: string;
 };
@@ -145,6 +148,9 @@ type PedidoEnvio<R> = {
   efecto: () => Promise<SalidaEnvio<R>>;
   reconciliar: (operacion: string) => Promise<Reconciliacion>;
   almacen?: AlmacenDurable;
+  /** F01: hasta cuándo vale la propuesta aprobada y cuándo se preparó (la puerta del efecto los vuelve a mirar). */
+  vence?: number;
+  preparado?: number;
 };
 
 /** Un hash corto para el log (nunca el valor: ni el id del mensaje, ni la cuenta). */
@@ -222,6 +228,13 @@ async function enviarUnaVezSinLinea<R = unknown>(o: PedidoEnvio<R>): Promise<Res
       await avanzarOperacion({ dueno: o.dueno, requestId: o.operacion, a: 'failed', recibo: { efecto: 'none', detalle: 'no se despachó: no pude anotarlo' }, almacen: a }).catch(() => undefined);
       return { ...base, estado: 'failed', motivo: 'almacen', detalle: anotado.detalle };
     }
+  }
+  // 3b) LA PUERTA DEL EFECTO (F01, lib/puerta-efecto.ts): dueño, vencimiento, acceso, lease del ejecutor, vínculo
+  //     (tarea/objetivo no cancelados), lápida y el RECLAMO de la operación: el punto de no retorno. Si no pasa, no sale.
+  const puerta = await pasarPuerta({ dueno: o.dueno, operacion: o.operacion, huella: o.huella, vence: o.vence, preparado: o.preparado, almacen: a });
+  if (puerta.ok === false) {
+    await avanzarOperacion({ dueno: o.dueno, requestId: o.operacion, a: 'failed', recibo: { efecto: 'none', detalle: `no se despachó: ${puerta.motivo}` }, almacen: a }).catch(() => undefined);
+    return { ...base, estado: 'failed', motivo: puerta.motivo === 'almacen' ? 'almacen' : 'sin-autoridad', autoridad: puerta.motivo, detalle: puerta.detalle };
   }
   const desp = await avanzarOperacion({ dueno: o.dueno, requestId: o.operacion, a: 'dispatched', almacen: a });
   if (desp.ok === false) {

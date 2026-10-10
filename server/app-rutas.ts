@@ -11,6 +11,8 @@
  *                                  durante la conversación, `event: ambiente` + `data: {"sonido","on"}`
  *                                  (el sonido de fondo de una tarea lenta; lib/acciones-app.ts)
  *   POST /api/app/contexto      { pantalla, chatAbierto?, contactos, borrador? }
+ *   POST /api/app/recibo        { id, ok, detalle? }: lo que hizo el teléfono con una acción (lib/recibos-aparato.ts)
+ *   POST /api/app/aparato       el latido del aparato: tipo, versión, habilidades y permisos (lib/aparatos.ts)
  *
  * Todo con la sesión de la mesa: el perfil, el canal y el contexto son de un CORREO, y el correo sale
  * de la sesión firmada, nunca del cuerpo.
@@ -20,6 +22,9 @@ import { almacenDurable, leerPerfilSeguro, PerfilNoDisponible, validarCambios } 
 import { guardarPerfilGobernado, hechoEnValido, supresionesPerfil } from '../lib/olvido';
 import { accionesDesde, ambitoApp, aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
+import { recibirRecibo } from '../lib/recibos-aparato';
+import { anotarEfectoReal } from '../lib/honestidad';
+import { anotarLatido, latidoValido } from '../lib/aparatos';
 
 /** Teléfonos (o pestañas) escuchando a la vez por cuenta; al pasarlo se desaloja el canal más viejo. */
 export { MAX_CANALES_POR_CUENTA };
@@ -186,5 +191,37 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     // Del aparato que lo manda: dos teléfonos de la misma persona no se pisan el contexto.
     guardarContexto(ambitoApp(s.correo, req.headers['x-aura-aparato']), v.contexto);
     return res.json({ ok: true, contactos: v.contexto.contactos.length, honesto: true });
+  });
+
+  /**
+   * EL RECIBO DEL APARATO (F02; lib/recibos-aparato.ts): lo que hizo el teléfono con una acción que le mandó AU-RA. Solo
+   * con su sesión, del mismo aparato al que salió, por el id de esa acción; el primero manda (idempotente). Con `ok`, el
+   * efecto queda en el registro de la cuenta (lib/honestidad.ts): solo así AU-RA puede decir que quedó.
+   */
+  app.post('/api/app/recibo', d.exigirMesa, d.limitar(120, 60_000, 'app-recibo'), (req, res) => {
+    const s = d.sesionDe(req);
+    if (!s) return sinSesion(res);
+    const r = recibirRecibo(s.correo, req.body || {}, aparatoValido(req.headers['x-aura-aparato']));
+    if (r.estado === 'aceptado') {
+      if (r.efecto) anotarEfectoReal(s.correo, r.efecto);
+      console.log(`[recibos] ${r.tipo}: ${r.ok ? 'hecho' : `falló${r.detalle ? ` (${r.detalle.slice(0, 60)})` : ''}`}`);
+      return res.json({ ok: true, estado: r.estado, honesto: true });
+    }
+    if (r.estado === 'repetido') return res.json({ ok: true, estado: r.estado, honesto: true });
+    // Un id que no salió para esta cuenta (o ya venció, o de otro aparato): no se inventa ninguna confirmación.
+    return res.status(409).json({ ok: false, estado: r.estado, error: 'Ese recibo no es de una acción que esté esperando.', honesto: true });
+  });
+
+  /**
+   * EL LATIDO DEL APARATO (lib/aparatos.ts): qué es, qué sabe hacer, qué permisos tiene y su versión. Queda en el registro
+   * durable de la cuenta (sobrevive a un despliegue) y el turno lleva una línea con los aparatos en línea.
+   */
+  app.post('/api/app/aparato', d.exigirMesa, d.limitar(30, 60_000, 'app-aparato'), async (req, res) => {
+    const s = d.sesionDe(req);
+    if (!s) return sinSesion(res);
+    const a = latidoValido(aparatoValido(req.headers['x-aura-aparato']), req.body);
+    if (!a) return res.status(400).json({ error: 'Falta el aparato o su forma no vale.', honesto: true });
+    const r = await anotarLatido(s.correo, a);
+    return res.json({ ok: true, durable: r.guardado, honesto: true });
   });
 }

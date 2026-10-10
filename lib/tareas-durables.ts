@@ -148,7 +148,8 @@ export type Decision = {
   vinculo?: Vinculo;
 };
 
-export type DecisionResuelta = { id: string; opcion: OpcionId; t: number; operacion?: string };
+/** `efecto` (F01): la operación de efecto que esa aprobación autorizó (`envio-<canal>-<intento>`): cancelar la revoca. */
+export type DecisionResuelta = { id: string; opcion: OpcionId; t: number; operacion?: string; efecto?: string };
 export type Resultado = { id: string; resumen: string; evidencias: Evidencia[]; parcial: string[]; pendiente: string[]; t: number };
 
 export type Origen = { kind: 'chat' | 'api' | 'tarea-en-curso' | 'computadora'; turnoId?: string; conversacion?: string };

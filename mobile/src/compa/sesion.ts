@@ -336,6 +336,18 @@ export class ControlSesion {
   }
 
   /**
+   * Contestar la llamada del avatar (o «Hablar»): SIEMPRE una sesión nueva (José, 10-oct: «al contestar salió colgada»).
+   * Una que quedara montada de antes —abierta con la app detrás, de una llamada que ya se colgó, con el pase de otra
+   * conversación— no se reutiliza: la persona contesta AHORA y la conversación empieza ahora. En una llamada de PULSE no
+   * se abre (como `iniciar`: queda anotado para cuando cuelgue).
+   */
+  iniciarNueva(): boolean {
+    if (this.v.suspendida) return this.iniciar();
+    this.abrir({ silenciada: false });
+    return true;
+  }
+
+  /**
    * Silenciado SIN sesión (se silenció mucho rato):
    * nadie escucha, ni la sesión ni el oído del teléfono (vozOcupaMicrofono: dormida). Despertar la reabre.
    */

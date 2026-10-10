@@ -7,7 +7,7 @@
  * leer el pedido (prefill), y la cobertura en paralelo (lib/cerebro-rapido.ts) mandaba el mismo pedido entero otra vez
  * al segundo modelo. Aquí, sin red y sin modelo, se elige qué herramientas van en ESTE turno:
  *
- *  · la charla, un saludo o una pregunta simple: solo `buscar_web` (un dato de hoy se busca; ninguna mano privada);
+ *  · la charla, un saludo o una pregunta simple: el núcleo (abajo), nada más;
  *  · lo que pide una acción: las herramientas de esa acción (un mensaje → WhatsApp, el chat de AU-RA, el correo y el
  *    círculo; «recuérdame» → recordatorio y la llamada de AU-RA; «llama a» → llamar; la computadora, los documentos,
  *    investigar, la app, la cartera…);
@@ -16,8 +16,14 @@
  *    respuesta anterior empujaba la herramienta en turnos que hablaban de otra cosa);
  *  · ANTE LA DUDA, TODAS: un verbo de acción que no cae en ningún grupo, o un «sí» a algo que no se sabe qué es.
  *
+ * EL NÚCLEO VA SIEMPRE (auditoría del 10-oct: en 3 días el 55 % de los turnos hablados llevó solo `buscar_web`, y los 8
+ * «prometió sin herramienta» del 10-oct pasaron con un subconjunto de 1 a 13 de 29; solo el 44 % se recuperaba en la
+ * re-pregunta, 0,7–2,1 s más). Además de lo que pide la frase va HERRAMIENTAS_NUCLEO (buscar, recordar, llamar, WhatsApp,
+ * correo, el calendario, la tarea, abrir una pantalla) y las manos del teléfono (HERRAMIENTAS_NUCLEO_EXTRA). Medido con
+ * las 29: todas pesan ~20 100 car.; el núcleo ~9 200 car. (~2,9 k fichas), la mitad de todas.
+ *
  * Nunca se pierde una mano que hacía falta: si el modelo promete algo sin la herramienta (prometeSinHacer), server.ts le
- * vuelve a pedir que lo cumpla con TODAS las herramientas (cumplirLoDicho). Bedrock no reutiliza lo leído entre turnos
+ * vuelve a pedir que lo cumpla con TODAS las herramientas (cumplirLoDicho) y sin el filtro de «fuera de tema». Bedrock no reutiliza lo leído entre turnos
  * para GLM-5 ni Kimi (lib/prompt-voz.ts), así que cambiar las herramientas turno a turno no le cuesta nada al siguiente;
  * el system del Qwen del nodo (el que sí reutiliza) no cambia: las herramientas no van ahí.
  */
@@ -52,7 +58,39 @@ export type EleccionHerramientas = {
   grupos: string[];
   /** Van todas (ante la duda). */
   todas: boolean;
+  /** Cuántas de las ofrecidas son del núcleo (las que van siempre). */
+  nucleo: number;
 };
+
+/**
+ * EL NÚCLEO: va en todo turno hablado, pida lo que pida la frase (ver arriba). Son las manos que más se prometen
+ * («te llamo», «te lo recuerdo», «le escribo», «lo agendo»): con ellas a mano, el modelo cumple en la primera vuelta.
+ */
+export const HERRAMIENTAS_NUCLEO: readonly string[] = [
+  'buscar_web',
+  'recordatorio',
+  'llamarme',
+  'llamar_contacto',
+  'llamar_numero',
+  'whatsapp',
+  'correo',
+  'agenda',
+  'agendar',
+  'tarea',
+  'abrir_pantalla',
+];
+
+/**
+ * LAS MANOS DEL TELÉFONO (la música, pausar, abrir una app, cómo llegar…): otro equipo las está agregando. Sus nombres
+ * van aquí (se lee en cada turno, no al cargar el módulo) y entran en el núcleo; un pedido del teléfono («pon música»,
+ * «abre Spotify») ya no se queda sin manos: lleva estas y el núcleo. Vacía hasta que lleguen.
+ */
+export const HERRAMIENTAS_NUCLEO_EXTRA: string[] = ['abrir_en_telefono', 'alarma_telefono', 'sms_telefono', 'evento_telefono'];
+
+/** Las herramientas que van siempre (el núcleo y las del teléfono). */
+export function nombresDelNucleo(): string[] {
+  return [...new Set([...HERRAMIENTAS_NUCLEO, ...HERRAMIENTAS_NUCLEO_EXTRA])];
+}
 
 /** Los grupos de manos y sus herramientas (las que no tiene el turno simplemente no están). */
 const GRUPOS: Record<string, readonly string[]> = {
@@ -83,6 +121,8 @@ const GRUPOS: Record<string, readonly string[]> = {
   mision: ['mision'],
   circulo: ['circulo'],
   sistema: ['estado_sistema'],
+  // Las manos del teléfono (la música, una app, cómo llegar): las mismas del núcleo extra.
+  telefono: HERRAMIENTAS_NUCLEO_EXTRA,
 };
 
 const plano = (s: string) =>
@@ -146,8 +186,19 @@ const PIDE: Array<[string, RegExp]> = [
  */
 const ACCION_SIN_GRUPO = /\b(cierr\w*|cerr\w*|pon(me|lo|la|le|elo|ga|gas)?|poner\w*|pongas?|cambi\w*|apag\w*|encend\w*|enciend\w*|prend\w*|activ\w*|desactiv\w*|borr\w*|descart\w*|compart\w*|guard\w*|anot\w*|apunt\w*|olvid\w*|cancel\w*|hazlo|hagale|haz|hazme|hagas|haga|encarga\w*|gestion\w*|consigue\w*|reserv\w*|compr\w*|pide(me|le)?|pidas)\b/;
 
-/** Lo que solo hace el teléfono o ninguna mano del cerebro (la cámara, la música, cantar): no pide herramientas. */
-const DEL_TELEFONO = /\b(camara\w*|foto\w*|lo que ves|lo que veo|musica|cancion\w*|canta\w*|cantes|reproduc\w*|spotify|youtube|playlist|radio|volumen|sube(le)?|baja(le)?)\b/;
+/**
+ * Lo que hace el teléfono (la cámara, la música, pausar, una app, cómo llegar, la linterna): las manos del teléfono
+ * (HERRAMIENTAS_NUCLEO_EXTRA) y el núcleo. Antes no llevaba NINGUNA herramienta (auditoría del 10-oct); ahora solo no
+ * cuenta como «ante la duda, todas».
+ */
+const DEL_TELEFONO =
+  /\b(camara\w*|foto\w*|lo que ves|lo que veo|musica|cancion\w*|canta\w*|cantes|reproduc\w*|spotify|youtube|playlist|radio|volumen|sube(le)?|baja(le)?|pausa\w*|reanuda\w*|play|siguiente (cancion|tema|rola)|la (otra|anterior)|como llego|llevame|ruta (a|para|hacia)|direccion(es)? (a|para|de)|waze|maps?|mapa\w*|navega(r|cion)? (a|hasta|hacia)|linterna|wifi|bluetooth|brillo|modo avion|no molestar)\b/;
+
+/**
+ * Lo que sigue a lo anterior sin palabras de mensajes («y que traiga pan», «agrégale que llego a las 8», «mejor a las
+ * 4»): tras un WhatsApp o un correo de AU-RA, es el mismo mensaje.
+ */
+const SIGUE_A_LO_ANTERIOR = /^(y que|que|y tambien|tambien|ademas|agrega\w*|ponle|pon que|dile tambien|nomas que|y dile)\b/;
 
 /** Los grupos que pide un texto. */
 function gruposDe(texto: string, contactos: readonly string[] = []): Set<string> {
@@ -180,6 +231,32 @@ function contestaALoAnterior(mensaje: string): boolean {
   return /^\s*(no|nel|mejor no|otra vez|de nuevo|igual|eso|ese|esa|ok(ay)?|listo|claro|perfecto|hazlo|hagale)\b/.test(plano(mensaje));
 }
 
+/** ¿Sigue a lo anterior (corto, empieza por «y», «que», «agrégale»…)? */
+function sigueALoAnterior(mensaje: string): boolean {
+  const m = String(mensaje || '').trim();
+  // Una pregunta («¿y qué más hay?», «y qué tal el clima») cambia de tema: el «qué» con tilde pregunta, el «que» no.
+  if (/[¿?]|^y\s+qu[ée]\s+(mas|más|tal|hay|onda|paso|pasó)\b|^qu[ée]\s+(mas|más|tal|hay|onda|paso|pasó)\b|^(y\s+)?qué\b/i.test(m)) return false;
+  const p = plano(m);
+  return p.split(' ').filter(Boolean).length <= 14 && SIGUE_A_LO_ANTERIOR.test(p);
+}
+
+/**
+ * LO QUE AU-RA OFRECIÓ Y LA PERSONA CONFIRMA (auditoría del 10-oct): un «sí», «dale», «mándalo» a «¿Te lo mando por
+ * correo?», o lo que sigue a un WhatsApp sin palabras de mensajes («y que traiga pan»). Devuelve las herramientas del
+ * grupo de esa oferta (o de lo que AU-RA acaba de hacer), para que el filtro de «fuera de tema» (server.ts) no las quite
+ * y para que vayan en el turno. Vacío si el turno no contesta a lo anterior.
+ */
+export function herramientasDeLaOferta(mensaje: string, anterior: string | undefined, contactos: readonly string[] = []): string[] {
+  if (!anterior || !String(mensaje || '').trim()) return [];
+  const confirma = contestaALoAnterior(mensaje) && !analizarRespuesta(mensaje).niega;
+  const grupos = gruposDe(anterior, contactos);
+  const sigue = sigueALoAnterior(mensaje) && (grupos.has('whatsapp') || grupos.has('correo') || grupos.has('mensajes'));
+  if (!confirma && !sigue) return [];
+  const nombres = new Set<string>();
+  for (const g of grupos) for (const n of GRUPOS[g] || []) nombres.add(n);
+  return [...nombres];
+}
+
 /**
  * Las herramientas de este turno hablado, de entre `todas` (las que el teléfono y la cuenta pueden: herramientasDelTurno),
  * en el mismo orden. Ver arriba.
@@ -195,7 +272,9 @@ export function herramientasSegunFrase(todas: readonly Tool[], ctx: ContextoHerr
   // Una pregunta suya de varias palabras («¿Y tú cómo pasaste la semana?») cambia de tema; «¿a cuál?» no.
   const palabras = plano(mensaje).split(' ').filter(Boolean).length;
   const contestaOferta = ofrecio && !pidio && (palabras <= 2 || (palabras <= 5 && !/[¿?]/.test(mensaje)));
-  if (ctx.anterior && (responde || contestaOferta)) for (const g of gruposDe(ctx.anterior, ctx.contactos)) grupos.add(g);
+  // Lo que sigue a un WhatsApp o un correo sin palabras de mensajes («y que traiga pan»): lo mismo.
+  const sigue = sigueALoAnterior(mensaje);
+  if (ctx.anterior && (responde || contestaOferta || sigue)) for (const g of gruposDe(ctx.anterior, ctx.contactos)) grupos.add(g);
   // Lo que espera su decisión: sus herramientas (cambiarlo, releerlo, mandarlo).
   if (ctx.esperaWhatsapp) grupos.add('whatsapp');
   if (ctx.esperaCorreo) grupos.add('correo');
@@ -209,11 +288,22 @@ export function herramientasSegunFrase(todas: readonly Tool[], ctx: ContextoHerr
   if (ctx.conTarea) grupos.add('tarea');
   // Ante la duda, todas: un verbo de acción que ningún grupo reconoce, o un «sí» a algo que no se sabe qué es.
   const p = plano(mensaje);
-  const dudaAccion = !pidio && ACCION_SIN_GRUPO.test(p) && !DEL_TELEFONO.test(p);
+  const delTelefono = DEL_TELEFONO.test(p);
+  // Lo del teléfono: sus manos (en el núcleo) y el núcleo; nunca «ante la duda, todas».
+  if (delTelefono) grupos.add('telefono');
+  const dudaAccion = !pidio && ACCION_SIN_GRUPO.test(p) && !delTelefono;
   const dudaSi = responde && grupos.size === 0 && (ofrecio || !!ctx.esperaSi);
-  if (dudaAccion || dudaSi) return { herramientas: [...todas], grupos: [...grupos, 'todas'], todas: true };
-  const nombres = new Set<string>(GRUPOS.base);
+  if (dudaAccion || dudaSi) return { herramientas: [...todas], grupos: [...grupos, 'todas'], todas: true, nucleo: 0 };
+  // El núcleo va siempre (ver arriba); lo de la frase, encima.
+  const nucleo = new Set<string>(nombresDelNucleo());
+  const nombres = new Set<string>([...GRUPOS.base, ...nucleo]);
   for (const g of grupos) for (const n of GRUPOS[g] || []) nombres.add(n);
   const herramientas = todas.filter((t) => nombres.has(String(t.toolSpec?.name || '')));
-  return { herramientas, grupos: [...grupos], todas: herramientas.length === todas.length };
+  return { herramientas, grupos: [...grupos], todas: herramientas.length === todas.length, nucleo: todas.filter((t) => nucleo.has(String(t.toolSpec?.name || ''))).length };
+}
+
+/** La línea del log del turno: «herramientas ofrecidas N/29 (núcleo 11+intención whatsapp,mensajes)». */
+export function lineaHerramientasOfrecidas(e: EleccionHerramientas, total: number): string {
+  if (e.todas) return `herramientas ofrecidas ${e.herramientas.length}/${total} (todas${e.grupos.length ? `: ${e.grupos.join(',')}` : ''})`;
+  return `herramientas ofrecidas ${e.herramientas.length}/${total} (núcleo ${e.nucleo}+intención ${e.grupos.join(',') || 'ninguna'})`;
 }

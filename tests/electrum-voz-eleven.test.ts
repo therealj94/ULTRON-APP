@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MODELO_PRIMERA_OMISION, guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
+import { MODELO_ELEVEN, guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
 import { abrirVozEnVivo, expresar, hablar } from '../server/voz';
 import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio, topeScribe, RESERVA_RESPALDO_MS } from '../lib/oido';
 import { presupuesto, PRESUPUESTO_OIDO_MS, MINIMO_UTIL_MS } from '../lib/presupuesto';
@@ -43,19 +43,20 @@ const mp3 = () => new Response(new Uint8Array(4000).fill(0xff), { status: 200, h
 
 test('el guion: el tono de la emoción delante, las marcas en español pasadas a v4, las cifras para v4', () => {
   const g = guionEleven('Buenas tardes, José. [mmm] Tiene 3,4 g/t en 1.250 ha. [risa] Dr Electrum le arma la ficha.', 'feliz', preparar);
-  assert.equal(g, '[warmly] Buenas tardes, José. [thoughtful] Tiene 3,4 gramos por tonelada en 1.250 hectáreas. [laughs] Doctor Electrum le arma la ficha.');
+  // La política de etiquetas (lib/etiquetas-voz.ts): un tono al comienzo, una reacción; [mmm] es un tono a mitad: no va.
+  assert.equal(g, '[warmly] Buenas tardes, José. Tiene 3,4 gramos por tonelada en 1.250 hectáreas. [laughs] Doctor Electrum le arma la ficha.');
   // Sereno no lleva etiqueta: una en cada frase suena actuada.
   assert.equal(guionEleven('Hay 206 concesiones.', 'neutral', preparar), 'Hay 206 concesiones.');
   // Las que no suman se quitan, las pausas son puntos suspensivos, las de la oración (en inglés) quedan.
   assert.equal(guionEleven('Listo [beso]. [pausa] Sigo.', 'neutral', preparar), 'Listo.... Sigo.');
-  assert.equal(guionEleven('[softly, reverent] Amén.', 'oracion', preparar), '[softly, reverent] Amén.');
+  assert.equal(guionEleven('[softly, reverent] Amén.', 'oracion', preparar), '[softly] Amén.', 'sin tonos compuestos');
   // Una etiqueta desconocida en español no se lee en voz alta.
   assert.equal(guionEleven('Mire [carcajada estruendosa] esto.', 'neutral', preparar), 'Mire esto.');
   // Sin palabras no hay nada que decir.
   assert.equal(guionEleven('[risa] [suspiro]', 'feliz', preparar), '');
-  // Como mucho cuatro etiquetas por trozo.
+  // Una reacción por turno (antes, cuatro por trozo: sonaba a actor).
   const muchas = guionEleven('a [risa] b [risa] c [risa] d [risa] e [risa] f', 'neutral', preparar);
-  assert.equal((muchas.match(/\[laughs\]/g) || []).length, 4);
+  assert.equal((muchas.match(/\[laughs\]/g) || []).length, 1);
 });
 
 test('la voz: Jorge para Dr Electrum; AU-RA con su voz v4 propia', () => {
@@ -145,14 +146,14 @@ test('AU-RA FP habla con ElevenLabs: la voz del avatar y del idioma elegidos; Vo
       await conEleven(
         () => mp3(),
         async (llamadas) => {
-          // Una frase suelta y corta es una «primera frase»: va con el modelo rápido (tests/voz-primera-rapida.test.ts).
+          // Todo el turno con el mismo modelo, también la primera frase (tests/voz-turno.test.ts).
           const h = await hablar({ texto: 'Hola, soy Aura.', plataforma: 'ultron', sinCache: true });
-          assert.equal(h?.motor, `elevenlabs:${MODELO_PRIMERA_OMISION}`);
+          assert.equal(h?.motor, `elevenlabs:${MODELO_ELEVEN}`);
           assert.equal(llamadas.length, 1);
           assert.ok(llamadas[0].url.includes(`/text-to-speech/${VOCES_ELEVEN.aura.es}/`));
           assert.equal(llamadas[0].cuerpo.language_code, 'es');
           const en = await hablar({ texto: 'Hi, I am your guardian. It is 25 degrees.', plataforma: 'ultron', avatar: 'ojos', idioma: 'en', sinCache: true });
-          assert.equal(en?.motor, `elevenlabs:${MODELO_PRIMERA_OMISION}`);
+          assert.equal(en?.motor, `elevenlabs:${MODELO_ELEVEN}`);
           assert.ok(llamadas[1].url.includes(`/text-to-speech/${VOCES_ELEVEN.ojos.en}/`));
           assert.equal(llamadas[1].cuerpo.language_code, 'en');
           // En inglés las cifras no se vuelven palabras en español.

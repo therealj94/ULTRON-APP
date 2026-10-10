@@ -13,7 +13,7 @@ import { pedidoDeVoces } from '../voces/voces';
 import { pedidoDeCaras } from '../caras/caras';
 // ── fin ──
 import { guardarPerfil } from '../lib/perfil';
-import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions, type TextInput } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, Pressable, StyleSheet, Text, View, useWindowDimensions, type TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
@@ -178,6 +178,7 @@ import { buzonHablar, oidoParaHablar } from '../entrada/enlace';
 import { useHablarEnMesa } from '../entrada/hablar';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
 import { avancePrimer, clasificarTurno, debePreguntar, queRecuperar, seguirTareasPrimer, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
+import { escucharCompartido, tomarCompartido, type PedidoCompartido } from '../telefono/compartido';
 
 type Props = {
   user: SessionUser;
@@ -529,7 +530,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // Los objetivos con estado (Fase 2): «Continuar trabajo» con el más reciente y su hoja. Un aviso «Necesito tu decisión»
   // tocado pide la hoja de ESE objetivo (al montarse la mesa o al instante).
   const [objetivoAbierto, setObjetivoAbierto] = useState<string | null>(null);
-  useObjetivos({ activo: mesaActiva || !!objetivoAbierto, conSesion: !!user.correo });
+  useObjetivos({ activo: mesaActiva || !!objetivoAbierto, conSesion: !!user.correo, cuenta: user.correo || null });
   useEffect(() => {
     const p = tomarPedidoObjetivo();
     if (p) setObjetivoAbierto(p);
@@ -3047,6 +3048,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (r === 'nueva' && mesaVisibleRef.current && !conversandoRef.current && !speakingRef.current) void haptic('light');
   }, []);
 
+  // «Compartir → AU-RA» desde otra app (APK 5.7.1, telefono/compartido.ts): un turno nuevo con eso como contexto. Lo que
+  // llegó antes de montarse la mesa espera en el buzón y se toma aquí.
+  useEffect(() => {
+    const hacer = (p: PedidoCompartido) => void askBrain(p.mensaje, p.imagen ? { image: p.imagen } : undefined);
+    const ya = tomarCompartido();
+    if (ya) hacer(ya);
+    return escucharCompartido((p) => {
+      if (tomarCompartido()) hacer(p);
+    });
+  }, [askBrain]);
+
   // Empujada por el servidor en el canal de acciones (la misma que el GET: no se duplica).
   useEffect(
     () =>
@@ -3134,15 +3146,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
 
-  // Borde derecho: tocar o arrastrar hacia la izquierda abre «Más» (la cara deja libre esa franja).
-  const edgePan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderRelease: (_e, g) => {
-        if (g.dx < -30 || (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12)) setMasAbierto(true);
-      },
-    })
-  ).current;
+  /*
+   * Borde derecho (Fase 0, APK 5.7.1): antes una franja de 44 dp, de arriba hasta la barra, se quedaba con TODO toque que
+   * empezara ahí (PanResponder sin condiciones) y arrastrar hacia la izquierda abría «Más»: el mismo gesto que el «atrás»
+   * de Android con la navegación por gestos, justo en su zona. Ahora es solo una pestaña visible (toque, sin arrastre) de
+   * 48 dp en el centro del borde: el deslizamiento desde el borde es del sistema, y un «atrás» que el sistema toma cancela
+   * el toque (no abre nada). «Más» sigue en la barra de abajo (el mismo menú, siempre a la vista).
+   */
+  const abrirMasPorBorde = useCallback(() => setMasAbierto(true), []);
 
   const dotColorNativo =
     status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? avatarPorId(avatar || 'aura').tema.acento : status === 'offline' ? T.texto3 : T.activo;
@@ -3685,10 +3696,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           onAlto={setAltoAbajo}
         />
 
-        {/* El borde derecho (en vertical): acostado ahí va el riel con «Más». No llega a lo de abajo. */}
+        {/* El borde derecho (en vertical): la pestaña de «Más», solo al tocarla. Acostado ahí va el riel con «Más». */}
         {!riel ? (
-          <View style={[styles.edgeZone, { bottom: altoAbajo + 16 }]} {...edgePan.panHandlers}>
-            <View pointerEvents="none" style={[styles.edgeHint, { backgroundColor: tema.acentoFondo }]} />
+          <View pointerEvents="box-none" style={[styles.edgeZone, { bottom: altoAbajo + 16 }]}>
+            <Pressable
+              onPress={abrirMasPorBorde}
+              style={styles.edgeTab}
+              accessibilityRole="button"
+              accessibilityLabel={tr('Más opciones', 'More options')}
+            >
+              <View pointerEvents="none" style={[styles.edgeHint, { backgroundColor: tema.acentoFondo }]} />
+            </Pressable>
           </View>
         ) : null}
         </>
@@ -3944,7 +3962,8 @@ const styles = StyleSheet.create({
   dichoQuien: { fontSize: 11, fontWeight: '800', letterSpacing: 0.4, marginBottom: 1, textAlign: 'right' },
   dichoText: { color: T.texto, fontSize: 14.5, lineHeight: 19, textAlign: 'right' },
   dichoParcial: { color: T.texto2, fontStyle: 'italic' },
-  // El borde derecho abre el menú; no llega a la barra (ahí está «Más»).
-  edgeZone: { position: 'absolute', right: 0, top: 0, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
+  // La pestaña del borde derecho abre el menú (solo al tocarla); la zona no capta nada fuera de la pestaña.
+  edgeZone: { position: 'absolute', right: 0, top: 0, width: 48, justifyContent: 'center', alignItems: 'flex-end' },
+  edgeTab: { width: 48, height: 96, justifyContent: 'center', alignItems: 'flex-end' },
   edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(214,181,108,0.35)' },
 });

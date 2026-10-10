@@ -161,7 +161,26 @@ export type AccionApp =
   /** «Cuelga»: cierra la llamada del avatar y sus recursos. La tarea de su computadora sigue como estaba. */
   | { tipo: 'colgar' }
   /** «Cancela / pausa / sigue con la tarea», «tomo el control»: su computadora. No cuelga. */
-  | { tipo: 'tarea'; que: 'pausar' | 'reanudar' | 'cancelar' | 'tomar' };
+  | { tipo: 'tarea'; que: 'pausar' | 'reanudar' | 'cancelar' | 'tomar' }
+  /*
+   * LAS MANOS EN EL TELÉFONO (APK 5.7.1; José, 10-oct: «le pedí abrir Spotify y no pudo»; src/telefono/). Las hace el
+   * módulo nativo AuraTelefono; cada una contesta con su recibo al servidor (POST /api/app/recibo). Mano `abrir_apps`:
+   */
+  /** Abre otra app del teléfono por su nombre (se resuelve contra las apps instaladas: src/telefono/apps.ts) o paquete. */
+  | { tipo: 'abrir_app'; app: string; paquete?: string }
+  /** Abre un enlace profundo (spotify:, whatsapp://send?…, geo:, https:, tel:, mailto:); `web`, el respaldo https. */
+  | { tipo: 'abrir_enlace'; uri: string; app?: string; web?: string }
+  /** La navegación a un destino (Google Maps; si no, Waze; si no, geo:). */
+  | { tipo: 'navegar'; destino: string; app?: string }
+  /* Mano `intents_telefono`: */
+  /** La alarma del reloj del teléfono (sin abrir el reloj). */
+  | { tipo: 'alarma'; hora: number; minutos: number; etiqueta?: string }
+  /** El temporizador del reloj del teléfono. */
+  | { tipo: 'temporizador'; segundos: number; etiqueta?: string }
+  /** Un BORRADOR de SMS: su app de mensajes con el número y el texto; ella le da enviar. */
+  | { tipo: 'sms'; numero: string; texto: string; nombre?: string }
+  /** La pantalla de evento nuevo del calendario, llena: ella la guarda (nunca «agendado» sin eso). */
+  | { tipo: 'evento_calendario'; titulo: string; inicio: number; fin: number };
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
@@ -174,7 +193,29 @@ export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
  * `marcar` (A-4): abre el marcador o WhatsApp con un número, tras el «sí». `recordatorios_servidor` (A-3): sus recordatorios
  * viven en el servidor (con repetición) y aquí se reconcilian con las alarmas de notifee; tiene la hoja «Recordatorios».
  */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor'] as const;
+/*
+ * `abrir_apps` e `intents_telefono` (APK 5.7.1, src/telefono/): abrir otras apps y enlaces, navegar, la alarma y el
+ * temporizador del reloj, un borrador de SMS y la pantalla de un evento del calendario. En una APK anterior (sin el módulo
+ * nativo) el teléfono contesta con su recibo que hay que actualizar; el servidor nunca las ofrece en Dr Electrum.
+ */
+export const MANOS_APP = [
+  'llamar',
+  'leer',
+  'buscar',
+  'idioma',
+  'perfil',
+  'recordatorio',
+  'recordatorio_llamada',
+  'llamame',
+  'cartera',
+  'pagar',
+  'controles',
+  'enviar_exacto',
+  'marcar',
+  'recordatorios_servidor',
+  'abrir_apps',
+  'intents_telefono',
+] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */

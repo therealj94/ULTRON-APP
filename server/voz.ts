@@ -29,7 +29,9 @@ import type { AlineacionEleven } from '../lib/alineacion';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
 import { esFraseConocida } from '../lib/frases-conocidas';
 import { jsonDeEnv, mapaDeTextos } from '../lib/datos-privados';
-import { abrirEleven, aceptaEtiquetas, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, HZ_PCM_ELEVEN, hzPcm, modeloDeLocucion, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
+import { abrirEleven, aceptaEtiquetas, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, HZ_PCM_ELEVEN, hzPcm, idDePedido, modeloEleven, modeloRespaldo, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
+import { quitarEtiquetasVoz, textoVecino } from '../lib/etiquetas-voz';
+import { HiloVoz, type FraseHilo, type ModoTurno } from './hilo-voz';
 
 export type Performance = 'speak' | 'sing';
 
@@ -147,16 +149,13 @@ const DIR_PUBLIC = fs.existsSync(path.join(process.cwd(), 'dist', 'voz'))
 
 /* ---------------- Texto para la boca ---------------- */
 
-/** Etiquetas de audio de los guiones viejos: `[softly]`, `[singing, slow worship ballad]`, `[short pause]`. */
-const ETIQUETA_AUDIO = /\[[^\]\n]{1,80}\]/g;
-
 /**
- * Quita las etiquetas de audio. Eran instrucciones para la voz anterior; Kokoro no las entiende y las
- * LEE en voz alta («softly, hola»). Se llevan también el espacio que dejan delante de la puntuación.
+ * Quita las etiquetas de audio (`[softly]`, `[singing, slow worship ballad]`, `[short pause]`, `[risa]`). Kokoro no las
+ * entiende y las LEE en voz alta («softly, hola»). Se llevan también el espacio que dejan delante de la puntuación. Solo
+ * las marcas de voz (lib/etiquetas-voz.ts quitarEtiquetasVoz): un «[1]» o un «[Anexo A]» se quedan (10-oct).
  */
 export function sinEtiquetas(texto: string): string {
-  return String(texto || '')
-    .replace(ETIQUETA_AUDIO, ' ')
+  return quitarEtiquetasVoz(String(texto || ''))
     .replace(/\s+([,.;:!?…])/g, '$1')
     .replace(/([¿¡])\s+/g, '$1')
     .replace(/\s{2,}/g, ' ')
@@ -175,8 +174,7 @@ const MAX_GUION = 4000;
  */
 export function expresar(texto: string, _emocion: Emocion = 'neutral', _performance: Performance = 'speak', opciones: { cifras?: boolean } = {}): string {
   const crudo = String(texto || '');
-  ETIQUETA_AUDIO.lastIndex = 0;
-  if (ETIQUETA_AUDIO.test(crudo)) return afinarParaBoca(sinEtiquetas(crudo), MAX_GUION, opciones);
+  if (quitarEtiquetasVoz(crudo) !== crudo) return afinarParaBoca(sinEtiquetas(crudo), MAX_GUION, opciones);
   const base = afinarParaBoca(crudo, 1200, opciones);
   if (!base) return '';
   /*
@@ -435,6 +433,53 @@ async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Pre
   return { audio: escribirWav(empalmar(piezas)), contentType: 'audio/wav', motor: 'voicebox:kokoro+expresiones' };
 }
 
+/* ---------------- El turno: una sola voz de principio a fin (10-oct) ---------------- */
+
+/**
+ * Las frases recientes de cada hablante (server/hilo-voz.ts): con el `previo` de un pedido se reconoce la frase de antes
+ * del mismo turno. De ahí sale (1) con qué sigue el turno: si ElevenLabs falló a mitad, el resto se queda en el mismo
+ * respaldo en vez de saltar de voz frase a frase; y (2) los `request-id` para enlazar el audio (previous_request_ids).
+ */
+const hilo = new HiloVoz();
+/** Solo pruebas: el hilo vacío, como un proceso recién desplegado. */
+export function _vaciarHiloVoz() {
+  hilo.vaciar();
+}
+
+type Turno = {
+  hablante: string;
+  previa: FraseHilo | null;
+  /** Los modelos de ElevenLabs a probar EN ORDEN para esta frase (vacío: el turno va con Voicebox). */
+  modelos: string[];
+  /** Hay frases en vivo antes que esta en el turno: si cae a Voicebox, sin tomas grabadas pegadas (sin costuras). */
+  enMitad: boolean;
+};
+
+function turnoDe(o: { plataforma: 'ultron' | 'electrum'; avatar?: string; idioma: Idioma; vozPropia?: string; previo?: string; sinEleven?: boolean; dueno?: string }): Turno {
+  // El hilo es de UNA cuenta (revisión del PR #173): la misma voz y una frase común no enlazan el turno de otra persona
+  // (su modo de respaldo ni sus request-id de ElevenLabs). Sin dueño conocido, sin hilo.
+  const dueno = String(o.dueno || '').trim().toLowerCase();
+  const hablante = dueno ? `${dueno}|${o.plataforma}|${o.avatar || 'aura'}|${o.idioma}|${String(o.vozPropia || '').trim()}` : '';
+  const previa = o.previo && hablante ? hilo.buscar(hablante, o.previo) : null;
+  const modo: ModoTurno = previa?.modo ?? 'v4';
+  const rapido = modeloRespaldo();
+  const modelos = o.sinEleven || modo === 'respaldo' ? [] : modo === 'rapido' && rapido ? [rapido] : [modeloEleven(), ...(rapido ? [rapido] : [])];
+  return { hablante, previa, modelos, enMitad: !!o.previo && (previa ? previa.empezoEnEleven : true) };
+}
+
+const modoDeModelo = (modelo: string): ModoTurno => (modelo === modeloEleven() ? 'v4' : 'rapido');
+
+/** La frase cayó a Voicebox: el resto del turno sigue ahí. Si era la primera, el turno entero es de Voicebox. */
+function anotarRespaldo(turno: Turno, texto: string, entrada: FraseHilo | null) {
+  if (entrada) {
+    entrada.modo = 'respaldo';
+    entrada.modelo = '';
+    if (!turno.previa) entrada.empezoEnEleven = false;
+    return;
+  }
+  hilo.anotar(turno.hablante, texto, 'respaldo', '', turno.previa);
+}
+
 /**
  * Lo que se le pediría a ElevenLabs para esta locución, o null si no toca (plataforma sin voz ahí,
  * canto, sin clave o en pausa, o nada que decir). La clave de caché lleva los vecinos: cambian la
@@ -451,8 +496,8 @@ function pedidoEleven(o: {
   siguiente?: string;
   /** Otra voz de ElevenLabs para esta plataforma (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). */
   vozPropia?: string;
-  /** El cliente dice que es la primera frase de la respuesta (Dr Electrum): va con el modelo rápido si cabe. */
-  primera?: boolean;
+  /** El modelo de esta frase (el del turno: turnoDe); sin él, el expresivo de siempre. */
+  modelo?: string;
 }): { voz: string; guion: string; clave: string; motor: string; estabilidad: number; modelo: string } | null {
   const idioma = o.idioma === 'en' ? 'en' : 'es';
   const voz = o.performance === 'speak' ? String(o.vozPropia || '').trim() || vozEleven(o.plataforma, o.avatar, idioma) : null;
@@ -463,18 +508,18 @@ function pedidoEleven(o: {
   const humano = o.plataforma === 'electrum' ? conMuletillas(codigosAVoz(base), { primero: !o.previo, emocion: o.emocion }) : base;
   // En inglés no se pasan cifras ni unidades a palabras en español: ElevenLabs las lee solo.
   const preparar = idioma === 'en' ? (t: string) => afinarParaBocaIngles(t, MAX_GUION) : (t: string) => expresar(t, o.emocion, 'speak', { cifras: false });
-  // La primera frase corta y sin etiquetas va con el modelo rápido (server/eleven.ts modeloDeLocucion): sin etiquetas
-  // ni tono, que ese modelo leería en voz alta.
-  const modelo = modeloDeLocucion({ texto: base, previo: o.previo, plataforma: o.plataforma, primera: o.primera });
+  // TODO el turno con el mismo modelo (server/eleven.ts): el expresivo; el rápido solo si el expresivo falló en este turno.
+  const modelo = o.modelo || modeloEleven();
   const etiquetas = aceptaEtiquetas(modelo);
-  // El tono de la emoción solo en la primera frase de la respuesta (la que no tiene `previo`).
-  const conTono = guionEleven(humano, o.emocion, preparar, { tono: !o.previo && etiquetas });
+  // La política de etiquetas (lib/etiquetas-voz.ts): el tono, solo en la primera frase del turno (la que no tiene
+  // `previo`); una reacción como mucho; ninguna en lo serio, el dinero o lo legal.
+  const conTono = guionEleven(humano, o.emocion, preparar, { tono: !o.previo, modelo, contexto: base });
   const guion = etiquetas ? conTono : conTono.replace(/\[[^\]\n]*\]\s*/g, '').trim();
   if (!guion) return null;
   const estabilidad = estabilidadDe(o.emocion);
   const clave = crypto
     .createHash('sha1')
-    .update(`eleven|${modelo}|${voz}|${idioma}|${estabilidad}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
+    .update(`eleven|${modelo}|${voz}|${idioma}|${estabilidad}|${guion}|${textoVecino(o.previo, 'previo') || ''}|${textoVecino(o.siguiente, 'siguiente') || ''}`)
     .digest('hex');
   return { voz, guion, clave, motor: `elevenlabs:${modelo}`, estabilidad, modelo };
 }
@@ -486,6 +531,8 @@ function pedidoEleven(o: {
  */
 export async function abrirVozEnVivo(opts: {
   texto: string;
+  /** De quién es la voz (la cuenta de la sesión): el hilo entre frases es solo suyo. */
+  dueno?: string;
   emocion?: Emocion | string;
   plataforma?: 'ultron' | 'electrum';
   previo?: string;
@@ -506,30 +553,52 @@ export async function abrirVozEnVivo(opts: {
   const emocion = normalizarEmocion(opts.emocion);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
   const idioma = normalizarIdioma(opts.idioma);
-  const p = pedidoEleven({ ...opts, emocion, performance: 'speak', plataforma, idioma });
-  if (!p) return null;
-  const hit = cacheGet(p.clave);
-  if (hit) return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
-  const guardable = persistible(p.guion, opts.texto);
-  const deS3 = guardable ? await leerVozDeS3(p.clave) : null;
-  if (deS3) {
-    cacheSet(p.clave, deS3);
-    return { tipo: 'cache', habla: { audio: deS3.audio, contentType: deS3.contentType, motor: deS3.motor, cache: true, ms: 0 } };
+  const avatar = plataforma === 'ultron' ? normalizarAvatar(opts.avatar) : 'aura';
+  const turno = turnoDe({ plataforma, avatar, idioma, vozPropia: opts.vozPropia, previo: opts.previo, dueno: opts.dueno });
+  let entrada: FraseHilo | null = null;
+  for (const modelo of turno.modelos) {
+    const p = pedidoEleven({ ...opts, avatar, emocion, performance: 'speak', plataforma, idioma, modelo });
+    if (!p) break;
+    const hit = cacheGet(p.clave);
+    if (hit) {
+      hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
+      return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
+    }
+    const guardable = persistible(p.guion, opts.texto);
+    const deS3 = guardable ? await leerVozDeS3(p.clave) : null;
+    if (deS3) {
+      cacheSet(p.clave, deS3);
+      hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
+      return { tipo: 'cache', habla: { audio: deS3.audio, contentType: deS3.contentType, motor: deS3.motor, cache: true, ms: 0 } };
+    }
+    // Se anota al pedirla: la frase siguiente ya sabe con qué va el turno.
+    if (entrada) Object.assign(entrada, { modo: modoDeModelo(modelo), modelo });
+    else entrada = hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
+    // Sin el idioma, ElevenLabs leía todo como español (language_code 'es'), inglés incluido.
+    const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, previosIds: hilo.idsPara(turno.previa, modelo) });
+    if (!r?.body) {
+      // Sin cupo o sin llave, el rápido tampoco contesta: Voicebox (lo decide quien llama).
+      if (!elevenListo()) break;
+      continue;
+    }
+    const fila = entrada;
+    return {
+      tipo: 'vivo',
+      contentType: 'audio/mpeg',
+      motor: p.motor,
+      cuerpo: r.body,
+      guardar: (audio) => {
+        if (audio.length < 400) return;
+        // Llegó entera: su id ya sirve para enlazar la frase siguiente (ElevenLabs lo pide así).
+        fila.id = idDePedido(r);
+        cacheSet(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
+        if (guardable) guardarVozEnS3(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
+      },
+    };
   }
-  // Sin el idioma, ElevenLabs leía todo como español (language_code 'es'), inglés incluido.
-  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo });
-  if (!r?.body) return null;
-  return {
-    tipo: 'vivo',
-    contentType: 'audio/mpeg',
-    motor: p.motor,
-    cuerpo: r.body,
-    guardar: (audio) => {
-      if (audio.length < 400) return;
-      cacheSet(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
-      if (guardable) guardarVozEnS3(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
-    },
-  };
+  // ElevenLabs no abrió (o el turno ya iba con Voicebox): quien llama sigue con Voicebox, y el resto del turno también.
+  if (turno.modelos.length) anotarRespaldo(turno, opts.texto, entrada);
+  return null;
 }
 
 /** Lo que `pasarVozEnVivo` usa de la respuesta HTTP (express.Response lo cumple; las pruebas lo fingen). */
@@ -619,6 +688,8 @@ export type VozPcm =
  */
 export async function abrirVozPcm(opts: {
   texto: string;
+  /** De quién es la voz (la cuenta de la sesión): el hilo entre frases es solo suyo. */
+  dueno?: string;
   emocion?: Emocion | string;
   performance?: Performance;
   avatar?: AvatarVoz | string;
@@ -649,25 +720,33 @@ export async function abrirVozPcm(opts: {
   const idioma = normalizarIdioma(opts.idioma);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
   const hz = opts.hz && (HZ_PCM_ELEVEN as readonly number[]).includes(opts.hz) ? opts.hz : hzPcm();
-  const p = opts.sinEleven
-    ? null
-    : pedidoEleven({ texto: opts.texto, emocion, performance, plataforma, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, vozPropia: opts.vozPropia, primera: opts.primera });
-  if (p) {
+  const turno = turnoDe({ plataforma, avatar: plataforma === 'ultron' ? avatar : 'aura', idioma, vozPropia: opts.vozPropia, previo: opts.previo, sinEleven: opts.sinEleven, dueno: opts.dueno });
+  let entrada: FraseHilo | null = null;
+  for (const modelo of turno.modelos) {
+    const p = pedidoEleven({ texto: opts.texto, emocion, performance, plataforma, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, vozPropia: opts.vozPropia, modelo });
+    if (!p) break;
     const clave = crypto.createHash('sha1').update(`${p.clave}|pcm_${hz}`).digest('hex');
     const tipo = `${TIPO_PCM};rate=${hz}`;
     if (!opts.privado) {
       const hit = cacheGet(clave);
-      if (hit) return { tipo: 'cache', pcm: hit.audio, hz, motor: hit.motor };
+      if (hit) {
+        if (!opts.soloCache) hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
+        return { tipo: 'cache', pcm: hit.audio, hz, motor: hit.motor };
+      }
     }
     const guardable = persistible(p.guion, opts.texto, opts.privado);
     const deS3 = guardable ? await leerVozDeS3(clave) : null;
     if (deS3 && deS3.contentType === tipo) {
       cacheSet(clave, deS3);
+      if (!opts.soloCache) hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
       return { tipo: 'cache', pcm: deS3.audio, hz, motor: deS3.motor };
     }
     if (opts.soloCache) return null;
-    const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, formato: `pcm_${hz}` });
+    if (entrada) Object.assign(entrada, { modo: modoDeModelo(modelo), modelo });
+    else entrada = hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
+    const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, formato: `pcm_${hz}`, previosIds: hilo.idsPara(turno.previa, modelo) });
     if (r?.body) {
+      const fila = entrada;
       return {
         tipo: 'vivo',
         hz,
@@ -675,14 +754,19 @@ export async function abrirVozPcm(opts: {
         cuerpo: r.body,
         guardar: (audio) => {
           // Lo privado no se guarda; un PCM de menos de 20 ms no es una frase.
-          if (opts.privado || audio.length < hz / 25) return;
+          if (audio.length < hz / 25) return;
+          fila.id = idDePedido(r);
+          if (opts.privado) return;
           cacheSet(clave, { audio, contentType: tipo, motor: p.motor });
           if (guardable) guardarVozEnS3(clave, { audio, contentType: tipo, motor: p.motor });
         },
       };
     }
+    if (!elevenListo()) break;
   }
   if (opts.soloCache) return null;
+  // Voicebox de aquí al final del turno (y sin tomas pegadas si el turno empezó en vivo: `hablar` lo mira).
+  if (turno.modelos.length) anotarRespaldo(turno, opts.texto, entrada);
   // Respaldo: Voicebox (WAV de 16 bits), pasado a PCM. Sin ElevenLabs de por medio (ya se intentó o no toca).
   const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, plataforma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
   if (!out || !/wav/i.test(out.contentType)) return null;
@@ -692,6 +776,8 @@ export async function abrirVozPcm(opts: {
 
 export async function hablar(opts: {
   texto: string;
+  /** De quién es la voz (la cuenta de la sesión): el hilo entre frases es solo suyo. */
+  dueno?: string;
   /** Se acepta y se normaliza por compatibilidad; ya no cambia la voz. */
   emocion?: Emocion | string;
   /** Kokoro no canta: `sing` se dice igual que `speak`. */
@@ -738,40 +824,54 @@ export async function hablar(opts: {
    */
   // Sin sesión: nada privado (nunca está en la caché) y nada que no esté ya guardado.
   if (opts.soloCache && (opts.privado || opts.sinCache)) return null;
-  const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma, avatar, idioma });
-  if (xiPedido) {
+  const turno = turnoDe({ plataforma, avatar, idioma, vozPropia: opts.vozPropia, previo: opts.previo, sinEleven: opts.sinEleven, dueno: opts.dueno });
+  let entrada: FraseHilo | null = null;
+  for (const modelo of turno.modelos) {
+    const xiPedido = pedidoEleven({ ...opts, performance, emocion, plataforma, avatar, idioma, modelo });
+    if (!xiPedido) break;
     if (!opts.sinCache) {
       const hit = cacheGet(xiPedido.clave);
       // Si ahora se piden los tiempos y lo guardado no los trae, se vuelve a pedir (una vez: se guarda con ellos).
       const sirve = hit && (!opts.tiempos || hit.alineacion !== undefined || opts.soloCache);
-      if (hit && sirve) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0, alineacion: hit.alineacion };
+      if (hit && sirve) {
+        if (!opts.soloCache) hilo.anotar(turno.hablante, String(opts.texto || ''), modoDeModelo(modelo), modelo, turno.previa);
+        return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0, alineacion: hit.alineacion };
+      }
     }
     const guardable = persistible(xiPedido.guion, String(opts.texto || ''), opts.privado);
     if (guardable && !opts.sinCache) {
       const deS3 = await leerVozDeS3(xiPedido.clave);
       if (deS3 && (!opts.tiempos || deS3.alineacion !== undefined || opts.soloCache)) {
         cacheSet(xiPedido.clave, deS3);
+        if (!opts.soloCache) hilo.anotar(turno.hablante, String(opts.texto || ''), modoDeModelo(modelo), modelo, turno.previa);
         return { ...deS3, cache: true, ms: Date.now() - t0 };
       }
     }
     if (opts.soloCache) return null;
-    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos, modelo: xiPedido.modelo });
+    if (entrada) Object.assign(entrada, { modo: modoDeModelo(modelo), modelo });
+    else entrada = hilo.anotar(turno.hablante, String(opts.texto || ''), modoDeModelo(modelo), modelo, turno.previa);
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos, modelo: xiPedido.modelo, previosIds: hilo.idsPara(turno.previa, modelo) });
     if (xi) {
+      entrada.id = xi.requestId;
+      const { requestId: _id, ...audio } = xi;
       // null: se pidieron los tiempos y no vinieron (así lo guardado no los vuelve a pedir).
-      const out = { ...xi, motor: xiPedido.motor, ...(opts.tiempos ? { alineacion: xi.alineacion ?? null } : {}) };
+      const out = { ...audio, motor: xiPedido.motor, ...(opts.tiempos ? { alineacion: xi.alineacion ?? null } : {}) };
       if (!opts.privado) cacheSet(xiPedido.clave, out);
       if (guardable) guardarVozEnS3(xiPedido.clave, out);
       return { ...out, cache: false, ms: Date.now() - t0 };
     }
+    // Sin cupo, sin llave o sin tiempo del cliente, el modelo rápido tampoco: directo al respaldo.
+    if (!elevenListo() || (opts.presupuesto && !opts.presupuesto.alcanza())) break;
   }
 
   /*
    * Respaldo en Voicebox. Guardián y Claudio son hombres: la voz de hombre (Kokoro Alex), nunca la
    * de AU-RA, y sin las tomas grabadas de risa o suspiro, que son de ella. En inglés tampoco van
-   * las tomas (se grabaron en español).
+   * las tomas (se grabaron en español). Y a MITAD de un turno que empezó con ElevenLabs, tampoco: una toma de Kokoro
+   * pegada entre frases en vivo es una costura que se oye (10-oct). El resto del turno sigue aquí (anotarRespaldo).
    */
   const deHombre = avatar !== 'aura';
-  const sinTomas = deHombre || idioma === 'en';
+  const sinTomas = deHombre || idioma === 'en' || turno.enMitad;
   const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance, idioma).filter((p) => !sinTomas || p.tipo === 'habla');
   if (!partes.length) return null;
   const perfil = deHombre ? vozDe('electrum') : vozDe(plataforma);
@@ -781,6 +881,7 @@ export async function hablar(opts: {
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
   }
   if (opts.soloCache) return null;
+  anotarRespaldo(turno, String(opts.texto || ''), entrada);
   let out: { audio: Buffer; contentType: string; motor: string } | null;
   if (partes.some((p) => p.tipo === 'expresion')) out = await hablarConExpresiones(partes, perfil, opts.presupuesto);
   else {

@@ -22,6 +22,8 @@ import { LectorSse, jsonDe } from './sse';
 import { esAccionPc, PANTALLAS_MAS } from './computadora';
 import { esAccionIniciativa } from './iniciativa';
 import { PANTALLAS_CEREBRO } from './cerebro';
+import { esAccionTelefono } from '../telefono/apps';
+import { anotarIdAccion } from '../telefono/recibos';
 
 /** Lo que se usa de un XMLHttpRequest (el de React Native o uno falso en las pruebas). */
 export type XhrMin = {
@@ -124,6 +126,15 @@ export function esAccionApp(a: any): a is AccionApp {
       return true;
     case 'tarea':
       return a.que === 'pausar' || a.que === 'reanudar' || a.que === 'cancelar' || a.que === 'tomar';
+    // Las manos en el teléfono (APK 5.7.1, telefono/apps.ts): la misma forma estricta que valida el servidor.
+    case 'abrir_app':
+    case 'abrir_enlace':
+    case 'navegar':
+    case 'alarma':
+    case 'temporizador':
+    case 'sms':
+    case 'evento_calendario':
+      return esAccionTelefono(a);
     default:
       return false;
   }
@@ -274,6 +285,8 @@ export function accionNueva(id?: string | null, accion?: unknown, ahora: number 
     }
   }
   if (!i && !firma) return true;
+  // El id de la acción viaja con su recibo al servidor (telefono/recibos.ts): solo así consta que el teléfono la hizo.
+  if (i && accion !== undefined) anotarIdAccion(accion, i, ahora);
   vistas.push({ id: i, firma, en: ahora });
   if (vistas.length > 300) vistas.shift();
   return true;

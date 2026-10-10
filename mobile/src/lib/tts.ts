@@ -463,10 +463,12 @@ async function conExtension(path: string, ct: string): Promise<string> {
  * pone el tono de la emoción solo en la primera (la que no tiene `previo`) — auditoría externa, 1-oct.
  */
 export type VecinosVoz = { previo?: string; siguiente?: string };
+/** Lo mismo que manda el servidor a ElevenLabs (lib/etiquetas-voz.ts TOPE_VECINO): 100 caracteres de cada lado. */
+export const TOPE_VECINO_VOZ = 100;
 function vecinosLimpios(v?: VecinosVoz): { previo?: string; siguiente?: string } {
   const limpio = (t?: string) => quitarExpresiones(String(t || '')).replace(/\s+/g, ' ').trim();
-  const previo = limpio(v?.previo).slice(-200);
-  const siguiente = limpio(v?.siguiente).slice(0, 200);
+  const previo = limpio(v?.previo).slice(-TOPE_VECINO_VOZ);
+  const siguiente = limpio(v?.siguiente).slice(0, TOPE_VECINO_VOZ);
   return { ...(previo ? { previo } : {}), ...(siguiente ? { siguiente } : {}) };
 }
 
@@ -1136,7 +1138,8 @@ export const FRASE_CORTA_LETRAS = 6;
 /** Cómo terminó un locutor: dijo todo lo que le dieron (`terminado`) o lo cortaron (`cancelado`). */
 export type FinLocutor = 'terminado' | 'cancelado';
 
-type FraseCola = { texto: string; previo: string; v: number };
+/** `siguiente`: la frase que viene, si ya se sabía cuando se pidió el audio (next_text: ElevenLabs no la cierra como final). */
+type FraseCola = { texto: string; previo: string; v: number; siguiente?: string };
 
 /** Suelta un sonido preparado que ya nadie va a usar (cuando llegue, si todavía no llegó). */
 function soltarPreparado(p: Promise<Reproducible | null>) {
@@ -1261,6 +1264,16 @@ export class StreamSpeaker {
    * con lo que siga. Nada se pierde, se repite ni se desordena: los pedazos son tramos seguidos del texto.
    */
   private cortar() {
+    // Las frases de este trozo, juntas: así cada una sabe cuál viene detrás (su `siguiente`) y se piden todas ya.
+    const nuevas: string[] = [];
+    try {
+      this.cortarEn(nuevas);
+    } finally {
+      nuevas.forEach((f, i) => this.enqueue(f, nuevas[i + 1]));
+    }
+  }
+
+  private cortarEn(nuevas: string[]) {
     for (let vueltas = 0; vueltas <= this.texto.length; vueltas++) {
       const c = siguienteCorte(this.texto, this.cortado, this.estadoCorte);
       if (!c || c.fin <= this.cortado) return;
@@ -1271,7 +1284,7 @@ export class StreamSpeaker {
       if (letras(pieza) < FRASE_CORTA_LETRAS && siguienteCorte(this.texto, this.cortado, this.estadoCorte)) continue;
       this.emitido = this.cortado;
       const sentence = cleanForSpeech(pieza);
-      if (sentence) this.enqueue(sentence);
+      if (sentence) nuevas.push(sentence);
     }
   }
 
@@ -1345,14 +1358,16 @@ export class StreamSpeaker {
   /** La última frase que se mandó a decir: es el `previo` de la siguiente (entonación y tono solo al empezar). */
   private ultima = '';
 
-  private source(sentence: string, previo?: string) {
+  private source(f: Pick<FraseCola, 'texto' | 'previo' | 'siguiente'>) {
+    const sentence = f.texto;
+    const previo = f.previo;
     // La clave lleva lo dicho antes: la misma frase después de otra se pide aparte (sin el tono del
-    // comienzo y con su entonación seguida) — revisión de Codex en #111.
+    // comienzo y con su entonación seguida) — revisión de Codex en #111. La siguiente no: lo pedido primero vale.
     const clave = `${previo || ''}\u0000${sentence}`;
     let p = this.sources.get(clave);
     if (!p) {
       const primera = !this.sources.size;
-      p = fuenteDe(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo }, undefined, this.io);
+      p = fuenteDe(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo, siguiente: f.siguiente }, undefined, this.io);
       // Bajado no es sonando: la traza lo llama «tts» (lib/trazaTurno.ts); lo que suena lo dice onSuena. Por el nativo,
       // «bajado» es haber juntado el prebúfer (el aviso «listo»).
       if (primera && this.opts.onAudioBajado) {
@@ -1373,7 +1388,7 @@ export class StreamSpeaker {
    */
   private preparar(f: FraseCola): Promise<Reproducible | null> {
     return (async () => {
-      const src = await this.source(f.texto, f.previo);
+      const src = await this.source(f);
       if (!src || !this.vigente() || f.v !== this.version) return null;
       const sound = await prepare(src);
       if (sound && (!this.vigente() || f.v !== this.version)) {
@@ -1384,11 +1399,14 @@ export class StreamSpeaker {
     })();
   }
 
-  private enqueue(sentence: string) {
+  private enqueue(sentence: string, siguiente?: string) {
     // Hay algo que decir y todavía no suena: la cara piensa (no habla) hasta la primera sílaba.
     if (!this.spoke && this.vigente()) vozSonando.preparar(this.locucion, true);
-    this.queue.push({ texto: sentence, previo: this.ultima, v: this.version });
-    void this.source(sentence, this.ultima);
+    // Cada frase se pide en cuanto se corta (sin esperar a la siguiente: VOZ-01); si la siguiente ya llegó en el mismo
+    // trozo, va como `siguiente` (next_text) y ElevenLabs no la cierra como un final (10-oct).
+    const frase: FraseCola = { texto: sentence, previo: this.ultima, v: this.version, ...(siguiente ? { siguiente } : {}) };
+    this.queue.push(frase);
+    void this.source(frase);
     this.ultima = sentence;
     if (!this.pumping) void this.pump();
   }

@@ -109,7 +109,7 @@ test('EtiquetasVoz: marcas partidas entre trozos, tope por turno y las que no ti
   assert.deepEqual(f.pasar('', true), [{ texto: '[esto no cierra' }], 'al final lo guardado sale como texto');
 });
 
-test('la llamada actúa las marcas v4 y pone el tono de la emoción delante de lo primero del cerebro', async () => {
+test('la llamada actúa las marcas v4 con la política compartida: el tono delante de lo primero del cerebro y UNA reacción', async () => {
   const s = await montar(
     async (t) => {
       t.enviar('emocion', { emocion: 'feliz' });
@@ -123,7 +123,7 @@ test('la llamada actúa las marcas v4 y pone el tono de la emoción delante de l
   try {
     const pase = paseDe(persona(), 'claudio', 'es');
     const dicho = dichoDe(await (await llm(s.base, pase, [{ role: 'user', content: '¿Me ayudas?' }])).text());
-    assert.equal(dicho.trim(), '[warmly] Claro que sí [laughs] mire. [sighs] Listo.');
+    assert.equal(dicho.trim(), '[warmly] Claro que sí [laughs] mire. Listo.', 'la segunda reacción ([suspiro]) no suena');
   } finally {
     await s.cerrar();
   }
@@ -486,7 +486,8 @@ test('un error de adentro se dice como persona; un segundo done no se lee; un tu
     const pase = paseDe(yo, 'aura', 'es');
     const msgs = [{ role: 'user', content: 'dime algo' }];
     let dicho = dichoDe(await (await llm(s.base, pase, msgs)).text());
-    assert.equal(dicho, 'Se me fue el hilo. ¿Me lo repites?');
+    // 10-oct: la recuperación nombra de qué hablaban (no el «se me fue el hilo» a secas).
+    assert.equal(dicho, 'Perdón, se me cortó. Me decías «dime algo»: ¿me lo repites?');
     assert.ok(!/qwen/i.test(dicho), 'nunca «Qwen caído» en voz alta');
     modo = 'doble';
     const r = await llm(s.base, pase, msgs);
@@ -499,10 +500,11 @@ test('un error de adentro se dice como persona; un segundo done no se lee; un tu
     assert.equal(dicho, 'Perdón, se me cortó un segundo. ¿Me lo repites?');
     modo = 'mudo';
     dicho = dichoDe(await (await llm(s.base, pase, msgs)).text());
-    assert.equal(dicho, 'Se me fue el hilo. ¿Me lo repites?', 'nunca una respuesta vacía');
+    assert.equal(dicho, 'Perdón, se me cortó. Me decías «dime algo»: ¿me lo repites?', 'nunca una respuesta vacía');
     const en = paseDe(yo, 'aura', 'en');
     modo = 'error';
-    assert.equal(dichoDe(await (await llm(s.base, en, msgs)).text()), 'I lost my train of thought. Can you say it again?');
+    assert.equal(dichoDe(await (await llm(s.base, en, msgs)).text()), 'Sorry, I got cut off. You said “dime algo”: could you say it again?');
+    assert.equal(dichoDe(await (await llm(s.base, en, [{ role: 'user', content: 'hola' }])).text()), 'I lost my train of thought. Can you say it again?', 'sin frase que citar, la de siempre');
   } finally {
     await s.cerrar();
   }
@@ -1007,7 +1009,7 @@ test('el puente: si el cerebro tarda, dice una frase de espera del avatar y en s
   );
   try {
     const dicho = dichoDe(await (await llm(falla.base, paseDe(persona(), 'claudio', 'es'), [{ role: 'user', content: 'explícame el plan' }])).text());
-    assert.match(dicho, /Se me fue el hilo\. ¿Me lo repites\?$/);
+    assert.match(dicho, /Perdón, se me cortó\. Me decías «explícame el plan»: ¿me lo repites\?$/);
   } finally {
     await falla.cerrar();
   }
