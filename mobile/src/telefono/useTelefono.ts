@@ -55,7 +55,7 @@ async function leerCompartido(): Promise<void> {
   let imagen: string | undefined;
   if (p.imagen) {
     try {
-      imagen = `data:image/jpeg;base64,${await FS.readAsStringAsync(p.imagen, { encoding: FS.EncodingType.Base64 })}`;
+      imagen = `data:${p.mime || 'image/jpeg'};base64,${await FS.readAsStringAsync(p.imagen, { encoding: FS.EncodingType.Base64 })}`;
     } catch {
       imagen = undefined;
     }

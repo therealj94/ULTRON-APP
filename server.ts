@@ -1692,6 +1692,7 @@ function leerVozElectrum(req: express.Request): PeticionVozPcm {
     plataforma: 'electrum',
     ...(vozPropia ? { vozPropia } : {}),
     primera: b.primera === true || b.primera === '1' || b.primera === 'true',
+    dueno: cuentaVozElectrum(req) || undefined,
   };
 }
 
@@ -1719,6 +1720,7 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
       idioma: normalizarIdioma(req.body?.idioma),
       primera: req.body?.primera === true,
       ...(vozPropia ? { vozPropia } : {}),
+      dueno: cuentaVozElectrum(req) || undefined,
     };
     // Sin minutos de ElevenLabs hoy (quien entró con el código de prueba): directo a la voz del servidor.
     const cuenta = cuentaVozElectrum(req);
@@ -2698,6 +2700,8 @@ function leerPeticionVoz(req: express.Request) {
      */
     previo: vecinoDeVoz(fuente.previo, 'final'),
     siguiente: vecinoDeVoz(fuente.siguiente, 'comienzo'),
+    // De quién es la voz: el hilo entre frases (server/voz.ts) es de esta cuenta y de nadie más.
+    dueno: sesionDe(req)?.correo || undefined,
   };
 }
 
@@ -2727,7 +2731,7 @@ async function responderVoz(req: express.Request, res: express.Response) {
   if (soloCache && p.privado) return negarClipSinSesion(res);
   const cuenta = cuentaDeVozMiembro(req);
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, previo: p.previo, siguiente: p.siguiente, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}), ...(soloCache ? { soloCache: true } : {}) });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, previo: p.previo, siguiente: p.siguiente, dueno: p.dueno, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}), ...(soloCache ? { soloCache: true } : {}) });
   if (!out && soloCache) return negarClipSinSesion(res);
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   if (cuenta && !out.cache && out.motor.startsWith('elevenlabs')) anotarVoz(cuenta, msDeHabla(p.texto));
@@ -2757,7 +2761,7 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
   // Sin sesión no hay nada en vivo que generar: lo guardado sale entero por el camino de siempre.
   if (soloClipGuardado(res) || p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
   try {
-    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar, previo: p.previo, siguiente: p.siguiente });
+    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar, previo: p.previo, siguiente: p.siguiente, dueno: p.dueno });
     if (!vivo) return responderVoz(req, res);
     if (vivo.tipo === 'cache') {
       res.setHeader('Content-Type', vivo.habla.contentType);

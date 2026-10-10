@@ -81,6 +81,8 @@ export class HiloVoz {
     // Seguidos o nada: si la anterior aún no tiene su id, la cadena empieza aquí (nunca se salta una frase).
     const antes = previa?.id && previa.modelo === modelo ? [...previa.antes, previa.id].slice(-2) : [];
     const f: FraseHilo = { hablante, texto: normalizarFrase(texto), modo, modelo, antes, empezoEnEleven: previa ? previa.empezoEnEleven : modo !== 'respaldo', t: ahora };
+    // Sin hablante (sin cuenta conocida) la frase no entra al hilo: nadie la puede enlazar.
+    if (!hablante) return f;
     this.frases.push(f);
     // Lo caducado sale por delante; y nunca más de `max`.
     while (this.frases.length > this.max || (this.frases.length && ahora - this.frases[0].t > this.ttlMs)) this.frases.shift();

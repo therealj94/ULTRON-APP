@@ -554,7 +554,11 @@ test('lo compartido con AU-RA: un turno nuevo con eso como contexto (texto, enla
   assert.equal(pedidoDeCompartido({ texto: '   ' }), null);
   assert.deepEqual(pedidoDeCompartido({ texto: 'https://ejemplo.com/nota' }), { mensaje: 'Te comparto este enlace desde otra app: https://ejemplo.com/nota ¿De qué se trata?' });
   assert.deepEqual(pedidoDeCompartido({ texto: 'La reunión es a las 3', asunto: 'Reunión' }), { mensaje: 'Te comparto esto desde otra app: «Reunión — La reunión es a las 3». ¿Qué me dices?' });
-  assert.deepEqual(pedidoDeCompartido({ imagen: 'file:///cache/compartido-1.jpg' }), { mensaje: 'Te comparto esta imagen desde otra app. ¿Qué ves?', imagen: 'file:///cache/compartido-1.jpg' });
+  assert.deepEqual(pedidoDeCompartido({ imagen: 'file:///cache/compartido-1.jpg' }), { mensaje: 'Te comparto esta imagen desde otra app. ¿Qué ves?', imagen: 'file:///cache/compartido-1.jpg', mime: 'image/jpeg' });
+  // El tipo real viaja (PNG, WebP): la visión confía en el tipo declarado; uno raro queda en JPEG.
+  assert.equal(pedidoDeCompartido({ tipo: 'image/png', imagen: 'file:///cache/c.png' })?.mime, 'image/png');
+  assert.equal(pedidoDeCompartido({ tipo: 'image/webp', imagen: 'file:///cache/c.webp' })?.mime, 'image/webp');
+  assert.equal(pedidoDeCompartido({ tipo: 'image/svg+xml', imagen: 'file:///cache/c.svg' })?.mime, 'image/jpeg');
   assert.equal(pedidoDeCompartido({ imagen: 'javascript:x' }), null);
   const vistos: string[] = [];
   const quitar = escucharCompartido((p) => vistos.push(p.mensaje));
@@ -575,4 +579,10 @@ test('los nombres que exporta el plugin y la versión de la APK de las manos', (
   assert.equal(j.expo.android.versionCode, 57);
   // app.json (la base de las dos apps) NO pide SET_ALARM: va solo por el plugin de AU-RA. Dr Electrum queda igual.
   assert.ok(!j.expo.android.permissions.includes('com.android.alarm.permission.SET_ALARM'));
+});
+
+test('nombrar otra app no le quita a AU-RA sus pantallas cuando la promesa es interna (límites de palabra reales, PR #173)', async () => {
+  const { herramientasPara } = await import('../lib/cerebro-manos');
+  assert.ok(herramientasPara('Te abro el chat sobre Spotify').has('chat_aura'), 'el chat de AU-RA sigue');
+  assert.ok(!herramientasPara('Te abro Spotify').has('chat_aura'), 'abrir Spotify no lo cumple una pantalla de AU-RA');
 });

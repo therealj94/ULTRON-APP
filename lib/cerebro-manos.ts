@@ -908,7 +908,7 @@ export function herramientasPara(texto: string): Set<string> {
   for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
   // «Te abro Spotify», «te pongo música en YouTube»: otra app del teléfono. Las pantallas de AU-RA no lo cumplen; sin
   // `abrir_en_telefono` en el turno no hay segunda vuelta que valga (se dice que todavía no puede, sin red).
-  if (nombraAppExterna(texto) && !/(chat|chats|pantalla|ajustes de aura|cartera|wallet)/.test(p)) for (const h of ABREN_EN_AURA) out.delete(h);
+  if (nombraAppExterna(texto) && !/\b(chat|chats|pantalla|ajustes de aura|cartera|wallet)\b/.test(p)) for (const h of ABREN_EN_AURA) out.delete(h);
   // Llamar: «te llamo» / «llámame» es que AU-RA la llame a ella; «le marco a Beto», llamar a otro.
   if (LLAMARLA.test(p)) out.add('llamarme');
   else if (/\b(llam|marc|timbr|call)|\bles? hable\b/.test(p)) for (const h of ['llamar_contacto', 'llamar_numero', 'circulo']) out.add(h);

@@ -8,7 +8,14 @@
  */
 
 export type Compartido = { tipo?: string; texto?: string; asunto?: string; imagen?: string };
-export type PedidoCompartido = { mensaje: string; imagen?: string };
+/** `mime`: el tipo real de la imagen (PNG, WebP…); la visión confía en el tipo declarado (revisión del PR #173). */
+export type PedidoCompartido = { mensaje: string; imagen?: string; mime?: string };
+
+/** Los tipos de imagen que la visión lee; otro o ninguno, JPEG. */
+export function mimeDeImagen(tipo: unknown): string {
+  const t = String(tipo ?? '').toLowerCase().trim();
+  return /^image\/(jpeg|png|webp|gif|heic|heif)$/.test(t) ? t : 'image/jpeg';
+}
 
 export const MAX_TEXTO_COMPARTIDO = 2000;
 
@@ -38,7 +45,7 @@ export function pedidoDeCompartido(c: Compartido | null | undefined, tr: (es: st
     : esEnlace
       ? tr(`Te comparto este enlace desde otra app: ${texto} ¿De qué se trata?`, `I'm sharing this link from another app: ${texto} What is it about?`)
       : tr(`Te comparto esto desde otra app: «${cuerpo}». ¿Qué me dices?`, `I'm sharing this from another app: «${cuerpo}». What do you think?`);
-  return { mensaje, ...(imagen ? { imagen } : {}) };
+  return { mensaje, ...(imagen ? { imagen, mime: mimeDeImagen(c.tipo) } : {}) };
 }
 
 /** El buzón de uno: lo último compartido, hasta que la mesa lo tome. */

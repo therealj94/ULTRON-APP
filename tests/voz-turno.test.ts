@@ -56,8 +56,8 @@ async function conEleven<T>(responder: ((l: Llamada) => Response | null) | null,
 
 test('todo el turno con eleven_v4_turbo; el tono de la emoción en la primera frase, nunca en las demás', async () => {
   await conEleven(null, async (llamadas) => {
-    const uno = await hablar({ texto: 'Claro que sí, José.', emocion: 'feliz', siguiente: 'Eso va muy bien.' });
-    const dos = await hablar({ texto: 'Eso va muy bien.', emocion: 'feliz', previo: 'Claro que sí, José.' });
+    const uno = await hablar({ dueno: 'ana@prueba.hn', texto: 'Claro que sí, José.', emocion: 'feliz', siguiente: 'Eso va muy bien.' });
+    const dos = await hablar({ dueno: 'ana@prueba.hn', texto: 'Eso va muy bien.', emocion: 'feliz', previo: 'Claro que sí, José.' });
     assert.equal(uno?.motor, `elevenlabs:${MODELO_ELEVEN}`);
     assert.equal(dos?.motor, `elevenlabs:${MODELO_ELEVEN}`, 'mismo modelo: mismo timbre de la frase 1 a la 2');
     assert.deepEqual(
@@ -71,8 +71,8 @@ test('todo el turno con eleven_v4_turbo; el tono de la emoción en la primera fr
 
 test('en un turno serio, de dinero o legal, ninguna etiqueta', async () => {
   await conEleven(null, async (llamadas) => {
-    await hablar({ texto: 'Lo siento mucho [suspiro].', emocion: 'triste' });
-    await hablar({ texto: 'Te transfiero L. 1,500 hoy [risa].', emocion: 'feliz' });
+    await hablar({ dueno: 'ana@prueba.hn', texto: 'Lo siento mucho [suspiro].', emocion: 'triste' });
+    await hablar({ dueno: 'ana@prueba.hn', texto: 'Te transfiero L. 1,500 hoy [risa].', emocion: 'feliz' });
     assert.equal(llamadas[0].cuerpo.text, 'Lo siento mucho.');
     assert.doesNotMatch(llamadas[1].cuerpo.text, /\[/, 'hablar de lempiras no se actúa');
     assert.match(llamadas[1].cuerpo.text, /mil quinientos lempiras/);
@@ -82,19 +82,19 @@ test('en un turno serio, de dinero o legal, ninguna etiqueta', async () => {
 test('los vecinos sin marcas y cortos (100), y los request-id de las frases anteriores enlazan el audio', async () => {
   await conEleven(null, async (llamadas) => {
     const larga = `Primero ${'mucho texto de relleno '.repeat(10)}y al final [risa] el cierre.`;
-    await hablar({ texto: larga, emocion: 'feliz', siguiente: `[risa] Después ${'otra cosa larga '.repeat(12)}` });
+    await hablar({ dueno: 'ana@prueba.hn', texto: larga, emocion: 'feliz', siguiente: `[risa] Después ${'otra cosa larga '.repeat(12)}` });
     const c0 = llamadas[0].cuerpo;
     assert.ok(!c0.previous_text);
     assert.ok(c0.next_text.length <= 100 && !/\[/.test(c0.next_text), `next_text: ${c0.next_text}`);
     assert.match(c0.next_text, /^Después/);
     assert.ok(!c0.previous_request_ids, 'la primera no tiene a quién enlazar');
     // La segunda: el previo (el final de la primera, recortado) basta para reconocer el turno.
-    await hablar({ texto: 'Y la segunda frase.', emocion: 'feliz', previo: larga });
+    await hablar({ dueno: 'ana@prueba.hn', texto: 'Y la segunda frase.', emocion: 'feliz', previo: larga });
     const c1 = llamadas[1].cuerpo;
     assert.ok(c1.previous_text.length <= 100 && !/\[/.test(c1.previous_text), `previous_text: ${c1.previous_text}`);
     assert.deepEqual(c1.previous_request_ids, ['req_prueba_' + (siguienteId - 2)]);
-    await hablar({ texto: 'Tercera.', emocion: 'feliz', previo: 'Y la segunda frase.' });
-    await hablar({ texto: 'Cuarta y última.', emocion: 'feliz', previo: 'Tercera.' });
+    await hablar({ dueno: 'ana@prueba.hn', texto: 'Tercera.', emocion: 'feliz', previo: 'Y la segunda frase.' });
+    await hablar({ dueno: 'ana@prueba.hn', texto: 'Cuarta y última.', emocion: 'feliz', previo: 'Tercera.' });
     const ids = llamadas[3].cuerpo.previous_request_ids;
     assert.equal(ids.length, 3, 'como mucho 3, los más recientes y seguidos');
     assert.equal(ids[2], 'req_prueba_' + (siguienteId - 2));
@@ -105,8 +105,8 @@ test('si el modelo rechaza los request-id, se reintenta sin ellos (con el texto 
   await conEleven(
     (l) => (l.cuerpo.previous_request_ids ? new Response('{"detail":"previous_request_ids not supported"}', { status: 400 }) : null),
     async (llamadas) => {
-      await hablar({ texto: 'Una frase primera.', emocion: 'neutral' });
-      const h = await hablar({ texto: 'La segunda.', emocion: 'neutral', previo: 'Una frase primera.' });
+      await hablar({ dueno: 'ana@prueba.hn', texto: 'Una frase primera.', emocion: 'neutral' });
+      const h = await hablar({ dueno: 'ana@prueba.hn', texto: 'La segunda.', emocion: 'neutral', previo: 'Una frase primera.' });
       assert.equal(h?.motor, `elevenlabs:${MODELO_ELEVEN}`, 'no se queda muda');
       assert.equal(llamadas.length, 3);
       assert.ok(llamadas[1].cuerpo.previous_request_ids);
@@ -121,18 +121,18 @@ test('si v4 falla a mitad del turno, el rápido de respaldo sin etiquetas, y el 
   await conEleven(
     (l) => (l.cuerpo.model_id === MODELO_ELEVEN && /Segunda/.test(l.cuerpo.text) ? new Response('caído', { status: 500 }) : null),
     async (llamadas) => {
-      await hablar({ texto: 'Primera frase del turno.', emocion: 'feliz' });
-      const dos = await hablar({ texto: 'Segunda [risa] frase.', emocion: 'feliz', previo: 'Primera frase del turno.' });
+      await hablar({ dueno: 'ana@prueba.hn', texto: 'Primera frase del turno.', emocion: 'feliz' });
+      const dos = await hablar({ dueno: 'ana@prueba.hn', texto: 'Segunda [risa] frase.', emocion: 'feliz', previo: 'Primera frase del turno.' });
       assert.equal(dos?.motor, `elevenlabs:${MODELO_RESPALDO_OMISION}`);
       const flash = llamadas.find((l) => l.cuerpo.model_id === MODELO_RESPALDO_OMISION)!;
       assert.equal(flash.cuerpo.text, 'Segunda frase.', 'sin etiquetas: flash las leería en voz alta');
       assert.ok(!flash.cuerpo.previous_request_ids, 'los ids de v4 no enlazan con otro modelo');
       // La tercera ya no prueba v4: el turno sigue con la misma voz de respaldo.
-      const tres = await hablar({ texto: 'Tercera frase.', emocion: 'feliz', previo: 'Segunda frase.' });
+      const tres = await hablar({ dueno: 'ana@prueba.hn', texto: 'Tercera frase.', emocion: 'feliz', previo: 'Segunda frase.' });
       assert.equal(tres?.motor, `elevenlabs:${MODELO_RESPALDO_OMISION}`);
       assert.equal(llamadas[llamadas.length - 1].cuerpo.model_id, MODELO_RESPALDO_OMISION);
       // Un turno nuevo (sin previo) vuelve a v4.
-      const nuevo = await hablar({ texto: 'Otro turno.', emocion: 'feliz' });
+      const nuevo = await hablar({ dueno: 'ana@prueba.hn', texto: 'Otro turno.', emocion: 'feliz' });
       assert.equal(nuevo?.motor, `elevenlabs:${MODELO_ELEVEN}`);
     }
   );
@@ -145,12 +145,12 @@ test('si ElevenLabs cae a mitad del turno: Voicebox hasta el final y sin tomas g
       conEleven(
         (l) => (/caer/.test(l.cuerpo.text) || /Luego/.test(l.cuerpo.text) ? new Response('caído', { status: 503 }) : null),
         async () => {
-          const uno = await hablar({ texto: 'Hola, José.', emocion: 'feliz' });
+          const uno = await hablar({ dueno: 'ana@prueba.hn', texto: 'Hola, José.', emocion: 'feliz' });
           assert.equal(uno?.motor, `elevenlabs:${MODELO_ELEVEN}`);
-          const dos = await hablar({ texto: 'Ay [risa] me voy a caer.', emocion: 'feliz', previo: 'Hola, José.' });
+          const dos = await hablar({ dueno: 'ana@prueba.hn', texto: 'Ay [risa] me voy a caer.', emocion: 'feliz', previo: 'Hola, José.' });
           assert.equal(dos?.motor, 'voicebox:kokoro', 'sin «+expresiones»: la risa grabada no se pega tras una frase en vivo');
           // La siguiente ni prueba ElevenLabs (el turno ya va con Voicebox).
-          const tres = await hablar({ texto: 'Luego sigo.', emocion: 'feliz', previo: 'Ay, me voy a caer.' });
+          const tres = await hablar({ dueno: 'ana@prueba.hn', texto: 'Luego sigo.', emocion: 'feliz', previo: 'Ay, me voy a caer.' });
           assert.equal(tres?.motor, 'voicebox:kokoro');
         }
       )
@@ -160,7 +160,7 @@ test('si ElevenLabs cae a mitad del turno: Voicebox hasta el final y sin tomas g
       conEleven(
         () => new Response('caído', { status: 503 }),
         async () => {
-          const solo = await hablar({ texto: 'Ay [risa] qué bueno.', emocion: 'feliz' });
+          const solo = await hablar({ dueno: 'ana@prueba.hn', texto: 'Ay [risa] qué bueno.', emocion: 'feliz' });
           assert.equal(solo?.motor, 'voicebox:kokoro+expresiones');
         }
       )
@@ -172,10 +172,10 @@ test('si ElevenLabs cae a mitad del turno: Voicebox hasta el final y sin tomas g
 
 test('el PCM del teléfono sigue el mismo turno: mismo modelo, ids y respaldo', async () => {
   await conEleven(null, async (llamadas) => {
-    const uno = await abrirVozPcm({ texto: 'Hola, José.', emocion: 'feliz', hz: 22050 });
+    const uno = await abrirVozPcm({ dueno: 'ana@prueba.hn', texto: 'Hola, José.', emocion: 'feliz', hz: 22050 });
     assert.equal(uno?.tipo, 'vivo');
     if (uno?.tipo === 'vivo') uno.guardar(Buffer.alloc(4000));
-    await abrirVozPcm({ texto: 'Te cuento algo.', emocion: 'feliz', previo: 'Hola, José.', hz: 22050 });
+    await abrirVozPcm({ dueno: 'ana@prueba.hn', texto: 'Te cuento algo.', emocion: 'feliz', previo: 'Hola, José.', hz: 22050 });
     assert.equal(llamadas[0].cuerpo.model_id, MODELO_ELEVEN);
     assert.equal(llamadas[0].cuerpo.text, '[warmly] Hola, José.');
     assert.equal(llamadas[1].cuerpo.text, 'Te cuento algo.');
@@ -215,4 +215,13 @@ test('los agentes de la llamada (scripts/elevenlabs-agentes.ts): v4 Turbo, estab
   const c = A.configAgente('aura', 'es', 'sec_prueba');
   assert.deepEqual(c.conversation_config.tts, { model_id: MODELO_ELEVEN, voice_id: c.conversation_config.tts.voice_id, stability: 0.45 });
   assert.match(A.modeloRechazado('AU-RA FP · AU-RA (es)', MODELO_ELEVEN, 422).message, /rechazó el modelo eleven_v4_turbo \(422\)\. No se usa otro/);
+});
+
+test('el hilo de la voz es de UNA cuenta: la misma frase de otra persona no enlaza su turno (revisión del PR #173)', () => {
+  const h = new HiloVoz();
+  h.anotar('ana@prueba.hn|ultron|aura|es|', 'Claro que sí.', 'respaldo', '', null);
+  assert.equal(h.buscar('beto@prueba.hn|ultron|aura|es|', 'Claro que sí.'), null, 'otra cuenta: nada');
+  assert.ok(h.buscar('ana@prueba.hn|ultron|aura|es|', 'Claro que sí.'), 'la misma cuenta: su frase');
+  h.anotar('', 'Sin cuenta.', 'v4', 'eleven_v4_turbo', null);
+  assert.equal(h.buscar('', 'Sin cuenta.'), null, 'sin cuenta no entra al hilo');
 });

@@ -271,7 +271,8 @@ class TelefonoAura(private val ctx: ReactApplicationContext) : ReactContextBaseJ
     const val EVENTO_COMPARTIDO = "auraCompartido"
     private const val TAG = "AuraTelefono"
     private const val PAQUETE_WAZE = "com.waze"
-    private const val MAX_IMAGEN = 12L * 1024 * 1024
+    // 8 MiB: en base64 crece un tercio (≈10,7 MiB) y el turno (/api/turno) admite 12 MiB de JSON (revisión del PR #173).
+    private const val MAX_IMAGEN = 8L * 1024 * 1024
     /** Los mismos esquemas que el `<queries>` del manifiesto y lib/telefono-apps.ts ESQUEMAS_ENLACE. */
     private val ESQUEMAS = setOf("spotify", "whatsapp", "geo", "https", "tel", "mailto")
     private val RE_NUMERO = Regex("^\\+?[0-9 ()-]{3,20}$")

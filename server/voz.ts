@@ -455,9 +455,12 @@ type Turno = {
   enMitad: boolean;
 };
 
-function turnoDe(o: { plataforma: 'ultron' | 'electrum'; avatar?: string; idioma: Idioma; vozPropia?: string; previo?: string; sinEleven?: boolean }): Turno {
-  const hablante = `${o.plataforma}|${o.avatar || 'aura'}|${o.idioma}|${String(o.vozPropia || '').trim()}`;
-  const previa = o.previo ? hilo.buscar(hablante, o.previo) : null;
+function turnoDe(o: { plataforma: 'ultron' | 'electrum'; avatar?: string; idioma: Idioma; vozPropia?: string; previo?: string; sinEleven?: boolean; dueno?: string }): Turno {
+  // El hilo es de UNA cuenta (revisión del PR #173): la misma voz y una frase común no enlazan el turno de otra persona
+  // (su modo de respaldo ni sus request-id de ElevenLabs). Sin dueño conocido, sin hilo.
+  const dueno = String(o.dueno || '').trim().toLowerCase();
+  const hablante = dueno ? `${dueno}|${o.plataforma}|${o.avatar || 'aura'}|${o.idioma}|${String(o.vozPropia || '').trim()}` : '';
+  const previa = o.previo && hablante ? hilo.buscar(hablante, o.previo) : null;
   const modo: ModoTurno = previa?.modo ?? 'v4';
   const rapido = modeloRespaldo();
   const modelos = o.sinEleven || modo === 'respaldo' ? [] : modo === 'rapido' && rapido ? [rapido] : [modeloEleven(), ...(rapido ? [rapido] : [])];
@@ -528,6 +531,8 @@ function pedidoEleven(o: {
  */
 export async function abrirVozEnVivo(opts: {
   texto: string;
+  /** De quién es la voz (la cuenta de la sesión): el hilo entre frases es solo suyo. */
+  dueno?: string;
   emocion?: Emocion | string;
   plataforma?: 'ultron' | 'electrum';
   previo?: string;
@@ -549,7 +554,7 @@ export async function abrirVozEnVivo(opts: {
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
   const idioma = normalizarIdioma(opts.idioma);
   const avatar = plataforma === 'ultron' ? normalizarAvatar(opts.avatar) : 'aura';
-  const turno = turnoDe({ plataforma, avatar, idioma, vozPropia: opts.vozPropia, previo: opts.previo });
+  const turno = turnoDe({ plataforma, avatar, idioma, vozPropia: opts.vozPropia, previo: opts.previo, dueno: opts.dueno });
   let entrada: FraseHilo | null = null;
   for (const modelo of turno.modelos) {
     const p = pedidoEleven({ ...opts, avatar, emocion, performance: 'speak', plataforma, idioma, modelo });
@@ -683,6 +688,8 @@ export type VozPcm =
  */
 export async function abrirVozPcm(opts: {
   texto: string;
+  /** De quién es la voz (la cuenta de la sesión): el hilo entre frases es solo suyo. */
+  dueno?: string;
   emocion?: Emocion | string;
   performance?: Performance;
   avatar?: AvatarVoz | string;
@@ -713,7 +720,7 @@ export async function abrirVozPcm(opts: {
   const idioma = normalizarIdioma(opts.idioma);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
   const hz = opts.hz && (HZ_PCM_ELEVEN as readonly number[]).includes(opts.hz) ? opts.hz : hzPcm();
-  const turno = turnoDe({ plataforma, avatar: plataforma === 'ultron' ? avatar : 'aura', idioma, vozPropia: opts.vozPropia, previo: opts.previo, sinEleven: opts.sinEleven });
+  const turno = turnoDe({ plataforma, avatar: plataforma === 'ultron' ? avatar : 'aura', idioma, vozPropia: opts.vozPropia, previo: opts.previo, sinEleven: opts.sinEleven, dueno: opts.dueno });
   let entrada: FraseHilo | null = null;
   for (const modelo of turno.modelos) {
     const p = pedidoEleven({ texto: opts.texto, emocion, performance, plataforma, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, vozPropia: opts.vozPropia, modelo });
@@ -769,6 +776,8 @@ export async function abrirVozPcm(opts: {
 
 export async function hablar(opts: {
   texto: string;
+  /** De quién es la voz (la cuenta de la sesión): el hilo entre frases es solo suyo. */
+  dueno?: string;
   /** Se acepta y se normaliza por compatibilidad; ya no cambia la voz. */
   emocion?: Emocion | string;
   /** Kokoro no canta: `sing` se dice igual que `speak`. */
@@ -815,7 +824,7 @@ export async function hablar(opts: {
    */
   // Sin sesión: nada privado (nunca está en la caché) y nada que no esté ya guardado.
   if (opts.soloCache && (opts.privado || opts.sinCache)) return null;
-  const turno = turnoDe({ plataforma, avatar, idioma, vozPropia: opts.vozPropia, previo: opts.previo, sinEleven: opts.sinEleven });
+  const turno = turnoDe({ plataforma, avatar, idioma, vozPropia: opts.vozPropia, previo: opts.previo, sinEleven: opts.sinEleven, dueno: opts.dueno });
   let entrada: FraseHilo | null = null;
   for (const modelo of turno.modelos) {
     const xiPedido = pedidoEleven({ ...opts, performance, emocion, plataforma, avatar, idioma, modelo });

@@ -152,7 +152,8 @@ export function useObjetivos(o: { activo: boolean; conSesion: boolean; cuenta?: 
       clearInterval(r);
       sub.remove();
     };
-  }, [o.activo, o.conSesion]);
+    // `cuenta`: otra cuenta vacía el almacén (almacen.sesion); se pide enseguida, no al siguiente sondeo (PR #173).
+  }, [o.activo, o.conSesion, o.cuenta]);
   return s;
 }
 
