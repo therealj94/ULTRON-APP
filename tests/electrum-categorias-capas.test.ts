@@ -67,14 +67,13 @@ test('pedido: por el nombre, y lo que no hay', () => {
   assert.equal(resolverPedido('todo', ITEMS).todo, true);
 });
 
-test('voz: encender, apagar y dejar solo', () => {
-  assert.deepEqual(comandoDe('Muéstrame los ríos'), { accion: 'capas', mostrar: true, que: 'los rios' });
-  assert.deepEqual(comandoDe('Doctor, esconde la geología'), { accion: 'capas', mostrar: false, que: 'la geologia' });
-  assert.deepEqual(comandoDe('pon el mapa político'), { accion: 'capas', mostrar: true, que: 'el mapa politico' });
-  assert.deepEqual(comandoDe('quita las áreas protegidas'), { accion: 'capas', mostrar: false, que: 'las areas protegidas' });
-  assert.deepEqual(comandoDe('deja solo el mapa político'), { accion: 'capas', mostrar: true, que: 'mapa politico', solo: true });
+test('voz: las capas van a Dr Electrum (un solo camino); limpiar el mapa sigue siendo local', () => {
+  // Encender, apagar o dejar solo una capa lo atiende el diálogo de capas del servidor
+  // (tests/electrum-dialogo-capas.test.ts), que pregunta el filtro y confirma con los datos.
+  for (const t of ['Muéstrame los ríos', 'Doctor, esconde la geología', 'pon el mapa político', 'quita las áreas protegidas', 'deja solo el mapa político', 'enciende las curvas de nivel']) {
+    assert.equal(comandoDe(t), null, t);
+  }
   assert.deepEqual(comandoDe('limpia el mapa'), { accion: 'capas', mostrar: false, que: 'todo' });
-  assert.deepEqual(comandoDe('enciende las curvas de nivel'), { accion: 'capas', mostrar: true, que: 'las curvas de nivel' });
 });
 
 test('voz: lo que ya era otra orden sigue siendo esa orden', () => {

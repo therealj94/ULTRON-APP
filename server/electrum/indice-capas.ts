@@ -18,6 +18,7 @@ import { esInvitado, exigirPlataforma, limitar } from '../seguridad';
 import { conTextoReparado, consultaConTope, hayBase, type RolCapa } from './db';
 import { capasPorRol, nombreDe } from './entorno';
 import { CASA, organizacionActual, sqlCarteraVisible, sqlDocumentoVisible } from './organizacion';
+import { camposDeEstilo, colorDeRasgo, colorPrincipal, type EntradaCatalogo, type Estilo, type Filtros } from '../../src-electrum/mapa/catalogo';
 
 const PREFIJO = 'biblioteca/mapas/';
 /** Más rasgos que esto no se manda entero a un teléfono: va por teselas. */
@@ -55,8 +56,26 @@ export type EntradaIndice = {
   notas?: string;
   fuentes?: Fuente[];
   caja?: [number, number, number, number] | null;
+  /** Cómo se pinta: el estilo original del KML, por categorías de un campo, o un solo color (correcciones v1.0, 2.3). */
+  estilo?: Estilo | null;
+  /** Cómo la nombra la gente («fichas de ocurrencia», «zonas de reserva»). */
+  alias?: string[];
+  /** En el índice pero sin archivo: en gris, «Sin datos». */
+  sin_datos?: boolean;
+  /** Agregada con el siguiente ID libre: el documento no la traía. */
+  fuera_de_indice?: boolean;
+  /** Dentro de un proyecto: «KML», «Shape», «Planos»… */
+  subgrupo?: string;
+  /** El ID que tenía antes de reclasificarla (retirado, no se reutiliza). */
+  id_anterior?: number;
 };
-export type Manifiesto = { version: string; crs_salida: string; capas: EntradaIndice[]; cuarentena?: Array<{ archivo: string; motivo: string }> };
+export type Manifiesto = {
+  version: string;
+  crs_salida: string;
+  capas: EntradaIndice[];
+  cuarentena?: Array<{ archivo: string; motivo: string }>;
+  retirados?: Array<{ id: number; ahora: number; nombre: string }>;
+};
 
 let leido: { cuando: number; m: Manifiesto | null } | null = null;
 
@@ -83,9 +102,37 @@ export function validarManifiesto(j: any): Manifiesto | null {
         .map((f: any) => ({ campo: String(f.campo).slice(0, 80), etiqueta: String(f.etiqueta || f.campo).slice(0, 80), valores: f.valores.slice(0, 60).map((v: unknown) => String(v).slice(0, 120)) })),
       fuentes: Array.isArray(x.fuentes) ? x.fuentes : [],
       caja: esCaja(x.caja) ? (x.caja.map(Number) as [number, number, number, number]) : null,
+      alias: (Array.isArray(x.alias) ? x.alias : []).filter((a: unknown) => typeof a === 'string').slice(0, 40).map((a: string) => a.slice(0, 80)),
+      estilo: estiloValido(x.estilo),
     });
   }
-  return { version: String(j.version || ''), crs_salida: String(j.crs_salida || 'EPSG:4326'), capas, cuarentena: Array.isArray(j.cuarentena) ? j.cuarentena : [] };
+  return {
+    version: String(j.version || ''),
+    crs_salida: String(j.crs_salida || 'EPSG:4326'),
+    capas,
+    cuarentena: Array.isArray(j.cuarentena) ? j.cuarentena : [],
+    retirados: Array.isArray(j.retirados) ? j.retirados.filter((r: any) => Number.isSafeInteger(Number(r?.id))) : [],
+  };
+}
+
+const HEX = /^#[0-9a-f]{6}$/i;
+/** Un estilo con colores de verdad (#rrggbb): lo que no lo es se cae, no llega a pintar nada raro. */
+function estiloValido(x: any): Estilo | null {
+  if (!x || typeof x !== 'object' || typeof x.tipo !== 'string') return null;
+  const categorias = Array.isArray(x.categorias)
+    ? x.categorias.filter((c: any) => c && HEX.test(String(c.color)) && c.valor != null).slice(0, 300).map((c: any) => ({ ...c, valor: String(c.valor).slice(0, 120) }))
+    : undefined;
+  const iconos = x.iconos && typeof x.iconos === 'object' ? Object.fromEntries(Object.entries(x.iconos).filter(([, v]) => HEX.test(String(v)))) : undefined;
+  return {
+    fuente: x.fuente,
+    tipo: x.tipo,
+    ...(typeof x.campo === 'string' ? { campo: x.campo } : {}),
+    ...(HEX.test(String(x.color)) ? { color: x.color } : {}),
+    ...(HEX.test(String(x.otro)) ? { otro: x.otro } : {}),
+    ...(categorias ? { categorias } : {}),
+    ...(iconos ? { iconos: iconos as Record<string, string> } : {}),
+    ...(typeof x.nota === 'string' ? { nota: x.nota.slice(0, 300) } : {}),
+  };
 }
 
 /** El manifiesto del cubo, con cinco minutos de memoria. Null si no hay. */
@@ -108,11 +155,13 @@ export async function manifiesto(): Promise<Manifiesto | null> {
 
 export function olvidarManifiesto() {
   leido = null;
+  paraMem.clear();
 }
 
 /** Para las pruebas: un manifiesto en memoria, como si viniera del cubo. */
 export function usarManifiesto(m: Manifiesto | null) {
   leido = { cuando: Date.now(), m };
+  paraMem.clear();
 }
 
 /**
@@ -136,9 +185,22 @@ export async function planoVisible(e: EntradaIndice): Promise<boolean> {
  * El manifiesto para esta persona: las capas de la base que su organización no ve quedan sin
  * fuente (se muestran en gris, como las faltantes), y no se dice de qué capa interna salen.
  */
+const paraMem = new Map<string, { cuando: number; base: Manifiesto; m: Manifiesto }>();
+
 export async function manifiestoPara(): Promise<Manifiesto | null> {
   const m = await manifiesto();
   if (!m) return null;
+  // Dr Electrum lo mira en cada pregunta desde el mapa: un minuto de memoria por organización
+  // (y se rehace si cambió el manifiesto del cubo).
+  const clave = organizacionActual() || '';
+  const ya = paraMem.get(clave);
+  if (ya && ya.base === m && Date.now() - ya.cuando < 60_000) return ya.m;
+  const r = await armarPara(m);
+  paraMem.set(clave, { cuando: Date.now(), base: m, m: r });
+  return r;
+}
+
+async function armarPara(m: Manifiesto): Promise<Manifiesto> {
   const visibles = new Set((hayBase() ? await capasPorRol() : []).map((c) => c.id));
   // Los planos que esta organización no puede abrir no se listan (revisión de Codex en #168).
   const planos = await Promise.all(m.capas.filter((c) => c.tipo === 'documento').map(async (c) => [c.id, await planoVisible(c)] as const));
@@ -164,7 +226,8 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
   const fuentes = (e.fuentes || []).filter((f) => f.capa || f.cartera);
   if (!fuentes.length) return { error: 'Esa capa no se sirve desde la base (es teselas, catastro o un plano).', status: 404 };
   const roles = new Map((await capasPorRol()).map((c) => [c.id, c.rol] as [number, RolCapa]));
-  const campos = (e.filtros || []).map((f) => f.campo);
+  // Lo que se filtra y lo que hace falta para pintarla con su estilo (el campo de categorías o el relleno/borde/ícono del KML).
+  const campos = [...new Set([...(e.filtros || []).map((f) => f.campo), ...camposDeEstilo(e.estilo), 'minerales'])];
   const total = fuentes.reduce((s, f) => s + (f.capa ? 1 : 0), 0);
   if (!total && !fuentes.some((f) => f.cartera)) return { error: 'Esa capa no está disponible para su organización.', status: 404 };
   const features: FeatureCollection['features'] = [];
@@ -191,17 +254,73 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
         20000
       ).then(conTextoReparado);
     }
+    const porDefecto = colorPrincipal(e as unknown as EntradaCatalogo);
     for (const r of filas) {
       if (!r.g) continue;
-      features.push({
-        type: 'Feature',
-        geometry: JSON.parse(r.g),
-        properties: { ...(r.props || {}), ...(f.propiedades || {}), layer_id: e.id, ...(f.capa ? { eid: Number(r.id) } : { concesion: Number(r.id) }), nombre: r.nombre || '' },
-      });
+      const geometry = JSON.parse(r.g);
+      const props: Record<string, unknown> = { ...(r.props || {}), ...(f.propiedades || {}), layer_id: e.id, ...(f.capa ? { eid: Number(r.id) } : { concesion: Number(r.id) }), nombre: r.nombre || '' };
+      // El color de CADA rasgo, con la misma regla que la leyenda (src-electrum/mapa/catalogo.ts):
+      // MapLibre y Google lo leen de aquí y pintan igual.
+      const c = colorDeRasgo(e.estilo, (k) => props[k], String(geometry?.type || ''), porDefecto);
+      props._c = c.relleno;
+      props._b = c.borde;
+      if (c.opacidadRelleno != null) props._o = c.opacidadRelleno;
+      features.push({ type: 'Feature', geometry, properties: props });
     }
     if (features.length > MAX_RASGOS) return { error: `Esa capa tiene más de ${MAX_RASGOS} rasgos: se ve por teselas.`, status: 413 };
   }
   return { geojson: { type: 'FeatureCollection', features }, entrada: e };
+}
+
+/**
+ * contar_entidades: cuántos rasgos de una capa del índice cumplen los filtros (varios valores = O,
+ * varios campos = Y). Con los mismos datos que se pintan; null si la capa no se cuenta (teselas,
+ * imágenes) o si no hay base.
+ */
+export async function contarIndice(id: number, filtros: Filtros = {}): Promise<number | null> {
+  const m = await manifiesto();
+  const e = m?.capas.find((c) => c.id === id);
+  if (!e || !hayBase()) return null;
+  const activos = Object.entries(filtros || {}).filter(([, vs]) => vs?.length);
+  const fu = e.fuentes || [];
+  if (fu.some((f) => f.catastro)) {
+    const conds: string[] = ['geom IS NOT NULL'];
+    const params: unknown[] = [];
+    for (const [campo, vs] of activos) {
+      if (campo !== 'estado' && campo !== 'tipo') return null;
+      params.push(vs);
+      conds.push(`${campo} = ANY($${params.length}::text[])`);
+    }
+    const [r] = await consultaConTope<{ n: string }>(`SELECT count(*)::text AS n FROM concesion WHERE ${conds.join(' AND ')}`, params, 10000);
+    return Number(r?.n ?? 0);
+  }
+  const base = fu.filter((f) => f.capa || f.cartera);
+  if (!base.length) return activos.length ? null : e.num_entidades ?? null;
+  const visibles = new Set((await capasPorRol()).map((c) => c.id));
+  let total = 0;
+  for (const f of base) {
+    if (f.capa && !visibles.has(f.capa)) continue;
+    // Lo que la fuente trae fijo (el mineral de cada archivo de fichas) se resuelve aquí, sin SQL.
+    let cumple = true;
+    const resto: Array<[string, string[]]> = [];
+    for (const [campo, vs] of activos) {
+      const fijo = f.propiedades?.[campo];
+      if (fijo != null) cumple = cumple && vs.includes(String(fijo));
+      else resto.push([campo, vs]);
+    }
+    if (!cumple) continue;
+    const params: unknown[] = [f.capa ?? f.cartera];
+    const conds = resto.map(([campo, vs]) => {
+      params.push(campo, vs);
+      return f.capa ? `(e.atributos->>$${params.length - 1}) = ANY($${params.length}::text[])` : `(CASE $${params.length - 1} WHEN 'estado' THEN c.estado WHEN 'titular' THEN c.titular END) = ANY($${params.length}::text[])`;
+    });
+    const sql = f.capa
+      ? `SELECT count(*)::text AS n FROM entidad_geo e WHERE e.capa_id = $1${conds.map((c) => ` AND ${c}`).join('')}`
+      : `SELECT count(*)::text AS n FROM cartera k JOIN cartera_concesion kc ON kc.cartera_id = k.id JOIN concesion c ON c.huella = kc.huella WHERE k.nombre = $1${sqlCarteraVisible('k')}${conds.map((c) => ` AND ${c}`).join('')}`;
+    const [r] = await consultaConTope<{ n: string }>(sql, params, 10000);
+    total += Number(r?.n ?? 0);
+  }
+  return total;
 }
 
 let perimetroMem: { cuando: number; fc: FeatureCollection } | null = null;

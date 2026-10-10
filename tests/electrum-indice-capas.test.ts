@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { arbolDe, colorDe, cumpleFiltroIndice, encendible, expresionFiltro, hayFiltro, hojasDe, resolverIndice, rolDe, type EntradaIndice } from '../src-electrum/mapa/indice';
 import { validarManifiesto } from '../server/electrum/indice-capas';
-import { comandoDe } from '../src-electrum/panel/comandos';
+import fs from 'node:fs';
 
 const g = (id: number, nombre: string, padre: number | null, orden: number): EntradaIndice => ({ id, nombre, tipo: 'grupo', padre, orden });
 const v = (id: number, nombre: string, padre: number, orden: number, extra: Partial<EntradaIndice> = {}): EntradaIndice => ({
@@ -78,26 +78,19 @@ test('índice: el filtro también en JavaScript (el mapa de Google no tiene expr
   assert.equal(cumpleFiltroIndice(p({ ph: 6 }), expresionFiltro({ ph: ['6'] })), true, 'como to-string');
 });
 
-test('índice: lo que se pide de palabra', () => {
-  const a = arbolDe(CAPAS);
-  assert.deepEqual(resolverIndice('el mapa político', a).ids.sort(), [105001, 105002]);
+test('índice: lo que se pide de palabra, con los alias del manifiesto (nada escrito a mano)', () => {
+  const real = JSON.parse(fs.readFileSync('scripts/indice-capas/manifest.json', 'utf8'));
+  const a = arbolDe(real.capas);
+  assert.deepEqual(resolverIndice('el mapa político', a).ids.sort(), [105001, 105002, 105003, 105004, 105005]);
   assert.deepEqual(resolverIndice('los municipios', a).ids, [105002]);
   assert.deepEqual(resolverIndice('el catastro', a).ids, [104001]);
   assert.deepEqual(resolverIndice('los ríos', a).ids, [105005]);
-  assert.deepEqual(resolverIndice('las fichas', a).ids, [110002]);
+  assert.deepEqual(resolverIndice('las fichas de ocurrencia', a).ids, [110002]);
   assert.deepEqual(resolverIndice('105002', a).ids, [105002], 'por ID');
-  assert.deepEqual(resolverIndice('la capa de pantaleona', a).ids, [301001], 'por nombre: el grupo entero, sin el plano');
+  assert.deepEqual(resolverIndice('800105', a).ids, [304060], 'por el ID retirado: la capa reclasificada');
+  assert.deepEqual(resolverIndice('las zonas de reserva', a).varias, ['Áreas protegidas', 'Patrimonio público forestal'], 'ambiguo: no adivina');
   assert.equal(resolverIndice('todo', a).todo, true);
-  assert.deepEqual(resolverIndice('las concesiones de plata', a).ids, []);
-});
-
-test('índice: la voz reconoce lo nuevo sin quitarle preguntas al cerebro', () => {
-  assert.deepEqual(comandoDe('muéstrame el catastro'), { accion: 'capas', mostrar: true, que: 'el catastro' });
-  assert.deepEqual(comandoDe('esconde las hojas cartográficas'), { accion: 'capas', mostrar: false, que: 'las hojas cartograficas' });
-  assert.deepEqual(comandoDe('pon la capa de pantaleona'), { accion: 'capas', mostrar: true, que: 'la capa de pantaleona' });
-  assert.deepEqual(comandoDe('deja solo el catastro'), { accion: 'capas', mostrar: true, que: 'catastro', solo: true });
-  assert.equal(comandoDe('muéstrame las concesiones de oro'), null);
-  assert.equal(comandoDe('muéstrame pantaleona'), null, 'un nombre suelto sigue siendo para volar a la concesión');
+  assert.deepEqual(resolverIndice('las zonas de litio', a).ids, []);
 });
 
 test('manifiesto: lo que no cumple no entra', () => {
@@ -137,6 +130,7 @@ test('índice contra PostGIS: una capa de varios archivos, con su layer_id, su m
         id: 110002, nombre: 'Fichas seleccionadas', tipo: 'vector', padre: 110000, orden: 2, num_entidades: 3,
         filtros: [{ campo: 'mineral', valores: ['Oro', 'Plata'] }, { campo: 'ESTADO', valores: ['activa', 'abandonada'] }],
         fuentes: [{ capa: id('ORO'), propiedades: { mineral: 'Oro' } }, { capa: id('PLATA'), propiedades: { mineral: 'Plata' } }],
+        estilo: { fuente: 'paleta', tipo: 'categorizado', campo: 'mineral', categorias: [{ valor: 'Oro', color: '#FFD700' }, { valor: 'Plata', color: '#C0C0C0' }] },
       },
       { id: 103001, nombre: 'Curvas', tipo: 'vector', padre: 103000, orden: 1, fuentes: [{ tesela: 'curvas' }] },
     ],
@@ -151,6 +145,17 @@ test('índice contra PostGIS: una capa de varios archivos, con su layer_id, su m
   assert.ok(oro.every((f: any) => typeof f.properties.ESTADO === 'string'), 'el campo de filtro viaja');
   assert.ok(fs.every((f: any) => !('SECRETO' in f.properties)), 'lo que no se filtra no viaja');
   assert.equal(fs.find((f: any) => f.properties.mineral === 'Plata').properties.nombre, 'Platera');
+  // Cada rasgo con su color, el de la leyenda (correcciones v1.0, 2.2): el oro amarillo, la plata gris.
+  assert.ok(oro.every((f: any) => f.properties._c === '#FFD700'));
+  assert.equal(fs.find((f: any) => f.properties.mineral === 'Plata').properties._c, '#C0C0C0');
+  // contar_entidades: el mineral de la fuente se resuelve sin SQL; el campo de la tabla, con SQL; varios campos = Y.
+  const { contarIndice } = await import('../server/electrum/indice-capas');
+  assert.equal(await contarIndice(110002, {}), 3);
+  assert.equal(await contarIndice(110002, { mineral: ['Oro'] }), 2);
+  assert.equal(await contarIndice(110002, { mineral: ['Oro', 'Plata'] }), 3, 'varios valores = O');
+  assert.equal(await contarIndice(110002, { mineral: ['Oro'], ESTADO: ['activa'] }), 1, 'varios campos = Y');
+  assert.equal(await contarIndice(110002, { ESTADO: ['activa'] }), 2);
+  assert.equal(await contarIndice(103001, { x: ['1'] }), null, 'las teselas no se cuentan con filtro');
   // Un plano: su documento manda; sin documento, solo la casa (revisión de Codex en #168).
   const { planoVisible } = await import('../server/electrum/indice-capas');
   const { conOrganizacion, asegurarOrganizacion } = await import('../server/electrum/organizacion') as any;

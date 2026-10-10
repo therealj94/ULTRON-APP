@@ -263,6 +263,7 @@ import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasIndice } from './server/electrum/indice-capas';
+import { estadoDelCliente } from './server/electrum/dialogo-capas';
 import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
@@ -766,7 +767,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
             prueba: id ? 'sesion' : null,
             duenio: quienDelHilo(id?.persona.id, req),
           },
-          { historial, idioma: req.body?.idioma, senal: corte.signal, inicio, interrumpido: oido }
+          { historial, idioma: req.body?.idioma, senal: corte.signal, inicio, interrumpido: oido, mapa: req.body?.mapa !== undefined ? estadoDelCliente(req.body.mapa) : undefined }
         )
       );
     } catch (e) {
@@ -1301,6 +1302,8 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
             mesa: req.body?.mesa === true,
             idioma: req.body?.idioma,
             interrumpido: oido,
+            // Lo encendido en el panel de capas: el diálogo de capas y estado_mapa lo leen.
+            mapa: req.body?.mapa !== undefined ? estadoDelCliente(req.body.mapa) : undefined,
             enVivo: (e) => {
               if (e.panel) enviar('panel', { panel: e.panel });
               if (e.herramienta) enviar('herramienta', e.herramienta);

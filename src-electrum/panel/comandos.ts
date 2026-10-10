@@ -123,13 +123,8 @@ export function comandoDe(texto: string): Comando | null {
    * algo del mapa: «muéstrame las concesiones de oro» es una pregunta, no una capa.
    */
   if (/^(limpia|limpiar|despeja)( el)? mapa$|^(quita|quitar|apaga|apagar|esconde|oculta)( todas)? las capas$/.test(t)) return { accion: 'capas', mostrar: false, que: 'todo' };
-  const solo = t.match(/^(?:deja(?:me)? |muestra(?:me)? |pon(?:me)? |ver )?solo(?: el| la| los| las)? (.+)$/);
-  if (solo && esPedidoDeCapa(solo[1])) return { accion: 'capas', mostrar: true, que: solo[1], solo: true };
-  const capa = t.match(/^(muestrame|muestra|ensename|ponme|pon|enciende|prende|activa|carga|cargame|agrega|anade|pinta|dibuja|quiero ver|ver|esconde|escondeme|oculta|ocultame|quita|quitame|apaga|desactiva|saca|retira|borra)( tambien)? (.+)$/);
-  if (capa && esPedidoDeCapa(capa[3])) {
-    const mostrar = !/^(esconde|escondeme|oculta|ocultame|quita|quitame|apaga|desactiva|saca|retira|borra)$/.test(capa[1]);
-    return { accion: 'capas', mostrar, que: capa[3] };
-  }
+  // Encender, filtrar o apagar una capa ya no se resuelve aquí: lo atiende Dr Electrum con el índice
+  // (server/electrum/dialogo-capas.ts), que pregunta lo que falta y confirma con los datos. Un solo camino.
 
   if (/^(donde estoy|mi ubicacion|muestrame donde estoy|llevame a donde estoy|ve a mi ubicacion|aqui donde estoy)$/.test(t)) return { accion: 'ubicacion' };
   return null;

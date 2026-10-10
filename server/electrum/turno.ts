@@ -32,7 +32,11 @@ import { lineaTiemposTurno, type MedidaTurno } from '../../lib/tiempos-turno';
 import { decidirPanel, herramientasDe, promptPanel } from './especialistas';
 import { bloqueMesa, duenioDe, EXPERTOS, OFICIOS, quienesDe, textoDeVoces, vocesDelTurno, type Voz } from './personajes';
 import { bloqueExpedientes, expedientesDeLaPregunta } from './expedientes-previos';
-import { manosDe, TODAS } from './manos';
+import { manosDe, MAPA, TODAS } from './manos';
+import { dialogoCapas, guardarPendiente, pendienteDe } from './dialogo-capas';
+import { contarIndice, manifiestoPara } from './indice-capas';
+import type { EntradaCatalogo, EstadoMapa } from '../../src-electrum/mapa/catalogo';
+import { normalizar } from '../../src-electrum/mapa/categorias';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro, lineas as lineasCerebro } from '../../lib/cerebro';
 import { bloqueInstituciones } from './instituciones';
@@ -180,6 +184,11 @@ export type OpcionesTurno = {
    * primera palabra; null/undefined si no la interrumpió). lib/interrumpida.ts: acusa corto y sigue con lo nuevo.
    */
   interrumpido?: string | null;
+  /**
+   * Lo encendido en el panel de capas de quien pregunta. Undefined si no viene de una pantalla con
+   * mapa: ahí no se abre el diálogo de capas (Telegram no tiene mapa).
+   */
+  mapa?: EstadoMapa;
 };
 
 export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: OpcionesTurno = {}): Promise<RespuestaTurno> {
@@ -198,6 +207,33 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
     }
   });
 }
+
+/** El diálogo de capas de un turno: null si la pregunta no es de capas. */
+async function turnoDeCapas(mensaje: string, ctx: Contexto, mapa: EstadoMapa, enVivo?: (e: EnVivo) => void): Promise<RespuestaTurno | null> {
+  const m = await manifiestoPara();
+  if (!m) return null;
+  const clave = `capas:${ctx.duenio || ctx.quien || 'anonimo'}`;
+  const r = await dialogoCapas(mensaje, { capas: m.capas as unknown as EntradaCatalogo[], estado: mapa, pendiente: pendienteDe(clave), contar: contarIndice });
+  if (!r) {
+    // Otra cosa: lo pendiente se olvida para que «sí» no abra algo de hace tres preguntas.
+    guardarPendiente(clave, null);
+    return null;
+  }
+  guardarPendiente(clave, r.pendiente);
+  const ui = r.ordenes.length ? [{ accion: 'indice', ordenes: r.ordenes }] : [];
+  for (const u of ui) enVivo?.({ ui: u });
+  trazaActual()?.agente('Índice de capas');
+  return { texto: r.texto, emocion: 'neutral', panel: '', traza: [{ herramienta: 'indice_capas', ok: true, resumen: r.ordenes.map((o) => o.op).join(', ') || 'pregunta', ms: 0 }], ui, fin: 'capas' };
+}
+
+/** Lo que el modelo tiene que saber en el modo mapa (correcciones v1.0, 4.4), corto. */
+export const REGLAS_MAPA =
+  'MAPA: para abrir capas usá buscar_capas y encender_capa con el ID. Una coincidencia: abrila. Varias: preguntá cuál nombrándolas. Ninguna: decilo, nunca inventes una capa. Si la capa tiene filtro y no lo dijeron, ofrecé los valores reales de valores_filtro; «todas» = sin filtro. Las capas se suman: no apagues otras salvo «solo», «quita», «cierra» o «limpia». Confirmá en una frase con datos (qué, filtro, cuántas). «Ahora las de plata» es la última capa con filtro; «quítalas», la última abierta (estado_mapa). Nunca digas que abriste algo si la herramienta falló.';
+
+/** ¿Habla del mapa? Entonces van las herramientas del índice de capas (modo mapa) y no los especialistas. */
+// Solo cuando nombra el mapa o sus capas: «muéstrame los vencimientos» es del catastro, no del mapa
+// (revisión de Codex en #169: un verbo suelto se llevaba las herramientas del especialista).
+const DEL_MAPA = /\b(capas?|mapa|indice de capas|leyenda|filtr\w*)\b/;
 
 /**
  * Lo que dice internet sobre la pregunta: los mejores resultados y el texto de las dos primeras
@@ -227,6 +263,14 @@ async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Pr
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno, idTraza = ''): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado, senal } = opciones;
   const inicio = opciones.inicio ?? Date.now();
+  if (opciones.mapa) ctx = { ...ctx, mapa: opciones.mapa };
+  /*
+   * LAS CAPAS, ANTES QUE EL MODELO (correcciones v1.0, 4.4). «Dame las fichas de ocurrencia» se
+   * contesta aquí, con el catálogo y los datos: qué capa es, qué valores tiene, cuántas hay. Las
+   * órdenes van al panel por el mismo camino que sus casillas. Lo que no es un pedido de capas sigue.
+   */
+  const deCapas = opciones.mapa && !opciones.mesa ? await turnoDeCapas(mensaje, ctx, opciones.mapa, enVivo).catch((e) => (console.error('[capas] diálogo', String(e?.message || e).slice(0, 160)), null)) : null;
+  if (deCapas) return deCapas;
   // Una línea de tiempos por turno en el log (lib/tiempos-turno.ts): sin nada de lo que se dijo.
   const medida: MedidaTurno = { inicio, herramientas: [], camino: 'electrum' };
   // Español por defecto; inglés si le hablan en inglés. Sin señal en el mensaje, la pista del
@@ -247,12 +291,15 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   trazaActual()?.clasificacion(clas);
   ctx = { ...ctx, riesgo: clas.riesgo, historial: historial.map((m) => ({ role: m.role, content: m.content })) };
   const { panel, fuente } = await panelP;
+  // Del mapa y desde la pantalla del mapa: las del índice de capas, sin especialistas que no las traen.
+  const modoMapa = !!ctx.mapa && !opciones.mesa && DEL_MAPA.test(normalizar(mensaje));
+  if (modoMapa) panel.splice(0, panel.length);
   // Quién de la mesa contesta: el dueño de cada especialidad convocada (personajes.ts).
   const mesa = fuente === 'mesa';
   const quienes = quienesDe(panel);
   const deLaMesa = bloqueMesa(quienes, mesa);
   // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
-  const base = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
+  const base = modoMapa ? MAPA : panel.length ? manosDe(herramientasDe(panel)) : TODAS;
   // Con «Internet» pedido, las dos de la web están aunque el especialista convocado no las traiga.
   const herramientas = [...base, ...(internet ? manosDe(['web_buscar', 'web_leer']).filter((h) => !base.some((b) => b.nombre === h.nombre)) : []), ...MEMORIA_ESTRUCTURADA];
   // Con la mesa se ve quién habla: «Don Chema (Metalurgista) y Ing. Tatiana (Ingeniero Civil)».
@@ -288,6 +335,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     // Ánimo, urgencia, estafa o alguien en riesgo, si Laya lo vio.
     ...guiasDeClasificacion(clas).flatMap((g) => ['', g]),
     '',
+    ...(modoMapa ? [REGLAS_MAPA, ''] : []),
     'CEREBRO DE MINAS:',
     CONOCIMIENTO_MINAS,
     // Al final, para que pese más que el resto del prompt, que está en español.

@@ -16,7 +16,8 @@ import { personalidadElectrum } from '../server/electrum/personalidad';
 import { ESPECIALISTAS, herramientasDe, promptPanel } from '../server/electrum/especialistas';
 import { CONOCIMIENTO_MINAS } from '../src/08-cerebro-minas/conocimiento';
 import { instruccionHermes } from '../lib/agente/protocolo';
-import { manosDe, TODAS } from '../server/electrum/manos';
+import { manosDe, MAPA, TODAS } from '../server/electrum/manos';
+import { REGLAS_MAPA } from '../server/electrum/turno';
 import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
 
 const PROXY = fs.readFileSync('scripts/nodo-a10g/ollama-proxy-ndjson.py', 'utf8');
@@ -51,4 +52,14 @@ test('el system de Dr Electrum cabe entero en el proxy del nodo, con cualquier p
     const nombre = panel.map((e) => e.nombre).join(' + ') || 'sin panel';
     assert.ok(system.length + HOLGURA <= MAX_PROXY, `${nombre}: ${system.length} caracteres no dejan sitio en ${MAX_PROXY}`);
   }
+  // El modo mapa (correcciones v1.0): sin especialistas, con las diez del índice de capas y sus reglas.
+  const mapa = [
+    personalidadElectrum({ nombre: 'José', nivel: 'mando', canal: 'mesa' }),
+    promptPanel([]),
+    REGLAS_MAPA,
+    'CEREBRO DE MINAS:',
+    CONOCIMIENTO_MINAS,
+    instruccionHermes([...MAPA, ...MEMORIA_ESTRUCTURADA]),
+  ].join('\n\n');
+  assert.ok(mapa.length + HOLGURA <= MAX_PROXY, `modo mapa: ${mapa.length} caracteres no dejan sitio en ${MAX_PROXY}`);
 });

@@ -20,3 +20,14 @@ El servidor lo lee en `server/electrum/indice-capas.ts` (`/api/electrum/mapa/ind
 `/indice/capa/:id`, `/perimetro`, `/plano/:id`) y el frontal lo pinta en
 `src-electrum/mapa/IndiceCapas.tsx`. Los IDs son permanentes: una capa nueva toma el siguiente
 número libre de su grupo; nunca se reutiliza uno.
+
+## Correcciones v1.0 (manifiesto v1.5)
+
+`correcciones.py` toma el manifiesto v1.4 publicado y le agrega, sin cambiar ningún ID publicado:
+`estilo` por capa (KML original, paleta por mineral o por unidad), `alias`, `sin_datos`,
+`subgrupo` de los proyectos y la reclasificación de Otros a los proyectos 301000–304000 (con
+`id_anterior` y la lista `retirados`). Lee los volcados del nodo (`atributos.json`,
+`kmlestilos.json`, `iconos.json`, `leyendas.json`, `capa-ext.txt`) y deja `salida/manifest.json`
+y `salida/correcciones.json`; `reporte_correcciones.py` arma el reporte. El resultado vive en el
+repositorio (`manifest.json`, que prueba `tests/electrum-arbol-indice.test.ts`) y en el cubo
+(`biblioteca/mapas/manifest.json`).
