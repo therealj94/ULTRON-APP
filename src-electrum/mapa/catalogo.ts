@@ -204,6 +204,8 @@ function forma(p: string): string {
   return /[lrndzj]es$/.test(t) ? t.slice(0, -2) : t.replace(/s$/, '');
 }
 const palabras = (t: string) => normalizar(t).split(' ').filter(Boolean).map(forma);
+/** Las palabras que dicen algo («de», «las», «mapa» no), en su forma de comparar. */
+export const palabrasSignificativas = (t: string) => palabras(t).filter((w) => !VACIAS.has(w));
 
 /** ¿Está la frase `a` dentro de `t`, palabra por palabra y en orden? */
 function contiene(t: string[], a: string[]): boolean {

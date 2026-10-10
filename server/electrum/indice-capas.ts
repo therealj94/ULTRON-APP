@@ -155,11 +155,13 @@ export async function manifiesto(): Promise<Manifiesto | null> {
 
 export function olvidarManifiesto() {
   leido = null;
+  paraMem.clear();
 }
 
 /** Para las pruebas: un manifiesto en memoria, como si viniera del cubo. */
 export function usarManifiesto(m: Manifiesto | null) {
   leido = { cuando: Date.now(), m };
+  paraMem.clear();
 }
 
 /**
@@ -183,9 +185,22 @@ export async function planoVisible(e: EntradaIndice): Promise<boolean> {
  * El manifiesto para esta persona: las capas de la base que su organización no ve quedan sin
  * fuente (se muestran en gris, como las faltantes), y no se dice de qué capa interna salen.
  */
+const paraMem = new Map<string, { cuando: number; base: Manifiesto; m: Manifiesto }>();
+
 export async function manifiestoPara(): Promise<Manifiesto | null> {
   const m = await manifiesto();
   if (!m) return null;
+  // Dr Electrum lo mira en cada pregunta desde el mapa: un minuto de memoria por organización
+  // (y se rehace si cambió el manifiesto del cubo).
+  const clave = organizacionActual() || '';
+  const ya = paraMem.get(clave);
+  if (ya && ya.base === m && Date.now() - ya.cuando < 60_000) return ya.m;
+  const r = await armarPara(m);
+  paraMem.set(clave, { cuando: Date.now(), base: m, m: r });
+  return r;
+}
+
+async function armarPara(m: Manifiesto): Promise<Manifiesto> {
   const visibles = new Set((hayBase() ? await capasPorRol() : []).map((c) => c.id));
   // Los planos que esta organización no puede abrir no se listan (revisión de Codex en #168).
   const planos = await Promise.all(m.capas.filter((c) => c.tipo === 'documento').map(async (c) => [c.id, await planoVisible(c)] as const));

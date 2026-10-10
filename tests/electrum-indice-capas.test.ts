@@ -130,6 +130,7 @@ test('índice contra PostGIS: una capa de varios archivos, con su layer_id, su m
         id: 110002, nombre: 'Fichas seleccionadas', tipo: 'vector', padre: 110000, orden: 2, num_entidades: 3,
         filtros: [{ campo: 'mineral', valores: ['Oro', 'Plata'] }, { campo: 'ESTADO', valores: ['activa', 'abandonada'] }],
         fuentes: [{ capa: id('ORO'), propiedades: { mineral: 'Oro' } }, { capa: id('PLATA'), propiedades: { mineral: 'Plata' } }],
+        estilo: { fuente: 'paleta', tipo: 'categorizado', campo: 'mineral', categorias: [{ valor: 'Oro', color: '#FFD700' }, { valor: 'Plata', color: '#C0C0C0' }] },
       },
       { id: 103001, nombre: 'Curvas', tipo: 'vector', padre: 103000, orden: 1, fuentes: [{ tesela: 'curvas' }] },
     ],
@@ -144,6 +145,17 @@ test('índice contra PostGIS: una capa de varios archivos, con su layer_id, su m
   assert.ok(oro.every((f: any) => typeof f.properties.ESTADO === 'string'), 'el campo de filtro viaja');
   assert.ok(fs.every((f: any) => !('SECRETO' in f.properties)), 'lo que no se filtra no viaja');
   assert.equal(fs.find((f: any) => f.properties.mineral === 'Plata').properties.nombre, 'Platera');
+  // Cada rasgo con su color, el de la leyenda (correcciones v1.0, 2.2): el oro amarillo, la plata gris.
+  assert.ok(oro.every((f: any) => f.properties._c === '#FFD700'));
+  assert.equal(fs.find((f: any) => f.properties.mineral === 'Plata').properties._c, '#C0C0C0');
+  // contar_entidades: el mineral de la fuente se resuelve sin SQL; el campo de la tabla, con SQL; varios campos = Y.
+  const { contarIndice } = await import('../server/electrum/indice-capas');
+  assert.equal(await contarIndice(110002, {}), 3);
+  assert.equal(await contarIndice(110002, { mineral: ['Oro'] }), 2);
+  assert.equal(await contarIndice(110002, { mineral: ['Oro', 'Plata'] }), 3, 'varios valores = O');
+  assert.equal(await contarIndice(110002, { mineral: ['Oro'], ESTADO: ['activa'] }), 1, 'varios campos = Y');
+  assert.equal(await contarIndice(110002, { ESTADO: ['activa'] }), 2);
+  assert.equal(await contarIndice(103001, { x: ['1'] }), null, 'las teselas no se cuentan con filtro');
   // Un plano: su documento manda; sin documento, solo la casa (revisión de Codex en #168).
   const { planoVisible } = await import('../server/electrum/indice-capas');
   const { conOrganizacion, asegurarOrganizacion } = await import('../server/electrum/organizacion') as any;

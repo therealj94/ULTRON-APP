@@ -12,6 +12,7 @@
  */
 import { normalizar } from '../../src-electrum/mapa/categorias';
 import {
+  palabrasSignificativas,
   buscarCapas,
   encendibleCat,
   enumerar,
@@ -92,6 +93,27 @@ function valoresOfrecidos(e: EntradaCatalogo, campo: string): string[] {
 
 const minus = (v: string) => (/^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(v) ? v.toLowerCase() : v);
 
+/** Palabras que pueden acompañar un pedido de capa sin cambiar qué capa es. */
+const RELLENO = new Set(['todas', 'toda', 'todo', 'todos', 'mineral', 'minerale', 'filtro', 'color', 'colore', 'ahi', 'aqui', 'favor', 'porfa', 'porfavor', 'otra', 'otro', 'vez', 'tambien', 'encima', 'zona', 'area', 'punto', 'lugar', 'sitio', 'nuevamente', 'otra vez', 'doctor', 'doc', 'electrum', 'dr', 'quisiera', 'podrias', 'puede', 'puedes', 'favor']);
+
+/**
+ * ¿Se explica TODO el pedido con la capa y sus filtros? «las fichas de ocurrencia de oro» sí; «las
+ * concesiones de oro» (el catastro no tiene mineral) o «el informe de Pantaleona» no: eso es una
+ * pregunta para el modelo, no una capa.
+ */
+function cubre(e: EntradaCatalogo, frase_: string, objeto: string, filtros: Filtros | null): boolean {
+  const explicadas = new Set([
+    ...palabrasSignificativas(frase_),
+    ...palabrasSignificativas(e.nombre),
+    ...(e.alias || []).flatMap((a) => palabrasSignificativas(a)),
+    ...Object.values(filtros || {}).flat().flatMap((v) => palabrasSignificativas(v)),
+  ]);
+  return palabrasSignificativas(objeto).every((w) => explicadas.has(w) || RELLENO.has(w) || GENERICAS.has(w));
+}
+
+/** ¿Suena a pedido de capa aunque no haya ninguna con ese nombre? («ábreme las zonas de litio») */
+const PIDE_CAPA = /\b(zonas?|capas?|areas?|puntos? de|fichas?|depositos?|yacimientos?|ocurrencias?|mapa de)\b/;
+
 /* ------------------------------------------------------------------ el diálogo */
 
 export async function conversarCapas(mensaje: string, x: Entorno): Promise<Respuesta | null> {
@@ -158,8 +180,10 @@ export async function conversarCapas(mensaje: string, x: Entorno): Promise<Respu
       // ¿Un valor de filtro de una capa ya abierta? («ábreme las de plata»)
       const cambio = cambiarFiltro(x, objeto, encendidas, por);
       if (cambio) return cambio;
-      return noEncontre(x, objeto);
+      return PIDE_CAPA.test(objeto) ? noEncontre(x, objeto) : null;
     }
+    // Si sobra algo que ninguna candidata explica, es una pregunta, no una capa.
+    if (!cands.some((c) => cubre(por.get(c.id)!, c.frase, objeto, filtrosEnTexto(por.get(c.id)!, objeto)))) return null;
     if (cands.length > 1) return preguntarCual(`«${mensajeCorto(objeto)}» puede ser`, cands.map((c) => por.get(c.id)!), soloM, x.capas);
     const e = por.get(cands[0].id)!;
     const f = filtrosEnTexto(e, objeto);
@@ -179,10 +203,12 @@ export async function conversarCapas(mensaje: string, x: Entorno): Promise<Respu
     const pron = PRONOMBRE.test(t.split(' ')[0]) || !objeto || PRONOMBRE.test(objeto);
     let e: EntradaCatalogo | null = null;
     if (!pron) {
-      const cands = buscarCapas(x.capas, objeto).map((c) => por.get(c.id)!);
+      const cands0 = buscarCapas(x.capas, objeto);
+      if (cands0.length && !cands0.some((c) => cubre(por.get(c.id)!, c.frase, objeto, null))) return null;
+      const cands = cands0.map((c) => por.get(c.id)!);
       const prendidas = cands.filter((c) => encendidas.some((y) => y.id === c.id) || hojasCat(x.capas, c.id).some((h) => encendidas.some((y) => y.id === h.id)));
       e = prendidas[0] || cands[0] || null;
-      if (!e) return noEncontre(x, objeto);
+      if (!e) return PIDE_CAPA.test(objeto) ? noEncontre(x, objeto) : null;
     } else if (ultima) e = por.get(ultima.id) || null;
     if (!e) return { texto: 'No hay ninguna capa encendida para quitar.', ordenes: [], pendiente: null };
     const ids = (e.tipo === 'grupo' ? hojasCat(x.capas, e.id) : [e]).map((h) => h.id).filter((i) => encendidas.some((y) => y.id === i));
@@ -320,6 +346,9 @@ function cambiarFiltro(x: Entorno, t: string, encendidas: EstadoMapa['capas'], p
 async function contarPedido(x: Entorno, t: string, ultima: EntradaCatalogo | null): Promise<Respuesta | null> {
   const objeto = t.replace(/^.*?\bcuant[oa]s?\b/, '').replace(/\b(hay|tengo|son|existen|tiene|tienen|en total|en el mapa)\b/g, ' ');
   const cands = buscarCapas(x.capas, objeto);
+  // «¿cuántas concesiones vencen?» no es contar una capa: sobra «vencen».
+  if (cands.length && !cands.some((c) => cubre(x.capas.find((y) => y.id === c.id)!, c.frase, objeto, filtrosEnTexto(x.capas.find((y) => y.id === c.id)!, objeto)))) return null;
+  if (!cands.length && palabrasSignificativas(objeto).some((w) => !RELLENO.has(w) && !GENERICAS.has(w) && !(ultima && filtrosEnTexto(ultima, objeto)))) return null;
   const e = cands.length === 1 ? x.capas.find((c) => c.id === cands[0].id)! : !cands.length ? ultima : null;
   if (!e) return cands.length > 1 ? preguntarCual('¿De cuál? Puede ser', cands.map((c) => x.capas.find((y) => y.id === c.id)!), false) : null;
   if (!encendibleCat(e)) return null;

@@ -118,7 +118,17 @@ test('funciona con otras capas filtrables, cuenta y dice qué hay encendido', as
 
 test('lo que no es de capas sigue al modelo', async () => {
   const c = conversacion();
-  for (const t of ['cuál es la ley de corte del oro', 'muéstrame el mapa', '¿qué concesiones vencen este mes?']) assert.equal(await c.decir(t), null, t);
+  for (const t of [
+    'cuál es la ley de corte del oro',
+    'muéstrame el mapa',
+    '¿qué concesiones vencen este mes?',
+    'muéstrame las concesiones de oro',
+    '¿cuántas concesiones vencen este año?',
+    'necesito el informe de Pantaleona',
+    'muéstrame el expediente de El Tajo',
+    'quita el último párrafo del informe',
+  ])
+    assert.equal(await c.decir(t), null, t);
 });
 
 test('valores de filtro: solo los que existen; lo inventado se rechaza', () => {
