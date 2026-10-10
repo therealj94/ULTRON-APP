@@ -61,6 +61,8 @@ import { indiceTeselas } from './teselas';
 import { inventarioCapas } from './explorar';
 import { manifiestoPara, type EntradaIndice } from './indice-capas';
 import { MANOS_CAPAS } from './manos-capas';
+import { buscarCapas, type EntradaCatalogo } from '../../src-electrum/mapa/catalogo';
+import { MANOS_PANTALLA } from './manos-pantalla';
 import { CATEGORIAS, categoriaDeRaster, categoriaDeRol } from '../../src-electrum/mapa/categorias';
 
 const NOMBRE_CATEGORIA = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c.nombre])) as Record<string, string>;
@@ -93,7 +95,7 @@ const catastro_buscar: Herramienta = {
     // (Chaparro II, III, VII y VIII) no estaban en ningún lado para pedirlas.
     const TOPE = 12;
     const filas = await buscarConcesiones(String(texto), TOPE);
-    if (!filas.length) return { ok: true, texto: `No hay ninguna concesión que coincida con «${texto}» en el catastro cargado.`, ui: { filas: [] } };
+    if (!filas.length) return { ok: true, texto: `No hay ninguna concesión que coincida con «${texto}» en el catastro cargado.${await dondeMas(String(texto))}`, ui: { filas: [] } };
     // La que se nombró tal cual gana aunque la búsqueda tolerante traiga parecidas.
     const exacta = unicaExacta(filas, String(texto));
     const uno = exacta || filas[0];
@@ -424,7 +426,7 @@ const concesion_entorno: Herramienta = {
     let id = concesion_id != null ? Number(concesion_id) : null;
     if (id == null && nombre) {
       const filas = await buscarConcesiones(String(nombre), 6);
-      if (!filas.length) return { ok: false, texto: `No encuentro «${nombre}» en el catastro.` };
+      if (!filas.length) return { ok: false, texto: `No encuentro «${nombre}» en el catastro.${await dondeMas(String(nombre))}` };
       const elegida = filas.length === 1 ? filas[0] : unicaExacta(filas, String(nombre));
       if (!elegida) return { ok: false, texto: `«${nombre}» coincide con varias: ${filas.map(distinguir).join('; ')}. Pedime el entorno de una por su id.` };
       id = elegida.id;
@@ -619,7 +621,7 @@ const mapa_volar: Herramienta = {
     let comoSeLlama = String(nombre || '');
     if (id == null && comoSeLlama) {
       const filas = await buscarConcesiones(comoSeLlama, 6);
-      if (!filas.length) return { ok: false, texto: `No encuentro «${comoSeLlama}» en el catastro, así que no sé a dónde volar.` };
+      if (!filas.length) return { ok: false, texto: `No encuentro «${comoSeLlama}» en el catastro, así que no sé a dónde volar.${await dondeMas(String(comoSeLlama))}` };
       const elegida = filas.length === 1 ? filas[0] : unicaExacta(filas, comoSeLlama);
       if (!elegida) {
         return {
@@ -657,6 +659,26 @@ const mapa_capa: Herramienta = {
     };
   },
 };
+
+/**
+ * Lo que no está en el catastro puede estar en otro lado: «Pantaleona» es una cartera de 23
+ * concesiones y un proyecto del índice, no una concesión. Sin esto, Electrum decía «no encuentro» y
+ * se quedaba ahí (auditoría de manos, 10 de octubre de 2026).
+ */
+async function dondeMas(texto: string): Promise<string> {
+  const t = texto.trim().toLowerCase();
+  if (t.length < 3) return '';
+  const partes: string[] = [];
+  const ks = await carteras().catch(() => []);
+  const k = ks.filter((x) => x.nombre.toLowerCase().includes(t));
+  if (k.length) partes.push(`Sí es una cartera: ${k.map((x) => `«${x.nombre}» (${x.n} concesiones; cartera_analisis)`).join(', ')}.`);
+  const m = await manifiestoPara().catch(() => null);
+  if (m) {
+    const c = buscarCapas(m.capas as unknown as EntradaCatalogo[], texto).slice(0, 4);
+    if (c.length) partes.push(`En el índice de capas: ${c.map((x) => `${String(x.id).padStart(6, '0')} ${x.nombre}`).join(', ')} (encender_capa).`);
+  }
+  return partes.length ? ` ${partes.join(' ')}` : '';
+}
 
 /** El índice de capas del mapa: qué hay, en qué categoría, si se ve y, si no, por qué. */
 const capas_listar: Herramienta = {
@@ -1096,6 +1118,8 @@ export const MANOS: Record<string, Herramienta> = {
   capas_listar,
   // Las diez del índice de capas (correcciones v1.0, 4.2): las mismas órdenes que el panel.
   ...MANOS_CAPAS,
+  // La pantalla, el análisis de un área dictada y el estado del sistema (auditoría de manos).
+  ...MANOS_PANTALLA,
   expediente_buscar,
   expediente_listar,
   expediente_leer,
@@ -1131,5 +1155,5 @@ export const TODAS = Object.values(MANOS).filter((h) => h.plataformas.includes('
  */
 export const MAPA: Herramienta[] = [
   ...Object.values(MANOS_CAPAS),
-  ...['capas_listar', 'mapa_volar', 'catastro_buscar', 'catastro_contar', 'concesion_entorno'].map((n) => MANOS[n]).filter(Boolean),
+  ...['capas_listar', 'mapa_volar', 'pantalla', 'area_analizar', 'catastro_buscar', 'catastro_contar', 'concesion_entorno'].map((n) => MANOS[n]).filter(Boolean),
 ];

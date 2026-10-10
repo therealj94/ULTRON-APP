@@ -624,9 +624,52 @@ export function declararPrefijosKml(texto: string): string {
   return texto.slice(0, fin) + decl + texto.slice(fin);
 }
 
+/** Lo que hay dentro de las etiquetas de una celda, como texto plano. */
+function textoCelda(h: string): string {
+  return h
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * LOS CAMPOS ESCONDIDOS EN LA DESCRIPCIÓN DE UN KML.
+ *
+ * ArcGIS exporta la tabla de atributos de cada elemento como una tabla HTML dentro de
+ * `<description>` («Unidad | Tpm», «Formación | Grupo Padre Miguel»…), no como ExtendedData. El
+ * cerebro leía ese HTML entero como el nombre de la unidad de roca. Aquí se sacan las parejas
+ * campo–valor de la tabla y se agregan a las propiedades del rasgo; la descripción original queda.
+ */
+export function camposDeDescripcion(desc: unknown): Record<string, string> {
+  const html = typeof desc === 'string' ? desc : desc && typeof desc === 'object' && typeof (desc as any).value === 'string' ? (desc as any).value : '';
+  if (!html || !/<td/i.test(html)) return {};
+  const out: Record<string, string> = {};
+  for (const fila of html.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || []) {
+    const celdas = (fila.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) || []).map(textoCelda);
+    // Solo filas de dos celdas: la de la cabecera (una celda con el título) y las tablas anidadas no.
+    if (celdas.length !== 2) continue;
+    const [k, v] = celdas;
+    if (!k || k.length > 40 || /^\d+$/.test(k) || !v || /^<?null>?$/i.test(v)) continue;
+    if (!(k in out)) out[k] = v.slice(0, 500);
+  }
+  return out;
+}
+
 function ingerirKml(nombre: string, texto: string, avisos: Aviso[], formato: string): Ingesta {
   const doc = new DOMParser().parseFromString(declararPrefijosKml(texto), 'text/xml');
   const crudo = kmlAGeojson(doc as any) as FeatureCollection;
+  for (const f of crudo.features) {
+    const p = (f.properties || {}) as Record<string, unknown>;
+    const extra = camposDeDescripcion(p.description);
+    for (const [k, v] of Object.entries(extra)) if (!(k in p)) p[k] = v;
+    f.properties = p;
+  }
   const { fc, descartadas } = limpiar(crudo);
   // KML es WGS84 por definición del formato; no hay nada que reproyectar.
   return {
