@@ -4940,6 +4940,15 @@ function turnoSuperado(opciones: OpcionesTurno): boolean {
 }
 
 /**
+ * La respuesta de un turno TARDÍO (llegó otra frase de la persona mientras pensaba) no se dice ni hace nada, pero el hilo
+ * la guarda marcada como no dicha (José, 10-oct: en la tormenta de interrupciones el hilo se quedaba sin respuestas y la
+ * llamada «perdía el hilo»). El cerebro ve qué iba a contestar y que la persona no lo oyó.
+ */
+function respuestaNoDicha(texto: string): string {
+  return `(No llegó a decirse: la persona siguió hablando antes. Iba a contestar:) ${String(texto || '').trim().slice(0, 600)}`;
+}
+
+/**
  * Empuja las acciones de un turno. Fuera de la voz, al momento (los eventos con su boleto van también
  * en la respuesta). En la voz, cuando el turno se confirma (`retener`), y la misma acción repetida en
  * pocos segundos no se hace dos veces (repetidaEnVoz). `antes` y `despues` son lo que el turno anota
@@ -5379,6 +5388,8 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     if (final.reply && estado === 'completo' && memorizable && !turnoSuperado(opciones)) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     // Contestó, pero no va a su memoria como conclusión (AUR07, parcial): el hilo sabe que sí hubo respuesta (M3).
     else if (final.reply && !turnoSuperado(opciones)) anotarRespuestaSinMemoria(claveHiloTurno(body, quienMem), message, final.reply);
+    // Tardía: no se dijo, pero el hilo sabe qué iba a contestar (marcado «no dicho»): el contexto no se pierde (10-oct).
+    else if (final.reply) anotarRespuestaSinMemoria(claveHiloTurno(body, quienMem), message, respuestaNoDicha(final.reply));
     return final;
   };
   if (p.directo) {
@@ -6080,6 +6091,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // Lo que sí quedó hecho afuera se anota igual (G2): nunca un efecto sin su recibo. (Con una herramienta con efectos el
       // turno ya no llega aquí: `conEfecto` lo deja terminar.)
       if (!senal?.aborted && recibosTurno.some((r) => r.estado === 'confirmado')) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), []);
+      // José, 10-oct: lo que iba a contestar queda en el hilo marcado «no dicho» (el turno nuevo sabe por dónde iba).
+      const noDicho = quitarExpresiones(extraerAcciones(texto).texto).trim();
+      if (noDicho) anotarRespuestaSinMemoria(claveHiloTurno(body, quienMem), message, respuestaNoDicha(noDicho));
       reg.cerrar({ error: 'respuesta tardía: llegó otra frase' });
       send('done', { reply: '', voz: '', emocion: 'neutral', ms: Date.now() - t0, via, acciones: [], trazaId: reg.id, estado: 'error', parcial: true, motivo: 'llegó otra frase de la persona', tardia: true });
       return salida.fin();

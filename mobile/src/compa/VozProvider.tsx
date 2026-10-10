@@ -34,7 +34,7 @@
  * `useVozOpcional()` devuelve null y ella misma se envuelve (ver DeskScreen).
  */
 import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { AppState, Platform } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 import { SafeAreaInsetsContext, initialWindowMetrics } from 'react-native-safe-area-context';
 import { API_BASE } from '../config';
 import { api } from '../lib/api';
@@ -68,6 +68,9 @@ import { registrarTrabajoActivo } from '../lib/barreraOta';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
+import { GRACIA_FONDO_MS, GuardiaFondoLlamada, VENTANA_TRAER_MS, comoAtenderLlamame } from './fondoLlamada';
+import { burbujaAbierta } from '../burbuja/logica';
+import { enlaceHablar } from '../entrada/enlace';
 import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, mandarAlAgente, seguirVozMesa, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
 import { aplicarAccionControl, puertosTelefono } from './controles';
 import { loadVozHoy, saveVozHoy } from '../lib/storage';
@@ -122,8 +125,8 @@ export type ApiVoz = {
 const VozCtx = createContext<ApiVoz | null>(null);
 
 
-/** Lo que la app tiene que seguir detrás para colgar la llamada (un diálogo del sistema dura menos). */
-export const SEGUNDO_PLANO_MS = 3_000;
+/** Lo que la app tiene que seguir detrás para colgar la llamada (un diálogo del sistema dura menos): compa/fondoLlamada.ts. */
+export const SEGUNDO_PLANO_MS = GRACIA_FONDO_MS;
 export function useVoz(): ApiVoz {
   const v = useContext(VozCtx);
   if (!v) throw new Error('useVoz fuera de VozProvider');
@@ -270,7 +273,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           case 'abrir':
             setMinimizada(false);
             setAltavoz(true);
-            control.iniciar();
+            // Contestó (o «Hablar»): una sesión NUEVA, nunca una que quedó montada de antes (sesion.ts iniciarNueva).
+            control.iniciarNueva();
             break;
           case 'cerrar':
             // Con el registro de toda la llamada: si se cortó sola, en el servidor se ve por qué.
@@ -426,6 +430,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
 
   // El reloj del silencio largo, segundo plano, perfil, silencio y llamadas.
   const puenteRef = useRef<PuenteAcciones | null>(null);
+  /** La guardia del segundo plano de la llamada (compa/fondoLlamada.ts): las transiciones propias se le avisan. */
+  const guardiaRef = useRef<GuardiaFondoLlamada | null>(null);
   useEffect(() => {
     const tic = setInterval(() => control.tic(), 10_000);
     // El vigilante de la conversación: «Conectando…» sin tope o abierta sin que le llegue la voz no
@@ -438,31 +444,54 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       } else if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
     }, 1_000);
     /*
-     * Segundo plano de verdad, no un parpadeo. En Android, cualquier ventana del sistema por encima (el
-     * diálogo de un permiso, aunque ya esté dado y se cierre solo) pausa la app, y React Native lo da como
-     * `background` durante unos milisegundos. 1-oct: poner un recordatorio pide el permiso de avisos y eso
-     * colgaba la llamada justo cuando AURA decía «Listo, te llamo a las 7:45». Se cuelga solo si sigue
-     * detrás pasado SEGUNDO_PLANO_MS.
+     * Segundo plano de verdad, no un parpadeo (compa/fondoLlamada.ts). En Android, cualquier ventana por encima (el
+     * diálogo de un permiso, la BURBUJA del botón lateral, el aviso a pantalla completa de una llamada) pausa la app, y
+     * React Native lo da como `background`. 1-oct: el permiso de avisos colgaba la llamada justo cuando AURA decía
+     * «Listo, te llamo a las 7:45»; 10-oct: la burbuja y contestar la colgaban («al contestar salió colgada»), y como
+     * Android congela los relojes de JS con la app detrás, el «cuelga en 3 s» corría al VOLVER. La guardia mide con el
+     * reloj de pared, no cuelga por nuestras propias ventanas y espera el «active» cuando su reloj llegó congelado.
      */
-    let detras: ReturnType<typeof setTimeout> | null = null;
+    const apagarPorFondo = (detalle: string) => {
+      miga(`voz: ${detalle}; la llamada del avatar se cuelga`);
+      ejecutar(ciclo.apagar());
+      control.segundoPlano();
+    };
+    const guardia = new GuardiaFondoLlamada({
+      hayLlamada: () => llamadaActiva(ciclo.estado()) || control.vista().montada,
+      contestada: () => ciclo.estado() === 'en_llamada' || ciclo.estado() === 'silenciado',
+      estadoApp: () => AppState.currentState,
+      burbuja: () => burbujaAbierta.abierta(),
+      colgar: apagarPorFondo,
+      miga,
+    });
+    guardiaRef.current = guardia;
+    // La burbuja se abre (o la app vuelve tras cerrarla): esos segundos planos son nuestros.
+    let burbujaAntes = burbujaAbierta.abierta();
+    const offBurbuja = burbujaAbierta.suscribir(() => {
+      const ahora = burbujaAbierta.abierta();
+      if (ahora === burbujaAntes) return;
+      burbujaAntes = ahora;
+      if (llamadaActiva(ciclo.estado()) || control.vista().montada) guardia.propia(ahora ? 'la burbuja se abrió' : 'la burbuja se cerró');
+    });
+    // Sin SSE en segundo plano (batería, datos): se para pasado el rato de gracia, como antes (con la burbuja delante
+    // AppState dice «active»: su «llámame» sigue llegando por ese canal). Al volver se reconecta con Last-Event-ID.
+    let puenteParado = false;
+    let pararPuente: ReturnType<typeof setTimeout> | null = null;
     const app = AppState.addEventListener('change', (st) => {
+      guardia.estado(st);
       if (st === 'active') {
-        if (detras) {
-          clearTimeout(detras);
-          detras = null;
-          miga('voz: volvió del segundo plano a tiempo; la llamada sigue');
-          return;
+        if (pararPuente) clearTimeout(pararPuente);
+        pararPuente = null;
+        if (puenteParado) {
+          puenteParado = false;
+          precalentarCerebro();
+          puenteRef.current?.arrancar();
         }
-        precalentarCerebro();
-        puenteRef.current?.arrancar();
-      } else if (st === 'background' && !detras) {
-        detras = setTimeout(() => {
-          detras = null;
+      } else if (st === 'background' && !pararPuente && !puenteParado) {
+        pararPuente = setTimeout(() => {
+          pararPuente = null;
           if (AppState.currentState === 'active') return;
-          miga('voz: segundo plano, la llamada del avatar se cuelga');
-          ejecutar(ciclo.apagar());
-          control.segundoPlano();
-          // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
+          puenteParado = true;
           puenteRef.current?.parar();
         }, SEGUNDO_PLANO_MS);
       }
@@ -471,9 +500,24 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       control.perfil(p.avatar, p.idioma);
     });
     const offAccion = escuchar('accion', (a) => {
-      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): la conversación se abre ya.
+      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): con la app delante, la conversación se abre
+      // ya. Pedido desde la BURBUJA (o con la app detrás) suena de verdad («AURA te está llamando») y, desde la burbuja,
+      // la app viene delante: al contestar empieza una sesión nueva (compa/fondoLlamada.ts comoAtenderLlamame).
       if (a.tipo === 'llamame') {
-        const ok = llamameRef.current();
+        const como = comoAtenderLlamame({ estadoApp: AppState.currentState, burbuja: burbujaAbierta.abierta() });
+        let ok: boolean;
+        if (como === 'al-instante') ok = llamameRef.current();
+        else if (control.vista().suspendida) ok = false;
+        else {
+          const ef = ciclo.llamar({ tipo: 'llamame' });
+          ejecutar(ef);
+          ok = ciclo.estado() === 'sonando';
+          miga(`llamada del avatar: «llámame» con la app ${como === 'sonar-y-traer' ? 'tapada por la burbuja' : 'detrás'}: suena`);
+          if (ok && como === 'sonar-y-traer') {
+            guardiaRef.current?.propia('la llamada suena: la app viene delante', VENTANA_TRAER_MS);
+            void Linking.openURL(enlaceHablar('burbuja')).catch((e) => miga(`llamada del avatar: no pude traer la app delante (${String((e as Error)?.message || e).slice(0, 60)})`));
+          }
+        }
         emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call.") }) });
         return;
       }
@@ -536,6 +580,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     const alContestarAviso = () => {
       const l = tomarPorDecir();
       if (!l) return;
+      // El aviso a pantalla completa y la app que se abre al contestar son ventanas nuestras: no cuelgan lo que contestó.
+      guardiaRef.current?.propia('contestó desde el aviso');
       const o = ciclo.origen();
       if (!(ciclo.estado() === 'sonando' && o?.tipo === 'recordatorio' && o.base === l.base)) ejecutar(ciclo.llamar(origenDe(l)));
       ejecutar(ciclo.contestar());
@@ -564,7 +610,10 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     return () => {
       clearInterval(tic);
       clearInterval(vigia);
-      if (detras) clearTimeout(detras);
+      if (pararPuente) clearTimeout(pararPuente);
+      guardia.soltar();
+      if (guardiaRef.current === guardia) guardiaRef.current = null;
+      offBurbuja();
       app.remove();
       offPerfil();
       offAccion();
@@ -661,11 +710,17 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   // Y mientras dure no vuelve a sonar: ni el resto de un turno que venía en camino ni un saludo, una
   // reacción o algo pedido desde el menú (lib/tts.ts, callarPorConversacion). Al colgar, o al fallar,
   // la mesa vuelve a tener voz antes de decir por qué no conectó.
+  // Y el oído del teléfono (el de la mesa, la compañera o la BURBUJA) tampoco escucha mientras tanto: oía la voz de AURA
+  // por el altavoz y mandaba turnos por su lado que dejaban tardío al de la llamada (lib/speech.ts, motivo 'conversacion').
   useEffect(() => {
-    const off = seguirVozMesa(ciclo, control, callarPorConversacion);
+    const off = seguirVozMesa(ciclo, control, (on) => {
+      callarPorConversacion(on);
+      void suspenderOido(on, 'conversacion');
+    });
     return () => {
       off();
       callarPorConversacion(false);
+      void suspenderOido(false, 'conversacion');
     };
   }, [ciclo, control]);
   const conversando = vista.montada && (vista.estado === 'escuchando' || vista.estado === 'hablando');

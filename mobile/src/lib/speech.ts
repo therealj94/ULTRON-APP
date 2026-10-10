@@ -336,7 +336,20 @@ export function oidoSuspendido() {
   return suspendido;
 }
 
-export async function suspenderOido(on: boolean) {
+/**
+ * Quiénes lo tienen suspendido: una llamada de PULSE2CHAT ('llamada', la de siempre) y, desde el 10-oct, la conversación
+ * en vivo con el avatar ('conversacion', VozProvider). José, APK 5.7.0: con la llamada del avatar abierta desde la burbuja,
+ * el oído del teléfono (el de la burbuja o el de la mesa) seguía abierto y oía la voz de AURA por el altavoz: mandaba
+ * turnos por su lado (`[turno] FALLA ruta=stream … estado=error`, `[mesa] respuesta tardía`) que dejaban tardío al turno
+ * de la llamada, y la llamada contestaba «Se me fue el hilo». Mientras ElevenLabs tiene el micrófono, ningún reconocedor
+ * del teléfono escucha. El oído vuelve cuando ya no queda ningún motivo.
+ */
+const motivosSuspension = new Set<string>();
+
+export async function suspenderOido(on: boolean, motivo = 'llamada') {
+  if (on) motivosSuspension.add(motivo);
+  else motivosSuspension.delete(motivo);
+  on = motivosSuspension.size > 0;
   if (suspendido === on) return;
   if (on) {
     queridoAlVolver = { abierto: isMicWanted(), pausado: isMicPaused() };

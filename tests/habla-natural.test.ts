@@ -18,7 +18,13 @@ import {
   pulirParaVoz,
   revisarHabla,
   turnoSerio,
+  ETIQUETAS_VOZ_CORTA,
+  EXPRESION_DE_EMOCION,
+  etiquetasPermitidas,
 } from '../lib/habla-natural';
+import { quitarExpresiones } from '../lib/expresiones';
+import { etiquetaV4 } from '../server/eleven';
+import { ETIQUETAS_VERIFICADAS } from '../mobile/src/compa/etiquetasVoz';
 import { recorteDeVoz, TOPE_VOZ_CHARS, TOPE_VOZ_LECTURA } from '../lib/cerebro-manos';
 import { buildPersonality } from '../server/desk';
 import { aceptaEtiquetas, guionEleven } from '../server/eleven';
@@ -183,4 +189,35 @@ test('ElevenLabs: las etiquetas solo con v3/v4; con un modelo de antes se quitan
   const id = (t: string) => t;
   assert.equal(guionEleven('Ay, no [risa] qué pena.', 'feliz', id, { modelo: 'eleven_v4_turbo' }), '[warmly] Ay, no [laughs] qué pena.');
   assert.equal(guionEleven('Ay, no [risa] qué pena [pausa] ya.', 'feliz', id, { modelo: 'eleven_flash_v2_5' }), 'Ay, no qué pena... ya.');
+});
+
+test('más expresiones (José, 10-oct): hasta DOS cuando la emoción lo pide, una si no, ninguna en lo serio', () => {
+  assert.equal(etiquetasPermitidas('Cuéntame un chiste', 'risa'), 2);
+  assert.equal(etiquetasPermitidas('Cuéntame un chiste', 'carino'), 2);
+  assert.equal(etiquetasPermitidas('¿Qué hora es?', 'neutral'), 1);
+  assert.equal(etiquetasPermitidas('Se murió mi abuelo', 'risa'), 0, 'tema sensible: ninguna aunque la emoción sea alegre');
+  assert.equal(etiquetasPermitidas('¿Cuánto le debo al banco?', 'feliz'), 0);
+  const p = new PulidorVoz({ mensaje: 'Cuéntame un chiste' });
+  p.ponerEmocion('risa');
+  assert.equal(p.trozo('[risa suave] Ay, no. [ternura] Eres lo máximo. [suspiro] Bueno.'), '[risa suave] Ay, no. [ternura] Eres lo máximo. Bueno.', 'dos y la tercera fuera');
+  // Electrum pide como mucho una: el tope de quien llama manda.
+  const e = new PulidorVoz({ mensaje: 'Cuéntame un chiste', maxEtiquetas: 1 });
+  e.ponerEmocion('risa');
+  assert.equal(e.trozo('[risa] Ay. [ternura] Ya.'), '[risa] Ay. Ya.');
+  assert.deepEqual(revisarHabla('[risa] Ay. [ternura] Ya.', { emocion: 'risa' }).problemas, []);
+  assert.ok(revisarHabla('[risa] Ay. [ternura] Ya.', { emocion: 'neutral' }).problemas.includes('etiquetas-de-mas'));
+});
+
+test('las expresiones nuevas suenan con una etiqueta v4 verificada, van con la emoción y nunca se ven en pantalla', () => {
+  const verificadas = new Set<string>(ETIQUETAS_VERIFICADAS);
+  for (const e of [...ETIQUETAS_VOZ_CORTA, ...Object.values(EXPRESION_DE_EMOCION)]) {
+    const v4 = etiquetaV4(e);
+    assert.ok(v4 && verificadas.has(v4), `[${e}] → [${v4}]`);
+    assert.equal(quitarExpresiones(`Hola [${e}] José.`), 'Hola José.', `[${e}] no se lee en pantalla`);
+  }
+  for (const nueva of ['risa suave', 'susurro', 'entusiasmo', 'ternura']) assert.ok((ETIQUETAS_VOZ_CORTA as readonly string[]).includes(nueva), nueva);
+  assert.equal(etiquetaV4('risa suave'), 'laughs softly');
+  assert.match(instruccionExpresionesVoz(), /DOS solo si la emoción/);
+  assert.match(instruccionExpresionesVoz(), /risa→\[risa suave\]/);
+  assert.equal(pulirParaVoz('[risa] Hola.', { pantalla: true, mensaje: 'hola' }), '[risa] Hola.', 'la pantalla la quita aparte (quitarExpresiones)');
 });

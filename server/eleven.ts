@@ -219,6 +219,10 @@ export function pausaPorFallo(status: number, cuerpo: string): number {
  */
 export const EXPRESION_A_V4: Record<string, string> = {
   risa: 'laughs',
+  // José, 10-oct («más expresiones»): las nuevas de la voz hablada (lib/habla-natural.ts ETIQUETAS_VOZ_CORTA), verificadas.
+  'risa suave': 'laughs softly',
+  entusiasmo: 'enthusiastic',
+  ternura: 'tender',
   risita: 'chuckles',
   'risa tierna': 'chuckles',
   'risa nerviosa': 'nervous laugh',
