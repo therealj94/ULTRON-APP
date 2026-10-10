@@ -150,8 +150,8 @@ test('el servidor levanta', () => {
   assert.ok(listo, `no levantó: ${errores}`);
 });
 
-test('turno hablado: sin fórmulas de asistente, una sola etiqueta de voz; el done dice lo mismo', { skip: !listo }, async () => {
-  contestar = () => '[EMO: feliz] ¡Excelente pregunta! La reunión con Beto quedó para las tres de la tarde. [risa] [suspiro] ¿En qué más te puedo ayudar?';
+test('turno hablado: sin fórmulas de asistente, una etiqueta de voz (dos si la emoción lo pide); el done dice lo mismo', { skip: !listo }, async () => {
+  contestar = () => '[EMO: neutral] ¡Excelente pregunta! La reunión con Beto quedó para las tres de la tarde. [risa] [suspiro] ¿En qué más te puedo ayudar?';
   const { dicho, done } = await turno('¿A qué hora quedó lo de Beto?');
   assert.equal(dicho, 'La reunión con Beto quedó para las tres de la tarde. [risa]');
   assert.equal(String(done?.voz || ''), dicho);

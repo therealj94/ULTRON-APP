@@ -42,15 +42,48 @@ export function estiloLlamada(): string {
 export const QUE_ERES =
   'QUÉ ERES: si te preguntan en serio si eres una IA, un robot o una persona, la verdad, breve y cálida, en tu personaje: eres una inteligencia artificial, su asistente. Nunca digas que eres humana ni inventes cuerpo, familia, comida o cosas vividas como hechos.';
 
-/** Las etiquetas de voz que se le enseñan a la voz hablada (pocas: con muchas sonaba a actor). */
-export const ETIQUETAS_VOZ_CORTA = ['risa', 'risita', 'suspiro', 'sorpresa', 'mmm', 'con ternura', 'emocionado', 'en voz baja', 'con picardía'] as const;
+/**
+ * Las etiquetas de voz que se le enseñan a la voz hablada (pocas: con muchas sonaba a actor). José, 10-oct: «nos hace
+ * falta agregar más expresiones»: risa suave, susurro, entusiasmo y ternura se suman (todas con su etiqueta v4 verificada,
+ * server/eleven.ts EXPRESION_A_V4; la pantalla nunca las enseña: lib/expresiones.ts quitarExpresiones).
+ */
+export const ETIQUETAS_VOZ_CORTA = ['risa', 'risa suave', 'suspiro', 'sorpresa', 'mmm', 'ternura', 'entusiasmo', 'susurro', 'con picardía'] as const;
+
+/**
+ * La expresión que le va a cada emoción del turno (la que el cerebro marca con su emoción): así la voz no se ríe en un
+ * turno de sorpresa ni suspira en uno de alegría. Las serias no tienen: ahí no va ninguna.
+ */
+export const EXPRESION_DE_EMOCION: Readonly<Record<string, string>> = {
+  risa: 'risa suave',
+  feliz: 'entusiasmo',
+  sorpresa: 'sorpresa',
+  carino: 'ternura',
+  travieso: 'con picardía',
+  orgullo: 'entusiasmo',
+  cansado: 'suspiro',
+  pensando: 'mmm',
+  curioso: 'mmm',
+};
+
+/** Emociones que piden de verdad más de una expresión (una risa y después ternura): hasta dos en ese turno. */
+const EMOCIONES_EXPRESIVAS = new Set(['risa', 'feliz', 'sorpresa', 'carino', 'travieso', 'orgullo']);
+/** Lo más que se permite en un turno, aunque la emoción lo pida (el cap local de la voz hablada). */
+export const MAX_ETIQUETAS_VOZ = 2;
+
+/** Cuántas expresiones caben en este turno: ninguna si es serio, dos si la emoción lo pide, una si no. */
+export function etiquetasPermitidas(mensaje: string, emocion?: string): number {
+  if (turnoSerio(mensaje, emocion)) return 0;
+  return EMOCIONES_EXPRESIVAS.has(String(emocion || '')) ? MAX_ETIQUETAS_VOZ : 1;
+}
 
 /**
  * La instrucción de las expresiones para el system corto de la voz (la larga, lib/expresiones.ts, sigue en lo escrito):
- * una lista corta y UNA por respuesta como mucho; el `PulidorVoz` quita las que sobren.
+ * una lista corta, una por respuesta (dos solo si la emoción lo pide) y la que va con la emoción del turno; el
+ * `PulidorVoz` quita las que sobren.
  */
 export function instruccionExpresionesVoz(): string {
-  return `EXPRESIONES DE VOZ (se oyen, no se ven): como mucho UNA por respuesta, solo donde una persona de verdad lo haría: ${ETIQUETAS_VOZ_CORTA.map((e) => `[${e}]`).join(', ')}. Nunca en temas serios, tristes, de dinero o legales. Solo estas; no repitas la de la respuesta anterior.`;
+  const porEmocion = ['risa', 'feliz', 'carino'].map((emo) => `${emo}→[${EXPRESION_DE_EMOCION[emo]}]`).join(', ');
+  return `EXPRESIONES DE VOZ (se oyen, no se ven): una por respuesta, DOS solo si la emoción lo pide: ${ETIQUETAS_VOZ_CORTA.map((e) => `[${e}]`).join(', ')}. Que vaya con tu emoción (${porEmocion}). Nunca en temas serios, tristes, de dinero o legales. No repitas la de antes.`;
 }
 
 /* ------------------------------------------------------------------ texto sin tildes, del mismo largo */
@@ -251,7 +284,10 @@ export type OpcionesPulido = {
   previas?: readonly string[];
   /** true mientras lo que se dice es literal (un borrador y su «¿Lo mando?», una lectura): no se toca el texto. */
   literal?: () => boolean;
-  /** Etiquetas de voz por turno como mucho (1). En un turno serio, ninguna. */
+  /**
+   * Tope de etiquetas de voz por turno. Sin él, las que pida la emoción (`etiquetasPermitidas`: 1, o 2 si es expresiva).
+   * En un turno serio, ninguna.
+   */
   maxEtiquetas?: number;
   /** Para la pantalla: solo las fórmulas y la honestidad (sin viñetas, markdown ni etiquetas: la pantalla las trata). */
   pantalla?: boolean;
@@ -285,7 +321,8 @@ export class PulidorVoz {
   }
 
   private maxEtiquetas(): number {
-    return turnoSerio(this.o.mensaje || '', this.emocion) ? 0 : (this.o.maxEtiquetas ?? 1);
+    const permitidas = etiquetasPermitidas(this.o.mensaje || '', this.emocion);
+    return this.o.maxEtiquetas === undefined ? permitidas : Math.min(this.o.maxEtiquetas, permitidas);
   }
 
   /** Un trozo del stream, tal como sale. Devuelve lo que se dice ('' si sobraba entero). */
@@ -365,7 +402,7 @@ export class PulidorVoz {
     return s.replace(/(\S)[ \t]{2,}/g, '$1 ');
   }
 
-  /** Una etiqueta de voz por turno (ninguna si es serio); las demás se quitan sin sonar. */
+  /** Las etiquetas de voz del turno (una, dos si la emoción lo pide, ninguna si es serio); las demás se quitan sin sonar. */
   private etiquetasDelTurno(t: string): string {
     const max = this.maxEtiquetas();
     let quito = false;
@@ -504,7 +541,7 @@ export function revisarHabla(texto: string, o: { mensaje?: string; idioma?: 'es'
   if (EMOJI.test(t)) problemas.push('emoji');
   EMOJI.lastIndex = 0;
   if (preguntas > 1) problemas.push('varias-preguntas');
-  if (etiquetas > 1) problemas.push('etiquetas-de-mas');
+  if (etiquetas > (o.emocion && EMOCIONES_EXPRESIVAS.has(o.emocion) ? MAX_ETIQUETAS_VOZ : 1)) problemas.push('etiquetas-de-mas');
   if (etiquetas > 0 && turnoSerio(o.mensaje || '', o.emocion)) problemas.push('etiqueta-en-turno-serio');
   const dichas = new Set(palabrasDe(o.mensaje || '').filter((w) => w.length > 2));
   const primera = palabrasDe(fs[0] || '').filter((w) => w.length > 2);

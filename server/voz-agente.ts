@@ -57,6 +57,7 @@ import type { MedidaRuta } from './voz-medidas';
 import { configMovil } from './movil-config';
 // El narrador del trabajo: lo que de verdad pasa en el turno (event: progreso) en vez del «ya casi» genérico.
 import { ConductorNarrador, Narrador, eventoProgresoValido } from '../mobile/src/compa/narrador';
+import { cuentaInterrupcion, esInterrupcionReal, palabras } from '../mobile/src/lib/interrupcion';
 import { memoriaNarradorDe } from '../lib/progreso-trabajo';
 // El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
 import {
@@ -320,7 +321,7 @@ type Conversacion = {
    * en vez de matarlo y empezar de cero (1-oct: tres intentos de la misma pregunta, cada uno releyendo
    * 7 000 fichas en otro espacio del nodo, y el que se mataba antes de hablar dejaba la respuesta vacía).
    */
-  vivo?: { mensaje: string; hasta: number; vigente: () => boolean; pensando?: () => boolean; enganchar: (r: express.Response, o?: { desdeOido?: boolean }) => Promise<void> } | null;
+  vivo?: { mensaje: string; hasta: number; vigente: () => boolean; pensando?: () => boolean; enganchar: (r: express.Response, o?: { desdeOido?: boolean; tras?: string }) => Promise<void> } | null;
   /**
    * Lo que el turno en curso ya le dio a la voz. Si llega otro turno antes de que termine, esto pasa
    * a ser lo audible de `anterior` (antes quedaba la del turno anterior y la interrupción no se notaba).
@@ -366,6 +367,12 @@ type Conversacion = {
    */
   rafaga?: number;
 };
+
+/** ¿Es la misma frase? Por sus palabras: sin mayúsculas, tildes ni puntuación (ElevenLabs repite con otra puntuación). */
+export function mismaFrase(a: string, b: string): boolean {
+  const x = palabras(a).join(' ');
+  return !!x && x === palabras(b).join(' ');
+}
 
 /** Una frase que reemplaza a otra que empezó hace menos de esto y no dijo nada: es la misma frase que sigue. */
 export const RAFAGA_MS = 1_500;
@@ -688,6 +695,182 @@ export function oidoDeLaAnterior(messages: unknown, anterior: DichoTurno | strin
   return aplanar(quitarExpresiones(oido)).replace(/(\.{3}|…|—|-)$/, '').trim();
 }
 
+/**
+ * EL ECO DE SU PROPIA VOZ EN LA LLAMADA (José, 10-oct, APK 5.7.0 en el S26, con altavoz): «[cerebro manos] intentos: …
+ * la persona interrumpió» cinco o seis veces en un segundo, «tras 5 frases a medias (seguía hablando)», y AURA que no
+ * terminaba nada. Lo que ElevenLabs manda como «lo que dijo la persona» mientras AU-RA hablaba puede ser su propia voz que
+ * se coló al micrófono, o un «ajá» de quien escucha: eso NO es un turno (ni corta el que se está diciendo). Se decide por
+ * el TEXTO, con la misma regla del teléfono (mobile/src/lib/interrupcion.ts `esInterrupcionReal`): un freno («espera»,
+ * «para», «oye») o dos palabras suyas que no son eco cortan; el eco y las muletillas no.
+ *
+ * Solo cuenta si AU-RA de verdad estaba hablando cuando llegó: el turno en curso ya le había dado texto a la voz, o
+ * ElevenLabs recortó la respuesta anterior (asistenteTruncado: la cortaron a media frase). Un «sí» DESPUÉS de que terminó
+ * («¿Lo mando?» — «sí») es una respuesta de verdad y pasa como siempre.
+ */
+export function vozQueSonaba(
+  conv: { enCurso: unknown; algoEnCurso: boolean; dichoEnCurso: string; anterior: DichoTurno },
+  messages: unknown
+): { dichos: string[]; oido: string; enCurso: boolean } | null {
+  const enCurso = !!conv.enCurso && conv.algoEnCurso && !!conv.dichoEnCurso.trim();
+  if (!enCurso && !asistenteTruncado(messages, conv.anterior)) return null;
+  const dichos = [enCurso ? conv.dichoEnCurso : '', conv.anterior.completo].map((t) => aplanar(quitarExpresiones(t || ''))).filter(Boolean);
+  if (!dichos.length) return null;
+  const base = enCurso ? dichoEntero('', conv.dichoEnCurso) : conv.anterior;
+  return { dichos, oido: oidoDeLaAnterior(messages, base), enCurso };
+}
+
+/** Las muletillas de quien escucha (las de mobile/src/lib/interrupcion.ts): solas, no son un turno. */
+const ASENTIR_VOZ = new Set('aja aha aham mhm mmm mm hmm hm uhum umju si sip ok okay oki okey claro ya exacto vale ah eh uh oh bien va dale cierto correcto entiendo yes yeah yep right sure uhhuh huh'.split(' '));
+
+/** La misma palabra, aunque el reconocedor la corte o le cambie el final («grado» / «grados»). */
+function mismaPalabra(a: string, b: string): boolean {
+  if (a === b) return true;
+  return a.length >= 4 && b.length >= 4 && Math.abs(a.length - b.length) <= 3 && a.slice(0, 4) === b.slice(0, 4);
+}
+
+/** ¿`ps` aparece SEGUIDO, en orden, dentro de lo que AU-RA dijo? (un eco es un pedazo literal de su voz; con 5+ palabras se perdona una mal oída). */
+function trozoDeLoDicho(ps: readonly string[], dichos: readonly string[]): boolean {
+  const tolera = ps.length >= 5 ? 1 : 0;
+  for (const d of dichos) {
+    const w = palabras(d);
+    for (let i = 0; i + ps.length <= w.length; i++) {
+      let malas = 0;
+      for (let k = 0; k < ps.length && malas <= tolera; k++) if (!mismaPalabra(ps[k], w[i + k])) malas++;
+      if (malas <= tolera) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * ¿Lo que llegó mientras AU-RA hablaba es solo su eco o un asentimiento (no una interrupción de verdad)? El eco es un
+ * pedazo SEGUIDO de lo que dijo (en orden); un «¿y la plata?» usa palabras que ella dijo, pero no en ese orden: es la
+ * persona y va al cerebro. Un freno («espera», «para») nunca es eco, salvo que sea literalmente lo que AU-RA decía.
+ * Ante la duda, es la persona: nunca se traga algo que dijo de verdad.
+ */
+export function esEcoOAsentimiento(mensaje: string, dichos: readonly string[]): boolean {
+  const ps = palabras(mensaje);
+  if (!ps.length) return false;
+  if (ps.every((p) => ASENTIR_VOZ.has(p))) return true;
+  if (!trozoDeLoDicho(ps, dichos)) return false;
+  // Es un trozo de su voz; aun así, si trae un freno que no viene de ahí, es la persona (esInterrupcionReal lo decide).
+  return !ps.some((p) => /^(espera|esperate|para|alto|basta|stop|wait|callate|calla|oye|momento)$/.test(p)) || !esInterrupcionReal(mensaje, dichos);
+}
+
+/**
+ * Desde dónde de `dicho` (lo que se le dio a la voz, con sus etiquetas v4) sigue la respuesta si la persona solo oyó
+ * `oido` (el recorte de ElevenLabs): desde el PRINCIPIO de la frase que se cortó, para que se vuelva a oír entera (la
+ * persona no oye un pedazo suelto). Se cuenta por palabras, sin las etiquetas. 0: no oyó nada; `dicho.length`: lo oyó todo.
+ */
+export function restoTrasLoOido(dicho: string, oido: string): number {
+  const d = String(dicho || '');
+  const n = (aplanar(quitarExpresiones(String(oido || ''))).replace(/(\.{3}|…|—|-)$/, '').match(/[\p{L}\p{N}]+/gu) || []).length;
+  if (!n) return 0;
+  // Las palabras de lo dicho, fuera de las etiquetas ([laughs], [warmly]).
+  const re = /\[[^\]\n]{0,80}\]|[\p{L}\p{N}]+/gu;
+  let vistas = 0;
+  let fin = -1;
+  for (let m = re.exec(d); m; m = re.exec(d)) {
+    if (m[0].startsWith('[')) continue;
+    vistas++;
+    if (vistas === n) {
+      fin = m.index + m[0].length;
+      break;
+    }
+  }
+  if (fin < 0) return d.length;
+  // Lo oído llegó justo al final de una frase: lo que sigue empieza en la próxima.
+  const despues = /^[^\p{L}\p{N}[]*/u.exec(d.slice(fin))![0];
+  if (/[.!?…]/.test(despues)) return fin + despues.length;
+  // Si no, desde el principio de la frase que se cortó.
+  const antes = d.slice(0, fin);
+  const corte = Math.max(antes.lastIndexOf('. '), antes.lastIndexOf('! '), antes.lastIndexOf('? '), antes.lastIndexOf('… '));
+  return corte < 0 ? 0 : corte + 2;
+}
+
+/**
+ * LO QUE SE DICE CUANDO EL TURNO NO TRAE RESPUESTA, y que sea VERDAD (José, 10-oct: «me seguía diciendo que me perdió el
+ * hilo»). Antes, cualquier error de adentro sonaba «Se me fue el hilo. ¿Me lo repites?». Ahora, por el código del error
+ * (server.ts FRASE_FALLO): no se entendió lo que dijo → «No te escuché bien»; el cerebro no contestó → que no alcanza su
+ * cerebro; se cayó a la mitad (o sin código) → que se le fue el hilo, que es lo que pasó.
+ */
+export function fraseDeError(codigo: unknown, idioma: Idioma, mensaje = ''): string {
+  const c = String(codigo || '');
+  if (c === 'vacio') return PHRASES.vacio[idioma];
+  if (c === 'cerebro') return PHRASES.cerebro[idioma];
+  return recuperacionHilo(idioma, mensaje);
+}
+
+/**
+ * Se le cortó lo que pensaba (el cerebro se cayó a la mitad o terminó sin nada): una recuperación corta y honesta que
+ * nombra de qué hablaban, para que la persona no tenga que adivinar qué repetir («Perdón, se me cortó. Me decías «…»:
+ * ¿me lo repites?»). Sin una frase de dos palabras o más que citar, la de siempre.
+ */
+export function recuperacionHilo(idioma: Idioma, mensaje = ''): string {
+  const m = aplanar(quitarExpresiones(String(mensaje || '')));
+  if (/\[\[/.test(m) || (m.match(/[\p{L}\p{N}]+/gu) || []).length < 2) return PHRASES.hilo[idioma];
+  const q = citaCorta(m, 70);
+  return idioma === 'en' ? `Sorry, I got cut off. You said “${q}”: could you say it again?` : `Perdón, se me cortó. Me decías «${q}»: ¿me lo repites?`;
+}
+
+/**
+ * EL HILO DE LA LLAMADA ENTRE CONVERSACIONES (José, 10-oct). Cuando la sesión se cae y el teléfono abre otra, para
+ * ElevenLabs es una conversación NUEVA. El cerebro no pierde nada (el hilo de la cuenta vive en el servidor), pero el
+ * perdón de la reconexión sin frase («Perdón, se me cortó. ¿Me repites?») dejaba a la persona sin saber dónde iban. Se
+ * guarda, por cuenta, lo último que dijo la persona y lo último que oyó de AU-RA; la conversación nueva lo retoma.
+ */
+type HiloCuenta = { cid: string; persona: string; dicho: string; en: number };
+const hilosDeCuenta = new Map<string, HiloCuenta>();
+/** Una reconexión retoma el tema si la conversación anterior habló hace menos de esto. */
+export const HILO_RECONEXION_MS = 10 * 60_000;
+
+export function anotarHiloCuenta(correo: string, cid: string, o: { persona?: string; dicho?: string }, ahora = Date.now()) {
+  const c = String(correo || '').toLowerCase();
+  if (!c) return;
+  const previo = hilosDeCuenta.get(c);
+  const mismo = previo && previo.cid === cid ? previo : null;
+  const persona = aplanar(quitarExpresiones(o.persona ?? '')) || mismo?.persona || '';
+  const dicho = aplanar(quitarExpresiones(o.dicho ?? '')) || (o.persona !== undefined ? '' : mismo?.dicho || '');
+  hilosDeCuenta.set(c, { cid, persona, dicho, en: ahora });
+  if (hilosDeCuenta.size > 5000) hilosDeCuenta.delete(hilosDeCuenta.keys().next().value as string);
+}
+
+/** Lo último de la llamada anterior de esta cuenta (otra conversación, reciente), o null. */
+export function hiloAnterior(correo: string, cid: string, ahora = Date.now()): HiloCuenta | null {
+  const h = hilosDeCuenta.get(String(correo || '').toLowerCase());
+  if (!h || h.cid === cid || ahora - h.en > HILO_RECONEXION_MS || (!h.persona && !h.dicho)) return null;
+  return h;
+}
+
+/** Un trozo corto de una frase, cortado en palabra, entre comillas: «…». */
+function citaCorta(t: string, max = 90): string {
+  const s = aplanar(t).replace(/^[«"“]+|[»"”]+$/g, '');
+  // El punto final sobra dentro de las comillas; la interrogación se queda si la frase la abrió («¿…?»).
+  if (s.length <= max) return /^[¿¡]/.test(s) ? s : s.replace(/[.!?…]+$/, '');
+  const corte = s.slice(0, max).replace(/\s+\S*$/, '');
+  return `${corte}…`;
+}
+
+/**
+ * El perdón de una reconexión SIN frase que retomar, con el tema de antes si lo hay: «Perdón, se me cortó. Me hablabas
+ * de «…». ¿Seguimos con eso?». Sin nada de antes, el de siempre («¿Me repites?»): eso sí es verdad entonces.
+ */
+export function perdonReconexion(idioma: Idioma, previo: HiloCuenta | null): string {
+  if (!previo) return PERDON_RECONEXION[idioma].sin;
+  if (previo.persona) {
+    const q = citaCorta(previo.persona);
+    return idioma === 'en' ? `Sorry, I got cut off. You were telling me about “${q}”. Shall we pick up there?` : `Perdón, se me cortó. Me hablabas de «${q}». ¿Seguimos con eso?`;
+  }
+  const ultima = frasesDe(previo.dicho).pop() || previo.dicho;
+  const q = citaCorta(ultima);
+  return idioma === 'en' ? `Sorry, I got cut off. I was saying: “${q}”. Shall I go on?` : `Perdón, se me cortó. Te decía: «${q}». ¿Sigo?`;
+}
+
+/** Las frases de un texto (para quedarse con la última). */
+function frasesDe(t: string): string[] {
+  return (String(t || '').match(/[^.!?…]+[.!?…]*/g) || []).map((f) => f.trim()).filter((f) => /[\p{L}\p{N}]/u.test(f));
+}
+
 /** Lo primero que dice AU-RA cuando cortó una respuesta larga: un perdón breve, y enseguida lo nuevo. */
 const PERDON: Record<Idioma, string[]> = {
   es: ['¡Ah, perdón! ', '¡Uy, perdón! ', 'Perdón. '],
@@ -890,6 +1073,9 @@ type Deps = {
 
 export const PHRASES = {
   hilo: { es: 'Se me fue el hilo. ¿Me lo repites?', en: 'I lost my train of thought. Can you say it again?' },
+  // Lo que de verdad pasó cuando el turno no trae respuesta (fraseDeError): no siempre «se me fue el hilo».
+  vacio: { es: 'No te escuché bien. ¿Me lo repites?', en: "I didn't catch that. Could you say it again?" },
+  cerebro: { es: 'Ahora mismo no alcanzo mi cerebro. Dame un momento y vuelve a preguntarme.', en: "I can't reach my brain right now. Give me a moment and ask me again." },
   corte: { es: 'Perdón, se me cortó un segundo. ¿Me lo repites?', en: 'Sorry, I lost the connection for a second. Can you repeat that?' },
   vencida: { es: 'Llevamos un buen rato hablando y esta conversación se cerró. Tócame para empezar otra y seguimos.', en: "We've been talking for a while and this conversation closed. Tap me to start a new one and we'll keep going." },
   tarde: { es: 'Perdón, me estoy tardando demasiado. ¿Me lo preguntas otra vez?', en: "Sorry, I'm taking too long. Could you ask me again?" },
@@ -1097,15 +1283,47 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       return res.end('data: [DONE]\n\n');
     }
 
-    // ¿Un reintento de ElevenLabs? La misma frase mientras ese turno sigue pensando: se engancha a él.
+    // ¿Un reintento de ElevenLabs? La misma frase mientras ese turno sigue pensando: se engancha a él. «La misma» es por
+    // sus palabras (10-oct: en la tormenta llegaban «Oye, ¿y el clima?» y «oye y el clima» a medio segundo, con otra
+    // puntuación, y cada una abortaba a la anterior: «[cerebro manos] … la persona interrumpió»).
     const vivo = conv.vivo;
-    if (vivo && mensaje && vivo.mensaje === plana(mensaje) && ahora < vivo.hasta && vivo.vigente()) {
+    if (vivo && mensaje && mismaFrase(vivo.mensaje, mensaje) && ahora < vivo.hasta && vivo.vigente()) {
       // Un reintento de la misma frase no es un turno nuevo.
       devolverCupo(claveTurnos, ahora);
       req.socket.setNoDelay?.(true);
       medirTurno(req, conv.cid, { primerTextoMs: null, cerebroMs: null, totalMs: 0, puente: false, interrupcion: null, repetido: true, respaldo: false, error: false, tarde: false, cortado: false });
       await vivo.enganchar(res);
       return;
+    }
+    // Su propio eco (o un «ajá») mientras AU-RA hablaba: no es un turno (vozQueSonaba). No cuenta en el cupo, no va al
+    // cerebro y NO corta lo que se estaba diciendo: la respuesta sigue desde la frase que se cortó (ElevenLabs ya calló el
+    // audio al oír «voz»; lo que faltaba se vuelve a mandar). Un turno que piensa sin haber dicho nada sigue pensando.
+    const sonaba = !reconexion && mensaje && !/\[\[/.test(mensaje) ? vozQueSonaba(conv, req.body?.messages) : null;
+    if (sonaba && esEcoOAsentimiento(mensaje, sonaba.dichos)) {
+      devolverCupo(claveTurnos, ahora);
+      req.socket.setNoDelay?.(true);
+      const cuenta = cuentaInterrupcion(mensaje, sonaba.dichos);
+      const queOyo = `${cuenta.palabras} palabra${cuenta.palabras === 1 ? '' : 's'}, ${cuenta.nuevas} suya${cuenta.nuevas === 1 ? '' : 's'}`;
+      const enCurso = conv.vivo;
+      if (conv.enCurso && enCurso && ahora < enCurso.hasta && enCurso.vigente()) {
+        console.log(`[voz] eco o asentimiento (${conv.cid.slice(0, 8)}, ${queOyo}): no es un turno; sigue la respuesta en curso`);
+        await enCurso.enganchar(res, sonaba.enCurso ? { tras: sonaba.oido } : { desdeOido: true });
+        return;
+      }
+      // La respuesta anterior ya estaba entera y el eco la cortó al decirla: lo que faltaba (desde la frase cortada).
+      const completo = conv.anterior.completo || '';
+      const resto = completo.slice(restoTrasLoOido(completo, sonaba.oido)).trim();
+      console.log(`[voz] eco o asentimiento (${conv.cid.slice(0, 8)}, ${queOyo}): no es un turno; ${resto ? 'sigue lo que faltaba de la respuesta' : 'nada que retomar'}`);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, no-transform');
+      res.write(trozoOpenAI(id, modelo, null, null, true));
+      if (resto) {
+        res.write(trozoOpenAI(id, modelo, resto));
+        conv.anterior = dichoEntero(id, resto);
+        conv.cortada = false;
+      }
+      res.write(trozoOpenAI(id, modelo, null, 'stop'));
+      return res.end('data: [DONE]\n\n');
     }
     // El turno anterior que nadie confirmó (una frase a medias del turno especulativo): sus acciones no se hacen.
     if (conv.porConfirmar) {
@@ -1176,10 +1394,12 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       for (const f of alTerminar.splice(0)) f();
     };
     escribir(trozoOpenAI(id, modelo, null, null, true));
-    // Se reconectó sin frase que retomar: el perdón y que la repita, al instante y sin cerebro.
+    // Se reconectó sin frase que retomar: el perdón, al instante y sin cerebro, con el tema de la conversación que se
+    // cayó si lo hay («Me hablabas de «…». ¿Seguimos con eso?»); sin nada de antes, que la repita (perdonReconexion).
     if (reconexion && !reconexion.frase) {
-      escribir(trozoOpenAI(id, modelo, reconexion.perdon));
-      conv.anterior = dichoEntero(id, reconexion.perdon);
+      const perdon = perdonReconexion(pase.idioma, hiloAnterior(pase.correo, conv.cid, ahora));
+      escribir(trozoOpenAI(id, modelo, perdon));
+      conv.anterior = dichoEntero(id, perdon);
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
     }
@@ -1220,6 +1440,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
      * recibe la indicación de saludar como quien llama y decírselo; después la charla sigue normal.
      */
     const deRecordatorio = turnoDeRecordatorio(mensaje, pase.idioma);
+    // Lo último que dijo la persona en esta llamada (para retomar el tema si la sesión se cae: perdonReconexion).
+    if (!deRecordatorio) anotarHiloCuenta(pase.correo, conv.cid, { persona: mensaje }, ahora);
 
     const corte = new AbortController();
     conv.enCurso = corte;
@@ -1284,6 +1506,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       },
     };
     let algo = false;
+    /** La respuesta salió tardía (otra frase la reemplazó): no se dice nada, ni el «se me fue el hilo». */
+    let superado = false;
     // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» y para saber, en el
     // turno que venga, si la persona cortó esta respuesta a la mitad.
     let dicho = '';
@@ -1354,8 +1578,9 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
           abrirSSE(r);
           r.write(trozoOpenAI(id, modelo, null, null, true));
           // Lo que ya dijo este turno (y lo que pensó mientras nadie oía), de una vez. Enganchado por una petición sin
-          // palabras (`desdeOido`): solo lo que todavía no le había llegado a nadie (lo de antes ya sonó).
-          const pendiente = o?.desdeOido ? dicho.slice(oido) : dicho;
+          // palabras (`desdeOido`): solo lo que todavía no le había llegado a nadie (lo de antes ya sonó). Por su propio
+          // eco (`tras`: lo que la persona alcanzó a oír): desde la frase que se cortó.
+          const pendiente = o?.tras !== undefined ? dicho.slice(restoTrasLoOido(dicho, o.tras)) : o?.desdeOido ? dicho.slice(oido) : dicho;
           if (pendiente) r.write(trozoOpenAI(id, modelo, pendiente));
           if (terminado) {
             oido = dicho.length;
@@ -1637,6 +1862,14 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
         // la adelanta, solo sigue con lo que de verdad pase después.
         if (ev.fase === 'empece' && (tarea?.lenta || puenteDicho || algo)) narrador.narrador.soltarPendiente(Date.now());
       } else if (evento === 'done') {
+        // Una respuesta TARDÍA (server.ts terminar: llegó otra frase de la persona mientras pensaba): no es para lo que
+        // la persona dice ahora y la contesta el turno nuevo. No se dice nada (antes sonaba «Se me fue el hilo»).
+        if (datos?.tardia === true) {
+          superado = true;
+          terminado = true;
+          avisarFin();
+          return;
+        }
         porRespaldo = /fallback|respaldo/i.test(String(datos?.via || '')) || datos?.respaldo === true;
         // Un corchete que quedó abierto al final del último trozo sale como texto (afinar lo limpia).
         if (algo && etiquetas.pendiente) decirCerebro(paraVoz('', true));
@@ -1665,8 +1898,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
         avisarFin();
       } else if (evento === 'error') {
         huboError = true;
-        // Nunca se lee el error de adentro («Qwen no contestó», «message vacío»): una frase de persona.
-        if (!algo) decir(PHRASES.hilo[pase.idioma]);
+        // Nunca se lee el error de adentro («Qwen no contestó», «message vacío»): una frase de persona, la de lo que pasó.
+        if (!algo) decir(fraseDeError(datos?.codigo, pase.idioma, mensaje));
         terminado = true;
         avisarFin();
       }
@@ -1781,7 +2014,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     // Desde aquí el cerebro ya no habla: lo que llegue tarde no se dice.
     terminado = true;
     if (porReloj) corte.abort(); // que el cerebro suelte también
-    if (!algo) decir(porReloj ? PHRASES.tarde[pase.idioma] : PHRASES.hilo[pase.idioma], true);
+    if (!algo && !superado) decir(porReloj ? PHRASES.tarde[pase.idioma] : recuperacionHilo(pase.idioma, mensaje), true);
+    if (superado) console.log(`[voz] turno ${conv.cid.slice(0, 8)}: respuesta tardía (llegó otra frase); no se dice nada`);
     if (conv.enCurso === corte) conv.enCurso = null;
     if (gracia) {
       clearTimeout(gracia);
@@ -1824,6 +2058,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       if (oido > 0 && oido < dicho.length) conv.cortada = true;
       vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
     }
+    // Y lo que la persona oyó de esta respuesta (para retomarla si la sesión se cae).
+    if (conv.anterior.id === id && conv.anterior.audible.trim()) anotarHiloCuenta(pase.correo, conv.cid, { dicho: conv.anterior.audible });
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();
     // Una línea por turno hablado, para ver la latencia real en el log (Render): la voz espera lo primero.
