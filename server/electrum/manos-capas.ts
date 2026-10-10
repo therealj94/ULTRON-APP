@@ -47,7 +47,17 @@ function linea(e: EntradaCatalogo): string {
 }
 
 /** Los filtros pedidos, solo con campos y valores que existen. Si no queda nada válido, se dice qué hay. */
-function filtrosReales(e: EntradaCatalogo, pedidos: unknown): { filtros: Filtros; error?: string } {
+export function filtrosReales(e: EntradaCatalogo, pedidos0: unknown): { filtros: Filtros; error?: string } {
+  // Algunos clientes (MCP, el modelo) mandan el objeto como texto JSON: se lee igual. Antes se
+  // ignoraba y la cuenta salía sin filtro (auditoría de manos).
+  let pedidos = pedidos0;
+  if (typeof pedidos === 'string' && pedidos.trim()) {
+    try {
+      pedidos = JSON.parse(pedidos);
+    } catch {
+      return { filtros: {}, error: `No entiendo el filtro «${pedidos}»: va como {"campo":["valor"]}.` };
+    }
+  }
   if (!pedidos || typeof pedidos !== 'object') return { filtros: {} };
   const { filtros, rechazados } = validarFiltros(e, pedidos as Record<string, unknown>);
   if (rechazados.length && !Object.keys(filtros).length) {

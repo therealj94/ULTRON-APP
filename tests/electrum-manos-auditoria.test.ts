@@ -68,3 +68,21 @@ test('las manos nuevas están registradas: sin panel y en el modo mapa', () => {
   }
   for (const n of ['pantalla', 'area_analizar', 'encender_capa', 'mapa_volar']) assert.ok(MAPA.some((h) => h.nombre === n), `${n} en modo mapa`);
 });
+
+test('filtros por el validador de argumentos (bucle del cerebro y MCP): el objeto llega objeto', async () => {
+  const fs = await import('node:fs');
+  const { filtrosReales, contar_entidades } = await import('../server/electrum/manos-capas');
+  const { validar } = await import('../lib/agente/protocolo');
+  // Antes el validador convertía {"mineral":["Oro"]} en «[object Object]» (revisión de Codex en #171).
+  const v = validar(contar_entidades.esquema, { id_capa: '110002', filtros: { mineral: ['Oro'] } });
+  assert.ok(v.ok);
+  assert.deepEqual((v as any).args.filtros, { mineral: ['Oro'] });
+  const t = validar(contar_entidades.esquema, { id_capa: '110002', filtros: '{"mineral":["Oro"]}' });
+  assert.deepEqual((t as any).args.filtros, { mineral: ['Oro'] }, 'como texto JSON también');
+  assert.equal(validar(contar_entidades.esquema, { id_capa: '110002', filtros: 'oro' }).ok, false, 'lo que no es objeto se dice');
+  const capas = JSON.parse(fs.readFileSync('scripts/indice-capas/manifest.json', 'utf8')).capas;
+  const fichas = capas.find((c: any) => c.id === 110002);
+  assert.deepEqual(filtrosReales(fichas, '{"mineral":["Oro"]}').filtros, { mineral: ['Oro'] });
+  assert.deepEqual(filtrosReales(fichas, { mineral: ['Oro'] }).filtros, { mineral: ['Oro'] });
+  assert.ok(filtrosReales(fichas, 'mineral oro').error, 'texto que no es JSON: se dice, no se cuenta todo');
+});

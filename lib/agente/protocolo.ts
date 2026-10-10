@@ -318,6 +318,22 @@ export function validar(esquema: EsquemaJson, args: Record<string, unknown>): { 
       salida[k] = Array.isArray(v) ? v : [v];
       continue;
     }
+    // Un objeto se queda objeto (antes salía «[object Object]» y los filtros {"mineral":["Oro"]} de las
+    // herramientas del índice de capas llegaban rotos: revisión de Codex en #171). Si vino como texto
+    // JSON, se lee; si no es un objeto, se dice.
+    if (def.type === 'object') {
+      let o: unknown = v;
+      if (typeof o === 'string') {
+        try {
+          o = JSON.parse(o);
+        } catch {
+          return { ok: false, error: `El campo «${k}» tiene que ser un objeto JSON y llegó «${String(v).slice(0, 80)}».` };
+        }
+      }
+      if (!o || typeof o !== 'object' || Array.isArray(o)) return { ok: false, error: `El campo «${k}» tiene que ser un objeto.` };
+      salida[k] = o;
+      continue;
+    }
     const s = String(v);
     if (def.enum && !def.enum.includes(s)) {
       return { ok: false, error: `El campo «${k}» solo admite: ${def.enum.join(', ')}. Llegó «${s}».` };
