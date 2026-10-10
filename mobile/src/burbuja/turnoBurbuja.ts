@@ -9,6 +9,13 @@
  * app, y una acción de pantalla («abre Ajustes») movería la app de atrás sin que se vea.
  *
  * Mientras AURA habla, el micrófono se pausa (pauseMicForTts), igual que en la mesa: no se oye a sí misma.
+ *
+ * F02 (revisión del dueño, «la burbuja debe saber qué puede completar»): el turno dice que viene de la burbuja
+ * (`superficie: 'burbuja'`, con sus capacidades: telefono/capacidades.ts) y el servidor solo le ofrece lo que ella completa
+ * (abrir otras apps, el reloj, el SMS, el calendario del teléfono); lo demás lo explica con el siguiente paso («tócale Abrir
+ * en AURA»). Las acciones del teléfono que trae el `done` se hacen AQUÍ (telefono/ejecutor.ts) y cada una manda su recibo
+ * con su id (telefono/recibos.ts); si falla, se dice por qué. Abrir otra app deja atrás la burbuja (se termina sola).
+ * El respaldo JSON primero pregunta por el turno (lib/respaldoTurno.ts): nunca se repite a ciegas uno que ya hizo cosas.
  */
 import { turno, turnoStream, nuevoIdTurno, type ChatResult, type TurnoOpts } from '../lib/api';
 import { clasificarFallo, type ClaseFallo } from '../lib/falloTurno';
@@ -16,8 +23,39 @@ import { pauseMicForTts } from '../lib/speech';
 import { speak, stopSpeaking, StreamSpeaker } from '../lib/tts';
 import { quitarExpresiones } from '../lib/expresiones';
 import { miga } from '../lib/reporte';
+import { consultarTurnoGuardado } from '../lib/api';
+import { planRespaldo } from '../lib/respaldoTurno';
+import { esAccionTelefono } from '../telefono/apps';
+import { ejecutarAccionTelefono, type AccionTelefonoApp } from '../telefono/ejecutor';
+import { depsEjecutor } from '../telefono/nativo';
+import { mandarRecibo } from '../telefono/recibos';
+import { instalarEnvioRecibos } from '../telefono/useTelefono';
+import { accionNueva } from '../compa/acciones';
 
-export type ResultadoBurbuja = { texto: string; fallo?: ClaseFallo; cortado?: boolean };
+/** `abrioApp`: una acción del teléfono abrió otra app (la burbuja queda atrás y se termina sola). */
+export type ResultadoBurbuja = { texto: string; fallo?: ClaseFallo; cortado?: boolean; abrioApp?: boolean };
+
+/**
+ * Las acciones del teléfono que trajo el turno (`[{ id, accion }]`), hechas aquí con su recibo. Las que la mesa de atrás ya
+ * hizo (llegaron por su canal con el mismo id) no se repiten (accionNueva). Devuelve lo que falló (para decirlo) y si se
+ * abrió otra app.
+ */
+export async function hacerAccionesDelTelefono(lista: unknown): Promise<{ fallos: string[]; abrioApp: boolean }> {
+  const out = { fallos: [] as string[], abrioApp: false };
+  if (!Array.isArray(lista)) return out;
+  instalarEnvioRecibos();
+  for (const x of lista) {
+    const accion = x && typeof x === 'object' && 'accion' in x ? (x as { accion: unknown }).accion : x;
+    const id = x && typeof x === 'object' && 'id' in x ? String((x as { id?: unknown }).id || '') : '';
+    if (!esAccionTelefono(accion) || !accionNueva(id, accion)) continue;
+    const a = accion as AccionTelefonoApp;
+    const r = await ejecutarAccionTelefono(a, depsEjecutor());
+    void mandarRecibo(a, r.ok, r.detalle, id || null);
+    if (!r.ok && r.detalle) out.fallos.push(r.detalle);
+    if (r.ok && (a.tipo === 'abrir_app' || a.tipo === 'abrir_enlace' || a.tipo === 'navegar' || a.tipo === 'sms' || a.tipo === 'evento_calendario')) out.abrioApp = true;
+  }
+  return out;
+}
 
 export type DepsTurnoBurbuja = {
   /** La frase que empieza a sonar (o la respuesta entera, si no hubo voz): se enseña bajo el orbe. */
@@ -27,7 +65,7 @@ export type DepsTurnoBurbuja = {
 };
 
 export function turnoBurbuja(opts: Omit<TurnoOpts, 'idTurno'>, d: DepsTurnoBurbuja): { promise: Promise<ResultadoBurbuja>; cancelar: () => void } {
-  const base: TurnoOpts & { idTurno: string } = { ...opts, idTurno: nuevoIdTurno() };
+  const base: TurnoOpts & { idTurno: string } = { ...opts, superficie: 'burbuja', idTurno: nuevoIdTurno() };
   let cortado = false;
   let abortar: (() => void) | null = null;
   let locutor: StreamSpeaker | null = null;
@@ -44,6 +82,18 @@ export function turnoBurbuja(opts: Omit<TurnoOpts, 'idTurno'>, d: DepsTurnoBurbu
     d.alFrase(quitarExpresiones(r.reply || texto).trim());
     // speak() se resuelve cuando terminó de sonar (o la cortaron): no se espera a su onEnd, que no llega si la cortan.
     await speak(texto, { emocion: r.emocion, onAudioStart: () => hablando(true) }).catch(() => false);
+  };
+
+  /** Lo del teléfono que trajo el turno: se hace con su recibo; lo que falló se dice (la compañera no está aquí). */
+  const despues = async (r: ChatResult): Promise<{ abrioApp?: boolean }> => {
+    if (cortado) return {};
+    const h = await hacerAccionesDelTelefono(r.acciones);
+    if (h.fallos.length && !cortado) {
+      const dicho = h.fallos.join(' ');
+      d.alFrase(dicho);
+      await speak(dicho, { onAudioStart: () => hablando(true) }).catch(() => false);
+    }
+    return h.abrioApp ? { abrioApp: true } : {};
   };
 
   const correr = async (): Promise<ResultadoBurbuja> => {
@@ -75,7 +125,7 @@ export function turnoBurbuja(opts: Omit<TurnoOpts, 'idTurno'>, d: DepsTurnoBurbu
               if (!l.hasSpoken) await decir(r);
             } else await decir(r);
             miga(`burbuja: turno en ${Date.now() - t0} ms (${r.via || 'stream'})`);
-            return { texto: r.reply };
+            return { texto: r.reply, ...(await despues(r)) };
           }
           if (l?.hasSpoken) return { texto: r.reply || '' };
           // Sin texto: el JSON con el mismo idTurno (devuelve el turno que ya corrió, no corre otro).
@@ -84,7 +134,10 @@ export function turnoBurbuja(opts: Omit<TurnoOpts, 'idTurno'>, d: DepsTurnoBurbu
           miga(`burbuja: el stream cayó (${String((e as Error)?.message || e).slice(0, 60)}); por JSON`);
         }
       }
-      const r = await turno(base);
+      // El respaldo conserva la identidad del turno: primero se pregunta por ese idTurno (lib/respaldoTurno.ts).
+      const plan = base.image ? 'pedir' : planRespaldo(await consultarTurnoGuardado(base.idTurno));
+      if (plan === 'repetir') miga('burbuja: el turno ya estaba en el servidor; solo se repite su respuesta');
+      const r = await turno(plan === 'repetir' ? { ...base, soloRepetir: true } : base);
       if (cortado || r.vencida) return { texto: '', cortado: true };
       if (r.error || !r.reply) {
         const fallo = clasificarFallo(r);
@@ -93,7 +146,7 @@ export function turnoBurbuja(opts: Omit<TurnoOpts, 'idTurno'>, d: DepsTurnoBurbu
       }
       await decir(r);
       miga(`burbuja: turno en ${Date.now() - t0} ms (${r.via || 'json'})`);
-      return { texto: r.reply };
+      return { texto: r.reply, ...(await despues(r)) };
     } finally {
       if (!cortado) hablando(false);
     }

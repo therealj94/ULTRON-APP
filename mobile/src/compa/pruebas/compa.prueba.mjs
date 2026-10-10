@@ -1216,9 +1216,10 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const c = await ctx.enviarAhora(true);
   // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea). `marcar` (A-4): abrir el marcador
   // tras el «sí»; `recordatorios_servidor` (A-3): sus recordatorios en el servidor, reconciliados con sus alarmas.
+  // `abrir_apps` e `intents_telefono` (APK 5.7.1, src/telefono/): otras apps, enlaces, el reloj, el SMS y el calendario.
   assert.deepEqual(
     [...c.manos],
-    ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor'],
+    ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor', 'abrir_apps', 'intents_telefono'],
     'enviar_exacto: comprueba el texto aprobado antes de mandar (permisos exactos)'
   );
   assert.deepEqual([...c.manos], [...MANOS_APP]);

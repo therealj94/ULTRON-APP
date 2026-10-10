@@ -337,3 +337,39 @@ test('PUT /api/perfil con S3 caído y sin copia local: 503 y no se sube nada enc
     Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: '', AWS_ACCESS_KEY_ID: '', AWS_SECRET_ACCESS_KEY: '' });
   }
 });
+
+test('POST /api/app/recibo (F02): con la sesión y el aparato al que salió la acción; idempotente; un id ajeno no confirma nada', async () => {
+  const { efectosRecientes, _olvidarEfectos } = await import('../lib/honestidad');
+  _olvidarEfectos();
+  const ha = (token: string, aparato: string) => ({ ...h(token), 'x-aura-aparato': aparato });
+  const salio = empujarAccion(yo.correo, { tipo: 'abrir_app', app: 'Spotify' }, { aparato: 'tel-recibo-1' }).evento;
+  assert.equal((await fetch(`${base}/api/app/recibo`, { method: 'POST', headers: h(), body: JSON.stringify({ id: salio.id, ok: true }) })).status, 401, 'sin sesión no');
+  const otra = emitirSesion({ correo: 'ajena@x.com', nombre: 'Ajena', rol: 'Junta' }, { comunidad: true });
+  assert.equal((await fetch(`${base}/api/app/recibo`, { method: 'POST', headers: ha(otra.token, 'tel-recibo-1'), body: JSON.stringify({ id: salio.id, ok: true }) })).status, 409, 'de otra cuenta no');
+  assert.equal((await fetch(`${base}/api/app/recibo`, { method: 'POST', headers: ha(yo.token, 'tel-otro-9'), body: JSON.stringify({ id: salio.id, ok: true }) })).status, 409, 'de otro aparato no');
+  assert.deepEqual(efectosRecientes(yo.correo), []);
+  const r: any = await (await fetch(`${base}/api/app/recibo`, { method: 'POST', headers: ha(yo.token, 'tel-recibo-1'), body: JSON.stringify({ id: salio.id, ok: true }) })).json();
+  assert.equal(r.estado, 'aceptado');
+  assert.deepEqual(
+    efectosRecientes(yo.correo).map((e) => [e.canal, e.estado, e.destino]),
+    [['app', 'confirmado', 'Spotify']]
+  );
+  const otraVez: any = await (await fetch(`${base}/api/app/recibo`, { method: 'POST', headers: ha(yo.token, 'tel-recibo-1'), body: JSON.stringify({ id: salio.id, ok: false }) })).json();
+  assert.equal(otraVez.estado, 'repetido', 'el primero manda');
+  assert.equal(efectosRecientes(yo.correo).length, 1);
+  assert.equal((await fetch(`${base}/api/app/recibo`, { method: 'POST', headers: ha(yo.token, 'tel-recibo-1'), body: JSON.stringify({ id: 'inventado', ok: true }) })).status, 409);
+});
+
+test('POST /api/app/aparato: el latido del aparato (tipo, versión, habilidades, permisos) con su id; sin id o mal formado, 400', async () => {
+  const ha = (aparato?: string) => ({ ...h(yo.token), ...(aparato ? { 'x-aura-aparato': aparato } : {}) });
+  assert.equal((await fetch(`${base}/api/app/aparato`, { method: 'POST', headers: ha(), body: JSON.stringify({ tipo: 'android' }) })).status, 400, 'sin aparato');
+  assert.equal((await fetch(`${base}/api/app/aparato`, { method: 'POST', headers: ha('tel-latido-1'), body: JSON.stringify({ tipo: 'tostadora' }) })).status, 400);
+  const r = await fetch(`${base}/api/app/aparato`, { method: 'POST', headers: ha('tel-latido-1'), body: JSON.stringify({ tipo: 'android', version: '5.7.1', habilidades: ['abrir_apps'], permisos: { notificaciones: 'si' } }) });
+  assert.equal(r.status, 200);
+  const { aparatosDe } = await import('../lib/aparatos');
+  const xs = await aparatosDe(yo.correo);
+  assert.deepEqual(
+    xs.map((a) => [a.id, a.version, a.habilidades]),
+    [['tel-latido-1', '5.7.1', ['abrir_apps']]]
+  );
+});

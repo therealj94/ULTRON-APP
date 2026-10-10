@@ -25,6 +25,7 @@ import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, 
 import { campoQuienHabla, type QuienHablaTurno } from '../voces/voces';
 import { campoParaTurno, type CampoDecisionVista } from './decisionVista';
 import { eventoProgresoValido, type EventoProgreso } from '../compa/narrador';
+import { capacidadesDelTurno, type SuperficieApp } from '../telefono/capacidades';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -542,6 +543,11 @@ export type TurnoOpts = {
    * por terminada. El servidor piensa y escribe, pero no hace nada con efecto hasta confirmarTurnoEspeculativo(idTurno).
    */
   especulativo?: boolean;
+  /**
+   * F02 (revisión del dueño): desde qué superficie habla (la mesa o la burbuja). Con ella viajan sus `capacidades` (lo
+   * que completa ahí: telefono/capacidades.ts) y el servidor solo le ofrece y le manda eso. Sin ella, la mesa.
+   */
+  superficie?: SuperficieApp;
 };
 
 /**
@@ -600,6 +606,9 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
     ...(campoQuienHabla(opts.quienHabla) ? { quienHabla: campoQuienHabla(opts.quienHabla) } : {}),
     ...(campoParaTurno(opts.hablado, opts.decisionVista) ? { decisionVista: campoParaTurno(opts.hablado, opts.decisionVista) } : {}),
+    // F02: la superficie y lo que completa ahí (la burbuja no navega la app ni muestra la ventana de decisión).
+    superficie: opts.superficie || 'mesa',
+    capacidades: capacidadesDelTurno(opts.superficie || 'mesa'),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

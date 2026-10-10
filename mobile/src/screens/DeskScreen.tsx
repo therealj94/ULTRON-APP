@@ -178,6 +178,7 @@ import { buzonHablar, oidoParaHablar } from '../entrada/enlace';
 import { useHablarEnMesa } from '../entrada/hablar';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
 import { avancePrimer, clasificarTurno, debePreguntar, queRecuperar, seguirTareasPrimer, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
+import { escucharCompartido, tomarCompartido, type PedidoCompartido } from '../telefono/compartido';
 
 type Props = {
   user: SessionUser;
@@ -3046,6 +3047,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const avisarPropuesta = useCallback((r: ResultadoSondeo) => {
     if (r === 'nueva' && mesaVisibleRef.current && !conversandoRef.current && !speakingRef.current) void haptic('light');
   }, []);
+
+  // «Compartir → AU-RA» desde otra app (APK 5.7.1, telefono/compartido.ts): un turno nuevo con eso como contexto. Lo que
+  // llegó antes de montarse la mesa espera en el buzón y se toma aquí.
+  useEffect(() => {
+    const hacer = (p: PedidoCompartido) => void askBrain(p.mensaje, p.imagen ? { image: p.imagen } : undefined);
+    const ya = tomarCompartido();
+    if (ya) hacer(ya);
+    return escucharCompartido((p) => {
+      if (tomarCompartido()) hacer(p);
+    });
+  }, [askBrain]);
 
   // Empujada por el servidor en el canal de acciones (la misma que el GET: no se duplica).
   useEffect(

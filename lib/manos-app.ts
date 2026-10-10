@@ -36,6 +36,7 @@ import { confirmaDecision } from './afirmacion';
 import { esCitaOReferido } from './cognitivo/intencion-llamada';
 import { dichoDeMarcar, dichoNegadoMarcar, esperaDeMarcar, esSoloNumero, numeroDe, numeroValido, preguntaDeMarcar, type PropuestaMarcar, type ViaMarcar } from './marcar';
 import { describirRepeticion, validarRepeticion, type Repeticion } from './recurrencia';
+import { dichoDeAbrir, manoDeTelefono, validarAccionTelefono, type AccionTelefono } from './telefono-apps';
 
 /* ------------------------------------------------------------------ las formas */
 
@@ -55,7 +56,13 @@ import { describirRepeticion, validarRepeticion, type Repeticion } from './recur
  * recordatorios-servidor.ts), entiende el `rid` de cada uno, los reconcilia con sus alarmas y tiene la hoja
  * «Recordatorios». Un teléfono sin ellas sigue como antes.
  */
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor'] as const;
+/**
+ * `abrir_apps` (José, 10-oct, APK 5.7.1): el teléfono abre OTRAS apps suyas (Spotify, Maps, YouTube…) o un enlace profundo
+ * (lib/telefono-apps.ts). La declara el JS de la app en AU-RA; en una APK anterior a la 5.7.1 el teléfono contesta con su
+ * recibo que hay que actualizar. Nunca en Dr Electrum. `intents_telefono` (la misma APK): la alarma y el temporizador del
+ * reloj, un borrador de SMS y la pantalla de un evento nuevo del calendario, con los intents estándar de Android.
+ */
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto', 'marcar', 'recordatorios_servidor', 'abrir_apps', 'intents_telefono'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;
@@ -102,7 +109,9 @@ export type AccionMano =
    * modelo llega solo `a` (el nombre o el número dicho) y `via`; el número lo pone el servidor desde la propuesta que la
    * persona aprobó con su «sí». Al teléfono solo sale con `numero`.
    */
-  | { tipo: 'marcar'; a: string; via: ViaMarcar; numero?: string; nombre?: string };
+  | { tipo: 'marcar'; a: string; via: ViaMarcar; numero?: string; nombre?: string }
+  /** Abrir otra app del teléfono o un enlace profundo (mano `abrir_apps`, lib/telefono-apps.ts). Es para ella: sin «sí». */
+  | AccionTelefono;
 
 /** Lo que espera el «sí» del turno siguiente (el borrador de un mensaje va aparte, en acciones-app). */
 export type Propuesta =
@@ -220,6 +229,14 @@ export function validarMano(a: Record<string, unknown>, ahora = Date.now()): Acc
       const moneda = linea(a.moneda, 16).toUpperCase().replace(/[^A-Z]/g, '');
       return { tipo: 'pagar', con, ...(monto ? { monto } : {}), ...(moneda ? { moneda } : {}) };
     }
+    case 'abrir_app':
+    case 'abrir_enlace':
+    case 'navegar':
+    case 'alarma':
+    case 'temporizador':
+    case 'sms':
+    case 'evento_calendario':
+      return validarAccionTelefono(a);
     default:
       return undefined;
   }
@@ -239,6 +256,8 @@ export function manoDe(a: { tipo: string; llamada?: boolean }): Mano | null {
   if (a.tipo === 'cancelar_recordatorio') return 'recordatorio';
   if (a.tipo === 'detener_audio' || a.tipo === 'colgar' || a.tipo === 'tarea') return 'controles';
   if (a.tipo === 'recordatorio' && a.llamada) return 'recordatorio_llamada';
+  const tel = manoDeTelefono(a.tipo);
+  if (tel) return tel;
   return esMano(a.tipo) ? a.tipo : null;
 }
 
@@ -1028,6 +1047,14 @@ export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
       return en ? 'I opened it filled in: check it and sign it in Veta Wallet.' : 'Te lo dejé listo: revísalo y fírmalo en Veta Wallet.';
     case 'marcar':
       return a.numero ? dichoDeMarcar({ numero: a.numero, nombre: a.nombre || '', via: a.via }, idioma) : en ? 'Who should I dial?' : '¿A quién le marco?';
+    case 'abrir_app':
+    case 'abrir_enlace':
+    case 'navegar':
+    case 'alarma':
+    case 'temporizador':
+    case 'sms':
+    case 'evento_calendario':
+      return dichoDeAbrir(a, idioma);
   }
 }
 
@@ -1093,6 +1120,10 @@ export function reglasManos(ctx: ContextoApp | null): string[] {
   if (puede('recordatorio_llamada') && !puede('llamame'))
     l.push(
       '· Recordatorio con llamada: igual, con "llamada":true, cuando pida que lo LLAMES para recordarle («llámame a las 5 para recordarme la pastilla», «márcame mañana a las 7 y recuérdame la cita»): a esa hora le entra tu llamada y, si contesta, se lo dices con tu voz. Pregunta «¿Te llamo hoy a las 5:00 de la tarde para recordarte …?». «llámame» solo, sin recordar nada, no es esto.'
+    );
+  if (puede('abrir_apps'))
+    l.push(
+      '· Abrir otra app de su teléfono: {"tipo":"abrir_app","app":"Spotify"} («abre Spotify», «abre la cámara del teléfono»), o algo dentro de ella: {"tipo":"abrir_enlace","uri":"spotify:search:Bad%20Bunny"} (solo spotify:, whatsapp://send?…, geo:, https:, tel:, mailto:). Di solo «Abriendo Spotify…»: nunca «ya la abrí» (el teléfono confirma y, si no la tiene, lo dice).'
     );
   return l;
 }

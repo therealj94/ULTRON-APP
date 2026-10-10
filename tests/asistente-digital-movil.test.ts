@@ -159,7 +159,7 @@ test('el Kotlin va a la carpeta del paquete, con el paquete y el esquema puestos
   const { manifiesto, raizAndroid } = await correrPlugin();
   const dir = path.join(raizAndroid, 'app/src/main/java', ...PAQUETE.split('.'), 'asistente');
   const kt = fs.readdirSync(dir).sort();
-  assert.deepEqual(kt, ['AsistenteVoz.kt', 'BurbujaActivity.kt', 'Invocacion.kt', 'MosaicoAura.kt', 'ReconocedorAura.kt']);
+  assert.deepEqual(kt, ['AsistenteVoz.kt', 'BurbujaActivity.kt', 'Invocacion.kt', 'MosaicoAura.kt', 'ReconocedorAura.kt', 'TelefonoAura.kt']);
   for (const f of kt) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
     assert.match(src, new RegExp(`^package ${PAQUETE.replace(/\./g, '\\.')}\\.asistente$`, 'm'), f);
@@ -205,10 +205,10 @@ test('solo AU-RA: Dr Electrum no trae el plugin del asistente; AU-RA sí', { ski
   }
 });
 
-test('la versión de la APK del asistente: 5.7.0 (versionCode 56)', () => {
+test('la versión de la APK de las manos del teléfono: 5.7.1 (versionCode 57)', () => {
   const j = JSON.parse(fs.readFileSync(path.join(raizMovil, 'app.json'), 'utf8'));
-  assert.equal(j.expo.version, '5.7.0');
-  assert.equal(j.expo.android.versionCode, 56);
+  assert.equal(j.expo.version, '5.7.1');
+  assert.equal(j.expo.android.versionCode, 57);
   // El parche de expo-av que esperaba esta APK ya va en mobile/patches (lo aplica patch-package en el postinstall).
   assert.ok(fs.existsSync(path.join(raizMovil, 'patches/expo-av+16.0.8.patch')));
   assert.match(JSON.parse(fs.readFileSync(path.join(raizMovil, 'package.json'), 'utf8')).scripts.postinstall, /patch-package/);

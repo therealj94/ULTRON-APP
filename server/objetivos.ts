@@ -42,7 +42,7 @@ import {
   type TareaParaObjetivo,
 } from '../lib/objetivos';
 import { claveManifiesto, type ManifiestoArchivo } from '../lib/oficina/almacen';
-import { bloqueObjetivosTurno } from '../lib/objetivos-turno';
+import { bloqueObjetivosTurno, objetivosAlCaso, type ObjetivoParaTurno } from '../lib/objetivos-turno';
 import { pedirDecisionPorPush, type PushDecision } from '../lib/push';
 import { autorizarEjecucion, cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea, type Vinculo } from '../lib/tareas-durables';
 import { descartarBorradorDurable } from './borradores-durables';
@@ -148,8 +148,10 @@ export async function descartarBorradoresDeTarea(
 export const OBJETIVOS_TURNO_VIVE_MS = 60_000;
 /** Cuánto espera el turno a leerlos (la voz no puede esperar al almacén): después, lo que había. */
 export const OBJETIVOS_TURNO_ESPERA_MS = 250;
-const delTurno = new Map<string, { t: number; bloque: string }>();
-const leyendoTurno = new Map<string, Promise<string>>();
+/** Lo leído para el turno: el bloque y lo justo de cada objetivo para saber si viene al caso (objetivosAlCaso). */
+type DelTurno = { bloque: string; objetivos: ObjetivoParaTurno[] };
+const delTurno = new Map<string, DelTurno & { t: number }>();
+const leyendoTurno = new Map<string, Promise<DelTurno>>();
 
 /** Algo cambió en los objetivos de esta persona: el próximo turno los vuelve a leer. */
 export function olvidarObjetivosDelTurno(dueno: string): void {
@@ -159,32 +161,36 @@ export function olvidarObjetivosDelTurno(dueno: string): void {
 /**
  * El bloque de sus objetivos abiertos para el turno (lib/objetivos-turno.ts, ≤400 caracteres), solo AU-RA. Lee del
  * almacén a lo más OBJETIVOS_TURNO_ESPERA_MS; si tarda, va lo último que se supo (o nada) y la lectura sigue para el
- * turno siguiente. Nunca lanza.
+ * turno siguiente. Nunca lanza. Con `mensaje` (José, 10-oct: «que no se mix con otras cosas»), solo si el mensaje es del
+ * trabajo, de seguir, de sus objetivos o pregunta qué le toca decidir (objetivosAlCaso); si no, ''.
  */
-export async function bloqueObjetivosDelTurno(correo: string, o: { plataforma: string; almacen?: AlmacenDurable; esperaMs?: number; ahora?: number }): Promise<string> {
+export async function bloqueObjetivosDelTurno(correo: string, o: { plataforma: string; almacen?: AlmacenDurable; esperaMs?: number; ahora?: number; mensaje?: string }): Promise<string> {
   const dueno = conCorreo(correo);
   if (!dueno || o.plataforma !== 'ultron') return '';
   const ahora = o.ahora ?? Date.now();
+  const alCaso = (d: DelTurno | undefined) => (!d ? '' : o.mensaje === undefined || objetivosAlCaso(o.mensaje, d.objetivos) ? d.bloque : '');
   const previo = delTurno.get(dueno);
-  if (previo && ahora - previo.t < OBJETIVOS_TURNO_VIVE_MS) return previo.bloque;
+  if (previo && ahora - previo.t < OBJETIVOS_TURNO_VIVE_MS) return alCaso(previo);
   let p = leyendoTurno.get(dueno);
   if (!p) {
+    const vacio: DelTurno = { bloque: '', objetivos: [] };
     p = listarObjetivos(dueno, o.almacen || almacenDurable())
       .then((l) => {
-        if (l.ok === false) return previo?.bloque ?? '';
+        if (l.ok === false) return previo ?? vacio;
         const bloque = bloqueObjetivosTurno(l.objetivos, { plataforma: 'ultron' });
-        delTurno.set(dueno, { t: Date.now(), bloque });
+        const objetivos = l.objetivos.map((x) => ({ titulo: x.titulo, estado: x.estado, actualizado: x.actualizado, decisiones: x.decisiones }));
+        delTurno.set(dueno, { t: Date.now(), bloque, objetivos });
         while (delTurno.size > 500) delTurno.delete(delTurno.keys().next().value as string);
-        return bloque;
+        return { bloque, objetivos };
       })
-      .catch(() => previo?.bloque ?? '')
+      .catch(() => previo ?? vacio)
       .finally(() => leyendoTurno.delete(dueno));
     leyendoTurno.set(dueno, p);
   }
   let reloj: ReturnType<typeof setTimeout> | undefined;
-  const tarde = new Promise<string>((r) => (reloj = setTimeout(() => r(previo?.bloque ?? ''), o.esperaMs ?? OBJETIVOS_TURNO_ESPERA_MS)));
+  const tarde = new Promise<DelTurno | undefined>((r) => (reloj = setTimeout(() => r(previo), o.esperaMs ?? OBJETIVOS_TURNO_ESPERA_MS)));
   try {
-    return await Promise.race([p, tarde]);
+    return alCaso(await Promise.race([p, tarde]));
   } finally {
     clearTimeout(reloj);
   }
