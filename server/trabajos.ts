@@ -33,7 +33,7 @@ import { conEnlacesDeDocumentos, raizPublica } from './enlace-documento';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import type express from 'express';
-import { almacenDurable, ejecutarUnaVez, hashArgumentos, reservarPedido } from '../lib/durable';
+import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, PROCESO_DURABLE, reservarPedido, type Lease } from '../lib/durable';
 import {
   cambiarTarea,
   crearTarea,
@@ -134,6 +134,12 @@ export type DepsTrabajos = {
      * mostró la tarjeta). Devuelve el borrador NUEVO (otro intento, otra huella) que espera su propio «sí»; nada sale.
      */
     editar?(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string, cambios: { texto: string; asunto?: string }): EdicionDeBorrador;
+    /**
+     * Fase 2 (server/borradores-durables.ts): si esta réplica ya no tiene en su memoria el borrador de ESE intento (se
+     * reinició, o lo armó otra réplica), lo trae de lo durable cuando la huella guardada y la recalculada son ESA. Después
+     * `vigente` lo encuentra como siempre. true si espera.
+     */
+    rehidratar?(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string): Promise<boolean>;
   };
   /**
    * Lo que el taller de la junta propuso (revisión 10, MEDIO-C; lib/taller.ts). `vigente`: ¿la cuenta que aprueba puede
@@ -207,6 +213,52 @@ const ENVIO_SIN_NOTICIA_MS = 2 * 60_000;
  * «no salió nada» (José, 5-oct: lo vencido se dice, no se queda pidiendo una decisión para siempre).
  */
 export const BLOQUEADA_VISIBLE_MS = 30 * 60_000;
+
+/* ------------------------------------------------------------------ el efecto aprobado, con lease y fencing */
+
+/** Cuánto dura el lease de una tarea mientras se ejecuta lo aprobado (un envío no tarda más; si tarda, se reconcilia). */
+export const LEASE_EFECTO_MS = 2 * 60_000;
+/** El lease de una tarea (el mismo que toma el planificador, server/planificador.ts): uno a la vez por tarea. */
+export const claveLeaseTarea = (dueno: string, tareaId: string) => claveDe('trabajos/leases', dueno, tareaId);
+
+/**
+ * Fase 2: lo aprobado sale con el lease de su tarea y su token de fencing. `ejecutarUnaVez` recibe el lease: justo antes de
+ * despachar comprueba que sigue siendo el vigente y que su token no es menor que el de la operación (lib/durable.ts
+ * `avanzarOperacion`). Un proceso viejo que despierta tarde, o una réplica a la que se le venció el lease mientras otra lo
+ * tomó, no despacha nada: la operación queda `failed` sin efecto. Si otro tiene el lease, no se corre (y no se sabe qué
+ * pasa con el envío: se reconcilia).
+ */
+async function efectoConLease(
+  dueno: string,
+  tareaId: string,
+  o: { requestId: string; tipo: string; argsHash: string },
+  efecto: () => Promise<SalidaEnvio>,
+  titular = PROCESO_DURABLE
+): Promise<SalidaEnvio> {
+  const correr = () =>
+    conLease(claveLeaseTarea(dueno, tareaId), titular, LEASE_EFECTO_MS, (lease: Lease) =>
+      ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: o.requestId, tipo: o.tipo, argsHash: o.argsHash, lease }, async () => {
+        const s = await efecto();
+        const estado = s.estado === 'stale' ? 'failed' : s.estado;
+        return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: o.tipo, ...(s.referencia ? { referencia: s.referencia } : {}), detalle: trozo(s.resumen, 160) } };
+      })
+    ).catch(() => ({ ok: false as const, ocupado: undefined }));
+  let r = await correr();
+  // El planificador toma el mismo lease un instante (al revisar la tarea): se espera un poco antes de rendirse.
+  for (let i = 0; i < 3 && r.ok === false && 'ocupado' in r && r.ocupado; i++) {
+    await new Promise((ok) => setTimeout(ok, 250));
+    r = await correr();
+  }
+  if (r.ok === false) return { estado: 'unknown', resumen: 'Otro proceso tiene esta tarea ahora mismo: no sé si salió. Lo reviso antes de repetir nada.' };
+  const salida = r.valor;
+  if (salida.corrio) return salida.resultado ?? { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
+  if ('motivo' in salida && salida.motivo === 'fencing') return { estado: 'failed', resumen: 'No salió: otro proceso tomó la tarea mientras tanto (su turno ya no era este). No se hizo nada; pídelo otra vez si aún lo quieres.' };
+  if (salida.op?.estado === 'succeeded') return { estado: 'succeeded', resumen: salida.op.recibo?.detalle || 'Ya había salido antes; no lo repetí.', ...(salida.op.recibo?.referencia ? { referencia: salida.op.recibo.referencia } : {}) };
+  return { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
+}
+
+/** Solo pruebas: el mismo camino con otro titular (un proceso viejo). */
+export const _efectoConLease = efectoConLease;
 
 /* ------------------------------------------------------------------ el contexto del turno */
 
@@ -354,6 +406,29 @@ export async function abrirInvestigacion(duenoCorreo: string, ambito: string, te
     console.warn('[trabajos] no pude crear la tarea de la investigación:', String(e?.message || e).slice(0, 120));
     return null;
   }
+}
+
+/**
+ * Fase 2 (el planificador): una tarea `queued` que nadie corría (POST /api/trabajos) pasa a ser una investigación en
+ * segundo plano de su objetivo, en la MISMA tarea (mismo id: su tarjeta no cambia). Solo desde `queued` (CAS): si otro ya
+ * la arrancó, no se arranca otra vez. true si quedó «running» como investigación.
+ */
+export async function convertirEnInvestigacion(duenoCorreo: string, id: string, tema: string, pasos: number, topeMin: number): Promise<boolean> {
+  const dueno = conCorreo(duenoCorreo);
+  if (!dueno) return false;
+  const c = await cambiarTarea(dueno, id, (reg): Cambio | null =>
+    reg.estado !== 'queued'
+      ? null
+      : {
+          estado: 'running',
+          entorno: ENTORNO_INVESTIGACION,
+          pasoActual: 'Empiezo a buscar',
+          progreso: { hechos: 0, total: Math.max(1, pasos), unidad: 'pasos' },
+          criterios: [{ id: 'fuentes', texto: 'Un resumen hecho con fuentes que puedes abrir', obligatorio: true, estado: 'pending', evidencias: [] }],
+          eventos: [{ type: 'task.progressed', payload: { motivo: 'planificador', tope: `${topeMin} min`, tema: trozo(tema, 120) } }],
+        }
+  ).catch(() => null);
+  return !!c && c.ok && c.cambiado && esInvestigacion(c.tarea) && c.tarea.estado === 'running';
 }
 
 /**
@@ -786,6 +861,12 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
     }
   }
   const leidas = misiones;
+  // Fase 2: el borrador que espera la decisión puede no estar en la memoria de ESTA réplica (reinicio, otra réplica): antes
+  // de darlo por perdido se busca en lo durable (con su intento y su huella exactos).
+  const vb = reg.decision?.vinculo?.tipo === 'borrador' ? reg.decision.vinculo : null;
+  if (vb && reg.estado === 'awaiting_approval' && !(reg.decision?.caduca && ahora > reg.decision.caduca) && d.borradores?.rehidratar) {
+    await d.borradores.rehidratar(dueno, vb.canal, vb.ambito, vb.intento, vb.hash).catch(() => false);
+  }
   // Por su intento (José, 5-oct): un borrador apartado que otro desplazó sigue esperando; no es «ya no está».
   const vigente = (canal: 'correo' | 'whatsapp', ambito: string, intento: string) => (d.borradores ? d.borradores.vigente(dueno, canal, ambito, intento) : undefined);
   const r = await cambiarTarea(
@@ -837,6 +918,15 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
     { ahora }
   ).catch(() => null);
   return r && r.ok ? r.tarea : reg;
+}
+
+/**
+ * Para el planificador (server/planificador.ts): reconcilia una tarea durable con sus fuentes como lo hace la lista
+ * (su computadora, su borrador, su investigación). Nunca lanza.
+ */
+export async function revisarTarea(d: DepsTrabajos, dueno: string, reg: RegistroTarea, ahora = Date.now()): Promise<RegistroTarea> {
+  const pc = d.computadora?.preparar ? await d.computadora.preparar(dueno).then((x) => x !== false, () => false) : true;
+  return reconciliar(dueno, reg, d, ahora, pc).catch(() => reg);
 }
 
 /* ------------------------------------------------------------------ rutas */
@@ -1092,12 +1182,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       const operacion = `tarea-${e.reg.id}-${decision.id}`;
       const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Haciendo lo que aprobaste…' });
       if (!r.ok) return r.resp();
-      const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: operacion, tipo: `taller.${vincT.accion}`, argsHash: vincT.huella }, async () => {
-        const s = await d.taller!.ejecutar(dueno, vincT);
-        const estado = s.estado === 'stale' ? 'failed' : s.estado;
-        return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: `taller.${vincT.accion}`, detalle: trozo(s.resumen, 160) } };
-      });
-      const s: SalidaEnvio = salida.corrio && salida.resultado ? salida.resultado : { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
+      // Con el lease de la tarea y su token de fencing (Fase 2): un proceso viejo no despacha.
+      const s = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `taller.${vincT.accion}`, argsHash: vincT.huella }, () => d.taller!.ejecutar(dueno, vincT));
       const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
       const reg = fin && fin.ok ? fin.tarea : r.reg;
       anotar(reg);
@@ -1114,6 +1200,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4) El mismo intento y la
     // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno. Sin huella del que
     // espera no hay con qué compararlo: se bloquea (permisos exactos, 4-oct; antes, sin huella, pasaba).
+    // Fase 2: si esta réplica no lo tiene en memoria (reinicio, otra réplica), vuelve de lo durable con ESA huella.
+    if (d.borradores.rehidratar) await d.borradores.rehidratar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash).catch(() => false);
     const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento);
     if (espera?.intento !== vinc.intento || !espera.huella || espera.huella !== vinc.hash) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
@@ -1122,12 +1210,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const operacion = `tarea-${e.reg.id}-${decision.id}`;
     const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' });
     if (!r.ok) return r.resp();
-    const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, async () => {
-      const s = await d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash);
-      const estado = s.estado === 'stale' ? 'failed' : s.estado;
-      return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: vinc.canal, ...(s.referencia ? { referencia: s.referencia } : {}), detalle: trozo(s.resumen, 160) } };
-    });
-    const s: SalidaEnvio = salida.corrio && salida.resultado ? salida.resultado : { estado: 'unknown', resumen: 'No supe cómo terminó el envío.' };
+    // Con el lease de la tarea y su token de fencing (Fase 2): un proceso viejo no despacha.
+    const s = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, () => d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash));
     const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
     const reg = fin && fin.ok ? fin.tarea : r.reg;
     soltarEnPantalla(dueno, e.reg.id);

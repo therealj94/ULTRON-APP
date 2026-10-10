@@ -185,6 +185,45 @@ export function trozoPrometeUOfrece(trozo: string): boolean {
   return frases(trozo).some((f) => clasificarFrase(f).length > 0);
 }
 
+/* ------------------------------------------------------------------ el libro de compromisos (Fase 2) */
+
+// Lo que AURA se compromete a hacer DESPUÉS (además de «te aviso» y del trabajo de arriba): dejar algo listo, revisarlo
+// mañana, encargarse, confirmar. Se compara en `plano`.
+const COMPROMISO = new RegExp(
+  [
+    '\\b(te |se )?(lo |la |los |las )?(dejo|tengo|tendre|dejare) (listo|lista|listos|listas|preparado|preparada|hecho|hecha)\\b',
+    '\\b(manana|pasado manana|el lunes|el martes|el miercoles|el jueves|el viernes|esta tarde|esta noche|mas tarde|en un rato) (te |se )?(lo |la |los |las )?(reviso|veo|miro|hago|preparo|mando|envio|termino|confirmo|llamo|escribo|cuento|aviso|busco|investigo)\\b',
+    '\\b(te |se )?(lo |la |los |las )?(reviso|veo|miro|hago|preparo|mando|envio|termino|confirmo|llamo|escribo|cuento|busco|investigo) (manana|pasado manana|el lunes|el martes|el miercoles|el jueves|el viernes|esta tarde|esta noche|mas tarde|en un rato|en (\\d+|un|una|dos|tres|media) (minutos?|horas?|dias?))\\b',
+    '\\b(yo )?me (encargo|ocupo)\\b',
+    '\\b(queda|lo dejo|lo anoto) (pendiente|anotado) (de mi parte|para (manana|despues|luego))\\b',
+    '\\bte (lo )?confirmo (manana|luego|despues|mas tarde|en cuanto)\\b',
+    "\\b(i'?ll|i will) (have it ready|get it done|take care of it|review it tomorrow|check (it|back) tomorrow|follow up)\\b",
+  ].join('|')
+);
+
+/**
+ * Los COMPROMISOS de un texto (Fase 2, el libro de compromisos de lib/compromisos.ts): las frases en que AURA promete
+ * algo para después —«te aviso», «lo dejo listo», «mañana lo reviso», «voy a investigar»—. Las mismas exclusiones que las
+ * promesas: una pregunta, una oferta condicional («si quieres, te aviso») o una negación no son compromisos. Solo
+ * registra: no corrige nada ni dice que se cumplió.
+ */
+export function frasesDeCompromiso(texto: string): string[] {
+  const out: string[] = [];
+  for (const f of frases(quitarVolcados(sinLineasDeMaquina(texto)))) {
+    const limpia = f.replace(/\[[^\]]{0,30}\]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!limpia) continue;
+    const tipos = clasificarFrase(limpia);
+    let es = tipos.includes('aviso') || tipos.includes('trabajo');
+    if (!es) {
+      const p = plano(limpia);
+      const m = COMPROMISO.exec(p);
+      es = !!m && !/[¿?]/.test(limpia) && !CONDICIONAL.test(p) && !NIEGA.test(p.slice(0, m.index));
+    }
+    if (es) out.push(limpia);
+  }
+  return out;
+}
+
 const LINEA_MAQUINA = /^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:.*$/gim;
 const sinLineasDeMaquina = (t: string) => String(t || '').replace(LINEA_MAQUINA, '');
 

@@ -48,6 +48,7 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
+import { agendar } from './agenda';
 import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, remiteAOtroLugar, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
@@ -270,6 +271,8 @@ export type Cambio = {
   enlace?: EnlaceTarea;
   proximaRevision?: number | null;
   planVersion?: number;
+  /** Fase 2: el objetivo con estado al que pertenece (lib/objetivos.ts). null lo desliga. */
+  objetivoId?: string | null;
   /** Eventos extra (un recibo de operación). */
   eventos?: { type: EventoTarea['type']; payload: Record<string, unknown> }[];
   /** Solo el latido: no sube la versión (una decisión vista hace un segundo sigue valiendo). */
@@ -326,6 +329,10 @@ export function aplicarCambio(reg: RegistroTarea, c: Cambio, ahora: number): { o
     else n.proximaRevision = c.proximaRevision;
   }
   if (c.planVersion !== undefined) n.planVersion = c.planVersion;
+  if (c.objetivoId !== undefined) {
+    if (c.objetivoId === null) delete n.objetivoId;
+    else n.objetivoId = texto(c.objetivoId, 40);
+  }
   if (esTerminal(a)) {
     // Un terminal no espera nada más: ni decisión ni próxima revisión.
     n.decision = null;
@@ -424,6 +431,9 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
   // dentro (A7): el inventario no se fía solo de la carpeta en que está el objeto.
   const c = await crearUnaVez(claveTarea(dueno, r.id), { ...registroNuevo(r.id, d, ahora), dueno: huellaDueno(dueno) }, a);
   if (c.ok === false) return { ok: false, motivo: 'almacen', detalle: c.detalle };
+  // Fase 2: lo que espera a que alguien lo corra (`queued`) o tiene una revisión programada entra en la agenda del
+  // planificador (server/planificador.ts): sin esto, nadie lo miraba hasta que la persona abría la lista.
+  if (c.creado) await agendarSiToca(dueno, null, c.valor, a);
   return { ok: true, creada: c.creado, tarea: c.valor };
 }
 
@@ -1446,7 +1456,21 @@ export async function cambiarTarea(
   // Terminó: su entrada del índice pasa a historial (solo esas se recortan). Si no se puede anotar, queda como «puede
   // seguir activa» (la lista la lee y lo repara): nunca al revés.
   if (cambiado && visto && !esTerminal(visto.estado) && esTerminal(final.estado)) await repararIndice(dueno, { fines: new Map([[id, final.actualizada]]) }, a);
+  if (cambiado && visto) await agendarSiToca(dueno, visto, final, a);
   return { ok: true, tarea: final, cambiado };
+}
+
+/**
+ * Fase 2: a la agenda del planificador si la tarea acaba de quedar `queued` o le pusieron (o adelantaron) una
+ * `proximaRevision`. Lo mejor posible: si la agenda no se pudo escribir, la tarea sigue como está (la lista la ve igual).
+ */
+async function agendarSiToca(dueno: string, antes: RegistroTarea | null, ahora: RegistroTarea, a: AlmacenDurable): Promise<void> {
+  if (esTerminal(ahora.estado)) return;
+  const encolada = ahora.estado === 'queued' && antes?.estado !== 'queued';
+  const revision = !!ahora.proximaRevision && ahora.proximaRevision !== antes?.proximaRevision;
+  if (!encolada && !revision) return;
+  const cuando = encolada ? ahora.actualizada : Math.max(ahora.actualizada, ahora.proximaRevision!);
+  await agendar('tarea', dueno, ahora.id, cuando, { almacen: a }).catch(() => false);
 }
 
 /* ------------------------------------------------------------------ decisiones */

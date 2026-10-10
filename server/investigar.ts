@@ -26,7 +26,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import { exito, fallo, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { TOPE_INVESTIGACION_MS } from '../lib/tareas-durables';
-import { abrirInvestigacion, avanzarInvestigacion, cerrarInvestigacion, type CierreInvestigacion } from './trabajos';
+import { abrirInvestigacion, avanzarInvestigacion, cerrarInvestigacion, convertirEnInvestigacion, type CierreInvestigacion } from './trabajos';
 
 export type HitWeb = { title: string; url: string; snippet: string };
 
@@ -149,6 +149,24 @@ export async function empezarInvestigacion(o: { dueno: string; ambito: string; a
     `INVESTIGACIÓN EMPEZADA (tarea ${id}, en su panel de Tareas): «${tema}». Corre en segundo plano (varias búsquedas y las mejores páginas), ${minutos(tope)} minutos como mucho. Dile en una o dos frases que ya empezaste, que cuando termine le llega una notificación al teléfono y el resumen con sus fuentes queda en Tareas, y que se lo cuentas cuando vuelva. Todavía NO tienes el resultado: no lo inventes. Nunca digas que se lo mandas por PULSE2CHAT (no puedes escribir ahí).`,
     { efecto: 'guardado', referencia: id, durable: true, proveedor: 'aura', codigo: ab.nueva ? 'investigacion-empezada' : 'investigacion-ya-registrada' }
   );
+}
+
+/**
+ * Fase 2 (server/planificador.ts): una tarea `queued` de la API se trabaja como investigación de su objetivo, en la misma
+ * tarea. `empezada` solo si la tarea quedó «running» como investigación (CAS desde `queued`) y el trabajo arrancó aquí.
+ */
+export async function investigarTareaEnCola(duenoCorreo: string, tareaId: string, pedido: string): Promise<'empezada' | 'no-disponible' | 'ocupado' | 'error'> {
+  const d = deps;
+  if (!d) return 'no-disponible';
+  const dueno = clave(duenoCorreo);
+  const { tema, consultas } = pedidoDeInvestigacion(pedido);
+  if (!tema) return 'error';
+  if ([...EN_CURSO.values()].filter((e) => e.dueno === dueno).length >= MAX_EN_CURSO) return 'ocupado';
+  const tope = d.topeMs ?? TOPE_INVESTIGACION_MS;
+  const pasos = consultas.length + MAX_LEER + 1;
+  if (!(await convertirEnInvestigacion(dueno, tareaId, tema, pasos, minutos(tope)))) return 'error';
+  arrancar({ id: tareaId, dueno, tema, consultas, tope, pasos });
+  return 'empezada';
 }
 
 function arrancar(x: { id: string; dueno: string; tema: string; consultas: string[]; tope: number; pasos: number }) {
