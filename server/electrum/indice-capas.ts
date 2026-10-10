@@ -236,11 +236,17 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
     if (f.capa) {
       const rol = roles.get(f.capa);
       if (!rol) continue; // no la ve esta organización
-      const n = (e.num_entidades || 0) > 4000 ? 0.0005 : 0;
+      /*
+       * Para el mapa, simplificado: ~30 m de tolerancia (≈50 m en las de miles de rasgos). Sin esto,
+       * aldeas, municipios y departamentos pesaban 53, 44 y 19 MB de GeoJSON y trababan el navegador
+       * (el recorrido se quedaba mudo en el paso siguiente). Con esto, 3,8, 1,2 y 0,5 MB. A los puntos
+       * no les cambia nada. El análisis de áreas usa la geometría completa de la base, no esta ruta.
+       */
+      const n = (e.num_entidades || 0) > 4000 ? 0.0005 : 0.0003;
       filas = await consultaConTope<Fila>(
         `SELECT e.id::text, ${nombreDe(rol)} AS nombre,
                 (SELECT jsonb_object_agg(a.k, a.v) FROM jsonb_each_text(e.atributos) a(k, v) WHERE a.k = ANY($2::text[])) AS props,
-                ST_AsGeoJSON(CASE WHEN $3::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $3::float8) ELSE e.geom END, 6)::text AS g
+                ST_AsGeoJSON(CASE WHEN $3::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $3::float8) ELSE e.geom END, 5)::text AS g
            FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS + 1}`,
         [f.capa, campos, n],
         20000

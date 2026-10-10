@@ -87,6 +87,38 @@ export function ocurrenciasCerca(t: TargetEjemplo): { n: number; dicho: string }
   return { n, dicho: t.ocurrenciasTope ? `al menos ${n}` : String(n) };
 }
 
+/** El inventario de indicios (GET /api/electrum/recorrido/inventario). null: no se pudo contar. */
+export type Inventario = {
+  fichasSeleccionadas: number | null;
+  fichasSeleccionadasOro: number | null;
+  fichasOcurrencia: number | null;
+  fichasOcurrenciaOro: number | null;
+  defomin: number | null;
+  usgsHonduras: number | null;
+};
+
+const cuenta = (n: number | null | undefined, uno: string, varios: string) => (n == null ? null : `${n.toLocaleString('es-ES')} ${n === 1 ? uno : varios}`);
+
+/**
+ * Paso 2, las fichas: cuántas tenemos y cuántas de oro, dichas por separado (son dos inventarios
+ * distintos, no se suman). Lo que no se pudo contar no se dice.
+ */
+export function lecturaFichas(inv: Inventario | null): string {
+  const sel = cuenta(inv?.fichasSeleccionadas, 'ficha seleccionada', 'fichas seleccionadas');
+  const fom = cuenta(inv?.fichasOcurrencia, 'ficha de ocurrencia minera', 'fichas de ocurrencia minera');
+  const oro = (n: number | null | undefined) => (n == null ? '' : `, ${n.toLocaleString('es-ES')} de ellas de oro`);
+  const partes = [sel ? `${sel}${oro(inv?.fichasSeleccionadasOro)}` : null, fom ? `${fom} en el inventario completo${oro(inv?.fichasOcurrenciaOro)}` : null].filter(Boolean);
+  if (!partes.length) return 'Cada punto que ve en el mapa es una ficha de ocurrencia.';
+  return `Tenemos ${partes.join('; y ')}. Cada punto que ve en el mapa es una de ellas.`;
+}
+
+/** Paso 2, las otras fuentes: el USGS con su cuenta en Honduras, JICA, Naciones Unidas y DEFOMIN. */
+export function lecturaFuentesIndicios(inv: Inventario | null): string {
+  const usgs = inv?.usgsHonduras != null ? `los depósitos del USGS, ${inv.usgsHonduras.toLocaleString('es-ES')} registrados en Honduras` : 'los depósitos del USGS';
+  const defomin = inv?.defomin != null ? `los ${inv.defomin.toLocaleString('es-ES')} yacimientos de DEFOMIN` : 'DEFOMIN';
+  return `Y las cruzamos con ${usgs}, con los estudios de JICA, con Naciones Unidas y con ${defomin}.`;
+}
+
 /** Lo que se le puede pedir después (sección 7), para ofrecerlo al cerrar. */
 export const PREGUNTAS_DESPUES = [
   'Muéstrame los targets de oro libres en El Paraíso',

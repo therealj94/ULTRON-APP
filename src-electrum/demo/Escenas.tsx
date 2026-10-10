@@ -426,7 +426,7 @@ function Catastro({ libre }: { libre: boolean }) {
 function Legal() {
   const leyes = [
     { t: 'Ley General de Minería', d: 'y su Reglamento' },
-    { t: 'Ley General del Ambiente', d: 'Licenciamiento MiAmbiente (antes SERNA)' },
+    { t: 'Ley General del Ambiente', d: 'Licenciamiento ambiental de SERNA' },
     { t: 'Normativa municipal', d: 'y consulta comunitaria' },
     { t: 'Legislación internacional', d: 'Solo como referencia' },
   ];

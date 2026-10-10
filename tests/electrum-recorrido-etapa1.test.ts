@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { MENSAJES, PASOS, estadoDicho, fichaFactibilidad, leyOroDicha, lecturaCatastro, lecturaHallazgos, lecturaIndicios, lecturaPremisas, lecturaRestricciones, nombreFicha, tipoProbable, type TargetEjemplo } from '../src-electrum/demo/etapa1';
+import { MENSAJES, PASOS, estadoDicho, lecturaFichas, lecturaFuentesIndicios, fichaFactibilidad, leyOroDicha, lecturaCatastro, lecturaHallazgos, lecturaIndicios, lecturaPremisas, lecturaRestricciones, nombreFicha, tipoProbable, type TargetEjemplo } from '../src-electrum/demo/etapa1';
 import { cuadrado, estaLibre, rumboDe, utm16 } from '../server/electrum/recorrido-target';
 import { recorridoPedido } from '../src-electrum/panel/comandos';
 
@@ -125,4 +125,16 @@ test('«quiero ver la etapa 1» arranca el recorrido nuevo', () => {
   assert.equal(recorridoPedido('quiero ver la etapa 1'), 'etapa1');
   assert.equal(recorridoPedido('muéstrame la presentación'), 'etapa1');
   assert.equal(recorridoPedido('Muéstrame el recorrido legal'), 'legal');
+});
+
+test('paso 2: las fichas de ocurrencia con sus cuentas de oro, el USGS y JICA', () => {
+  const inv = { fichasSeleccionadas: 123, fichasSeleccionadasOro: 73, fichasOcurrencia: 166, fichasOcurrenciaOro: 56, defomin: 99, usgsHonduras: 261 };
+  assert.equal(lecturaFichas(inv), 'Tenemos 123 fichas seleccionadas, 73 de ellas de oro; y 166 fichas de ocurrencia minera en el inventario completo, 56 de ellas de oro. Cada punto que ve en el mapa es una de ellas.');
+  assert.equal(lecturaFuentesIndicios(inv), 'Y las cruzamos con los depósitos del USGS, 261 registrados en Honduras, con los estudios de JICA, con Naciones Unidas y con los 99 yacimientos de DEFOMIN.');
+  // Sin cuentas no se inventan números.
+  assert.equal(lecturaFichas(null), 'Cada punto que ve en el mapa es una ficha de ocurrencia.');
+  assert.doesNotMatch(lecturaFuentesIndicios(null), /\d/);
+  const fuente = fs.readFileSync('src-electrum/demo/Recorrido.tsx', 'utf8');
+  assert.match(fuente, /geólogos profesionales calificados/);
+  assert.match(fuente, /FOM levantadas en Honduras/);
 });

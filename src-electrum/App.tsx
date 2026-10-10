@@ -55,6 +55,7 @@ import { guardarSesion, hayCredencial, headersElectrum, porQueNoAbre, puertaAbie
 import { PonerClave, enlaceEnLaUrl, faltaPara, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
 import { Cuenta, TEMA_ELECTRUM } from './Cuenta';
 import {
+  ALTO_COMPACTO_PX,
   ALTO_MAX,
   ALTO_MIN,
   ALTURAS,
@@ -973,7 +974,8 @@ export default function App() {
         */}
         <div
           className="absolute top-[52px] left-0 right-0 sin-seleccion"
-          style={{ bottom: `${alto * 100}%` }}
+          // El mapa termina donde empieza el panel, que nunca baja de ALTO_COMPACTO_PX.
+          style={{ bottom: `max(${alto * 100}%, ${ALTO_COMPACTO_PX}px)` }}
         >
           <SinMapa>
           <Suspense
