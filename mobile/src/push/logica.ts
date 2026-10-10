@@ -341,8 +341,15 @@ export function privacidadDecision(k: ConstantesNotifee, contenidoEnBloqueo = CO
   return { ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PRIVATE ?? 0 } : {}), botonesEnBloqueo: false, preguntaEnBloqueo: false };
 }
 
-/** Los botones del aviso: uno por opción (≤3), cada uno manda ESA opción sin abrir la app. */
-export function botonesDecision(p: Pick<DatosPush, 'opciones'>): { title: string; pressAction: { id: string } }[] {
+/**
+ * Los botones del aviso: uno por opción (≤3), cada uno manda ESA opción sin abrir la app.
+ *
+ * Solo para decisiones de un OBJETIVO (elegir entre caminos). Una decisión de una TAREA puede ser aprobar un correo o
+ * un WhatsApp que sale en ese instante: eso no se aprueba desde un aviso sin ver el borrador entero. Sin botones; el
+ * toque abre la app con la propuesta delante.
+ */
+export function botonesDecision(p: Pick<DatosPush, 'opciones' | 'tareaId'>): { title: string; pressAction: { id: string } }[] {
+  if (p.tareaId) return [];
   return p.opciones.slice(0, MAX_OPCIONES_AVISO).map((o) => ({ title: o.etiqueta, pressAction: { id: `${ACCION_DECIDIR}${o.id}` } }));
 }
 

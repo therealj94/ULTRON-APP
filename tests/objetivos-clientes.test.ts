@@ -95,6 +95,10 @@ test('aviso «decision»: un botón por opción (≤3, cortos), tocarlo abre el 
   assert.deepEqual(L.privacidadDecision(K), { visibility: 0, botonesEnBloqueo: false, preguntaEnBloqueo: false });
   assert.deepEqual(L.privacidadDecision(K, true), { visibility: 1, botonesEnBloqueo: true, preguntaEnBloqueo: true });
   assert.equal((L.avisoDecision(p!, K, true) as any).android.visibility, K.AndroidVisibility.PUBLIC);
+  // Una decisión de TAREA (puede ser aprobar un envío): sin botones, el toque abre la app con el borrador delante.
+  const deTarea = (L.avisoDecision({ ...p!, tareaId: 'tarea_123456' }, K) as any).android;
+  assert.equal(deTarea.actions, undefined, 'una aprobación de envío no se contesta desde el aviso');
+  assert.equal(deTarea.pressAction.launchActivity, 'default');
   // De otra persona en este teléfono: no se enseña.
   assert.deepEqual(L.planear(p!, { dueno: seudonimoDe('otra@ejemplo.com'), ahora: T0, k: K }), { que: 'ignorar', porque: 'ajeno' });
 });
