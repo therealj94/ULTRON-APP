@@ -54,6 +54,8 @@ export function siguienteReparto(alto: number): number {
 }
 
 export const ALTO_MIN = 0.12;
+/** Lo mínimo que mide el panel en «Más mapa»: pestañas, la última respuesta en una línea y la caja de preguntar. */
+export const ALTO_COMPACTO_PX = 140;
 export const ALTO_MAX = 0.86;
 
 /* ------------------------------------------------------ las que siguen a la persona */
