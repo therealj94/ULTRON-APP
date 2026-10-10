@@ -36,7 +36,12 @@ export type OrdenMapa =
   /** Ir a un lugar de Honduras («llévame a Juticalpa») y dejarlo marcado con su nombre. */
   | { accion: 'lugar'; centro: [number, number]; zoom: number; nombre: string; detalle?: string }
   /** Dejar en el mapa solo las concesiones de un mineral o una clase (null: todas otra vez). */
-  | { accion: 'filtrar'; mineral: string | null };
+  | { accion: 'filtrar'; mineral: string | null }
+  /**
+   * El target del recorrido: polígono rojo y estrella roja con su nombre (Etapa 1, sección 5:
+   * «Simbología del target: estrella roja»). `geojson: null` lo quita.
+   */
+  | { accion: 'target'; geojson: Geometry | null; centro?: [number, number]; etiqueta?: string; estado?: 'neutro' | 'libre' | 'restringido' };
 
 /** Lo que se tocó en el mapa: una concesión, un rasgo de una capa encendida, o un punto cualquiera. */
 export type Tocado =

@@ -30,8 +30,8 @@ type Rasgos = { nombre: string; papel: string; color: string; piel: string; somb
 
 export const RETRATOS: Record<string, Rasgos> = {
   electrum: { nombre: 'Dr Electrum', papel: 'Geólogo sénior', color: '#FFAE3B', piel: '#E2AE86', sombra: '#B97F57', iris: '#6B4A2B' },
-  tatiana: { nombre: 'Ing. Tatiana', papel: 'Ing. civil y ambiental', color: '#5CD6C4', piel: '#D9A07C', sombra: '#A86E4E', iris: '#2F6B5E' },
-  chema: { nombre: 'Don Chema', papel: 'Metalurgista', color: '#E08A5A', piel: '#B97B55', sombra: '#86523A', iris: '#3B2616' },
+  tatiana: { nombre: 'Ing. Tatiana', papel: 'Ing. en minas', color: '#5CD6C4', piel: '#D9A07C', sombra: '#A86E4E', iris: '#2F6B5E' },
+  chema: { nombre: 'Don Chema', papel: 'Ing. metalurgista', color: '#E08A5A', piel: '#B97B55', sombra: '#86523A', iris: '#3B2616' },
   narrador: { nombre: 'Narrador', papel: 'Voz del recorrido', color: '#B39DFF', piel: '#2A2150', sombra: '#140F2C', iris: '#E6DEFF' },
 };
 

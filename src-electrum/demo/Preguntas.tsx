@@ -12,12 +12,14 @@ import { hablar } from '../panel/voz';
 import { capturarDicho } from '../panel/oido';
 import { esAfirmativa, esNegativa, recorridoPedido } from '../panel/comandos';
 import type { ModoRecorrido } from './Recorrido';
+import { PREGUNTAS_DESPUES } from './etapa1';
 
 const AMBAR = '#FFAE3B';
 /** Si nadie dice nada en este rato, se despide solo y deja la pantalla libre. */
 const ESPERA_MS = 45_000;
 
 const OTROS: Array<{ modo: ModoRecorrido; titulo: string }> = [
+  { modo: 'etapa1', titulo: 'Etapa 1' },
   { modo: 'herramientas', titulo: 'Herramientas' },
   { modo: 'legal', titulo: 'Legal' },
   { modo: 'geologico', titulo: 'Geológico' },
@@ -115,6 +117,25 @@ export function Preguntas({
           </button>
         </div>
         <p className="mt-2 text-[14px] leading-snug text-[#F3F6F8] md:text-[15px]">{texto}</p>
+        {/* Modo consulta (Etapa 1, sección 7): lo que se le puede pedir, a un toque. */}
+        {!esperando && (
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {PREGUNTAS_DESPUES.slice(0, 4).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  setEsperando(true);
+                  setTexto(`«${p}»`);
+                  onPreguntar(p);
+                }}
+                className="rounded-full border border-[#FFAE3B]/30 bg-[#FFAE3B]/[0.06] px-2.5 py-1 text-left text-[11.5px] text-[#FFE3A3] hover:border-[#FFAE3B]/70 cursor-pointer"
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[#7F939D]">Otro recorrido</span>
           {OTROS.map((o) => (

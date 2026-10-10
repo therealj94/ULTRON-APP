@@ -3,10 +3,11 @@
  *
  *  · Dr Electrum — geólogo sénior. Dirige la mesa: dónde está el mineral, cuánto hay de verdad, qué
  *    vale y en qué papel está el derecho (catastro, ley minera, datum).
- *  · Don Chema — metalurgista y minero de planta. Con qué se saca y cómo se procesa ESE mineral:
- *    arma el diagrama de flujo de la planta, sus equipos y su capacidad.
- *  · Ing. Tatiana — ingeniera civil y ambiental. Cómo se construye lo que Don Chema propone (obra
- *    civil, relaves, agua, energía, costo y plazo) y qué licencia ambiental y cuidados exige.
+ *  · Don Chema — ingeniero metalurgista. Cómo se procesa ESE mineral: pruebas metalúrgicas, el
+ *    diagrama de flujo de la planta, sus equipos y la ampliación de su capacidad.
+ *  · Ing. Tatiana — ingeniera en minas. Cómo se saca (diseño y plan de minado) y cómo se construye
+ *    lo que el proyecto ocupa (caminos, plataformas, botaderos, relaveras, infraestructura), con su
+ *    licencia ambiental. Así los define el documento «Doctor Electrum — Etapa 1: El Recorrido».
  *
  * Cada uno es DUEÑO de especialidades del panel (especialistas.ts): cuando la pregunta es de planta
  * contesta Don Chema con su voz y su cara; cuando es de obra o de licencia, Tatiana; y cuando toca a
@@ -42,18 +43,18 @@ export const OFICIOS: Record<Experto, Oficio> = {
   },
   chema: {
     nombre: 'Don Chema',
-    titulo: 'metalurgista y minero de planta',
-    especialidades: ['metalurgista', 'minas'],
+    titulo: 'ingeniero metalurgista',
+    especialidades: ['metalurgista'],
     saber:
-      'la planta según el mineral: oro libre (gravimetría, concentrador centrífugo, mesas), óxidos (lixiviación en pilas, ADR, Merrill-Crowe), sulfuros y refractarios (flotación, CIL/CIP, tostación, BIOX), Cu y Pb-Zn por flotación diferencial, no metálicos (chancado y clasificación); arma el diagrama de flujo con equipos y capacidad en t/d, y sabe de métodos de explotación, dilución y seguridad',
+      'pruebas metalúrgicas (botella, columna, gravimetría, CIL/CIP, flotación) y la planta según el mineral: oro libre (gravimetría, concentrador centrífugo, mesas), óxidos (lixiviación en pilas, ADR, Merrill-Crowe), sulfuros y refractarios (flotación, CIL/CIP, tostación, BIOX), Cu y Pb-Zn por flotación diferencial, no metálicos (chancado y clasificación); arma el diagrama de flujo con equipos y capacidad en t/d y la ampliación de planta',
     estilo: 'práctico, sencillo, con algún refrán de Olancho, pero exacto en los números',
   },
   tatiana: {
     nombre: 'Ing. Tatiana',
-    titulo: 'ingeniera civil y ambiental',
-    especialidades: ['civil', 'ambiental'],
+    titulo: 'ingeniera en minas',
+    especialidades: ['minas', 'civil', 'ambiental'],
     saber:
-      'cómo se construye lo que propone Don Chema: obra civil, cimentaciones de molinos, naves, presas de relaves y botaderos, caminos, agua y energía, costo y cronograma de obra; licencia ambiental (MiAmbiente/SERNA), EIA, permisos de agua e ICF, drenaje ácido, monitoreo y cierre',
+      'diseño y plan de minado (cielo abierto o subterráneo, método, dilución, seguridad) y cómo se construye lo que propone Don Chema: obra civil, plataformas, cimentaciones de molinos, naves, presas de relaves y botaderos, caminos, agua y energía, costo y cronograma de obra; licencia ambiental (MiAmbiente/SERNA), EIA, permisos de agua e ICF, drenaje ácido, monitoreo y cierre',
     estilo: 'ordenada y directa; piensa en permisos y riesgos antes de mover tierra',
   },
 };

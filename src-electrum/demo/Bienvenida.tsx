@@ -3,7 +3,7 @@
  *
  * Al abrir, con la cara a pantalla completa, Dr Electrum saluda según la hora de Honduras y por el
  * nombre de quien entró (su nombre de pila, o el que se le puso al código temporal) y ofrece
- * un recorrido: herramientas, legal, geológico o completo. «Saltar» lo cierra por esta vez y «No
+ * un recorrido: la Etapa 1 (la presentación, primero), herramientas, legal, geológico o completo. «Saltar» lo cierra por esta vez y «No
  * volver a mostrar» lo apaga para esa persona en este aparato. Elegir o saltar lleva al mapa.
  */
 import { useEffect, useRef } from 'react';
@@ -55,7 +55,24 @@ export function Bienvenida({
       <div className="w-full max-w-[560px] rounded-2xl border border-[#FFAE3B]/30 bg-black/80 p-4 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl md:p-5">
         <p className="font-display text-[20px] font-bold leading-tight text-[#F3F6F8] md:text-[24px]">{saludo}</p>
         <p className="mt-1 text-[13.5px] leading-snug text-[#9FB0B8] md:text-[14.5px]">¿Quiere un tutorial para aprender lo que podemos hacer?</p>
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        {/* La Etapa 1 es la presentación: va primero, a todo lo ancho. */}
+        <button
+          type="button"
+          onClick={() => onElegir('etapa1')}
+          className="group relative mt-3 block w-full overflow-hidden rounded-xl border border-[#FFAE3B]/60 bg-gradient-to-r from-[#FFAE3B]/[0.16] via-[#FFAE3B]/[0.06] to-transparent px-4 py-3 text-left transition-colors hover:border-[#FFAE3B] cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FFAE3B]"
+        >
+          <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/15 to-transparent" style={{ animation: 'bienvenida-brillo 3.2s ease-in-out infinite' }} />
+          <span className="flex items-center justify-between gap-2">
+            <span>
+              <span className="block font-mono text-[10px] uppercase tracking-[0.24em] text-[#FFAE3B]">Etapa 1</span>
+              <span className="block font-display text-[17px] font-bold text-[#F3F6F8] md:text-[19px]">El Recorrido</span>
+              <span className="block text-[11.5px] leading-snug text-[#C9D4DA] md:text-[12.5px]">De la premisa geológica a la decisión del inversionista, en 12 pasos</span>
+            </span>
+            <span className="shrink-0 rounded-full bg-[#FFAE3B] px-3 py-1 text-[12px] font-bold text-black">▶ Ver</span>
+          </span>
+          <style>{'@keyframes bienvenida-brillo{0%{transform:translateX(0)}60%,100%{transform:translateX(420%)}}'}</style>
+        </button>
+        <div className="mt-2 grid grid-cols-2 gap-2">
           {OPCIONES.map((o) => (
             <button
               key={o.modo}

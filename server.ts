@@ -278,6 +278,7 @@ import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasIndice } from './server/electrum/indice-capas';
 import { estadoDelCliente } from './server/electrum/dialogo-capas';
+import { montarRutasRecorrido } from './server/electrum/recorrido-target';
 import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
@@ -2232,6 +2233,7 @@ function rolDeSesion(s: { correo: string; rol: string }) {
 if (ES_ELECTRUM) montarRutasBiblioteca(app);
 if (ES_ELECTRUM) montarRutasTeselas(app);
 if (ES_ELECTRUM) montarRutasIndice(app, enviarJsonComprimido);
+if (ES_ELECTRUM) montarRutasRecorrido(app);
 if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);

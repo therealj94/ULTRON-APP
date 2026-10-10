@@ -332,7 +332,7 @@ export default function App() {
   const [tresD, setTresD] = useState(false);
   const [tableroAbierto, setTableroAbierto] = useState(false);
   const [recorrido, setRecorrido] = useState(false);
-  const [modoRecorrido, setModoRecorrido] = useState<ModoRecorrido>('completo');
+  const [modoRecorrido, setModoRecorrido] = useState<ModoRecorrido>('etapa1');
   /**
    * La bienvenida sale una vez por visita, con la cara en el centro, salvo que esa persona haya
    * pedido no verla más. Se cierra al elegir, al saltar, o si alguien se pone a trabajar antes.
@@ -389,6 +389,7 @@ export default function App() {
       trabajo: () => setEscenario('trabajo'),
       enfocar: setEnfoque,
       visor: (f) => window.dispatchEvent(new CustomEvent('electrum:visor', { detail: f })),
+      indice: (lista) => setOrdenesIndice({ n: Date.now() + Math.random(), lista }),
     }),
     []
   );
@@ -516,7 +517,7 @@ export default function App() {
             setEscenario('trabajo');
             (document.querySelector('[data-tour="capas"]') as HTMLElement | null)?.click();
           } else if (cmd.que === 'recorrido') {
-            setModoRecorrido('completo');
+            setModoRecorrido('etapa1');
             setEscenario('trabajo');
             setRecorrido(true);
           } else elegirPanel(cmd.que === 'consulta' ? 'chat' : cmd.que === 'expedientes' ? 'expedientes' : 'infra');
@@ -1038,7 +1039,7 @@ export default function App() {
                   if (recorrido) return terminarRecorrido(false);
                   prepararRecorrido();
                   setPreguntas(false);
-                  setModoRecorrido('completo');
+                  setModoRecorrido('etapa1');
                   setRecorrido(true);
                 },
                 titulo: 'Dr Electrum presenta la plataforma solo, con su voz',

@@ -163,6 +163,41 @@ function introDesdeElEspacio(m: maplibregl.Map) {
 const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: null, resaltada: null };
 /** Las capas encendidas, por el mismo motivo: si el estilo se recarga, se reponen desde aquí. */
 const pintadoExtra = new Map<string, { rol: string; geojson: unknown; opacidad?: number; filtro?: unknown[] | null; color?: string; estilo?: CapaExtra['estilo'] }>();
+/** El target del recorrido (polígono, estrella y etiqueta). Fuera de React por lo mismo que `pintado`. */
+let pintadoTarget: { geojson: unknown; centro?: [number, number]; etiqueta?: string; estado?: string } | null = null;
+let marcaTarget: maplibregl.Marker | null = null;
+const COLOR_TARGET: Record<string, string> = { neutro: '#FF2D2D', libre: '#FF2D2D', restringido: '#FF2D2D' };
+
+/** Las capas de dibujo del target: relleno rojo tenue, borde rojo grueso y un halo que respira. */
+function asegurarTarget(m: maplibregl.Map) {
+  if (!pintadoTarget) return;
+  const datos = { type: 'Feature', geometry: pintadoTarget.geojson, properties: {} } as any;
+  const fuente = m.getSource('target') as any;
+  if (fuente) fuente.setData(datos);
+  else m.addSource('target', { type: 'geojson', data: datos });
+  const color = COLOR_TARGET[pintadoTarget.estado || 'neutro'];
+  if (!m.getLayer('target-relleno')) m.addLayer({ id: 'target-relleno', type: 'fill', source: 'target', paint: { 'fill-color': color, 'fill-opacity': 0.14 } } as any);
+  if (!m.getLayer('target-halo')) m.addLayer({ id: 'target-halo', type: 'line', source: 'target', paint: { 'line-color': color, 'line-width': 10, 'line-opacity': 0.25, 'line-blur': 6 } } as any);
+  if (!m.getLayer('target-borde')) m.addLayer({ id: 'target-borde', type: 'line', source: 'target', paint: { 'line-color': color, 'line-width': 3 } } as any);
+}
+
+/** La estrella roja con su nombre: un marcador del DOM (no depende de los glifos del estilo). */
+function ponerMarcaTarget(m: maplibregl.Map) {
+  marcaTarget?.remove();
+  marcaTarget = null;
+  if (!pintadoTarget?.centro) return;
+  const el = document.createElement('div');
+  el.setAttribute('aria-hidden', 'true');
+  el.style.pointerEvents = 'none';
+  el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-18px)">
+    <svg width="38" height="38" viewBox="0 0 24 24" style="filter:drop-shadow(0 0 10px rgba(255,45,45,.9));animation:electrum-estrella 1.8s ease-in-out infinite">
+      <path d="M12 2.2l2.9 6.1 6.7.8-4.9 4.6 1.3 6.6L12 17l-6 3.3 1.3-6.6L2.4 9.1l6.7-.8z" fill="#FF2D2D" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/>
+    </svg>
+    ${pintadoTarget.etiqueta ? `<div style="margin-top:2px;padding:2px 8px;border-radius:999px;background:rgba(0,0,0,.78);border:1px solid rgba(255,45,45,.7);color:#fff;font:600 11px/1.3 ui-sans-serif,system-ui;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap">${pintadoTarget.etiqueta.replace(/[<>&]/g, '')}</div>` : ''}
+  </div><style>@keyframes electrum-estrella{0%,100%{transform:scale(1)}50%{transform:scale(1.16)}}</style>`;
+  marcaTarget = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(pintadoTarget.centro).addTo(m);
+}
+
 /** El perímetro de Honduras y el estado del catastro en el índice de capas. Fuera de React por lo mismo. */
 let pintadoPerimetro: unknown = null;
 const catastroIndice: { visible: boolean; filtro: unknown[] | null } = { visible: true, filtro: null };
@@ -335,6 +370,8 @@ function asegurarCapas(m: maplibregl.Map) {
     m.setPaintProperty('muestras-punto', 'circle-radius', radioMuestra(elemento) as any);
   }
   aplicarTerreno(m);
+  // El target del recorrido, encima del catastro: es lo que se está mostrando.
+  asegurarTarget(m);
 }
 
 /** Apaga las muestras. */
@@ -956,6 +993,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     // A la derecha, no a la izquierda: abajo a la izquierda vive la cara cuando cede el paso, y la
     // escala le asomaba por detrás como un recorte de papel blanco.
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    // El norte del marco de mapa del recorrido gira con la cámara.
+    m.on('rotate', () => window.dispatchEvent(new CustomEvent('electrum:rumbo', { detail: m.getBearing() })));
     if (introPendiente) m.once('style.load', () => prepararGlobo(m));
     // El índice de capas avisa «acérquese» a las capas que solo se ven de cerca.
     m.on('zoomend', () => window.dispatchEvent(new CustomEvent('electrum:zoom', { detail: m.getZoom() })));
@@ -1437,6 +1476,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         pintar(m, 'concesiones', o.geojson);
         // Durante la entrada desde el espacio, el descenso ya termina sobre el país.
         if (o.encuadre && !introEnCurso()) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
+      } else if (o.accion === 'target') {
+        pintadoTarget = o.geojson ? { geojson: o.geojson, centro: o.centro, etiqueta: o.etiqueta, estado: o.estado } : null;
+        if (!pintadoTarget) for (const id of ['target-relleno', 'target-halo', 'target-borde']) if (m.getLayer(id)) m.removeLayer(id);
+        if (pintadoTarget) asegurarTarget(m);
+        ponerMarcaTarget(m);
       } else if (o.accion === 'candidatas') {
         pintar(m, 'resaltada', o.geojson);
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 14 });

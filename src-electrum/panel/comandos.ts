@@ -142,9 +142,10 @@ export function esAfirmativa(texto: string): boolean {
 }
 
 /** ¿Pide otro recorrido? Devuelve cuál. */
-export function recorridoPedido(texto: string): 'completo' | 'geologico' | 'legal' | 'herramientas' | null {
+export function recorridoPedido(texto: string): 'etapa1' | 'completo' | 'geologico' | 'legal' | 'herramientas' | null {
   const t = normalizarDicho(texto);
   if (!/(recorrido|tour|muestrame|ensename|ver|seguir|sigamos|continuar|otro|quiero)/.test(t) && t.split(' ').length > 3) return null;
+  if (/etapa (1|uno)|presentacion|doce pasos|12 pasos|desde el principio/.test(t)) return 'etapa1';
   if (/herramienta/.test(t)) return 'herramientas';
   if (/legal/.test(t)) return 'legal';
   if (/geolog/.test(t)) return 'geologico';

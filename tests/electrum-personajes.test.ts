@@ -7,7 +7,7 @@ test('cada especialidad tiene dueño en la mesa', () => {
   assert.equal(duenioDe('geologo'), 'electrum');
   assert.equal(duenioDe('economista'), 'electrum');
   assert.equal(duenioDe('metalurgista'), 'chema');
-  assert.equal(duenioDe('minas'), 'chema');
+  assert.equal(duenioDe('minas'), 'tatiana');
   assert.equal(duenioDe('civil'), 'tatiana');
   assert.equal(duenioDe('legal'), 'electrum');
   assert.equal(duenioDe('ambiental'), 'tatiana');
