@@ -15,6 +15,8 @@
  *    habló (burbuja/logica.ts `hiloCompartido`);
  *  · «Abrir en AURA» abre la app entera en la mesa, escuchando, con lo hablado ya en el hilo (ultronfp://hablar); si el
  *    turno pidió algo que se revisa (acciones, tareas), «Abrir revisión»: la burbuja no mueve la app de atrás sin verse;
+ *  · «llámame» (APK 5.7.1): la llamada suena en la APP, también si nunca se abrió: la burbuja deja el pedido en su buzón,
+ *    abre la app y se cierra (burbuja/llamameBurbuja.ts);
  *  · se cierra sola tras 30 s sin nada (suelta el micrófono), y al dejar de verse (el nativo la termina en onStop).
  *  · Con el teléfono bloqueado no sale nada privado: BurbujaActivity no tiene showWhenLocked (Android pide desbloquear
  *    antes de enseñarla).
@@ -34,7 +36,7 @@
  *  · marcas de tiempo por sesión y por turno (`[traza-burbuja] …` en las migas) para sacar p50/p95.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AppState, BackHandler, Image, Keyboard, Linking, PixelRatio, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions, Animated } from 'react-native';
+import { AppState, BackHandler, Image, Keyboard, Linking, PixelRatio, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, Animated } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -75,6 +77,7 @@ import { medidasBurbuja } from './medidas';
 import { expresionDeEmocion, nombreExpresion, type ExpresionOrbe } from '../orbe/expresiones';
 import { turnoBurbuja } from './turnoBurbuja';
 import { registrarTrabajoActivo } from '../lib/barreraOta';
+import { buzonLlamame } from './llamameBurbuja';
 
 // La paleta de la mesa: azul noche, texto marfil, acento dorado cálido (el núcleo del orbe).
 const TEXTO = '#F1EEE8';
@@ -250,6 +253,7 @@ function Burbuja({ origen, invocadaEn }: Props) {
   /* ── el oído ──────────────────────────────────────────────────────────────────────────────── */
 
   const enviarRef = useRef<(texto: string, escritoAMano?: boolean) => void>(() => undefined);
+  const llamarEnLaAppRef = useRef<() => void>(() => undefined);
 
   /** Escucha (abre el micrófono si hace falta) y mide desde `desde` hasta que el oído escucha de verdad. */
   const escuchar = useCallback(
@@ -480,6 +484,11 @@ function Burbuja({ origen, invocadaEn }: Props) {
       } else {
         setRespuesta(textoEstado('error', en));
       }
+      if (r.llamame) {
+        // «Llámame»: la llamada suena en la app (también si nunca se abrió); la burbuja la abre y se cierra.
+        llamarEnLaAppRef.current();
+        return;
+      }
       if (r.abrioApp) {
         // Una acción del teléfono abrió otra app (Spotify, Maps…): la burbuja queda atrás y se cierra sola.
         cerrar('fondo');
@@ -596,26 +605,42 @@ function Burbuja({ origen, invocadaEn }: Props) {
     });
   };
 
+  /** «Abrir en AURA» no abrió la app: la burbuja sigue delante y vuelve a estar abierta («atrás» o tocar fuera la cierran). */
+  const noAbrioLaApp = (que: string, e: unknown, deshacer: () => void) => {
+    if (!control.falloAbrirApp()) return;
+    miga(`burbuja: ${que} no abrió la app (${String((e as Error)?.message || e).slice(0, 60)})`);
+    deshacer();
+    dejarDeEsperarVuelta();
+    apertura.current = ++aperturas;
+    burbujaAbierta.fijar(true);
+    burbujaAbierta.acusar();
+    actividad();
+    setRespuesta(tr('No pude abrir AURA. Toca el orbe para seguir aquí, o cierra.', 'I couldn’t open AURA. Tap the orb to keep going here, or close.'));
+    setEstado('error');
+  };
+
   const abrirApp = () => {
     // Primero se cierra (suelta el micrófono y deja lo hablado para la mesa); después la app, en la mesa, escuchando.
     // El pedido va también al buzón (mismo motor de JS): si el enlace llega tarde o no llega, la mesa igual lo atiende.
     // Es INTERNO: el único «hablar» que puede quitar el silencio que la persona dejó en la mesa (entrada/enlace.ts).
     cerrar('abrir-app');
     if (usuario.current && guardiaHablar.aceptar(Date.now())) buzonHablar.pedir('burbuja', Date.now(), { interno: true });
-    void Linking.openURL(enlaceHablar('burbuja')).catch((e) => {
-      // No abrió la app: la burbuja sigue delante. Vuelve a estar abierta para que «atrás» o tocar fuera la cierren.
-      if (!control.falloAbrirApp()) return;
-      miga(`burbuja: «Abrir en AURA» no abrió la app (${String((e as Error)?.message || e).slice(0, 60)})`);
-      buzonHablar.tomar(Date.now());
-      dejarDeEsperarVuelta();
-      apertura.current = ++aperturas;
-      burbujaAbierta.fijar(true);
-      burbujaAbierta.acusar();
-      actividad();
-      setRespuesta(tr('No pude abrir AURA. Toca el orbe para seguir aquí, o cierra.', 'I couldn’t open AURA. Tap the orb to keep going here, or close.'));
-      setEstado('error');
-    });
+    void Linking.openURL(enlaceHablar('burbuja')).catch((e) => noAbrioLaApp('«Abrir en AURA»', e, () => buzonHablar.tomar(Date.now())));
   };
+
+  /**
+   * «Llámame» (burbuja/llamameBurbuja.ts): la llamada vive en la app. El pedido queda en su buzón (mismo motor de JS), la
+   * app se abre con el enlace de «Abrir en AURA» (en frío también: es el que arranca MainActivity) y la burbuja se cierra;
+   * el VozProvider de la app la hace sonar al montarse o en el acto. Sin el buzón del «hablar» interno: el silencio que la
+   * persona dejó en la mesa no se quita para una llamada.
+   */
+  const llamarEnLaApp = () => {
+    buzonLlamame.pedir(Date.now());
+    miga('burbuja: «llámame» → la llamada suena en la app');
+    cerrar('abrir-app');
+    void Linking.openURL(enlaceHablar('burbuja')).catch((e) => noAbrioLaApp('«llámame»', e, () => buzonLlamame.tomar(Date.now())));
+  };
+  llamarEnLaAppRef.current = llamarEnLaApp;
 
   const darPermiso = () => {
     actividad();
@@ -694,23 +719,26 @@ function Burbuja({ origen, invocadaEn }: Props) {
           </>
         )}
 
-        {/* La línea de estado: palabra corta en su píldora (el punto de color acompaña, no informa solo). */}
-        <View
-          pointerEvents="box-none"
-          style={[s.estadoCaja, { bottom: modo === 'camara' ? insets.bottom + 24 + Math.min(((width - 48) * 4) / 3, 380) + 14 + 48 + 16 : m.estado.abajo, height: modo === 'camara' ? undefined : m.estado.alto }]}
-        >
-          <View style={s.estado} accessibilityLiveRegion="polite" accessible accessibilityLabel={detalle ? `${linea}. ${detalle}` : linea}>
-            <View style={[s.punto, { backgroundColor: TONO[fase.tono] }]} />
-            <Text style={s.estadoTexto} numberOfLines={1} maxFontSizeMultiplier={MAX_LETRA}>
-              {linea}
-            </Text>
+        {/* La línea de estado: palabra corta en su píldora (el punto de color acompaña, no informa solo). Sin sitio (teclado
+            abierto y acostado, con letra grande: burbuja/medidas.ts) no se dibuja: el campo de escribir manda. */}
+        {(modo === 'camara' || m.estado.visible) && (
+          <View
+            pointerEvents="box-none"
+            style={[s.estadoCaja, { bottom: modo === 'camara' ? insets.bottom + 24 + Math.min(((width - 48) * 4) / 3, 380) + 14 + 48 + 16 : m.estado.abajo, height: modo === 'camara' ? undefined : m.estado.alto }]}
+          >
+            <View style={s.estado} accessibilityLiveRegion="polite" accessible accessibilityLabel={detalle ? `${linea}. ${detalle}` : linea}>
+              <View style={[s.punto, { backgroundColor: TONO[fase.tono] }]} />
+              <Text style={s.estadoTexto} numberOfLines={1} maxFontSizeMultiplier={MAX_LETRA}>
+                {linea}
+              </Text>
+            </View>
+            {!!detalle && (modo === 'camara' || m.estado.conDetalle) && (
+              <Text style={s.detalle} numberOfLines={2} maxFontSizeMultiplier={MAX_LETRA}>
+                {detalle}
+              </Text>
+            )}
           </View>
-          {!!detalle && (
-            <Text style={s.detalle} numberOfLines={2} maxFontSizeMultiplier={MAX_LETRA}>
-              {detalle}
-            </Text>
-          )}
-        </View>
+        )}
 
         {modo === 'camara' && (
           <View style={[s.camara, { bottom: insets.bottom + 24 }]}>
@@ -803,24 +831,29 @@ function Burbuja({ origen, invocadaEn }: Props) {
   );
 }
 
-/** La transcripción: aparece suave (y con «reducir movimiento», igual: solo opacidad). */
+/**
+ * La transcripción: aparece suave (y con «reducir movimiento», igual: solo opacidad). Su alto lo da burbuja/medidas.ts;
+ * con letra grande o acostado el texto puede no caber: se desplaza dentro de la tarjeta en vez de cortarse a media línea.
+ */
 function Transcripcion({ tuyo, suyo, parcial, style }: { tuyo: string; suyo: string; parcial: boolean; style: object }) {
   const op = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(op, { toValue: 1, duration: 220, useNativeDriver: true }).start();
   }, [op]);
   return (
-    <Animated.View pointerEvents="none" style={[s.tarjeta, style, { opacity: op }]}>
-      {!!tuyo && (
-        <Text style={[s.tuyo, parcial && s.parcial]} numberOfLines={2} maxFontSizeMultiplier={MAX_LETRA} accessibilityLabel={`${tr('Tú', 'You')}: ${tuyo}`}>
-          {tuyo}
-        </Text>
-      )}
-      {!!suyo && (
-        <Text style={s.suyo} numberOfLines={5} maxFontSizeMultiplier={MAX_LETRA} accessibilityLabel={`AURA: ${suyo}`}>
-          {suyo}
-        </Text>
-      )}
+    <Animated.View style={[s.tarjeta, style, { opacity: op }]}>
+      <ScrollView style={s.tarjetaScroll} contentContainerStyle={s.tarjetaContenido} showsVerticalScrollIndicator persistentScrollbar keyboardShouldPersistTaps="handled">
+        {!!tuyo && (
+          <Text style={[s.tuyo, parcial && s.parcial]} maxFontSizeMultiplier={MAX_LETRA} accessibilityLabel={`${tr('Tú', 'You')}: ${tuyo}`}>
+            {tuyo}
+          </Text>
+        )}
+        {!!suyo && (
+          <Text style={s.suyo} maxFontSizeMultiplier={MAX_LETRA} accessibilityLabel={`AURA: ${suyo}`}>
+            {suyo}
+          </Text>
+        )}
+      </ScrollView>
     </Animated.View>
   );
 }
@@ -875,9 +908,10 @@ const s = StyleSheet.create({
     backgroundColor: FONDO_PIEZA,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: BORDE,
-    gap: 8,
     overflow: 'hidden',
   },
+  tarjetaScroll: { flexGrow: 0, flexShrink: 1 },
+  tarjetaContenido: { gap: 8 },
   tuyo: { color: TEXTO_SUAVE, fontSize: 15, lineHeight: 21 },
   parcial: { fontStyle: 'italic' },
   suyo: { color: TEXTO, fontSize: 18, lineHeight: 25, fontWeight: '500' },
@@ -885,6 +919,7 @@ const s = StyleSheet.create({
   estado: {
     flexDirection: 'row',
     alignItems: 'center',
+    maxWidth: '100%',
     gap: 8,
     minHeight: 36,
     paddingHorizontal: 16,
@@ -895,15 +930,17 @@ const s = StyleSheet.create({
     borderColor: BORDE,
   },
   punto: { width: 8, height: 8, borderRadius: 4 },
-  estadoTexto: { color: TEXTO, fontSize: 15, fontWeight: '600', letterSpacing: 0.2 },
+  estadoTexto: { flexShrink: 1, color: TEXTO, fontSize: 15, fontWeight: '600', letterSpacing: 0.2 },
   detalle: { color: TEXTO_SUAVE, fontSize: 13, lineHeight: 17, textAlign: 'center', paddingHorizontal: 12, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(12,17,32,0.82)', overflow: 'hidden' },
   filaAbrir: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   controles: { position: 'absolute', flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-evenly' },
-  control: { alignItems: 'center', minWidth: 72, gap: 6 },
+  // Cada control con su parte de la fila: una palabra larga con letra grande se acorta («…») en vez de empujar a los otros.
+  control: { flex: 1, alignItems: 'center', minWidth: 64, maxWidth: 96, gap: 6 },
   redondo: { width: 56, height: 56, borderRadius: 28, backgroundColor: FONDO_PIEZA, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDE },
   redondoActivo: { backgroundColor: ACENTO, borderColor: ACENTO },
-  controlTexto: { color: TEXTO, fontSize: 12.5, fontWeight: '600' },
+  controlTexto: { color: TEXTO, fontSize: 12.5, fontWeight: '600', textAlign: 'center' },
   pildora: {
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -914,7 +951,7 @@ const s = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: BORDE,
   },
-  pildoraTexto: { color: TEXTO, fontSize: 15, fontWeight: '600' },
+  pildoraTexto: { flexShrink: 1, color: TEXTO, fontSize: 15, fontWeight: '600' },
   miniatura: { width: 48, height: 48, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: ACENTO },
   escribir: { position: 'absolute', flexDirection: 'row', alignItems: 'center', gap: 10 },
   campo: { flex: 1, borderRadius: 24, paddingHorizontal: 18, color: TEXTO, backgroundColor: FONDO_PIEZA, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDE, fontSize: 16 },

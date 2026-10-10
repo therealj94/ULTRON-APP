@@ -322,7 +322,9 @@ prueba('un solo menú (M-7): lo que tenía el panel de la derecha vive en «Más
   // La orden de voz «menú» (y «catálogo», y el deslizar o el borde derecho) abren «Más».
   assert.match(desk, /case 'menu':\s+\/\/[^\n]*\n\s+setMasAbierto\(true\);/);
   assert.match(desk, /case 'catalogo':\s+setMasAbierto\(true\);\s+setCatalogRequest/);
-  assert.match(desk, /setMasAbierto\(true\);\s*\n\s*\},\s*\n\s*\}\)\s*\n\s*\)\.current;/, 'el borde derecho abre «Más»');
+  // El borde derecho: una pestaña que se TOCA (Fase 0, 5.7.1: el arrastre competía con el «atrás» de Android).
+  assert.match(desk, /const abrirMasPorBorde = useCallback\(\(\) => setMasAbierto\(true\), \[\]\);/, 'el borde derecho abre «Más»');
+  assert.match(desk, /onPress=\{abrirMasPorBorde\}/);
   const { interpretar } = await import('../../src/lib/intenciones.ts');
   assert.equal(interpretar('menú', { dormido: false, enConocer: false }).tipo, 'menu');
   // «Más» monta lo del avatar debajo de los mosaicos, y suma «Mi círculo» y «Cartera» (con el texto verdadero de la tarjeta).
@@ -453,8 +455,10 @@ prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo
   assert.match(vivo, /planInicial=\{companero\.plan\}/);
   assert.match(vivo, /companero\.alEstado\(s\.actual\.id, trabajando\(s\.actual\.estado\), s\.actual\.estado\)/, 'el sondeo de fondo también ve si quedó quieta');
   // Sin dependencias nativas nuevas (va por OTA): solo lo que ya trae React Native.
+  // (expo-clipboard entró en la APK 5.7.1 para otras cosas: la hoja de la computadora sigue sin usarlo.)
   const deps = JSON.parse(fs.readFileSync(path.join(RAIZ, 'mobile/package.json'), 'utf8')).dependencies;
-  assert.ok(!deps['expo-clipboard'] && !deps['react-native-share'], 'sin módulos nativos nuevos');
+  assert.ok(!deps['react-native-share'], 'sin módulos nativos nuevos');
+  assert.doesNotMatch(hoja, /expo-clipboard|react-native-share/, 'sin módulos nativos nuevos');
 });
 
 prueba('su computadora a pantalla completa (AUR09): visor propio desde la tarea, vuelve al chat sin cancelarla, misma sesión al reabrir, AURA no lo abre sola', () => {

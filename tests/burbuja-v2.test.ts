@@ -16,7 +16,7 @@ import path from 'node:path';
 import { EXPRESIONES, EXPRESION_PARAMS, expresionDeCara, expresionDeEmocion, mensajeExpresion, nombreExpresion, temperatura, tinteExpresion } from '../mobile/src/orbe/expresiones';
 import { orbeConOpciones } from '../mobile/src/orbe/opciones';
 import { ORBE_HTML } from '../mobile/src/orbe/orbeHtml';
-import { CASCARA_SOBRE_DISCO, FRACCION_ORBE, LIENZO_SOBRE_DISCO, TOQUE_MIN, medidasBurbuja } from '../mobile/src/burbuja/medidas';
+import { CASCARA_SOBRE_DISCO, FRACCION_ORBE, LIENZO_SOBRE_DISCO, ORBE_MIN, TOQUE_MIN, medidasBurbuja } from '../mobile/src/burbuja/medidas';
 import { AvisoBurbuja, VueltaDeLaApp } from '../mobile/src/burbuja/logica';
 import { OidoMesa, duenoAudio, type DuenoAudio } from '../mobile/src/compa/duenoAudio';
 import {
@@ -191,7 +191,9 @@ test('nada se encima: controles, «Abrir», estado, orbe y transcripción, en ve
   sinEncimarse(medidasBurbuja(S26), 915, 32, 24);
   const acostado = medidasBurbuja({ ancho: 915, alto: 412, arriba: 0, abajo: 16 });
   sinEncimarse(acostado, 412, 0, 16);
-  assert.ok(acostado.lado < 412 * 0.46 && acostado.lado >= 72, 'acostado el orbe cede');
+  // Acostado el orbe cede (más chico, o entero si no cabe junto a la transcripción: tests/pulido-571-movil.test.ts).
+  assert.ok(acostado.lado < 412 * 0.46 && (acostado.lado === 0 || acostado.lado >= ORBE_MIN), 'acostado el orbe cede');
+  assert.ok(acostado.transcripcion.altoMax >= 48, 'acostado la transcripción se ve');
   const grande = medidasBurbuja({ ...S26, escalaTexto: 2 });
   sinEncimarse(grande, 915, 32, 24);
   assert.ok(grande.transcripcion.altoMax >= 150, 'con letra grande la transcripción tiene sitio');

@@ -7,8 +7,12 @@
  * app «parece web».
  *
  * Variantes: `principal` (una por pantalla), `secundario` (superficie con borde), `fantasma` (solo
- * texto dorado, área de toque de 44), `peligro` (cerrar sesión, borrar). `texto` y `contorno` son los
- * nombres de antes y se siguen aceptando (el chat los usa).
+ * texto dorado), `peligro` (cerrar sesión, borrar). `texto` y `contorno` son los nombres de antes y se
+ * siguen aceptando (el chat los usa).
+ *
+ * El área de toque nunca baja de 48 dp (ui/toque.ts): el chico se ve de 42 y el fantasma de 44, pero el
+ * Pressable mide 48 y lo que se ve va centrado dentro (Fase 0, APK 5.7.1; el hitSlop de antes no servía
+ * en Android: no pasa de los bordes del padre).
  */
 import { useEffect, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -18,6 +22,7 @@ import { MEDIDA, useTema } from '../nucleo/tema';
 import { vibrar } from './hapticos';
 import { Icono, type NombreIcono } from './Icono';
 import { Texto } from './Texto';
+import { medidasBoton } from './toque';
 
 export type VarianteBoton = 'principal' | 'secundario' | 'fantasma' | 'peligro' | 'texto' | 'contorno';
 
@@ -75,7 +80,9 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
 
   const colorLetra =
     v === 'principal' ? tema.sobreAcento : v === 'secundario' || v === 'contorno' ? tema.texto : v === 'peligro' ? tema.aviso : tema.acentoTexto;
-  const alto = tam === 'chico' ? 42 : v === 'fantasma' ? 44 : 54;
+  const { alto, toque } = medidasBoton(v, tam);
+  /** El área de toque es mayor que lo que se ve: el Pressable mide `toque` y la cara va centrada dentro. */
+  const holgura = toque > alto;
   const caja: ViewStyle =
     v === 'principal'
       ? { backgroundColor: tema.acento }
@@ -87,6 +94,41 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
             ? { backgroundColor: tema.avisoFondo }
             : {};
   const tamIcono = tam === 'chico' ? 18 : 20;
+  /** Lo que se ve: la cara del botón, de `alto`. */
+  const cara: StyleProp<ViewStyle> = [s.base, { minHeight: alto, borderRadius: alto / 2, paddingHorizontal: v === 'fantasma' ? 10 : tam === 'chico' ? 18 : 24 }, caja];
+  const contenido = (
+    <>
+      {v === 'principal' && (
+        <>
+          <LinearGradient colors={oroDe(tema.oscuro)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+          {/* El filo de luz de arriba: da volumen sin sombra dura. */}
+          <View pointerEvents="none" style={[s.filo, { borderRadius: alto / 2 }]} />
+          <Animated.View pointerEvents="none" style={[s.brillo, aBrillo]}>
+            <LinearGradient colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.55)', 'rgba(255,255,255,0)']} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={StyleSheet.absoluteFill} />
+          </Animated.View>
+        </>
+      )}
+      {cargando ? (
+        <>
+          <ActivityIndicator color={colorLetra} />
+          {!!textoCargando && (
+            <Texto v="boton" color={colorLetra} numberOfLines={2} style={s.letra}>
+              {textoCargando}
+            </Texto>
+          )}
+        </>
+      ) : (
+        <>
+          {typeof icono === 'string' ? <Icono nombre={icono as NombreIcono} tam={tamIcono} color={colorLetra} /> : icono}
+          {/* Hasta dos renglones con la letra grande del sistema (A18): la acción no se corta. */}
+          <Texto v={tam === 'chico' ? 'chicaFuerte' : 'boton'} color={colorLetra} numberOfLines={2} style={[s.letra, tam === 'chico' ? { fontSize: 14 } : undefined]}>
+            {titulo}
+          </Texto>
+          {iconoDerecha && <Icono nombre={iconoDerecha} tam={tamIcono} color={colorLetra} />}
+        </>
+      )}
+    </>
+  );
 
   return (
     <Animated.View style={[aEscala, style]}>
@@ -97,42 +139,14 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
         onLayout={(e) => {
           ancho.value = e.nativeEvent.layout.width;
         }}
-        android_ripple={v === 'fantasma' ? undefined : { color: v === 'principal' ? 'rgba(255,255,255,0.18)' : tema.acentoFondo, borderless: false }}
-        style={[s.base, { minHeight: alto, borderRadius: alto / 2, paddingHorizontal: v === 'fantasma' ? 10 : tam === 'chico' ? 18 : 24 }, caja]}
+        // Con holgura la onda saldría fuera de la cara: queda el resorte y la vibración.
+        android_ripple={v === 'fantasma' || holgura ? undefined : { color: v === 'principal' ? 'rgba(255,255,255,0.18)' : tema.acentoFondo, borderless: false }}
+        style={holgura ? [s.toque, { minHeight: toque }] : cara}
         accessibilityRole="button"
         accessibilityLabel={etiqueta || titulo}
         accessibilityState={{ disabled: apagado, busy: !!cargando }}
-        hitSlop={v === 'fantasma' ? 6 : 0}
       >
-        {v === 'principal' && (
-          <>
-            <LinearGradient colors={oroDe(tema.oscuro)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-            {/* El filo de luz de arriba: da volumen sin sombra dura. */}
-            <View pointerEvents="none" style={[s.filo, { borderRadius: alto / 2 }]} />
-            <Animated.View pointerEvents="none" style={[s.brillo, aBrillo]}>
-              <LinearGradient colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.55)', 'rgba(255,255,255,0)']} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={StyleSheet.absoluteFill} />
-            </Animated.View>
-          </>
-        )}
-        {cargando ? (
-          <>
-            <ActivityIndicator color={colorLetra} />
-            {!!textoCargando && (
-              <Texto v="boton" color={colorLetra} numberOfLines={2} style={s.letra}>
-                {textoCargando}
-              </Texto>
-            )}
-          </>
-        ) : (
-          <>
-            {typeof icono === 'string' ? <Icono nombre={icono as NombreIcono} tam={tamIcono} color={colorLetra} /> : icono}
-            {/* Hasta dos renglones con la letra grande del sistema (A18): la acción no se corta. */}
-            <Texto v={tam === 'chico' ? 'chicaFuerte' : 'boton'} color={colorLetra} numberOfLines={2} style={[s.letra, tam === 'chico' ? { fontSize: 14 } : undefined]}>
-              {titulo}
-            </Texto>
-            {iconoDerecha && <Icono nombre={iconoDerecha} tam={tamIcono} color={colorLetra} />}
-          </>
-        )}
+        {holgura ? <View style={cara}>{contenido}</View> : contenido}
       </APorPresionar>
     </Animated.View>
   );
@@ -140,6 +154,7 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
 
 const s = StyleSheet.create({
   letra: { flexShrink: 1, textAlign: 'center' },
+  toque: { justifyContent: 'center' },
   base: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, overflow: 'hidden' },
   filo: { ...StyleSheet.absoluteFillObject, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.35)' },
   brillo: { position: 'absolute', top: -30, bottom: -30, width: 70, left: 0 },
