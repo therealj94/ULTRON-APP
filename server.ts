@@ -262,6 +262,7 @@ import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
+import { montarRutasIndice } from './server/electrum/indice-capas';
 import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
@@ -2180,6 +2181,7 @@ function rolDeSesion(s: { correo: string; rol: string }) {
 // El panel de infraestructura de lo que sabe Dr Electrum (carpetas, estados, releer, importar).
 if (ES_ELECTRUM) montarRutasBiblioteca(app);
 if (ES_ELECTRUM) montarRutasTeselas(app);
+if (ES_ELECTRUM) montarRutasIndice(app, enviarJsonComprimido);
 if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);

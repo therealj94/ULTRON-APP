@@ -174,9 +174,16 @@ function limpiarPedido(que: string): string {
  * ¿Lo dicho nombra algo de las capas? Sin mirar el catálogo: lo usan los comandos de voz para no
  * confundir una pregunta con una orden.
  */
+/** Lo del índice de capas que no es una categoría de arriba: catastro, hojas, aldeas, IDs… */
+const OTRAS_DEL_INDICE = /\b(catastro|derechos mineros|hojas?( cartograficas)?|aldeas?|depositos?|fichas?|suelos?|geotectonico|metalogenetico|estructurales?|carreteras?|indexa|targets?|blancos|jica|historia|perimetro|\d{6})\b/;
+
 export function esPedidoDeCapa(que: string): boolean {
+  const raw = normalizar(que);
+  // «la capa de Pantaleona», «las capas de Minas de Oro»: lo que siga es el nombre de una capa.
+  if (/^(la |las )?capas? (de|del) \S/.test(raw)) return true;
   const t = limpiarPedido(que);
   if (!t) return false;
+  if (OTRAS_DEL_INDICE.test(t)) return true;
   if (TODO.test(t)) return true;
   if (/\bmuestras?\b/.test(t)) return true;
   return ALIAS_CATEGORIA.some(([, re]) => re.test(t)) || ALIAS_ROL.some(([, re]) => re.test(t)) || ALIAS_RASTER.some(([re]) => re.test(t));

@@ -810,11 +810,11 @@ export async function coberturaDeFechas(): Promise<{ conVence: number; total: nu
  * para contar hectáreas.
  */
 export async function catastroGeojson(limite = 4000, toleranciaGrados = 0.0001): Promise<FeatureCollection> {
-  const filas = await consulta<{ g: string; id: number; nombre: string; titular: string | null; estado: string | null; ha: number | null; vence: string | null }>(
+  const filas = await consulta<{ g: string; id: number; nombre: string; titular: string | null; estado: string | null; tipo: string | null; ha: number | null; vence: string | null }>(
     // Seis decimales son once centímetros: de sobra para pintar, y el cuerpo baja un cuarto frente a
     // los quince que manda PostGIS por defecto (ruido de coma flotante que nadie ve).
     `SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, $2), 6)::text AS g,
-            id, nombre, titular, estado, hectareas::float8 AS ha, to_char(vence, 'YYYY-MM-DD') AS vence
+            id, nombre, titular, estado, tipo, hectareas::float8 AS ha, to_char(vence, 'YYYY-MM-DD') AS vence
        FROM concesion
       WHERE geom IS NOT NULL
       ORDER BY hectareas DESC NULLS LAST
@@ -826,7 +826,8 @@ export async function catastroGeojson(limite = 4000, toleranciaGrados = 0.0001):
     features: filas.map((f) => ({
       type: 'Feature',
       geometry: JSON.parse(f.g) as Geometry,
-      properties: { id: f.id, nombre: f.nombre, titular: f.titular, estado: f.estado, hectareas: f.ha, ...(f.vence ? { vence: f.vence } : {}) },
+      // `tipo` va para el filtro del índice de capas (104001: estado y tipo).
+      properties: { id: f.id, nombre: f.nombre, titular: f.titular, estado: f.estado, tipo: f.tipo, hectareas: f.ha, ...(f.vence ? { vence: f.vence } : {}) },
     })),
   } as FeatureCollection;
 }

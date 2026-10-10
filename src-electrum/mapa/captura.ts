@@ -41,7 +41,7 @@ export type OrdenMapa =
 /** Lo que se tocó en el mapa: una concesión, un rasgo de una capa encendida, o un punto cualquiera. */
 export type Tocado =
   | { tipo: 'concesion'; id: number; nombre?: string; lngLat: [number, number] }
-  | { tipo: 'rasgo'; eid: number; nombre?: string; lngLat: [number, number] }
+  | { tipo: 'rasgo'; eid: number; nombre?: string; lngLat: [number, number]; /** El ID del índice de capas (layer_id), si salió de ahí. */ capa?: number }
   | { tipo: 'muestra'; id: number; nombre?: string; lngLat: [number, number] }
   | { tipo: 'punto'; lngLat: [number, number] };
 
@@ -62,7 +62,18 @@ export type RolVisible =
   | 'historico';
 
 /** Una capa encendida encima del catastro (geología, fallas, áreas protegidas…). */
-export type CapaExtra = { id: number; nombre: string; rol: RolVisible; geojson: FeatureCollection };
+export type CapaExtra = {
+  id: number;
+  nombre: string;
+  rol: RolVisible;
+  geojson: FeatureCollection;
+  /** Transparencia de 0 a 1 (índice de capas); sin ella, la de su estilo. */
+  opacidad?: number;
+  /** Expresión de MapLibre que deja solo lo filtrado (p. ej. mineral = Oro). */
+  filtro?: unknown[] | null;
+  /** Color propio de la capa del índice, en vez del de su clase. */
+  color?: string;
+};
 
 /** Un mapa escaneado y georreferenciado (JICA…), servido en teselas raster desde el cubo. */
 export type RasterEscaneado = {
@@ -175,3 +186,9 @@ export function guardarCatastro(fc: unknown) {
 export function catastroGuardado() {
   return catastro;
 }
+
+/** Muestras geoquímicas de JICA encendidas y el elemento que las colorea. */
+export type MuestrasEncendidas = { elemento: import('./muestras').ElementoMuestra; geojson: { features?: unknown[] } };
+
+/** Lo que alguien pidió de palabra sobre las capas (o Dr Electrum con su herramienta). `n` distingue un pedido del siguiente. */
+export type PedidoCapas = { mostrar: boolean; que: string; solo?: boolean; n: number };
