@@ -308,21 +308,26 @@ export function Recorrido({
         setTexto(`${NOMBRES[ls[Math.min(k, ls.length - 1)].quien]}: ${limpio(ls[Math.min(k, ls.length - 1)].texto)}`);
       };
       hasta(0);
+      /*
+       * Suena de verdad cuando la escena nombra a quien habla: voz.ts lo pone solo con el audio
+       * corriendo (pausado o todavía juntándose, como en el iPhone, el hablante es null).
+       */
+      let empezo = false;
       const soltar = escucharEscena((e) => {
+        if (e.hablante) empezo = true;
         if (!e.linea) return;
         const k = ls.findIndex((l, j) => j >= hechas - 1 && l.texto === e.linea);
         if (k >= 0) hasta(k);
       });
       c.current.cara('SPEAKING');
       let fallo = false;
-      let empezo = false;
       let resuelto = false;
       const t0 = Date.now();
       await Promise.race([
         hablarDialogo(
           ls.map((l) => ({ quien: l.quien, nombre: NOMBRES[l.quien], texto: l.texto })),
           headersElectrum(),
-          { alFallar: () => (fallo = true), alEmpezar: () => (empezo = true) }
+          { alFallar: () => (fallo = true) }
         ),
         new Promise<void>((r) => (despertar.current = r)),
         /*
