@@ -68,3 +68,13 @@ test('las manos nuevas están registradas: sin panel y en el modo mapa', () => {
   }
   for (const n of ['pantalla', 'area_analizar', 'encender_capa', 'mapa_volar']) assert.ok(MAPA.some((h) => h.nombre === n), `${n} en modo mapa`);
 });
+
+test('filtros que llegan como texto JSON (MCP) se leen igual, no se ignoran', async () => {
+  const fs = await import('node:fs');
+  const { filtrosReales } = await import('../server/electrum/manos-capas');
+  const capas = JSON.parse(fs.readFileSync('scripts/indice-capas/manifest.json', 'utf8')).capas;
+  const fichas = capas.find((c: any) => c.id === 110002);
+  assert.deepEqual(filtrosReales(fichas, '{"mineral":["Oro"]}').filtros, { mineral: ['Oro'] });
+  assert.deepEqual(filtrosReales(fichas, { mineral: ['Oro'] }).filtros, { mineral: ['Oro'] });
+  assert.ok(filtrosReales(fichas, 'mineral oro').error, 'texto que no es JSON: se dice, no se cuenta todo');
+});

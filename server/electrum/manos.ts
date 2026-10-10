@@ -671,7 +671,7 @@ async function dondeMas(texto: string): Promise<string> {
   const partes: string[] = [];
   const ks = await carteras().catch(() => []);
   const k = ks.filter((x) => x.nombre.toLowerCase().includes(t));
-  if (k.length) partes.push(`Sí es una cartera: ${k.map((x) => `«${x.nombre}» (${x.n} concesiones; cartera_analisis)`).join(', ')}.`);
+  if (k.length) partes.push(`Sí es una cartera: ${k.map((x) => `«${x.nombre}» (${x.concesiones} concesiones; cartera_analisis)`).join(', ')}.`);
   const m = await manifiestoPara().catch(() => null);
   if (m) {
     const c = buscarCapas(m.capas as unknown as EntradaCatalogo[], texto).slice(0, 4);
