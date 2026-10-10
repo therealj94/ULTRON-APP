@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { herramientasDelTurno, lineaDeHerramienta, type ManosDelTurno } from '../lib/cerebro-manos';
 import { extraerAcciones, validarAccion } from '../lib/acciones-app';
-import { herramientasSegunFrase } from '../lib/herramientas-turno';
+import { HERRAMIENTAS_NUCLEO, herramientasSegunFrase } from '../lib/herramientas-turno';
 import { promesaSinCumplir, trozoPrometeAccion } from '../lib/honestidad';
 import { acotarPedido, TOPE_PEDIDO_TEXTO_CAR, TOPE_PEDIDO_VOZ_CAR } from '../lib/tope-pedido';
 import { lineaDeEnvio } from '../lib/envios';
@@ -50,10 +50,11 @@ test('ANT-ONIO: «avatar_antonio» está en la herramienta de la app y se vuelve
 
 /* ------------------------------------------------------------------ las herramientas según la frase */
 
-test('la charla, un saludo o una pregunta simple: solo buscar_web', () => {
+test('la charla, un saludo o una pregunta simple: solo el núcleo (auditoría del 10-oct: antes, solo buscar_web)', () => {
+  const nucleo = TODAS.map((t) => String(t.toolSpec?.name)).filter((n) => HERRAMIENTAS_NUCLEO.includes(n));
   for (const m of ['¿Qué opinas de la música de los noventa?', 'Estoy cansado, fue un día largo.', '¿Cuál es la capital de Francia?', 'Buenas noches, que descanses', '¿Te acuerdas de lo que hablamos?', 'Cuéntame un chiste']) {
     const e = elegir(m);
-    assert.deepEqual(e.nombres, ['buscar_web'], `${m}: ${e.nombres.join(', ')}`);
+    assert.deepEqual(e.nombres, nucleo, `${m}: ${e.nombres.join(', ')}`);
     assert.equal(e.todas, false);
   }
 });
@@ -93,17 +94,20 @@ test('lo que pide una acción lleva su herramienta, también sin el verbo de sie
 
 test('José, 7-oct 00:30: WhatsApp solo si la frase o la decisión pendiente es de un mensaje', () => {
   const anterior = 'Te quedó pendiente enviarle un WhatsApp a Marisol sobre la reunión.';
+  // WhatsApp va en el núcleo (auditoría del 10-oct); lo que no se arrastra es el GRUPO de mensajes (la intención). Que no
+  // se corra fuera de tema lo cuida herramientaFueraDeTema (lib/cerebro-manos.ts).
+  const deMensajes = (e: { grupos: string[] }) => e.grupos.includes('whatsapp') || e.grupos.includes('mensajes');
   for (const m of ['Cámbiame el tema a oscuro', '¿Y qué más hay para hoy?', 'Cuéntame algo bonito', 'Ponme a Claudio', '¿Qué hora es en Madrid?', 'Ana estaba contenta ayer con lo de la mina de Danlí']) {
     const e = elegir(m, { anterior });
-    assert.ok(!e.nombres.includes('whatsapp'), `${m}: lleva whatsapp (${e.nombres.join(', ')})`);
+    assert.ok(!deMensajes(e), `${m}: lleva el grupo de mensajes (${e.grupos.join(', ')})`);
   }
   // Un «sí» a «¿Le escribo a Marisol…?», o lo que contesta a «¿A quién le escribo?»: sí.
-  assert.ok(elegir('Sí, dale', { anterior: '¿Le escribo a Marisol que la reunión pasa a las 3?' }).nombres.includes('whatsapp'));
-  assert.ok(elegir('a Marisol', { anterior: '¿A quién le mando el WhatsApp?' }).nombres.includes('whatsapp'));
+  assert.ok(deMensajes(elegir('Sí, dale', { anterior: '¿Le escribo a Marisol que la reunión pasa a las 3?' })));
+  assert.ok(deMensajes(elegir('a Marisol', { anterior: '¿A quién le mando el WhatsApp?' })));
   // Cambiar de tema después de una propuesta no arrastra la herramienta de la propuesta.
-  assert.ok(!elegir('¿Y tú cómo pasaste la semana?', { anterior: '¿Le escribo a Marisol que la reunión pasa a las 3?' }).nombres.includes('whatsapp'));
+  assert.ok(!deMensajes(elegir('¿Y tú cómo pasaste la semana?', { anterior: '¿Le escribo a Marisol que la reunión pasa a las 3?' })));
   // Un borrador de WhatsApp que espera su decisión: sí (puede pedir cambiarlo o releerlo).
-  assert.ok(elegir('ponlo más formal', { esperaWhatsapp: true }).nombres.includes('whatsapp'));
+  assert.ok(elegir('ponlo más formal', { esperaWhatsapp: true }).grupos.includes('whatsapp'));
 });
 
 test('ante la duda, todas: un verbo de acción sin grupo, o un «sí» a algo que no se sabe qué es', () => {

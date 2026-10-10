@@ -246,9 +246,10 @@ test('un turno hablado pesado y realista cabe en el presupuesto y conserva lo qu
   assert.match(m.system, /Nunca digas que algo salió, se creó o se hizo si el resultado de la herramienta no lo dice/);
   assert.match(m.system, /ESCENA \(tu cámara, ahora mismo\): Reconozco a José/);
   // Auditoría del 7-oct (C1): hablando, las herramientas van según lo que pide la frase (lib/herramientas-turno.ts). «Analiza
-  // a fondo los riesgos» lleva buscar e investigar, no las manos de mensajes ni de llamadas (antes iban las 25 siempre).
+  // a fondo los riesgos» lleva buscar e investigar; del 10-oct, también el núcleo (WhatsApp, correo, llamadas…), pero no el
+  // resto de las manos de mensajes (antes iban las 25 siempre).
   assert.ok(m.nombres.includes('buscar_web') && m.nombres.includes('investigar'), m.nombres.join(', '));
-  assert.ok(!m.nombres.includes('whatsapp') && !m.nombres.includes('llamar_contacto') && !m.nombres.includes('correo'), m.nombres.join(', '));
+  assert.ok(!m.nombres.includes('chat_aura') && !m.nombres.includes('leer_mensajes') && !m.nombres.includes('circulo'), m.nombres.join(', '));
   // El mismo turno pesado pidiendo mensajes, correo y a un contacto: esas manos van, con su «sí» antes de mandar, y cabe.
   contestar = () => '[EMO: neutral] Va, déjame ver.';
   const accion = await turno('Contéstale a Ana que sí voy mañana, revisa si Beto me escribió al correo y después márcale', { escena: ESCENA_PESADA });
