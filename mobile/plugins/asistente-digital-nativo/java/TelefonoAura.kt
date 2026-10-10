@@ -244,27 +244,39 @@ class TelefonoAura(private val ctx: ReactApplicationContext) : ReactContextBaseJ
   }
 
   /** La imagen compartida, copiada a la caché de la app (el permiso de leer la de la otra app no dura): su file://. */
-  private fun copiarImagen(uri: Uri): String? =
+  private fun copiarImagen(uri: Uri): String? {
+    // Cuerpo de bloque: los `return` de en medio (imagen demasiado grande, sin flujo) no caben en un cuerpo de expresión.
+    val destino = File(ctx.cacheDir, "compartido-${System.currentTimeMillis()}.jpg")
     try {
-      val destino = File(ctx.cacheDir, "compartido-${System.currentTimeMillis()}.jpg")
-      ctx.contentResolver.openInputStream(uri)?.use { entrada ->
+      val entrada = ctx.contentResolver.openInputStream(uri) ?: return null
+      var demasiado = false
+      entrada.use { ent ->
         destino.outputStream().use { salida ->
           val buf = ByteArray(64 * 1024)
           var total = 0L
           while (true) {
-            val n = entrada.read(buf)
+            val n = ent.read(buf)
             if (n < 0) break
             total += n
-            if (total > MAX_IMAGEN) return null
+            if (total > MAX_IMAGEN) {
+              demasiado = true
+              break
+            }
             salida.write(buf, 0, n)
           }
         }
-      } ?: return null
-      Uri.fromFile(destino).toString()
+      }
+      if (demasiado) {
+        destino.delete()
+        return null
+      }
+      return Uri.fromFile(destino).toString()
     } catch (e: Exception) {
       Log.w(TAG, "no pude copiar la imagen compartida", e)
-      null
+      destino.delete()
+      return null
     }
+  }
 
   companion object {
     const val NOMBRE = "AuraTelefono"
