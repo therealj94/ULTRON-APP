@@ -315,15 +315,31 @@ export function Recorrido({
       });
       c.current.cara('SPEAKING');
       let fallo = false;
+      let empezo = false;
+      let resuelto = false;
       const t0 = Date.now();
       await Promise.race([
         hablarDialogo(
           ls.map((l) => ({ quien: l.quien, nombre: NOMBRES[l.quien], texto: l.texto })),
           headersElectrum(),
-          { alFallar: () => (fallo = true) }
+          { alFallar: () => (fallo = true), alEmpezar: () => (empezo = true) }
         ),
         new Promise<void>((r) => (despertar.current = r)),
+        /*
+         * Si la voz no arranca en 12 s (el servidor tarda, la red se cortó, el navegador está ocupado),
+         * el recorrido no se queda mudo esperando: se calla y sigue con los subtítulos.
+         */
+        new Promise<void>((r) =>
+          setTimeout(() => {
+            // Ya terminó (o se saltó): el reloj no puede callar la voz del capítulo siguiente.
+            if (empezo || resuelto || !sigue()) return;
+            fallo = true;
+            callar();
+            r();
+          }, 12_000)
+        ),
       ]);
+      resuelto = true;
       soltar();
       if (saltoEste()) callar();
       // Sin voz: se lee, con los mismos gestos en su momento.
