@@ -7,9 +7,10 @@
  *
  *  · la intro lo ve y, con sesión, no hace la espera mínima de la apertura (1,15 s): a la mesa en cuanto carga;
  *  · sin sesión, la entrada de siempre (el pedido caduca a los 2 min: no abre el micrófono horas después);
- *  · la mesa (useHablarEnMesa, abajo) lo toma: calla a AURA si hablaba, abre el micrófono si estaba silenciado (la
- *    persona acaba de pedir hablar), y mide hasta que el oído escucha DE VERDAD. Sin permiso del micrófono, lo pide
- *    con la salida a Ajustes; si el micrófono no abre (otra app lo tiene, sin foco de audio), lo dice.
+ *  · la mesa (useHablarEnMesa, abajo) lo toma: calla a AURA si hablaba, abre el micrófono y mide hasta que el oído
+ *    escucha DE VERDAD. Sin permiso del micrófono, lo pide con la salida a Ajustes; si el micrófono no abre (otra app lo
+ *    tiene, sin foco de audio), lo dice. Revisión de fases: el silencio que la persona dejó puesto solo lo quita el pedido
+ *    INTERNO de la burbuja (su «Abrir en AURA», mismo motor de JS); un enlace de fuera lo respeta (`oidoParaHablar`).
  *
  * Una segunda invocación dentro de 1,5 s se ignora (`guardiaHablar`, compartida con la burbuja: su «Abrir en AURA»
  * deja el pedido en el buzón Y abre el enlace; el enlace que llega después ya no cuenta otra vez).
@@ -29,6 +30,7 @@ function atender(url: string | null, arranque: boolean) {
     miga(`[entrada] origen=${e.origen}: segunda invocación en menos de 1,5 s, ignorada`);
     return;
   }
+  // De fuera: nunca `interno` (no quita el silencio que la persona dejó puesto).
   buzonHablar.pedir(e.origen, momentoInvocacion(e.invocadaEn, ahora));
   miga(`[entrada] origen=${e.origen}: hablar (${arranque ? 'al abrir la app' : 'con la app abierta'})`);
   // Ya en la sesión pero en otra pantalla (Ajustes, un chat): a la mesa, que es la que oye.
@@ -75,8 +77,11 @@ export type DepsHablarMesa = {
   ocupada: () => boolean;
   /** Calla a AURA si está hablando (la persona quiere hablar ya). */
   callar: () => void;
-  /** Abre el micrófono (sin decir nada: quitar el silencio, o un reconocedor nuevo). false: sin permiso. */
-  abrirOido: () => Promise<boolean>;
+  /**
+   * Abre el micrófono (sin decir nada: un reconocedor nuevo; quitar el silencio SOLO si el pedido es interno, ver
+   * `oidoParaHablar`). false: sin permiso. 'silenciado': la persona lo dejó en silencio y el pedido no puede quitarlo.
+   */
+  abrirOido: (p: PedidoHablar) => Promise<boolean | 'silenciado'>;
   /** El micrófono no abrió: decirlo en la mesa. */
   avisarSinOido: () => void;
 };
@@ -102,8 +107,12 @@ export function useHablarEnMesa(deps: DepsHablarMesa) {
         return;
       }
       d.current.callar();
-      const ok = await d.current.abrirOido();
+      const ok = await d.current.abrirOido(p);
       if (!vigente()) return;
+      if (ok === 'silenciado') {
+        miga(lineaEntrada(p.origen, p.desde, null, 'micrófono silenciado por la persona: un enlace de fuera no lo abre'));
+        return;
+      }
       if (!ok) {
         miga(lineaEntrada(p.origen, p.desde, null, 'sin permiso del micrófono'));
         return;

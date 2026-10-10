@@ -35,6 +35,8 @@ const enCola = (requestId: string, objetivoId?: string) => ({
   estado: 'queued' as const,
   entorno: { kind: 'chat' as const, id: 'api', displayName: 'AURA' },
   origen: { kind: 'api' as const },
+  // Revisión de fases: el planificador solo arranca lo que se pidió explícitamente (y con permiso del objetivo).
+  ejecutar: true,
   ...(objetivoId ? { objetivoId } : {}),
 });
 
@@ -50,7 +52,7 @@ function ejecutor(a: AlmacenDurable, salida: SalidaEjecutor = 'empezada') {
 }
 
 async function objetivoCon(a: AlmacenDurable, yo: string, ids: string[]) {
-  const o = await crearObjetivo(yo, { requestId: `obj-${ids.join('-').slice(0, 40)}`, titulo: 'Propuesta para el banco', criterioCierre: ['Propuesta lista'] }, { almacen: a, ahora: T0 });
+  const o = await crearObjetivo(yo, { requestId: `obj-${ids.join('-').slice(0, 40)}`, titulo: 'Propuesta para el banco', criterioCierre: ['Propuesta lista'], permisos: ['preparar-borradores', 'investigar'] }, { almacen: a, ahora: T0 });
   assert.ok(o.ok);
   return o.ok ? o.objetivo.id : '';
 }
@@ -263,15 +265,29 @@ test('el envío aprobado pasa por el lease de su tarea: la operación lleva el t
     assert.ok(op.ok && op.valor);
     assert.equal(op.valor!.estado, 'succeeded');
     assert.equal(op.valor!.fencing, 1, 'despachada con el token de fencing del lease');
-    // Otra tarea cuyo lease tiene otro proceso (vigente): aprobar no envía; queda para reconciliar.
+    // Otra tarea cuyo lease tiene otro proceso (vigente): aprobar no envía NI toca la tarea; 409 reintentable (revisión de
+    // fases: el lease se toma antes de marcarla `running`; antes quedaba `unknown` / reconciliando sin haber salido nada).
     const ref2 = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-lease-2'));
     const t2 = (await h.pedir(`/api/trabajos/${ref2!.id}`, yo)).json.tarea;
     const ajeno = await tomarLease(claveLeaseTarea(yo, t2.id), 'otro-proceso', 60_000, { almacen: a });
     assert.ok(ajeno.ok);
     const r2 = await h.pedir(`/api/trabajos/${t2.id}/decisiones`, yo, { decisionId: t2.decisionId, expectedVersion: t2.version, opcion: 'aprobar' });
-    assert.equal(r2.status, 200);
+    assert.equal(r2.status, 409);
+    assert.equal(r2.json.codigo, 'tarea-ocupada');
+    assert.equal(r2.json.reintentable, true);
     assert.equal(enviados.n, 1, 'no se envió');
-    assert.equal(r2.json.tarea.state, 'reconciling');
+    const sigue = (await h.pedir(`/api/trabajos/${t2.id}`, yo)).json.tarea;
+    assert.equal(sigue.state, 'awaiting_approval', 'la tarea no se tocó: ni running ni reconciling');
+    assert.equal(sigue.version, t2.version);
+    // Suelto el lease: el mismo pedido (misma versión) ahora sí sale, una vez.
+    if (ajeno.ok) {
+      const { soltarLease } = await import('../lib/durable');
+      await soltarLease(ajeno.lease);
+    }
+    const r3 = await h.pedir(`/api/trabajos/${t2.id}/decisiones`, yo, { decisionId: t2.decisionId, expectedVersion: t2.version, opcion: 'aprobar' });
+    assert.equal(r3.status, 200);
+    assert.equal(r3.json.tarea.state, 'completed');
+    assert.equal(enviados.n, 2);
   } finally {
     h.cerrar();
   }
@@ -298,19 +314,167 @@ test('el gate del efecto rechaza un token de fencing viejo (envío aprobado de s
   assert.equal(efectos, 0);
   const op = await leerOperacion(yo, `tarea-${tareaId}-dc_1`, a);
   assert.equal(op.ok && op.valor?.estado, 'failed', 'queda sin efecto (failed), no «pendiente»');
-  // Y por el camino del envío aprobado: con el lease en manos del nuevo, el viejo no envía.
+  // Y por el camino del envío aprobado: con el lease en manos del nuevo, el viejo no envía ni marca la tarea `running`.
   let enviados = 0;
-  const s = await _efectoConLease(yo, tareaId, { requestId: `tarea-${tareaId}-dc_2`, tipo: 'correo.enviar', argsHash: 'h' }, async () => {
+  let previos = 0;
+  const previo = async () => (previos++, { ok: true as const });
+  const s = await _efectoConLease(yo, tareaId, { requestId: `tarea-${tareaId}-dc_2`, tipo: 'correo.enviar', argsHash: 'h' }, previo, async () => {
     enviados++;
     return { estado: 'succeeded', resumen: 'CORREO ENVIADO' };
   }, 'proceso-viejo');
   assert.equal(enviados, 0);
-  assert.equal(s.estado, 'unknown');
+  assert.equal(previos, 0, 'sin lease no se aplica el running');
+  assert.equal(s.tipo, 'ocupada');
   // El titular vigente sí.
-  const ok = await _efectoConLease(yo, tareaId, { requestId: `tarea-${tareaId}-dc_3`, tipo: 'correo.enviar', argsHash: 'h' }, async () => {
+  const ok = await _efectoConLease(yo, tareaId, { requestId: `tarea-${tareaId}-dc_3`, tipo: 'correo.enviar', argsHash: 'h' }, previo, async () => {
     enviados++;
     return { estado: 'succeeded', resumen: 'CORREO ENVIADO' };
   }, 'proceso-nuevo');
-  assert.equal(ok.estado, 'succeeded');
+  assert.equal(ok.tipo === 'hecho' && ok.salida.estado, 'succeeded');
+  assert.equal(previos, 1);
   assert.equal(enviados, 1);
+});
+
+/* ------------------------------------------------------------------ revisión de fases: lo suyo y con permiso */
+
+test('una misión de la computadora que va de en_cola a queued NUNCA queda waiting_resource por el planificador', async () => {
+  const a = almacenEnMemoria();
+  const yo = correo();
+  const { agendar } = await import('../lib/agenda');
+  const t = await crearTarea(yo, { requestId: 'pc-mision-0001', titulo: 'Bajar el PDF', estado: 'running', entorno: { kind: 'computadora', id: 'pc-1', displayName: 'Mi PC' }, origen: { kind: 'chat' } }, { almacen: a, ahora: T0 });
+  assert.ok(t.ok);
+  if (!t.ok) return;
+  // La misión vuelve a la cola (en_cola → queued) y otra vez a trabajar, y a la cola: nada entra en la agenda.
+  for (const estado of ['queued', 'running', 'queued'] as const) assert.ok((await cambiarTarea(yo, t.tarea.id, () => ({ estado }), { almacen: a, ahora: T0 })).ok);
+  const ag = await leerAgenda(a);
+  assert.ok(ag.ok && ag.entradas.length === 0, 'no es del planificador: no se agenda');
+  // Aunque hubiera una entrada vieja (de antes de este arreglo): se quita sin tocar la tarea.
+  await agendar('tarea', yo, t.tarea.id, T0, { almacen: a });
+  const ex = ejecutor(a, 'sin-ejecutor');
+  for (let i = 0; i < 3; i++) await vueltaPlanificador({ ejecutar: ex.f, almacen: a, ahora: () => T0 + 1000 + i * 6 * 60_000, titular: 'p' });
+  assert.equal(ex.veces.size, 0, 'el ejecutor nunca corre');
+  const l = await leerTarea(yo, t.tarea.id, a);
+  assert.equal(l.ok && l.tarea?.estado, 'queued', 'sigue en cola, nunca waiting_resource');
+  assert.equal(l.ok && l.tarea?.version, t.tarea.version + 3, 'el planificador no le escribió nada');
+  const ag2 = await leerAgenda(a);
+  assert.ok(ag2.ok && ag2.entradas.length === 0, 'la entrada vieja sale');
+});
+
+test('sin `ejecutar: true` no arranca sola: queda en cola «Esperando que lo autorices»; autorizada, arranca', async () => {
+  const a = almacenEnMemoria();
+  const yo = correo();
+  const { autorizarEjecucion } = await import('../lib/tareas-durables');
+  const { ejecutar: _x, ...sinPermiso } = enCola('sin-permiso-0001');
+  const t = await crearTarea(yo, sinPermiso, { almacen: a, ahora: T0 });
+  assert.ok(t.ok);
+  if (!t.ok) return;
+  const ex = ejecutor(a);
+  await vueltaPlanificador({ ejecutar: ex.f, almacen: a, ahora: () => T0 + 1000, titular: 'p' });
+  assert.equal(ex.veces.size, 0, 'no arrancó ninguna investigación');
+  let l = await leerTarea(yo, t.tarea.id, a);
+  assert.equal(l.ok && l.tarea?.estado, 'queued');
+  assert.match(String(l.ok && l.tarea?.pasoActual), /^Esperando que lo autorices/);
+  const ag = await leerAgenda(a);
+  assert.ok(ag.ok && ag.entradas.length === 0, 'no se queda dando vueltas');
+  // La persona la autoriza: vuelve a la agenda y arranca una vez.
+  assert.ok((await autorizarEjecucion(yo, t.tarea.id, { almacen: a, ahora: T0 + 2000 })).ok);
+  await vueltaPlanificador({ ejecutar: ex.f, almacen: a, ahora: () => T0 + 3000, titular: 'p' });
+  assert.equal(ex.veces.get(t.tarea.id), 1);
+  l = await leerTarea(yo, t.tarea.id, a);
+  assert.equal(l.ok && l.tarea?.estado, 'running');
+});
+
+test('de un objetivo sin el permiso «investigar»: no arranca y el objetivo dice «Esperando que lo autorices»', async () => {
+  const a = almacenEnMemoria();
+  const yo = correo();
+  const o = await crearObjetivo(yo, { requestId: 'obj-sin-investigar', titulo: 'Propuesta', criterioCierre: ['Lista'] }, { almacen: a, ahora: T0 });
+  assert.ok(o.ok);
+  if (!o.ok) return;
+  assert.deepEqual(o.objetivo.permisos, ['preparar-borradores']);
+  const t = await crearTarea(yo, enCola('obj-sin-perm-01', o.objetivo.id), { almacen: a, ahora: T0 });
+  assert.ok(t.ok);
+  if (!t.ok) return;
+  const ex = ejecutor(a);
+  await vueltaPlanificador({ ejecutar: ex.f, almacen: a, ahora: () => T0 + 1000, titular: 'p' });
+  assert.equal(ex.veces.size, 0);
+  const l = await leerTarea(yo, t.tarea.id, a);
+  assert.equal(l.ok && l.tarea?.estado, 'queued');
+  const lo = await leerObjetivo(yo, o.objetivo.id, a);
+  assert.equal(lo.ok && lo.objetivo?.siguientePaso, 'Esperando que lo autorices');
+});
+
+test('el topeCosto del objetivo (una investigación = una unidad) y el tope diario por cuenta se respetan', async () => {
+  const a = almacenEnMemoria();
+  const yo = correo();
+  const { consumoObjetivo, topeDiarioInvestigaciones } = await import('../server/planificador');
+  const o = await crearObjetivo(yo, { requestId: 'obj-tope-costo-1', titulo: 'Propuesta', criterioCierre: ['Lista'], permisos: ['investigar'], topeCosto: 1 }, { almacen: a, ahora: T0 });
+  assert.ok(o.ok);
+  if (!o.ok) return;
+  const t1 = await crearTarea(yo, enCola('tope-costo-t1', o.objetivo.id), { almacen: a, ahora: T0 });
+  const t2 = await crearTarea(yo, enCola('tope-costo-t2', o.objetivo.id), { almacen: a, ahora: T0 });
+  assert.ok(t1.ok && t2.ok);
+  if (!t1.ok || !t2.ok) return;
+  // Un ejecutor que no pudo (no disponible) no gasta la unidad.
+  const nd = ejecutor(a, 'no-disponible');
+  await vueltaPlanificador({ ejecutar: nd.f, almacen: a, ahora: () => T0 + 1000, titular: 'p', maxPorVuelta: 1 });
+  assert.equal(nd.veces.size, 1);
+  assert.equal(await consumoObjetivo(yo, o.objetivo.id, a), 0, 'lo que no arrancó se devuelve');
+  const ex = ejecutor(a);
+  await vueltaPlanificador({ ejecutar: ex.f, almacen: a, ahora: () => T0 + 10 * 60_000, titular: 'p' });
+  assert.equal(ex.veces.size, 1, 'solo una cabe en el tope');
+  assert.equal(await consumoObjetivo(yo, o.objetivo.id, a), 1);
+  const esperando = [t1.tarea.id, t2.tarea.id].find((id) => !ex.veces.has(id))!;
+  const l = await leerTarea(yo, esperando, a);
+  assert.equal(l.ok && l.tarea?.estado, 'queued');
+  assert.match(String(l.ok && l.tarea?.pasoActual), /tope de costo/);
+  // El tope diario (sin objetivo): con 2 al día, la tercera espera a mañana.
+  const otro = correo();
+  const ids: string[] = [];
+  for (const k of ['dia-a-000001', 'dia-b-000001', 'dia-c-000001']) {
+    const t = await crearTarea(otro, enCola(k), { almacen: a, ahora: T0 });
+    assert.ok(t.ok);
+    if (t.ok) ids.push(t.tarea.id);
+  }
+  const ed = ejecutor(a);
+  await vueltaPlanificador({ ejecutar: ed.f, almacen: a, ahora: () => T0 + 1000, titular: 'p', topeDiario: 2 });
+  assert.equal(ed.veces.size, 2);
+  const tercera = ids.find((id) => !ed.veces.has(id))!;
+  const lt = await leerTarea(otro, tercera, a);
+  assert.equal(lt.ok && lt.tarea?.estado, 'queued');
+  assert.match(String(lt.ok && lt.tarea?.pasoActual), /tope de investigaciones de hoy/);
+  const ag = await leerAgenda(a);
+  const entrada = ag.ok ? ag.entradas.find((e) => e.id === tercera) : null;
+  assert.ok(entrada && entrada.cuando > T0 + 1000 && entrada.cuando <= T0 + 1000 + 86_400_000, 'se reintenta mañana');
+  // La variable de entorno (por omisión 10).
+  const antes = process.env.AURA_INVESTIGACIONES_DIA;
+  delete process.env.AURA_INVESTIGACIONES_DIA;
+  assert.equal(topeDiarioInvestigaciones(), 10);
+  process.env.AURA_INVESTIGACIONES_DIA = '3';
+  assert.equal(topeDiarioInvestigaciones(), 3);
+  if (antes === undefined) delete process.env.AURA_INVESTIGACIONES_DIA;
+  else process.env.AURA_INVESTIGACIONES_DIA = antes;
+});
+
+test('POST /api/trabajos: sin `ejecutar` queda sin autorizar; el mismo requestId con `ejecutar: true` la autoriza', async () => {
+  const a = almacenEnMemoria();
+  _usarAlmacenDurable(a);
+  const yo = correo();
+  const h = arnesTrabajos({ n: 0 });
+  try {
+    const r = await h.pedir('/api/trabajos', yo, { requestId: 'api-autoriza-01', titulo: 'Investigar tasas' });
+    assert.equal(r.status, 201);
+    let l = await leerTarea(yo, r.json.tarea.id, a);
+    assert.equal(l.ok && l.tarea?.ejecutar, undefined);
+    const r2 = await h.pedir('/api/trabajos', yo, { requestId: 'api-autoriza-01', titulo: 'Investigar tasas', ejecutar: true });
+    assert.equal(r2.status, 200);
+    l = await leerTarea(yo, r.json.tarea.id, a);
+    assert.equal(l.ok && l.tarea?.ejecutar, true);
+    const ag = await leerAgenda(a);
+    assert.ok(ag.ok && ag.entradas.some((e) => e.id === r.json.tarea.id), 'autorizada: vuelve a la agenda');
+    const r3 = await h.pedir('/api/trabajos', yo, { requestId: 'api-autoriza-02', titulo: 'Otra', ejecutar: 'true' });
+    l = await leerTarea(yo, r3.json.tarea.id, a);
+    assert.equal(l.ok && l.tarea?.ejecutar, undefined, 'solo `true` de verdad');
+  } finally {
+    h.cerrar();
+  }
 });

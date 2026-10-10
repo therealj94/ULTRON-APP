@@ -102,3 +102,68 @@ test('SEC-04: el refresco de una cuenta suspendida queda cerrado (reactivarla no
   A._envejecerAutoridad(31_000);
   assert.equal((await refrescar(cid, r)).status, 400, 'ese refresco ya no vale');
 });
+
+/**
+ * Revisión de fases: con el registro de cuentas caído (`desconocida`), /oauth/token contesta 503 temporarily_unavailable
+ * (no 400 invalid_grant, que hace a Claude tirar el conector) y lo mira ANTES de gastar el código: al volver el registro,
+ * el mismo código canjea. Suspendida sigue siendo invalid_grant. Con una cuenta aprobada desde la web (no la identidad
+ * del despliegue, que sigue aunque el registro no conteste).
+ */
+test('registro caído: /oauth/token da 503 temporarily_unavailable y NO gasta el código; suspendida sigue invalid_grant', async () => {
+  const crypto = await import('node:crypto');
+  const { fijarCuentasAprobadas } = await import('../lib/acceso');
+  const LECTOR = { correo: 'lector-oauth@mina.hn', nombre: 'Lector', rol: 'lector' };
+  fijarCuentasAprobadas([{ id: 'lector-oauth', nombre: 'Lector', correos: [LECTOR.correo], acceso: { electrum: 'lee' } } as any]);
+  const cayo = async () => {
+    throw new Error('registro caído');
+  };
+  try {
+    suspendidas.clear();
+    A._autoridadDePrueba({ consulta: async (c) => suspendidas.has(c), registro: true, topeMs: 200 });
+    const cid = await clienteRegistrado();
+    const codigo = async () => {
+      const verificador = crypto.randomBytes(32).toString('base64url');
+      const reto = crypto.createHash('sha256').update(verificador).digest('base64url');
+      const q = new URLSearchParams({ response_type: 'code', client_id: cid, redirect_uri: 'http://localhost:9999/cb', code_challenge: reto, code_challenge_method: 'S256', state: 'e' });
+      const r = await fetch(`${BASE}/oauth/authorize?${q}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ultron-sesion': S.emitirSesion(LECTOR).token }, body: JSON.stringify({ decision: 'permitir' }) });
+      const volver = ((await r.json()) as any).volver as string;
+      const code = new URL(volver).searchParams.get('code');
+      assert.ok(code, volver);
+      return { code: code!, verificador };
+    };
+    const canjear = (c: { code: string; verificador: string }) =>
+      fetch(`${BASE}/oauth/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', client_id: cid, code: c.code, code_verifier: c.verificador, redirect_uri: 'http://localhost:9999/cb' }).toString() });
+    const c1 = await codigo();
+    A._autoridadDePrueba({ consulta: cayo, registro: true, topeMs: 200 });
+    const caido = await canjear(c1);
+    assert.equal(caido.status, 503);
+    assert.equal(((await caido.json()) as any).error, 'temporarily_unavailable');
+    // Vuelve el registro: el MISMO código canjea (no se gastó), y una sola vez.
+    A._autoridadDePrueba({ consulta: async (c) => suspendidas.has(c), registro: true, topeMs: 200 });
+    const ok = await canjear(c1);
+    assert.equal(ok.status, 200);
+    const tokens = (await ok.json()) as any;
+    assert.ok(tokens.access_token && tokens.refresh_token);
+    const otra = await canjear(c1);
+    assert.equal(otra.status, 400);
+    assert.equal(((await otra.json()) as any).error, 'invalid_grant');
+    // El refresco con el registro caído: 503 y NO se rota (al volver, el mismo refresco sirve).
+    A._autoridadDePrueba({ consulta: cayo, registro: true, topeMs: 200 });
+    const rc = await refrescar(cid, tokens.refresh_token);
+    assert.equal(rc.status, 503);
+    assert.equal(((await rc.json()) as any).error, 'temporarily_unavailable');
+    A._autoridadDePrueba({ consulta: async (c) => suspendidas.has(c), registro: true, topeMs: 200 });
+    assert.equal((await refrescar(cid, tokens.refresh_token)).status, 200);
+    // Suspendida: invalid_grant (no 503).
+    const c2 = await codigo();
+    suspendidas.add(LECTOR.correo);
+    A._autoridadDePrueba({ consulta: async (c) => suspendidas.has(c), registro: true, topeMs: 200 });
+    const sus = await canjear(c2);
+    assert.equal(sus.status, 400);
+    assert.equal(((await sus.json()) as any).error, 'invalid_grant');
+  } finally {
+    suspendidas.clear();
+    fijarCuentasAprobadas([]);
+    A._autoridadDePrueba({ consulta: async (c) => suspendidas.has(c), registro: true, topeMs: 200 });
+  }
+});

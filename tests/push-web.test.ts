@@ -279,3 +279,61 @@ test('AUR13: el navegador que pasa de una cuenta a otra deja de recibir los avis
     }
   });
 });
+
+test('decision: la notificación web no lleva la pregunta; la marca «ya avisé» solo después de que alguien lo aceptó', async () => {
+  const D = await import('../lib/durable');
+  await conVapid(async () => {
+    W._olvidarPushWeb();
+    const n = navegador('https://web.push.apple.com/decision');
+    await W.suscribirWeb('fede@x.hn', n.sus);
+    const a = D.almacenEnMemoria();
+    const p = { objetivoId: 'ob_abcdef123456', decisionId: 'dob_secreta1', revision: 2, pregunta: '¿Le mando a Bruno el contrato con el precio de 40 mil?', opciones: [{ id: 'si', etiqueta: 'Sí' }, { id: 'no', etiqueta: 'No' }] };
+    let estado = 500;
+    const s = conServicio(() => estado);
+    try {
+      // El servicio falla: no se marca como avisada (la próxima vez se reintenta).
+      const r1 = await P.pedirDecisionPorPush('fede@x.hn', p, { almacen: a });
+      assert.equal(r1.repetido, false);
+      assert.equal(r1.repetido === false && r1.resultado.enviados, 0);
+      estado = 201;
+      const r2 = await P.pedirDecisionPorPush('fede@x.hn', p, { almacen: a });
+      assert.equal(r2.repetido, false, 'no se había aceptado: se vuelve a mandar');
+      assert.equal(r2.repetido === false && r2.resultado.enviados, 1);
+      const r3 = await P.pedirDecisionPorPush('fede@x.hn', p, { almacen: a });
+      assert.equal(r3.repetido, true, 'aceptada una vez: no se repite');
+      assert.equal(s.llegados.length, 2);
+      const aviso = JSON.parse(descifrar(s.llegados[1].body, n.ua, n.auth).toString());
+      assert.equal(aviso.texto, P.TEXTO_WEB_DECISION);
+      assert.equal(aviso.tipo, 'decision');
+      assert.ok(!JSON.stringify(aviso).includes('Bruno') && !JSON.stringify(aviso).includes('40 mil'), 'la pregunta no va en la notificación del sistema');
+    } finally {
+      s.soltar();
+    }
+  });
+});
+
+test('decision: dos réplicas a la vez no la mandan dos veces (el reclamo «enviando»)', async () => {
+  const D = await import('../lib/durable');
+  const a = D.almacenEnMemoria();
+  let mandados = 0;
+  let soltar: () => void = () => undefined;
+  const espera = new Promise<void>((r) => (soltar = r));
+  const enviar = async () => {
+    mandados++;
+    await espera;
+    return { enviados: 1, aceptados: 1, entrega: 'aceptado' as const, fallidos: 0, quitados: 0, configurado: true };
+  };
+  const p = { objetivoId: 'ob_abcdef123456', decisionId: 'dob_concurrente', revision: 1, pregunta: '¿Sí o no?', opciones: [{ id: 'si', etiqueta: 'Sí' }] };
+  const uno = P.pedirDecisionPorPush('gil@x.hn', p, { almacen: a, enviar });
+  await new Promise((r) => setTimeout(r, 20));
+  const dos = await P.pedirDecisionPorPush('gil@x.hn', p, { almacen: a, enviar });
+  assert.equal(dos.repetido, true, 'la otra réplica lo está mandando');
+  soltar();
+  assert.equal((await uno).repetido, false);
+  assert.equal(mandados, 1);
+  // Si el que reclamó murió a medias, pasado el reclamo otra lo reintenta.
+  const q = { ...p, decisionId: 'dob_huerfana' };
+  const k = D.claveDe('push/decisiones', 'gil@x.hn', 'dob_huerfana-r1');
+  await D.crearUnaVez(k, { estado: 'enviando', t: Date.now() - P.RECLAMO_DECISION_MS - 1 }, a);
+  assert.equal((await P.pedirDecisionPorPush('gil@x.hn', q, { almacen: a, enviar })).repetido, false);
+});

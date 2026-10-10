@@ -203,3 +203,72 @@ test('server/correo.ts: el borrador guardado vuelve tras «reiniciar» (huella r
     for (const c of await cuentasDe(quien)) await quitarCuenta(quien, c.id);
   }
 });
+
+/* ------------------------------------------------------------------ revisión de fases: la lápida */
+
+test('lápida: un borrador reemplazado o rechazado NO revive tras «reiniciar» (ni con la memoria de rechazos vacía)', async () => {
+  const buzon = {
+    mandar: async (_q: string, _c: unknown, e: Envio) => ({ messageId: e.messageId || '<x@prueba.hn>', guardadoEnEnviados: false, aceptados: [...e.para], rechazados: [] }),
+    buscarEnviado: async () => 'no-encontrado' as const,
+  };
+  const quien = 'lapida@x.hn';
+  const { _olvidarRechazos } = await import('../server/borradores-cola');
+  D._usarAlmacenDurable(D.almacenEnMemoria());
+  C._buzonDePrueba(buzon as any);
+  C._olvidarCorreo();
+  _olvidarCuentas();
+  for (const c of await cuentasDe(quien)) await quitarCuenta(quien, c.id);
+  await agregarCuenta(quien, 'lapida@prueba.hn', PROV, 'clave');
+  try {
+    await C.correrCorreo(quien, 'escribir ana@example.test | Contrato | Ana, va el contrato.', 'tel');
+    const viejo = C.borradorDe(quien, 'tel')!;
+    assert.ok(viejo);
+    // Una versión nueva del mismo correo lo reemplaza.
+    await C.correrCorreo(quien, 'escribir ana@example.test | Contrato | Ana, va el contrato firmado y sellado.', 'tel');
+    const nuevo = C.borradorDe(quien, 'tel')!;
+    assert.ok(nuevo && nuevo.intento !== viejo.intento);
+    await BD._esperarBorradoresDurables();
+    C._olvidarCorreo();
+    _olvidarRechazos();
+    assert.equal(await C.rehidratarBorradorCorreo(quien, 'tel', viejo.intento, viejo.huella), false, 'el reemplazado no revive');
+    assert.equal(await BD.borradorDescartado(quien, viejo.intento), true);
+    assert.equal(await C.rehidratarBorradorCorreo(quien, 'tel', nuevo.intento, nuevo.huella), true, 'el vigente sí');
+    // La persona lo rechaza en su panel: lápida durable; tras otro reinicio (y sin la marca en memoria) no vuelve.
+    const r = await C.resolverApartadoCorreo(quien, 'tel', nuevo.intento, 'no');
+    assert.match(String(r?.texto), /descartado/);
+    await BD._esperarBorradoresDurables();
+    C._olvidarCorreo();
+    _olvidarRechazos();
+    assert.equal(await C.rehidratarBorradorCorreo(quien, 'tel', nuevo.intento, nuevo.huella), false, 'el rechazado no revive');
+  } finally {
+    D._usarAlmacenDurable(null);
+    C._buzonDePrueba(null);
+    C._olvidarCorreo();
+    for (const c of await cuentasDe(quien)) await quitarCuenta(quien, c.id);
+  }
+});
+
+test('lápida: «Rechazar» en la tarjeta tras un reinicio (la réplica no lo tiene en memoria) igual deja la marca durable', async () => {
+  D._usarAlmacenDurable(D.almacenEnMemoria());
+  try {
+    const yo = 'rechazo-reinicio@ejemplo.com';
+    const enviados = { n: 0, huellas: [] as string[] };
+    const r1 = replica(enviados);
+    const b: B = { intento: 'int-lapida-1', huella: 'h-int-lapida-1', vence: Date.now() + 15 * 60_000, texto: 'Hola Ana' };
+    r1.armar(yo, 'telefono', b);
+    await BD._esperarBorradoresDurables();
+    const ref = await TR.abrirDecisionDeBorrador(yo, 'telefono', { canal: 'correo', intento: b.intento, para: ['ana@ejemplo.com'], desde: 'yo@ejemplo.com', asunto: 'Fechas', texto: b.texto, vence: b.vence, huella: b.huella });
+    const { leerTarea } = await import('../lib/tareas-durables');
+    const l = await leerTarea(yo, ref!.id);
+    assert.ok(l.ok && l.tarea?.decision);
+    r1.memoria.clear(); // «reinicio»
+    const r = await r1.pedir(`/api/trabajos/${ref!.id}/decisiones`, yo, { decisionId: l.ok ? l.tarea!.decision!.id : '', expectedVersion: l.ok ? l.tarea!.version : 0, opcion: 'rechazar' });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.tarea.state, 'cancelled');
+    assert.equal(await BD.leerBorradorDurable('correo', yo, 'telefono', b.intento, b.huella), null, 'no vuelve de lo durable');
+    assert.equal(enviados.n, 0);
+    r1.cerrar();
+  } finally {
+    D._usarAlmacenDurable(null);
+  }
+});

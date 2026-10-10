@@ -35,6 +35,7 @@ import crypto from 'node:crypto';
 import type express from 'express';
 import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, PROCESO_DURABLE, reservarPedido, type Lease } from '../lib/durable';
 import {
+  autorizarEjecucion,
   cambiarTarea,
   crearTarea,
   criteriosCumplidos,
@@ -74,6 +75,7 @@ import {
 import type { PropuestaAbierta, PropuestaTaller } from '../lib/taller';
 import { fijarEnPantalla, renovarEnPantalla, sigueSiendoUltimaSecuencia, soltarEnPantalla, tomarSecuenciaPantalla } from './decision-en-pantalla';
 import { esIdVeta } from './veta-entrar';
+import { anotarDescarteDurable } from './borradores-durables';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -225,36 +227,62 @@ export const claveLeaseTarea = (dueno: string, tareaId: string) => claveDe('trab
  * Fase 2: lo aprobado sale con el lease de su tarea y su token de fencing. `ejecutarUnaVez` recibe el lease: justo antes de
  * despachar comprueba que sigue siendo el vigente y que su token no es menor que el de la operación (lib/durable.ts
  * `avanzarOperacion`). Un proceso viejo que despierta tarde, o una réplica a la que se le venció el lease mientras otra lo
- * tomó, no despacha nada: la operación queda `failed` sin efecto. Si otro tiene el lease, no se corre (y no se sabe qué
- * pasa con el envío: se reconcilia).
+ * tomó, no despacha nada: la operación queda `failed` sin efecto.
+ *
+ * Revisión de fases: el lease se toma ANTES de marcar la tarea `running` (`previo`, el CAS con la versión que vio la
+ * persona). Si otro proceso lo tiene (o el almacén no contesta), no se toca la tarea ni se despacha nada: `ocupada` /
+ * `almacen`, que la ruta devuelve como 409 / 503 reintentables (la decisión sigue esperando). Antes se marcaba `running`
+ * primero y, sin lease, la tarea quedaba `unknown` / reconciliando sin que nada hubiera salido.
  */
-async function efectoConLease(
+export type ResultadoEfectoLease<P> =
+  | { tipo: 'hecho'; previo: P; salida: SalidaEnvio }
+  /** El `previo` no se aplicó (la tarea cambió): no se despachó nada. */
+  | { tipo: 'previo'; previo: P }
+  | { tipo: 'ocupada' }
+  | { tipo: 'almacen' };
+
+async function efectoConLease<P extends { ok: boolean }>(
   dueno: string,
   tareaId: string,
   o: { requestId: string; tipo: string; argsHash: string },
+  previo: () => Promise<P>,
   efecto: () => Promise<SalidaEnvio>,
   titular = PROCESO_DURABLE
-): Promise<SalidaEnvio> {
+): Promise<ResultadoEfectoLease<P>> {
   const correr = () =>
-    conLease(claveLeaseTarea(dueno, tareaId), titular, LEASE_EFECTO_MS, (lease: Lease) =>
-      ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: o.requestId, tipo: o.tipo, argsHash: o.argsHash, lease }, async () => {
+    conLease(claveLeaseTarea(dueno, tareaId), titular, LEASE_EFECTO_MS, async (lease: Lease): Promise<ResultadoEfectoLease<P>> => {
+      const p = await previo();
+      if (!p.ok) return { tipo: 'previo', previo: p };
+      // Desde aquí la tarea ya está `running`: pase lo que pase, se devuelve una salida (nunca se lanza).
+      const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: o.requestId, tipo: o.tipo, argsHash: o.argsHash, lease }, async () => {
         const s = await efecto();
         const estado = s.estado === 'stale' ? 'failed' : s.estado;
         return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: o.tipo, ...(s.referencia ? { referencia: s.referencia } : {}), detalle: trozo(s.resumen, 160) } };
-      })
-    ).catch(() => ({ ok: false as const, ocupado: undefined }));
+      }).then(salidaDeOperacion, () => ({ estado: 'unknown' as const, resumen: 'No supe cómo terminó: no lo repito a ciegas.' }));
+      return { tipo: 'hecho', previo: p, salida };
+    }).catch(() => ({ ok: false as const, detalle: 'error' }));
   let r = await correr();
   // El planificador toma el mismo lease un instante (al revisar la tarea): se espera un poco antes de rendirse.
   for (let i = 0; i < 3 && r.ok === false && 'ocupado' in r && r.ocupado; i++) {
     await new Promise((ok) => setTimeout(ok, 250));
     r = await correr();
   }
-  if (r.ok === false) return { estado: 'unknown', resumen: 'Otro proceso tiene esta tarea ahora mismo: no sé si salió. Lo reviso antes de repetir nada.' };
-  const salida = r.valor;
+  if (r.ok === false) return 'ocupado' in r && r.ocupado ? { tipo: 'ocupada' } : { tipo: 'almacen' };
+  return r.valor;
+}
+
+function salidaDeOperacion(salida: Awaited<ReturnType<typeof ejecutarUnaVez<SalidaEnvio>>>): SalidaEnvio {
   if (salida.corrio) return salida.resultado ?? { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
   if ('motivo' in salida && salida.motivo === 'fencing') return { estado: 'failed', resumen: 'No salió: otro proceso tomó la tarea mientras tanto (su turno ya no era este). No se hizo nada; pídelo otra vez si aún lo quieres.' };
   if (salida.op?.estado === 'succeeded') return { estado: 'succeeded', resumen: salida.op.recibo?.detalle || 'Ya había salido antes; no lo repetí.', ...(salida.op.recibo?.referencia ? { referencia: salida.op.recibo.referencia } : {}) };
   return { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
+}
+
+/** La respuesta reintentable cuando no se pudo tomar la tarea (nada se tocó ni salió). */
+function tareaNoDisponible(res: express.Response, tipo: 'ocupada' | 'almacen', reg: RegistroTarea, t: number) {
+  if (tipo === 'ocupada')
+    return res.status(409).json({ error: 'Otro proceso está trabajando esta tarea ahora mismo. No envié nada; vuelve a intentarlo en unos segundos.', codigo: 'tarea-ocupada', reintentable: true, tarea: vistaTarea(reg, t), honesto: true });
+  return res.status(503).json({ error: 'No pude tomar la tarea en este momento. No envié nada; prueba otra vez en un rato.', code: 'almacen_no_disponible', reintentable: true, tarea: vistaTarea(reg, t), honesto: true });
 }
 
 /** Solo pruebas: el mismo camino con otro titular (un proceso viejo). */
@@ -1094,9 +1122,17 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       estado: 'queued',
       entorno: { kind: 'chat', id: 'api', displayName: 'AURA' },
       origen: { kind: 'api' },
+      // Solo con `ejecutar: true` explícito el planificador la empieza sola (una investigación cuesta); si no, espera.
+      ejecutar: b.ejecutar === true,
     }).catch((e) => ({ ok: false as const, motivo: 'almacen' as const, detalle: String(e?.message || e) }));
     if (r.ok === false) return r.motivo === 'almacen' ? almacenCaido(res) : res.status(400).json({ error: r.detalle, honesto: true });
-    return res.status(r.creada ? 201 : 200).json({ tarea: vistaTarea(r.tarea, ahora()), creada: r.creada, honesto: true });
+    let tarea = r.tarea;
+    // El mismo requestId con `ejecutar: true` sobre una que esperaba: la autoriza (una vez).
+    if (!r.creada && b.ejecutar === true && tarea.estado === 'queued' && !tarea.ejecutar) {
+      const au = await autorizarEjecucion(dueno, tarea.id).catch(() => null);
+      if (au && au.ok) tarea = au.tarea;
+    }
+    return res.status(r.creada ? 201 : 200).json({ tarea: vistaTarea(tarea, ahora()), creada: r.creada, honesto: true });
   });
 
   /* ---------------------------------------------------------------- decidir */
@@ -1153,6 +1189,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
         resultado: { id: `${e.reg.id}:resultado`, resumen: vinc ? 'No se envió: lo rechazaste. Queda constancia.' : 'Rechazada: no se hizo. Queda constancia.', evidencias: [], parcial: [], pendiente: [], t: t0 },
       });
       if (!r.ok) return r.resp();
+      // La lápida durable SIEMPRE (también si esta réplica no lo tiene en memoria): tras un reinicio no revive.
+      if (vinc) await anotarDescarteDurable(dueno, vinc.intento, 'rechazado');
       if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
       soltarEnPantalla(dueno, e.reg.id);
       anotar(r.reg);
@@ -1162,7 +1200,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (opcion.id === 'editar') {
       const r = await aplicar({ resolver, decision: null, estado: 'waiting_resource', pasoActual: 'Dime en el chat qué cambio; preparo una propuesta nueva. Esta ya no vale.' });
       if (!r.ok) return r.resp();
-      // Editar invalida el vínculo anterior: el borrador viejo se descarta (un «sí» en el chat ya no lo manda).
+      // Editar invalida el vínculo anterior: el borrador viejo se descarta (un «sí» en el chat ya no lo manda), con su
+      // lápida durable (no revive tras un reinicio).
+      if (vinc) await anotarDescarteDurable(dueno, vinc.intento, 'descartado');
       if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito, vinc.intento)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
       const para = decision.propuesta.destinatario || '';
       const sugerencia = vinc ? (vinc.canal === 'correo' ? `Cambia el correo para ${para}: ` : `Cambia el WhatsApp para ${para}: `) : 'Cambia la propuesta: ';
@@ -1180,12 +1220,14 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
         return res.status(409).json({ error: 'Lo que espera ya no es lo que aprobaste: no hice nada. Pídelo otra vez si aún lo quieres.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
       }
       const operacion = `tarea-${e.reg.id}-${decision.id}`;
-      const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Haciendo lo que aprobaste…' });
-      if (!r.ok) return r.resp();
-      // Con el lease de la tarea y su token de fencing (Fase 2): un proceso viejo no despacha.
-      const s = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `taller.${vincT.accion}`, argsHash: vincT.huella }, () => d.taller!.ejecutar(dueno, vincT));
+      // Con el lease de la tarea y su token de fencing (Fase 2): el lease ANTES de marcarla `running`; un proceso viejo no
+      // despacha y, si otro la tiene, no se toca nada (409 reintentable).
+      const x = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `taller.${vincT.accion}`, argsHash: vincT.huella }, () => aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Haciendo lo que aprobaste…' }), () => d.taller!.ejecutar(dueno, vincT));
+      if (x.tipo === 'ocupada' || x.tipo === 'almacen') return tareaNoDisponible(res, x.tipo, e.reg, ahora());
+      if (x.tipo === 'previo' || !x.previo.ok) return x.previo.ok ? res.status(409).json({ error: 'La tarea cambió.', honesto: true }) : x.previo.resp();
+      const s = x.salida;
       const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
-      const reg = fin && fin.ok ? fin.tarea : r.reg;
+      const reg = fin && fin.ok ? fin.tarea : x.previo.reg;
       anotar(reg);
       return res.json({ tarea: vistaTarea(reg, ahora()), operacion, resultado: { estado: s.estado, resumen: trozo(s.resumen, 300) }, honesto: true });
     }
@@ -1208,12 +1250,14 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       return res.status(409).json({ error: 'Esa propuesta ya no es la que espera: no envié nada. Mira la actual o pide una nueva.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }
     const operacion = `tarea-${e.reg.id}-${decision.id}`;
-    const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' });
-    if (!r.ok) return r.resp();
-    // Con el lease de la tarea y su token de fencing (Fase 2): un proceso viejo no despacha.
-    const s = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, () => d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash));
+    // Con el lease de la tarea y su token de fencing (Fase 2): el lease ANTES de marcarla `running`; un proceso viejo no
+    // despacha y, si otro la tiene, no se toca nada (409 reintentable).
+    const x = await efectoConLease(dueno, e.reg.id, { requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, () => aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' }), () => d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash));
+    if (x.tipo === 'ocupada' || x.tipo === 'almacen') return tareaNoDisponible(res, x.tipo, e.reg, ahora());
+    if (x.tipo === 'previo' || !x.previo.ok) return x.previo.ok ? res.status(409).json({ error: 'La tarea cambió.', honesto: true }) : x.previo.resp();
+    const s = x.salida;
     const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
-    const reg = fin && fin.ok ? fin.tarea : r.reg;
+    const reg = fin && fin.ok ? fin.tarea : x.previo.reg;
     soltarEnPantalla(dueno, e.reg.id);
     anotar(reg);
     return res.json({ tarea: vistaTarea(reg, ahora()), operacion, honesto: true });

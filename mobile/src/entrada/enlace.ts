@@ -132,7 +132,22 @@ export function lineaEntrada(origen: OrigenEntrada, desde: number, hasta: number
 
 /* ── el «hablar» que espera a la mesa ─────────────────────────────────────────────────────────── */
 
-export type PedidoHablar = { origen: OrigenEntrada; desde: number; n: number };
+/**
+ * `interno`: lo pidió la burbuja desde ESTE mismo motor de JS (su «Abrir en AURA» deja el pedido en el buzón). Un enlace
+ * `ultronfp://hablar` de fuera nunca es interno, aunque diga `origen=burbuja` (cualquiera puede escribir ese enlace).
+ */
+export type PedidoHablar = { origen: OrigenEntrada; desde: number; n: number; interno: boolean };
+
+/**
+ * Revisión de fases: ¿qué hace la mesa con el micrófono ante un «hablar»? El silencio que la persona dejó puesto (el
+ * botón, guardado entre sesiones) SOLO lo quita un pedido interno de la burbuja (la persona acaba de tocar «Abrir en
+ * AURA» con la burbuja escuchándola). Un enlace de fuera abre la app escuchando solo si no estaba silenciada; si lo
+ * estaba, la respeta (antes cualquier enlace le quitaba el silencio a escondidas).
+ */
+export function oidoParaHablar(p: Pick<PedidoHablar, 'interno'>, silenciadoPorPersona: boolean): 'abrir' | 'quitar-silencio' | 'respetar-silencio' {
+  if (!silenciadoPorPersona) return 'abrir';
+  return p.interno ? 'quitar-silencio' : 'respetar-silencio';
+}
 
 /**
  * El buzón entre el enlace (que llega en cualquier momento: con la intro a medias, en otra pantalla, con la mesa ya
@@ -143,8 +158,9 @@ export class BuzonHablar {
   private n = 0;
   private oyentes = new Set<(p: PedidoHablar) => void>();
 
-  pedir(origen: OrigenEntrada, desde: number): PedidoHablar {
-    const p = { origen, desde, n: ++this.n };
+  /** `interno` solo desde la burbuja (mismo motor de JS); el oyente de enlaces nunca lo pone. */
+  pedir(origen: OrigenEntrada, desde: number, o: { interno?: boolean } = {}): PedidoHablar {
+    const p = { origen, desde, n: ++this.n, interno: o.interno === true };
     this.pedido = p;
     for (const f of this.oyentes) f(p);
     return p;

@@ -96,6 +96,34 @@ export function cierreBurbuja(motivo: MotivoCierre): Cierre {
   };
 }
 
+/**
+ * Si la burbuja ya se cerró (una vez). Revisión de fases: «Abrir en AURA» la cierra ANTES de abrir la app (suelta el
+ * micrófono y deja lo hablado); si el enlace no abre la app, la burbuja sigue delante y antes quedaba trabada: cerrada
+ * por dentro, «atrás» y tocar fuera ya no hacían nada. `falloAbrirApp` la deja abierta otra vez (solo después de
+ * «abrir-app»: un cierre de verdad no se deshace) y se cierra como siempre.
+ */
+export class ControlCierre {
+  private motivo: MotivoCierre | null = null;
+
+  cerrada(): boolean {
+    return this.motivo !== null;
+  }
+
+  /** El cierre que toca, o null si ya estaba cerrada (cerrar dos veces no hace nada). */
+  cerrar(motivo: MotivoCierre): Cierre | null {
+    if (this.motivo !== null) return null;
+    this.motivo = motivo;
+    return cierreBurbuja(motivo);
+  }
+
+  /** «Abrir en AURA» no abrió la app: la burbuja vuelve a estar abierta (true) para cerrarse con «atrás» o fuera. */
+  falloAbrirApp(): boolean {
+    if (this.motivo !== 'abrir-app') return false;
+    this.motivo = null;
+    return true;
+  }
+}
+
 /** Sin hablarle, sin escribir y sin nada en curso: la burbuja se cierra sola y suelta el micrófono. */
 export const CIERRE_POR_SILENCIO_MS = 30_000;
 
@@ -115,9 +143,21 @@ export function preguntaDeFoto(texto: string, en = false): string {
 
 type Oyente = () => void;
 
+/** Lo más que espera la burbuja el acuse de la mesa antes de abrir su micrófono igual (una mesa colgada no la deja sorda). */
+export const TOPE_ACUSE_MS = 1_500;
+
+/**
+ * Revisión de fases: el ACUSE. Al abrirse la burbuja la mesa suelta su micrófono (compa/duenoAudio.ts `OidoMesa`); antes
+ * la burbuja esperaba 150 ms fijos y abría el suyo: si el `muteMic` de la mesa llegaba tarde, cerraba el micrófono de la
+ * burbuja (es el mismo oído, prestado). Ahora la mesa ACUSA cuando terminó de soltarlo (o en el acto si no lo tenía
+ * abierto) y la burbuja espera ese acuse (con tope).
+ */
 export class AvisoBurbuja {
   private abierta_ = false;
   private oyentes = new Set<Oyente>();
+  /** ¿La mesa ya soltó el micrófono para ESTA apertura? (sin burbuja, no hay nada que soltar). */
+  private acusado = true;
+  private esperando = new Set<() => void>();
 
   abierta = (): boolean => this.abierta_;
 
@@ -131,7 +171,70 @@ export class AvisoBurbuja {
   fijar(abierta: boolean) {
     if (this.abierta_ === abierta) return;
     this.abierta_ = abierta;
+    // Una apertura nueva espera su propio acuse; al cerrarse no queda nadie esperando.
+    if (abierta) this.acusado = false;
+    else this.acusar();
     for (const f of [...this.oyentes]) f();
+  }
+
+  /** La mesa ya soltó su micrófono (o no lo tenía): la burbuja puede abrir el suyo. */
+  acusar() {
+    this.acusado = true;
+    for (const f of [...this.esperando]) f();
+    this.esperando.clear();
+  }
+
+  /** Espera el acuse de la mesa (true) o el tope (false). Sin burbuja abierta, o ya acusado: en el acto. */
+  esperarAcuse(topeMs = TOPE_ACUSE_MS): Promise<boolean> {
+    if (this.acusado || !this.abierta_) return Promise.resolve(true);
+    return new Promise((ok) => {
+      const listo = () => {
+        clearTimeout(reloj);
+        ok(true);
+      };
+      const reloj = setTimeout(() => {
+        this.esperando.delete(listo);
+        ok(false);
+      }, topeMs);
+      this.esperando.add(listo);
+    });
+  }
+}
+
+/**
+ * Revisión de fases: CUÁNDO VUELVE LA APP. Al cerrarse la burbuja, el aviso «abierta» se suelta solo cuando la app vuelve
+ * a estar delante DE VERDAD: después de cerrarse hace falta ver un ciclo fondo → activa. Antes, si al cerrar AppState
+ * todavía decía «active» (era la BURBUJA la que estaba delante, terminando), se soltaba en el acto y la mesa reabría su
+ * micrófono en segundo plano, encima de la otra app. Con la burbuja cerrada, la única actividad que puede volver a estar
+ * delante es MainActivity (una burbuja nueva vuelve a fijar «abierta» y cancela esta espera).
+ */
+export class VueltaDeLaApp {
+  private fase: 'nada' | 'esperando-fondo' | 'esperando-delante' = 'nada';
+
+  /** Se cerró la burbuja: `estadoAhora` es el AppState de este momento (si dice «active», es la burbuja que se va). */
+  empezar(estadoAhora: string) {
+    this.fase = estadoAhora === 'active' ? 'esperando-fondo' : 'esperando-delante';
+  }
+
+  cancelar() {
+    this.fase = 'nada';
+  }
+
+  esperando(): boolean {
+    return this.fase !== 'nada';
+  }
+
+  /** Un cambio de AppState. true: la app volvió delante de verdad (soltar el aviso ahora). */
+  cambio(estado: string): boolean {
+    if (this.fase === 'esperando-fondo') {
+      if (estado !== 'active') this.fase = 'esperando-delante';
+      return false;
+    }
+    if (this.fase === 'esperando-delante' && estado === 'active') {
+      this.fase = 'nada';
+      return true;
+    }
+    return false;
   }
 }
 

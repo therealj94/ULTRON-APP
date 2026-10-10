@@ -121,6 +121,11 @@ const motivoAutoridad = (a: 'suspendida' | 'desconocida') => (a === 'suspendida'
 
 const errorOauth = (res: express.Response, status: number, error: string, descripcion: string) =>
   res.status(status).setHeader('Cache-Control', 'no-store').json({ error, error_description: descripcion });
+/** El registro de cuentas no contestó: 503 `temporarily_unavailable` (RFC 6749 §4.1.2.1), con un reintento sugerido. */
+const noDisponible = (res: express.Response) => {
+  res.setHeader('Retry-After', '30');
+  return errorOauth(res, 503, 'temporarily_unavailable', `${motivoAutoridad('desconocida')}. Probá otra vez en un momento.`);
+};
 
 function esc(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -305,10 +310,13 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
       if (!k || Number(k.exp) < Date.now()) return errorOauth(res, 400, 'invalid_grant', 'Código vencido o inválido');
       if (k.cid !== clientId || k.ru !== String(b.redirect_uri || '')) return errorOauth(res, 400, 'invalid_grant', 'El código es de otro cliente o de otra dirección');
       if (s256(String(b.code_verifier || '')) !== k.cc) return errorOauth(res, 400, 'invalid_grant', 'code_verifier no corresponde');
-      if (!gastarCodigo(codigo)) return errorOauth(res, 400, 'invalid_grant', 'Ese código ya se usó');
       if (!personaConAcceso(k.c, k.nm, plataforma)) return errorOauth(res, 400, 'invalid_grant', 'La cuenta ya no tiene acceso');
+      // Revisión de fases: la cuenta se mira ANTES de gastar el código. Si el registro no contesta (`desconocida`) es una
+      // falla pasajera: 503 temporarily_unavailable y el código sigue valiendo para reintentar. Suspendida: invalid_grant.
       const vigente = await autoridadMcp(k.c);
+      if (vigente === 'desconocida') return noDisponible(res);
       if (vigente !== 'permitida') return errorOauth(res, 400, 'invalid_grant', motivoAutoridad(vigente));
+      if (!gastarCodigo(codigo)) return errorOauth(res, 400, 'invalid_grant', 'Ese código ya se usó');
       return emitir({ correo: k.c, nombre: k.nm, rol: k.rl });
     }
 
@@ -320,6 +328,8 @@ export function montarOauthMcp(app: express.Express, plataforma: Plataforma = PL
       // SEC-04: una cuenta suspendida no renueva (y su refresco se cierra: una reactivación no lo resucita).
       const vigente = await autoridadMcp(t.correo);
       if (vigente === 'suspendida') void borrarSesion(viejo);
+      // Sin poder comprobarla (registro caído): pasajero; el refresco NO se rota ni se cierra, se reintenta.
+      if (vigente === 'desconocida') return noDisponible(res);
       if (vigente !== 'permitida') return errorOauth(res, 400, 'invalid_grant', motivoAutoridad(vigente));
       // Rotación (OAuth 2.1 para clientes públicos): el refresco viejo deja de valer al usarse.
       void borrarSesion(viejo);

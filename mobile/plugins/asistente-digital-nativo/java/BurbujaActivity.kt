@@ -1,11 +1,16 @@
 package __PAQUETE__.asistente
 
+import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
+import com.facebook.react.bridge.ReactContext
+import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicReference
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
@@ -32,6 +37,15 @@ import __PAQUETE__.BuildConfig
  * Y al terminar NO apaga el motor de React si MainActivity sigue viva detrás: `onHostDestroy` avisa a todos los módulos
  * (expo-av suelta TODOS sus reproductores, también los de la mesa) y deja al motor sin actividad. Con la app abierta
  * detrás solo se desmonta la superficie de la burbuja; el motor sigue con la de la mesa.
+ *
+ * Revisión de fases (el ciclo de ReactActivityDelegate, sin descargar la app):
+ *  · si el motor YA es de MainActivity (su onResume hizo onHostResume: «Abrir en AURA», o la persona volvió a la app),
+ *    el onDestroy normal es lo correcto: `onHostDestroy(burbuja)` no toca al motor (no es su actividad) y solo desmonta
+ *    la superficie de la burbuja;
+ *  · si el motor todavía apunta a la burbuja (se cerró encima de otra app, con AURA viva detrás), se desmonta su
+ *    superficie y el motor la OLVIDA (su actividad actual queda vacía, en pausa) sin el ciclo de destrucción. Antes se
+ *    saltaba todo y el motor seguía apuntando a una actividad destruida (los módulos que piden la actividad actual
+ *    recibían esa; y la retenía en memoria). Cuando MainActivity vuelva delante, su onHostResume la pone de nuevo.
  */
 class BurbujaActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,7 +79,15 @@ class BurbujaActivity : ReactActivity() {
           }
 
         override fun onDestroy() {
-          if (actividad.laAppSigueAbierta()) reactDelegate?.unloadApp() else super.onDestroy()
+          // Sin la app detrás: el ciclo normal (el motor se queda sin actividad y se apaga como siempre).
+          if (!actividad.laAppSigueAbierta()) return super.onDestroy()
+          val host = reactHost
+          val contexto = host?.currentReactContext
+          // El motor ya es de MainActivity (o todavía no hay contexto): el ciclo normal no toca el motor.
+          if (contexto == null || contexto.currentActivity !== actividad) return super.onDestroy()
+          // Todavía apunta a la burbuja: solo su superficie, y que el motor la olvide (sin avisar a los módulos).
+          reactDelegate?.unloadApp()
+          if (!MotorReact.olvidarActividad(host, contexto, actividad)) Log.w(TAG, "el motor de React no soltó la burbuja (la retoma MainActivity al volver)")
         }
       }
     )
@@ -88,6 +110,10 @@ class BurbujaActivity : ReactActivity() {
     overridePendingTransition(0, android.R.anim.fade_out)
   }
 
+  private companion object {
+    const val TAG = "AuraBurbuja"
+  }
+
   /** ¿MainActivity está viva en su tarea? (la mesa sigue montada detrás y usa el mismo motor de React). */
   internal fun laAppSigueAbierta(): Boolean =
     try {
@@ -99,4 +125,44 @@ class BurbujaActivity : ReactActivity() {
     } catch (e: Exception) {
       false
     }
+}
+
+/**
+ * Que el motor de React (ReactHost y su ReactContext) deje de apuntar a una actividad que se destruyó, SIN el ciclo de
+ * destrucción (`onHostDestroy` avisaría a todos los módulos y apagaría lo de la mesa). React Native no tiene una forma
+ * pública de vaciar la actividad actual sin ese ciclo: se vacían sus dos referencias (la del host y la del contexto),
+ * solo si siguen siendo ESA actividad. Si una versión nueva de React Native las cambia de nombre, no se toca nada
+ * (false) y queda como antes: MainActivity la reemplaza en su próximo onHostResume.
+ */
+internal object MotorReact {
+  fun olvidarActividad(host: Any?, contexto: ReactContext?, actividad: Activity): Boolean {
+    val enHost = host == null || vaciar(host, "activity", actividad)
+    val enContexto = contexto == null || vaciar(contexto, "mCurrentActivity", actividad)
+    return enHost && enContexto
+  }
+
+  private fun vaciar(dueno: Any, campo: String, actividad: Activity): Boolean {
+    var clase: Class<*>? = dueno.javaClass
+    while (clase != null) {
+      try {
+        val f = clase.getDeclaredField(campo)
+        f.isAccessible = true
+        when (val v = f.get(dueno)) {
+          is AtomicReference<*> -> {
+            @Suppress("UNCHECKED_CAST")
+            (v as AtomicReference<Any?>).compareAndSet(actividad, null)
+          }
+          is WeakReference<*> -> if (v.get() === actividad) f.set(dueno, null)
+          null -> Unit
+          else -> return false
+        }
+        return true
+      } catch (e: NoSuchFieldException) {
+        clase = clase.superclass
+      } catch (e: Exception) {
+        return false
+      }
+    }
+    return false
+  }
 }

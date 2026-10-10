@@ -115,6 +115,7 @@ import {
 } from './server/trabajos';
 import { bloqueObjetivosDelTurno, montarRutasObjetivos } from './server/objetivos';
 import { iniciarPlanificador } from './server/planificador';
+import { esDelPlanificador } from './lib/tareas-durables';
 import { registrarCompromisos } from './lib/compromisos';
 import { pedirDecisionPorPush } from './lib/push';
 import { correrDocumento, montarRutasDocumentos } from './server/documentos';
@@ -7140,8 +7141,9 @@ async function startServer() {
     // tiene revisión programada y reconcilia los objetivos inciertos. Un lease por cosa: dos réplicas no hacen lo mismo.
     if (ES_ULTRON) {
       iniciarPlanificador({
-        // Una tarea de la API (POST /api/trabajos o de un objetivo) se trabaja como investigación de su objetivo.
-        ejecutar: async (dueno, reg) => (reg.origen.kind === 'api' && reg.entorno.kind === 'chat' && reg.entorno.id === 'api' ? investigarTareaEnCola(dueno, reg.id, reg.objetivo || reg.titulo) : 'sin-ejecutor'),
+        // Una tarea de la API (POST /api/trabajos o de un objetivo) se trabaja como investigación de su objetivo. El
+        // planificador solo llega aquí con lo suyo y autorizado (`ejecutar: true`, permiso `investigar`, dentro de los topes).
+        ejecutar: async (dueno, reg) => (esDelPlanificador(reg) ? investigarTareaEnCola(dueno, reg.id, reg.objetivo || reg.titulo) : 'sin-ejecutor'),
         revisar: (dueno, reg) => revisarTarea(depsTrabajos, dueno, reg),
         avisarDecision: (correo, p) => pedirDecisionPorPush(correo, p),
       });

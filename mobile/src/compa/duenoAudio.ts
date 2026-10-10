@@ -94,6 +94,12 @@ export type DepsOidoMesa = {
    * con tope). Si falta, el oído se reabre en el acto.
    */
   esperarAudioLibre?: () => Promise<void>;
+  /**
+   * Revisión de fases: el acuse a la burbuja (burbuja/logica.ts `burbujaAbierta.acusar`). Se llama cuando el dueño pasa a
+   * «burbuja» y la mesa TERMINÓ de soltar su micrófono (o en el acto, si no lo tenía abierto): la burbuja espera esto en
+   * vez de un respiro fijo antes de abrir el suyo (que un `muteMic` tardío de la mesa ya no lo cierre).
+   */
+  acusarBurbuja?: () => void;
   miga?: (texto: string) => void;
 };
 
@@ -136,7 +142,10 @@ export class OidoMesa {
   aplicar(nuevo: DuenoAudio): 'suelta' | 'toma' | 'nada' {
     const antes = this.dueno;
     this.dueno = nuevo;
-    if (antes === nuevo) return 'nada';
+    if (antes === nuevo) {
+      if (nuevo === 'burbuja') this.d.acusarBurbuja?.();
+      return 'nada';
+    }
     const ahoraOye = oidoPropio(nuevo);
     const antesOia = antes === null || oidoPropio(antes);
     if (ahoraOye && antesOia) {
@@ -150,8 +159,21 @@ export class OidoMesa {
       this.d.cancelarTurno();
       void this.d.stopSpeaking();
       this.d.pauseMicForTts(false);
-      void this.d.muteMic();
-      this.d.miga?.(`oído de la mesa: lo suelta (${nuevo})`);
+      // Revisión de fases: el micrófono solo se cierra si la mesa lo estaba usando (era suyo y la persona lo quería
+      // abierto). Si ya estaba cerrado (venía de «nadie», de otro dueño, o silenciado), un `muteMic` de más cerraría el
+      // del NUEVO dueño (la burbuja usa el mismo oído, prestado).
+      const loUsaba = antesOia && this.d.micQuerido();
+      const avisar = nuevo === 'burbuja' ? this.d.acusarBurbuja : undefined;
+      if (loUsaba) {
+        let hecho: Promise<unknown>;
+        try {
+          hecho = Promise.resolve(this.d.muteMic()).catch(() => undefined);
+        } catch {
+          hecho = Promise.resolve();
+        }
+        if (avisar) void hecho.then(() => avisar());
+      } else avisar?.();
+      this.d.miga?.(`oído de la mesa: lo suelta (${nuevo})${loUsaba ? '' : ' (ya estaba cerrado)'}`);
       return 'suelta';
     }
     this.d.pauseMicForTts(false);

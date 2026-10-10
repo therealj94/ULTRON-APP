@@ -190,6 +190,11 @@ export type RegistroTarea = {
   resultado?: Resultado | null;
   origen: Origen;
   objetivoId?: string;
+  /**
+   * Revisión de fases: la persona pidió EXPLÍCITAMENTE (`ejecutar: true` al crearla, o después) que el planificador la
+   * trabaje solo. Sin esto una tarea en cola NO arranca una investigación (cuesta: búsquedas y el cerebro).
+   */
+  ejecutar?: boolean;
   enlace?: EnlaceTarea;
   proximaRevision?: number;
   condicionParada: string;
@@ -273,6 +278,8 @@ export type Cambio = {
   planVersion?: number;
   /** Fase 2: el objetivo con estado al que pertenece (lib/objetivos.ts). null lo desliga. */
   objetivoId?: string | null;
+  /** La persona autorizó que el planificador la trabaje solo (ver `RegistroTarea.ejecutar`). Solo se enciende. */
+  ejecutar?: true;
   /** Eventos extra (un recibo de operación). */
   eventos?: { type: EventoTarea['type']; payload: Record<string, unknown> }[];
   /** Solo el latido: no sube la versión (una decisión vista hace un segundo sigue valiendo). */
@@ -333,6 +340,7 @@ export function aplicarCambio(reg: RegistroTarea, c: Cambio, ahora: number): { o
     if (c.objetivoId === null) delete n.objetivoId;
     else n.objetivoId = texto(c.objetivoId, 40);
   }
+  if (c.ejecutar === true) n.ejecutar = true;
   if (esTerminal(a)) {
     // Un terminal no espera nada más: ni decisión ni próxima revisión.
     n.decision = null;
@@ -366,6 +374,8 @@ export type NuevaTarea = {
   decision?: Decision | null;
   origen: Origen;
   objetivoId?: string;
+  /** Ver `RegistroTarea.ejecutar`: solo `true` explícito. */
+  ejecutar?: boolean;
   enlace?: EnlaceTarea;
   condicionParada?: string;
   proximaRevision?: number;
@@ -391,6 +401,7 @@ export function registroNuevo(id: string, d: NuevaTarea, ahora: number): Registr
     resultado: null,
     origen: d.origen,
     ...(d.objetivoId ? { objetivoId: texto(d.objetivoId, 40) } : {}),
+    ...(d.ejecutar === true ? { ejecutar: true } : {}),
     enlace: d.enlace ?? null,
     ...(d.proximaRevision ? { proximaRevision: d.proximaRevision } : {}),
     condicionParada: texto(d.condicionParada || 'Termina con evidencia, falla, o la cancelas tú.', 200),
@@ -1461,12 +1472,28 @@ export async function cambiarTarea(
 }
 
 /**
- * Fase 2: a la agenda del planificador si la tarea acaba de quedar `queued` o le pusieron (o adelantaron) una
- * `proximaRevision`. Lo mejor posible: si la agenda no se pudo escribir, la tarea sigue como está (la lista la ve igual).
+ * La persona autoriza que el planificador trabaje sola una tarea en cola que ya existía (`ejecutar: true` sobre el mismo
+ * requestId). Idempotente; vuelve a la agenda (agendarSiToca) y se borra el «Esperando que lo autorices».
+ */
+export async function autorizarEjecucion(dueno: string, id: string, o: Opciones = {}): Promise<ResultadoCambio> {
+  return cambiarTarea(dueno, id, (t) => (t.estado === 'queued' && !t.ejecutar ? { ejecutar: true, pasoActual: null } : null), o);
+}
+
+/**
+ * ¿La puede trabajar el planificador (server/planificador.ts)? Solo las tareas de la API (POST /api/trabajos o de un
+ * objetivo): `origen.kind === 'api'` y `entorno.id === 'api'`. Una misión de la computadora que va y viene de `en_cola` a
+ * `queued` (o cualquier otra) NO es suya: ni se agenda ni la toca (antes la dejaba en `waiting_resource`).
+ */
+export const esDelPlanificador = (reg: Pick<RegistroTarea, 'origen' | 'entorno'> | null | undefined): boolean => reg?.origen?.kind === 'api' && reg?.entorno?.id === 'api';
+
+/**
+ * Fase 2: a la agenda del planificador si la tarea acaba de quedar `queued` (o, en cola, la acaban de autorizar) o le
+ * pusieron (o adelantaron) una `proximaRevision`. Solo las que el planificador sabe trabajar (`esDelPlanificador`).
+ * Lo mejor posible: si la agenda no se pudo escribir, la tarea sigue como está (la lista la ve igual).
  */
 async function agendarSiToca(dueno: string, antes: RegistroTarea | null, ahora: RegistroTarea, a: AlmacenDurable): Promise<void> {
-  if (esTerminal(ahora.estado)) return;
-  const encolada = ahora.estado === 'queued' && antes?.estado !== 'queued';
+  if (esTerminal(ahora.estado) || !esDelPlanificador(ahora)) return;
+  const encolada = ahora.estado === 'queued' && (antes?.estado !== 'queued' || (!!ahora.ejecutar && !antes?.ejecutar));
   const revision = !!ahora.proximaRevision && ahora.proximaRevision !== antes?.proximaRevision;
   if (!encolada && !revision) return;
   const cuando = encolada ? ahora.actualizada : Math.max(ahora.actualizada, ahora.proximaRevision!);

@@ -174,7 +174,7 @@ import { VentanaDecision } from '../trabajos/VentanaDecision';
 import { clienteTrabajos } from '../trabajos/useTrabajos';
 import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
 import { burbujaAbierta, hiloCompartido } from '../burbuja/logica';
-import { buzonHablar } from '../entrada/enlace';
+import { buzonHablar, oidoParaHablar } from '../entrada/enlace';
 import { useHablarEnMesa } from '../entrada/hablar';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
 import { avancePrimer, clasificarTurno, debePreguntar, queRecuperar, seguirTareasPrimer, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
@@ -716,6 +716,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       silenciadoPorPersona: () => micMutedRef.current,
       // Al colgar, el oído se reabre cuando la conversación soltó de verdad el audio (como mucho 4 s).
       esperarAudioLibre: () => esperarAudioLibre(),
+      // La burbuja espera este acuse (no un respiro fijo) antes de abrir su micrófono prestado.
+      acusarBurbuja: () => burbujaAbierta.acusar(),
       miga,
     });
     // Nace dueña (la mesa se monta visible) sin abrir nada todavía: el oído lo abre el arranque, con
@@ -2819,8 +2821,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   /*
    * `ultronfp://hablar` (entrada/hablar.ts): la persona pidió hablar desde fuera (el «Abrir en AURA» de la burbuja). Se
-   * calla a AURA si hablaba, se abre el micrófono SIN decir nada (aunque lo hubiera silenciado: lo acaba de pedir) y se
-   * mide hasta que el oído escucha de verdad.
+   * calla a AURA si hablaba, se abre el micrófono SIN decir nada y se mide hasta que el oído escucha de verdad. El
+   * silencio que la persona dejó puesto solo lo quita el pedido interno de la burbuja (lo acaba de pedir hablándole); un
+   * enlace de fuera lo respeta (entrada/enlace.ts `oidoParaHablar`).
    */
   useHablarEnMesa({
     // Con la burbuja todavía abierta (el «Abrir en AURA» la está cerrando) el micrófono es suyo: se espera a que lo suelte.
@@ -2833,13 +2836,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       speakingRef.current = false;
       avisarMesa({ hablando: false });
     },
-    abrirOido: async () => {
+    abrirOido: async (p) => {
+      const queHacer = oidoParaHablar(p, micMutedRef.current);
+      if (queHacer === 'respetar-silencio') {
+        setStatus('muted');
+        showBubble(tr('Sigo con el micrófono en silencio, como lo dejaste. Tócalo para hablarme.', 'My microphone is still muted, as you left it. Tap it to talk to me.'));
+        return 'silenciado';
+      }
       const ok = await ensureSpeechPermissions();
       if (!ok) {
         pedirEnAjustes(tr('Micrófono', 'Microphone'), tr('Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.', 'I need the microphone to hear you. Turn it on in the phone settings.'));
         return false;
       }
-      if (micMutedRef.current || !oidoListo.current) {
+      if (queHacer === 'quitar-silencio' || !oidoListo.current) {
         // Arrancó silenciada: el oído nunca se armó (enableAlwaysOnMic elige el motor y cae al siguiente si hace falta).
         if (!oidoListo.current) await enableAlwaysOnMic();
         else await unmuteMic();
