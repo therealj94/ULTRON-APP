@@ -14,6 +14,8 @@ import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { FaceState } from '../config';
 import { ORBE_HTML } from '../orbe/orbeHtml';
+import { orbeConOpciones } from '../orbe/opciones';
+import { expresionDeCara, mensajeExpresion } from '../orbe/expresiones';
 
 type Props = {
   face: FaceState;
@@ -43,16 +45,8 @@ const FONDO = '#05070C';
 /** El fondo del orbe: acostado, detrás del riel de la mesa, para que no quede una franja de otro color. */
 export const FONDO_ORBE = FONDO;
 
-/**
- * El orbe con sus opciones ya puestas DENTRO de la página: sin barra ni panel de prueba, sin voz propia
- * (habla el teléfono) y con sus sonidos según Ajustes. Antes iban por `injectedJavaScriptBeforeContentLoaded`,
- * pero en Android con html propio ese guion llega tarde y el orbe salía con su panel de prueba entero
- * (José, 3-oct: «REPOSO, ESCUCHA… WEBGL2 · 60 FPS» en la mesa). Así no depende de la WebView.
- */
-export function orbeConOpciones(html: string, sonidos: boolean, margen?: { arriba: number; abajo: number }): string {
-  const guion = `<script>window.__orbeOpciones=${JSON.stringify({ clean: true, tts: false, sfx: sonidos, ...(margen ? { margen } : {}) })};</script>`;
-  return html.includes('<head>') ? html.replace('<head>', `<head>${guion}`) : guion + html;
-}
+/** El orbe con sus opciones ya puestas DENTRO de la página (orbe/opciones.ts; aquí sigue para quien lo importaba). */
+export { orbeConOpciones };
 
 export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSource, onTocar, onDeslizar, onFallo }: Props) {
   const web = useRef<WebView>(null);
@@ -95,6 +89,12 @@ export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSo
     if (hablando && frase?.texto) enviar({ tipo: 'decir', texto: frase.texto });
   }, [enviar, hablando, frase?.n, frase?.texto]);
   useEffect(() => enviar({ tipo: 'sonido', activo: sonidos }), [enviar, sonidos]);
+  // Más expresiones (José, 10-oct): la emoción del turno llega como cara (HAPPY, SAD, SURPRISED…). Aunque el orbe se quede
+  // en «habla» mientras suena la voz, la emoción se mezcla encima (color, movimiento, núcleo) y vuelve sola a lo neutro.
+  const expresion = expresionDeCara(face);
+  useEffect(() => {
+    if (expresion) enviar(mensajeExpresion(expresion));
+  }, [enviar, expresion]);
   useEffect(() => {
     if (margen) enviar({ tipo: 'margen', arriba: Math.round(margen.arriba), abajo: Math.round(margen.abajo) });
   }, [enviar, margen?.arriba, margen?.abajo]);
@@ -128,6 +128,8 @@ export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSo
           enviar({ tipo: 'sonido', activo: u.sonidos });
           if (u.margen) enviar({ tipo: 'margen', arriba: Math.round(u.margen.arriba), abajo: Math.round(u.margen.abajo) });
           enviar({ tipo: 'estado', face: u.hablando ? 'SPEAKING' : u.face });
+          const ex = expresionDeCara(u.face);
+          if (ex) enviar(mensajeExpresion(ex));
           if (u.hablando && u.frase?.texto) enviar({ tipo: 'decir', texto: u.frase.texto });
           return;
         }
