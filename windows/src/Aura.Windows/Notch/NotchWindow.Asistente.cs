@@ -789,6 +789,8 @@ public partial class NotchWindow
                     break;
                 case Microsoft.Win32.SessionSwitchReason.SessionUnlock:
                     AlDesbloquear();
+                    // De vuelta en la PC: ¿algo cambió en tus objetivos mientras no estabas? (NotchWindow.Objetivos.cs)
+                    RevisarContinuarLuego("desbloqueo", TimeSpan.FromSeconds(3));
                     break;
             }
         }));
