@@ -64,11 +64,28 @@ internal static class CentroSelfTest
                 new { id = "k2", chat = "50499887766@s.whatsapp.net", de = "", nombreDe = "", mio = true, hora = Ahora() - 3_500_000, tipo = "texto", texto = "Ya casi termino", editado = true },
                 new { id = "k3", chat = "50499887766@s.whatsapp.net", de = "50499887766@s.whatsapp.net", nombreDe = "Karla", mio = false, hora = Ahora() - 240_000, tipo = "texto", texto = "¿Ya saliste de la junta?" } } },
             "whatsapp.leido" => new { ok = true },
+            // Fase 2: «Trabajos» con un objetivo que espera una decisión (y su hoja) y una tarea en marcha.
+            "trabajos.lista" => new { objetivos = new[] { ObjetivoMuestra() }, tareas = new object[] {
+                new { id = "t1", titulo = "Buscar el contrato de 2024", estado = "running", estadoTexto = "Trabajando", espera = "Revisando tus correos de marzo", terminal = false,
+                      actualizado = DateTimeOffset.UtcNow.ToString("o"), progreso = new { hechos = 3, total = 8, unidad = "carpetas" }, objetivo = "Cerrar la venta con Maple" } },
+                aviso = (string?)null, abrir = (string?)null },
+            "objetivos.abrir" => new { objetivo = ObjetivoMuestra(), nuevos = new[] { "Preparé el borrador de la propuesta" } },
             _ => null,
         };
     }
 
     static T Hecho<T>(Action a, T v) { a(); return v; }
+
+    static object ObjetivoMuestra() => new
+    {
+        id = "ob_prueba00001", titulo = "Cerrar la venta con Maple", meta = "Propuesta firmada antes del viernes", proyecto = "", estado = "esperando-decision", estadoTexto = "Espera tu decisión",
+        espera = "Tu decisión: ¿Mando la propuesta a Karla o la revisas tú primero?", pausado = false, terminal = false, revision = 7, siguientePaso = "Enviar la propuesta", actualizado = Ahora() - 600_000, nuevo = true,
+        decision = new { id = "dob_prueba01", pregunta = "¿Mando la propuesta a Karla o la revisas tú primero?", opciones = new[] {
+            new { id = "mandar", etiqueta = "Mándala", consecuencia = "Sale hoy desde tu correo" }, new { id = "revisar", etiqueta = "La reviso yo", consecuencia = "Te la dejo en borradores" } } },
+        criterios = new[] { new { texto = "Propuesta enviada", cumplido = false } },
+        documentos = new[] { new { nombre = "Propuesta Maple.docx", version = 2L } },
+        eventos = new[] { new { revision = 7L, t = Ahora() - 600_000, texto = "Preparé el borrador de la propuesta" } },
+    };
     static long Ahora() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     public static async Task Run(string carpeta)
@@ -110,6 +127,15 @@ internal static class CentroSelfTest
                 if (hay != "true") faltan.Add(secciones[i]);
                 await w.Fotografiar(Path.Combine(carpeta, $"{i + 3:00}-{secciones[i]}.png"));
             }
+            // Trabajos (Fase 2): la lista y la hoja del objetivo con su decisión (botones de opción).
+            w.Emitir("ir", "trabajos");
+            await Task.Delay(2500);
+            if (await w.Ejecutar("!!document.querySelector('.vista-trabajos .tr-fila')") != "true") faltan.Add("trabajos");
+            await w.Fotografiar(Path.Combine(carpeta, "08b-trabajos.png"));
+            w.Emitir("objetivo.abrir", new { id = "ob_prueba00001" });
+            await Task.Delay(1500);
+            if (await w.Ejecutar("!!document.querySelector('.tr-hoja:not([hidden]) .tr-decision button')") != "true") faltan.Add("trabajos-hoja");
+            await w.Fotografiar(Path.Combine(carpeta, "08c-trabajos-hoja.png"));
             // WhatsApp (junto a PULSE2CHAT, arriba se cambia): la lista y una conversación.
             w.Emitir("ir", "whatsapp");
             await Task.Delay(2500);

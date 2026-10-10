@@ -15,6 +15,7 @@ import { autoConectarCartera } from './pulse/pagar';
 import { cerrarAura } from './cerrar';
 import { vistaInicio } from './vistas/inicio';
 import { vistaChat } from './vistas/chat';
+import { vistaTrabajos } from './vistas/trabajos';
 import { vistaMensajeria, mostrarPanel } from './vistas/mensajeria';
 import { vistaMusica } from './vistas/musica';
 import { vistaCartera } from './vistas/cartera';
@@ -26,6 +27,8 @@ type Seccion = { id: string; es: string; en: string; icono: string; crear: () =>
 export const SECCIONES: Seccion[] = [
   { id: 'inicio', es: 'Inicio', en: 'Home', icono: 'inicio', crear: vistaInicio },
   { id: 'chat', es: 'Chat', en: 'Chat', icono: 'chat', crear: vistaChat },
+  // Fase 2: tus objetivos y tareas, y la hoja de cada objetivo (el notch abre aquí con «Continuar»).
+  { id: 'trabajos', es: 'Trabajos', en: 'Work', icono: 'trabajos', crear: vistaTrabajos },
   // PULSE2CHAT y, para la cuenta dueña, su WhatsApp personal: misma sección, se cambia arriba (o deslizando).
   { id: 'pulse', es: 'PULSE2CHAT', en: 'PULSE2CHAT', icono: 'pulse', crear: vistaMensajeria },
   { id: 'musica', es: 'Música', en: 'Music', icono: 'musica', crear: vistaMusica },
