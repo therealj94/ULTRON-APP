@@ -164,6 +164,10 @@ import { avisarTrabajos, useTrabajos } from '../trabajos/useTrabajos';
 import { IndicadorTrabajos } from '../trabajos/IndicadorTrabajos';
 import { PanelTrabajos } from '../trabajos/PanelTrabajos';
 import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
+import { escucharPedidoObjetivo, tomarPedidoObjetivo } from '../objetivos/abrirObjetivo';
+import { useObjetivos } from '../objetivos/useObjetivos';
+import { TarjetaContinuar } from '../objetivos/TarjetaContinuar';
+import { HojaObjetivo } from '../objetivos/HojaObjetivo';
 // La ventana de decisión de la mesa (José, 5-oct): Sí · No · Editar, también por voz, en orden.
 import { useVentanaDecision } from '../trabajos/useVentanaDecision';
 import { VentanaDecision } from '../trabajos/VentanaDecision';
@@ -520,6 +524,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     };
     abrir();
     return escucharPedidoPanel(abrir);
+  }, []);
+
+  // Los objetivos con estado (Fase 2): «Continuar trabajo» con el más reciente y su hoja. Un aviso «Necesito tu decisión»
+  // tocado pide la hoja de ESE objetivo (al montarse la mesa o al instante).
+  const [objetivoAbierto, setObjetivoAbierto] = useState<string | null>(null);
+  useObjetivos({ activo: mesaActiva || !!objetivoAbierto, conSesion: !!user.correo });
+  useEffect(() => {
+    const p = tomarPedidoObjetivo();
+    if (p) setObjetivoAbierto(p);
+    return escucharPedidoObjetivo(() => {
+      const id = tomarPedidoObjetivo();
+      if (id) setObjetivoAbierto(id);
+    });
   }, []);
 
   // Su computadora: se pregunta despacio (rápido mientras trabaja) con la mesa a la vista. Mientras
@@ -3576,6 +3593,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         <>
         {/* «Trabajando · 2» / «Necesito una decisión · 1»: arriba a la derecha, frente al estado; nunca abajo con el teclado. */}
         <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => (ventana.abrirDesdeIndicador() ? undefined : setPanelTrabajos(true))} style={[styles.trabajos, riel && { right: anchoR + 8 }]} />
+        {/* «Continuar trabajo» (Fase 2): el objetivo abierto más reciente, debajo del estado; no compite con el aviso de su computadora. */}
+        {!pcAviso && !tutorialAbierto ? (
+          <View pointerEvents="box-none" style={[styles.continuar, riel && { left: Math.max(16, ins.left + 8), right: anchoR + 16 }]}>
+            <TarjetaContinuar onAbrir={setObjetivoAbierto} />
+          </View>
+        ) : null}
         {/* «¿Te sirvió?» del primer resultado: abajo, por encima de la barra y del subtítulo (hasta tres líneas), sin tapar lo que dice la persona arriba. */}
         {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }, riel && { left: Math.max(16, ins.left + 8), right: anchoR + 16 }]}>{preguntaPrimer}</View>}
 
@@ -3768,6 +3791,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }}
       />
 
+      {/* La hoja del objetivo (Fase 2): meta, criterios, documentos, decisiones y eventos; cerrarla no cancela nada. */}
+      <HojaObjetivo id={objetivoAbierto} onCerrar={() => setObjetivoAbierto(null)} />
+
       {/* La ventana de decisión (José, 5-oct): Sí · No · Editar, también por voz; cerrarla es «Luego». */}
       <VentanaDecision v={ventana} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
 
@@ -3856,6 +3882,8 @@ const styles = StyleSheet.create({
   // El indicador de tareas (AUR08): arriba a la derecha, a la altura del estado; el cuadro del chat lo lleva dentro.
   trabajos: { position: 'absolute', top: 12, right: 16, zIndex: 35 },
   trabajosCuadro: { position: 'absolute', top: 10, right: 10, zIndex: 35 },
+  // «Continuar trabajo»: debajo de la fila del estado y del indicador de tareas (top 12 + 40 de alto + aire).
+  continuar: { position: 'absolute', top: 62, left: 16, right: 16, alignItems: 'center', zIndex: 34 },
   primerCuadro: { position: 'absolute', bottom: 10, left: 10, right: 10, alignItems: 'center', zIndex: 36 },
   primerFlota: { position: 'absolute', left: 16, right: 16, alignItems: 'center', zIndex: 36 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },

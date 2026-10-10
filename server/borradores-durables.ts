@@ -12,6 +12,9 @@
  *   · no venció y no consta que ya salió (lib/envios.ts `reciboDeBorrador`).
  * El envío sigue pasando por la operación una-vez del borrador (lib/envios.ts): rehidratar nunca lo manda dos veces.
  *
+ * Descartar (cancelar su objetivo, rechazarlo en el panel) deja una marca durable por dueño + intento
+ * (`descartarBorradorDurable`): ninguna réplica lo rehidrata después, aunque su huella siga siendo la misma.
+ *
  * Lo que no se guarda: los bytes de un archivo adjunto de WhatsApp (viven solo en la memoria, a propósito): un borrador
  * con archivo no es durable y tras un reinicio pide armarse otra vez.
  */
@@ -22,6 +25,7 @@ export type CanalBorrador = 'correo' | 'whatsapp';
 type Guardado<B> = { v: 1; canal: CanalBorrador; ambito: string; intento: string; huella: string; vence: number; b: B };
 
 const claveBorrador = (canal: CanalBorrador, dueno: string, intento: string, huella: string) => claveDe(`borradores/${canal}`, dueno, `${intento}:${huella}`);
+const claveDescartado = (canal: CanalBorrador, dueno: string, intento: string) => claveDe(`borradores/${canal}/descartados`, dueno, intento);
 const amb = (ambito: string) => String(ambito || 'general').slice(0, 80);
 
 /** Lo que falta por escribir (para las pruebas: «reiniciar» después de que todo quedó guardado). */
@@ -51,10 +55,24 @@ export async function leerBorradorDurable<B>(canal: CanalBorrador, dueno: string
   const g = l.valor;
   if (g.v !== 1 || g.canal !== canal || g.intento !== intento || g.huella !== huella || g.ambito !== amb(ambito)) return null;
   if (!((o.ahora ?? Date.now()) <= g.vence)) return null;
+  // Descartado (su objetivo se canceló, o se rechazó): no vuelve. Si no se puede saber, tampoco (fallo cerrado).
+  const desc = await leerDurable<{ t: number }>(claveDescartado(canal, dueno, intento), a).catch(() => null);
+  if (!desc || desc.ok === false || desc.valor) return null;
   // Si ya consta que salió (o no se sabe), no vuelve a esperar un «sí».
   const recibo = await reciboDeBorrador(canal, dueno, intento, a).catch(() => 'incierto' as const);
   if (recibo !== 'ninguno') return null;
   return g.b;
+}
+
+/**
+ * Descarta el borrador de ESE intento en lo durable (una marca por dueño + intento, con cualquier huella): después,
+ * `leerBorradorDurable` no lo devuelve y ninguna réplica lo vuelve a poner a esperar. true si la marca quedó (o ya estaba).
+ * Nunca lanza.
+ */
+export async function descartarBorradorDurable(canal: CanalBorrador, dueno: string, intento: string, a?: AlmacenDurable, ahora = Date.now()): Promise<boolean> {
+  if (!dueno || !intento) return false;
+  const r = await crearUnaVez(claveDescartado(canal, dueno, intento), { t: ahora }, a || almacenDurable()).catch(() => null);
+  return !!r && r.ok === true;
 }
 
 /** Solo pruebas: espera a que terminen las escrituras pendientes. */

@@ -27,7 +27,7 @@
  * después de aparecer la decisión (lib/trabajos.ts). La lógica, en lib/decisionesMesa.ts y useVentanaDecision.ts.
  */
 import { useEffect, useState } from 'react';
-import { StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Hoja, Texto } from '../ui';
@@ -46,12 +46,19 @@ export function VentanaDecision({ v, nombreAvatar }: Props) {
   // La opción con efecto se arma ARMADO_MS después de que aparece ESTA decisión (no se toca sin querer).
   const [armada, setArmada] = useState(false);
   const clave = v.item?.clave ?? '';
+  const conEfecto = v.botones.some((b) => b.conEfecto);
+  const etiquetaEfecto = v.botones.find((b) => b.conEfecto)?.etiqueta ?? '';
   useEffect(() => {
     setArmada(false);
     if (!clave) return;
-    const r = setTimeout(() => setArmada(true), Math.max(0, v.armadaDesde + ARMADO_MS + 30 - Date.now()));
+    const r = setTimeout(() => {
+      setArmada(true);
+      // Revisión de accesibilidad (Fase 2): el botón con efecto se habilitó a los ARMADO_MS; quien no ve la pantalla no se
+      // enteraba (seguía oyendo «deshabilitado»). Se anuncia una vez por decisión.
+      if (conEfecto) AccessibilityInfo.announceForAccessibility(tr(`Ya puedes tocar «${etiquetaEfecto}».`, `You can tap «${etiquetaEfecto}» now.`));
+    }, Math.max(0, v.armadaDesde + ARMADO_MS + 30 - Date.now()));
     return () => clearTimeout(r);
-  }, [clave, v.armadaDesde]);
+  }, [clave, v.armadaDesde]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!v.item || !d) return <Hoja visible={false} onCerrar={() => undefined}>{null}</Hoja>;
   const editando = !!v.edicion && v.edicion.clave === clave;
