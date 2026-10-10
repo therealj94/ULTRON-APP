@@ -42,8 +42,10 @@ import {
   type TareaParaObjetivo,
 } from '../lib/objetivos';
 import { claveManifiesto, type ManifiestoArchivo } from '../lib/oficina/almacen';
+import { bloqueObjetivosTurno } from '../lib/objetivos-turno';
 import { pedirDecisionPorPush, type PushDecision } from '../lib/push';
-import { cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea } from '../lib/tareas-durables';
+import { cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea, type Vinculo } from '../lib/tareas-durables';
+import { descartarBorradorDurable } from './borradores-durables';
 
 export type DepsObjetivos = {
   /** Las puertas de siempre: la sesión de la mesa y `exigirPlataforma('ultron')` (Dr Electrum no entra). */
@@ -55,6 +57,11 @@ export type DepsObjetivos = {
   revisarTarea?: (dueno: string, reg: RegistroTarea) => Promise<RegistroTarea>;
   /** El aviso «necesito tu decisión» (lib/push.ts `pedirDecisionPorPush`, que lo manda una vez por decisión + revisión). */
   avisarDecision?: (correo: string, p: PushDecision) => Promise<unknown>;
+  /**
+   * Los borradores en la memoria del proceso (server/correo.ts, server/whatsapp.ts; server.ts pasa los de las tareas):
+   * cancelar el objetivo descarta los que esperaban el «sí» de sus tareas, para que un «sí» en el chat no los mande.
+   */
+  borradores?: { descartar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<unknown> };
   almacen?: AlmacenDurable;
 };
 
@@ -114,6 +121,79 @@ export async function reconciliarObjetivoConTareas(
   if (!r || r.ok === false) return obj;
   if (r.cambiado && r.objetivo.estado === 'esperando-decision') await avisarDecisionesPendientes(dueno, r.objetivo, leidas, o.avisarDecision);
   return r.objetivo;
+}
+
+/* ------------------------------------------------------------------ cancelar: los borradores de sus tareas */
+
+/**
+ * Cancelar el objetivo descarta el borrador (correo o WhatsApp) que esperaba el «sí» de una de sus tareas: en lo durable
+ * (una marca por intento: ninguna réplica lo rehidrata) y en la memoria del proceso (`borradores.descartar`, que también
+ * lo anota como rechazado: un turno de voz descartado no lo repone). Así un «sí» suelto en el chat, después, no lo manda.
+ * Nunca lanza.
+ */
+export async function descartarBorradoresDeTarea(
+  dueno: string,
+  vinc: { canal: 'correo' | 'whatsapp'; ambito: string; intento: string } | null,
+  o: { almacen?: AlmacenDurable; borradores?: DepsObjetivos['borradores']; ahora?: number } = {}
+): Promise<boolean> {
+  if (!vinc?.intento) return false;
+  await descartarBorradorDurable(vinc.canal, dueno, vinc.intento, o.almacen, o.ahora).catch(() => false);
+  if (o.borradores) await Promise.resolve(o.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento)).catch(() => undefined);
+  return true;
+}
+
+/* ------------------------------------------------------------------ el bloque del turno de AU-RA */
+
+/** Cuánto vale lo leído para el turno (los cambios por las rutas lo olvidan antes). */
+export const OBJETIVOS_TURNO_VIVE_MS = 60_000;
+/** Cuánto espera el turno a leerlos (la voz no puede esperar al almacén): después, lo que había. */
+export const OBJETIVOS_TURNO_ESPERA_MS = 250;
+const delTurno = new Map<string, { t: number; bloque: string }>();
+const leyendoTurno = new Map<string, Promise<string>>();
+
+/** Algo cambió en los objetivos de esta persona: el próximo turno los vuelve a leer. */
+export function olvidarObjetivosDelTurno(dueno: string): void {
+  delTurno.delete(conCorreo(dueno));
+}
+
+/**
+ * El bloque de sus objetivos abiertos para el turno (lib/objetivos-turno.ts, ≤400 caracteres), solo AU-RA. Lee del
+ * almacén a lo más OBJETIVOS_TURNO_ESPERA_MS; si tarda, va lo último que se supo (o nada) y la lectura sigue para el
+ * turno siguiente. Nunca lanza.
+ */
+export async function bloqueObjetivosDelTurno(correo: string, o: { plataforma: string; almacen?: AlmacenDurable; esperaMs?: number; ahora?: number }): Promise<string> {
+  const dueno = conCorreo(correo);
+  if (!dueno || o.plataforma !== 'ultron') return '';
+  const ahora = o.ahora ?? Date.now();
+  const previo = delTurno.get(dueno);
+  if (previo && ahora - previo.t < OBJETIVOS_TURNO_VIVE_MS) return previo.bloque;
+  let p = leyendoTurno.get(dueno);
+  if (!p) {
+    p = listarObjetivos(dueno, o.almacen || almacenDurable())
+      .then((l) => {
+        if (l.ok === false) return previo?.bloque ?? '';
+        const bloque = bloqueObjetivosTurno(l.objetivos, { plataforma: 'ultron' });
+        delTurno.set(dueno, { t: Date.now(), bloque });
+        while (delTurno.size > 500) delTurno.delete(delTurno.keys().next().value as string);
+        return bloque;
+      })
+      .catch(() => previo?.bloque ?? '')
+      .finally(() => leyendoTurno.delete(dueno));
+    leyendoTurno.set(dueno, p);
+  }
+  let reloj: ReturnType<typeof setTimeout> | undefined;
+  const tarde = new Promise<string>((r) => (reloj = setTimeout(() => r(previo?.bloque ?? ''), o.esperaMs ?? OBJETIVOS_TURNO_ESPERA_MS)));
+  try {
+    return await Promise.race([p, tarde]);
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+/** Solo pruebas. */
+export function _olvidarObjetivosDelTurno(): void {
+  delTurno.clear();
+  leyendoTurno.clear();
 }
 
 /* ------------------------------------------------------------------ rutas */
@@ -215,6 +295,7 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
       { almacen: alm(), ahora: ahora() }
     ).catch((e) => ({ ok: false as const, error: new ErrorObjetivo('almacen', String(e?.message || e)) }));
     if (r.ok === false) return responderError(res, r.error);
+    olvidarObjetivosDelTurno(dueno);
     return res.status(r.creado ? 201 : 200).json({ objetivo: vistaObjetivo(r.objetivo), creado: r.creado, honesto: true });
   });
 
@@ -231,6 +312,7 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
     const aparato = aparatoValido(b.aparato) || aparatoValido(req.headers['x-aura-aparato']) || undefined;
     const r = await decidirObjetivo(dueno, String(req.params.id || ''), { decisionId, opcion, revisionVista, aparato, por: 'persona' }, { almacen: alm(), ahora: ahora() });
     if (r.ok === false) return responderError(res, r.error);
+    olvidarObjetivosDelTurno(dueno);
     return res.json({ objetivo: vistaObjetivo(r.objetivo), ...(r.repetida ? { repetida: true } : {}), honesto: true });
   });
 
@@ -261,18 +343,24 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
       // reconcilia por su cuenta (no se finge que se paró).
       if (control === 'cancelar' && r.cambiado) {
         const quietas: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['created', 'planning', 'queued', 'waiting_resource', 'awaiting_approval', 'blocked', 'paused']);
-        for (const id of obj.tareas) {
-          await cambiarTarea(
+        for (const id of r.objetivo.tareas) {
+          // El borrador que esperaba el «sí» de esta tarea (lo que tenía al cancelarla, no lo de un reintento anterior).
+          let vinc: Extract<Vinculo, { tipo: 'borrador' }> | null = null;
+          const c = await cambiarTarea(
             dueno,
             id,
-            (t) =>
-              esTerminal(t.estado) || !quietas.has(t.estado)
-                ? null
-                : { estado: 'cancelled', pasoActual: null, decision: null, resultado: { id: `${t.id}:resultado`, resumen: 'Cancelada con su objetivo antes de hacer nada con efecto.', evidencias: [], parcial: [], pendiente: [], t: ahora() } },
+            (t) => {
+              vinc = null;
+              if (esTerminal(t.estado) || !quietas.has(t.estado)) return null;
+              vinc = t.decision?.vinculo?.tipo === 'borrador' ? t.decision.vinculo : null;
+              return { estado: 'cancelled', pasoActual: null, decision: null, resultado: { id: `${t.id}:resultado`, resumen: 'Cancelada con su objetivo antes de hacer nada con efecto.', evidencias: [], parcial: [], pendiente: [], t: ahora() } };
+            },
             { almacen: alm(), ahora: ahora() }
           ).catch(() => null);
+          if (c?.ok) await descartarBorradoresDeTarea(dueno, vinc, { almacen: alm(), borradores: d.borradores, ahora: ahora() });
         }
       }
+      olvidarObjetivosDelTurno(dueno);
       return res.json({ objetivo: vistaObjetivo(r.objetivo), ...(r.cambiado ? {} : { sinCambio: true }), honesto: true });
     });
   }
@@ -302,6 +390,7 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
     }
     const r = await cambiarObjetivo(dueno, e.obj.id, () => ({ evidencias, estado: 'completado', evento: 'Lo cerraste: cada criterio tiene su evidencia' }), { almacen: alm(), ahora: ahora(), revisionEsperada });
     if (r.ok === false) return responderError(res, r.error);
+    olvidarObjetivosDelTurno(dueno);
     return res.json({ objetivo: vistaObjetivo(r.objetivo), honesto: true });
   });
 
@@ -335,6 +424,7 @@ export function montarRutasObjetivos(app: express.Express, d: DepsObjetivos) {
     );
     if (r.ok === false) return responderError(res, r.error);
     const documento = r.objetivo.documentos.find((x) => x.id === archivoId) || r.objetivo.documentos.find((x) => x.vigente && x.sha256 === m.sha256) || null;
+    olvidarObjetivosDelTurno(dueno);
     return res.json({ objetivo: vistaObjetivo(r.objetivo), documento, ...(r.cambiado ? {} : { sinCambio: true }), honesto: true });
   });
 
@@ -393,6 +483,7 @@ export async function pedirDecisionObjetivo(
   if (!dueno) return { ok: false, error: new ErrorObjetivo('invalido', 'Sin cuenta no hay objetivos.') };
   const r = await pedirDecision(dueno, objetivoId, d, { almacen: o.almacen, ahora: o.ahora, revisionEsperada: o.revisionEsperada });
   if (r.ok === false) return r;
+  olvidarObjetivosDelTurno(dueno);
   const nueva = [...r.objetivo.decisiones].reverse().find((x) => !x.elegida)!;
   await avisarDecisionesPendientes(dueno, r.objetivo, [], o.avisarDecision ?? ((c, p) => pedirDecisionPorPush(c, p, { almacen: o.almacen })));
   return { ok: true, objetivo: r.objetivo, decisionId: nueva.id };

@@ -113,7 +113,7 @@ import {
   revisarTarea,
   type DepsTrabajos,
 } from './server/trabajos';
-import { montarRutasObjetivos } from './server/objetivos';
+import { bloqueObjetivosDelTurno, montarRutasObjetivos } from './server/objetivos';
 import { iniciarPlanificador } from './server/planificador';
 import { registrarCompromisos } from './lib/compromisos';
 import { pedirDecisionPorPush } from './lib/push';
@@ -146,6 +146,7 @@ import {
   type MotorNodo,
 } from './server/computadora';
 import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, rehidratarBorradorCorreo, respuestaAlBorrador } from './server/correo';
+import { descartarBorradorDurable } from './server/borradores-durables';
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
@@ -1911,7 +1912,11 @@ const depsTrabajos: DepsTrabajos = {
     // Fase 2 (server/borradores-durables.ts): tras un reinicio o desde otra réplica, el borrador de ESE intento y ESA huella
     // vuelve de lo durable (la memoria del proceso sigue siendo el camino rápido).
     rehidratar: (correo, canal, ambito, intento, huella) => (canal === 'correo' ? rehidratarBorradorCorreo(correo, ambito, intento, huella) : rehidratarBorradorWhatsapp(correo, ambito, intento, huella)),
-    descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
+    // Descartar también deja la marca durable (server/borradores-durables.ts): ninguna réplica lo rehidrata después.
+    descartar: async (correo, canal, ambito, intento) => {
+      await descartarBorradorDurable(canal, correo, intento).catch(() => false);
+      return resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no');
+    },
     // «Editar» de la ventana de decisión: el borrador nuevo (otro intento y huella) espera su propio «sí»; nada sale.
     editar: (correo, canal, ambito, intento, huella, cambios) => {
       if (canal === 'correo') {
@@ -1939,6 +1944,8 @@ montarRutasObjetivos(app, {
   sesionDe: (req) => sesionDe(req),
   revisarTarea: (dueno, reg) => revisarTarea(depsTrabajos, dueno, reg),
   avisarDecision: (correo, p) => pedirDecisionPorPush(correo, p),
+  // Cancelar el objetivo descarta los borradores que esperaban el «sí» de sus tareas (memoria y durable).
+  borradores: depsTrabajos.borradores,
 });
 // Investigar en segundo plano (server/investigar.ts): las mismas piezas que `web` y `leer` (con urlPublica), el
 // mismo cerebro de las vueltas del harness (redactarConCerebro) y el aviso al teléfono (y al navegador).
@@ -3817,7 +3824,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // (server/prompt-turno.ts).
   // Su cerebro continuo: lo que quedó a medias y lo que hablaron antes de esto (en el mensaje del turno), y
   // lo que AU-RA sabe de su vida (en lo fijo, sin la firma: aprender un dato no rehace el system).
-  const bloqueCerebro = personal.bloqueCerebro;
+  // Sus objetivos abiertos (Fase 2, lib/objetivos-turno.ts): «sigue con lo de…», «¿en qué quedamos?» se contestan desde
+  // ahí. Solo AU-RA y con la sesión de la app; ≤400 caracteres; lee del almacén a lo más 250 ms (si no, lo último sabido).
+  const bloqueObjetivos = correoApp ? await bloqueObjetivosDelTurno(correoApp, { plataforma: ES_ULTRON ? 'ultron' : 'electrum' }).catch(() => '') : '';
+  const bloqueCerebro = [personal.bloqueCerebro, bloqueObjetivos ? vista.texto(bloqueObjetivos) : ''].filter(Boolean).join('\n\n');
   const conocer = personal.conocer;
   const argsPiezas: Parameters<typeof piezasDelTurno>[0] = {
     nivel,
