@@ -68,6 +68,11 @@ export type Contexto = {
    */
   historial?: Array<{ role: 'user' | 'assistant'; content: string }>;
   /**
+   * Lo que hay encendido en el mapa de quien pregunta (Dr Electrum): lo manda el panel de capas con
+   * cada pregunta. Undefined si la pregunta no viene de una pantalla con mapa (Telegram, MCP).
+   */
+  mapa?: { capas: Array<{ id: number; filtros: Record<string, string[]> }> } | null;
+  /**
    * Se dispara si quien preguntaba se fue (auditoría H09). Una herramienta que hace `fetch` largo
    * puede pasarla para cortar; el bucle deja de esperarla igual.
    */

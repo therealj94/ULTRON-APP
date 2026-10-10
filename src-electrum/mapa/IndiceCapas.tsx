@@ -28,6 +28,20 @@ import {
 } from './indice';
 import { normalizar } from './categorias';
 import { leyendaProsp } from './prospectividad';
+import { colorDeValor, cumpleFiltros, leyendaDe, type EntradaCatalogo, type Filtros } from './catalogo';
+import { fijarEstadoMapa } from './estado-mapa';
+
+/** Una orden de Dr Electrum para el índice (server/electrum/dialogo-capas.ts → OrdenMapa). */
+export type OrdenIndice =
+  | { op: 'encender'; id: number; filtros?: Filtros; encuadrar?: boolean }
+  | { op: 'filtro'; id: number; filtros: Filtros }
+  | { op: 'apagar'; id: number }
+  | { op: 'solo'; ids: number[] }
+  | { op: 'limpiar' }
+  | { op: 'acercar'; id: number; filtros?: Filtros };
+
+/** Las subcarpetas de un proyecto, en este orden. */
+const ORDEN_SUBGRUPO = ['KML', 'Shape', 'Datos de campo', 'Imágenes', 'Planos'];
 
 const AMBAR = '#FFAE3B';
 const HONDURAS: [number, number, number, number] = [-89.4, 12.9, -83.1, 16.6];
@@ -72,6 +86,7 @@ export function IndiceCapas({
   onProspectividad,
   pedido = null,
   onRespuesta,
+  ordenes = null,
 }: {
   onExtras: (xs: CapaExtra[]) => void;
   onRasters: (xs: RasterEncendido[]) => void;
@@ -83,6 +98,8 @@ export function IndiceCapas({
   onProspectividad?: (v: boolean) => void;
   pedido?: PedidoCapas | null;
   onRespuesta?: (texto: string, ok: boolean) => void;
+  /** Lo que mandó hacer Dr Electrum: se hace con las MISMAS funciones que las casillas. */
+  ordenes?: { n: number; lista: OrdenIndice[] } | null;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [capas, setCapas] = useState<EntradaIndice[] | null>(null);
@@ -237,7 +254,7 @@ export function IndiceCapas({
       if (!e) continue;
       const clase = claseDeFuente(e);
       if (clase === 'base' && datos.current.has(id)) {
-        extras.push({ id, nombre: e.nombre, rol: rolDe(e) as any, geojson: datos.current.get(id) as any, opacidad: est.opacidad, filtro: expresionFiltro(est.filtros), color: colorDe(e) });
+        extras.push({ id, nombre: e.nombre, rol: rolDe(e) as any, geojson: datos.current.get(id) as any, opacidad: est.opacidad, filtro: expresionFiltro(est.filtros), color: colorDe(e), estilo: e.estilo?.tipo ?? null });
       } else if (clase === 'tesela') {
         for (const f of e.fuentes || []) {
           const r = f.tesela ? rastersIdx.find((x) => x.clave === f.tesela) : null;
@@ -256,6 +273,65 @@ export function IndiceCapas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, version, capas, rastersIdx]);
 
+  /* ---------------------------------------------------------------- Dr Electrum */
+
+  // Lo encendido, para que Electrum lo sepa en la pregunta siguiente (de lo más viejo a lo más nuevo).
+  useEffect(() => {
+    fijarEstadoMapa({ capas: [...on].map(([id, e]) => ({ id, filtros: e.filtros })) });
+  }, [on]);
+
+  const filtrar = useCallback((id: number, filtros: Filtros) => {
+    setOn((m) => {
+      const n = new Map<number, Estado>(m);
+      const base: Estado = n.get(id) || { opacidad: 0.85, filtros: {} };
+      n.set(id, { ...base, filtros });
+      return n;
+    });
+  }, []);
+
+  /** Encuadra una capa, o solo sus rasgos filtrados si ya están bajados. */
+  const acercar = useCallback(
+    (id: number, filtros?: Filtros) => {
+      const e = porId.get(id);
+      const fc = datos.current.get(id) as { features?: Array<{ geometry: any; properties: Record<string, unknown> }> } | undefined;
+      if (fc?.features?.length) {
+        let caja: [number, number, number, number] | null = null;
+        const sumar = (c: any): void => {
+          if (typeof c?.[0] === 'number') {
+            caja = caja ? [Math.min(caja[0], c[0]), Math.min(caja[1], c[1]), Math.max(caja[2], c[0]), Math.max(caja[3], c[1])] : [c[0], c[1], c[0], c[1]];
+          } else if (Array.isArray(c)) c.forEach(sumar);
+        };
+        for (const f of fc.features) if (cumpleFiltros((k) => f.properties?.[k], filtros)) sumar(f.geometry?.coordinates);
+        if (caja) return onEncuadrar(caja);
+      }
+      if (e?.caja) onEncuadrar(e.caja);
+    },
+    [porId, onEncuadrar]
+  );
+
+  const hechas = useRef(0);
+  useEffect(() => {
+    if (!ordenes || ordenes.n === hechas.current || !capas) return;
+    hechas.current = ordenes.n;
+    for (const o of ordenes.lista) {
+      if (o.op === 'limpiar') {
+        setOn(new Map());
+        setFiltroAbierto(null);
+      } else if (o.op === 'solo') apagar([...on.keys()].filter((i) => !o.ids.includes(i)));
+      else if (o.op === 'apagar') apagar([o.id]);
+      else if (o.op === 'filtro') {
+        if (!on.has(o.id)) void encender([o.id], { filtros: o.filtros });
+        else filtrar(o.id, o.filtros);
+      } else if (o.op === 'encender') {
+        if (on.has(o.id)) filtrar(o.id, o.filtros || {});
+        else void encender([o.id], { filtros: o.filtros || {} }).then(() => o.encuadrar && acercar(o.id, o.filtros));
+      } else if (o.op === 'acercar') {
+        if (!on.has(o.id)) void encender([o.id], { filtros: o.filtros || {} }).then(() => acercar(o.id, o.filtros));
+        else acercar(o.id, o.filtros);
+      }
+    }
+  }, [ordenes, capas, on, encender, apagar, filtrar, acercar]);
+
   /* ---------------------------------------------------------------- de palabra */
 
   const atendido = useRef(0);
@@ -263,6 +339,7 @@ export function IndiceCapas({
     if (!pedido || pedido.n === atendido.current || !capas) return;
     atendido.current = pedido.n;
     const r = resolverIndice(pedido.que, arbol);
+    if (r.varias?.length) return void onRespuesta?.(`«${pedido.que}» puede ser ${r.varias.join(' o ')}. ¿Cuál?`, false);
     if (!r.ids.length) return void onRespuesta?.(`No encontré «${pedido.que}» en el índice de capas.`, false);
     if (pedido.mostrar && r.todo) return void onRespuesta?.('Son demasiadas para encenderlas todas juntas. Pídame una categoría: la geología, los ríos, el catastro…', false);
     if (pedido.solo) apagar([...on.keys()].filter((i) => !r.ids.includes(i)));
@@ -352,7 +429,7 @@ export function IndiceCapas({
               </span>
             </button>
           </div>
-          {ab && <ul>{n.hijos.map((h) => fila(h, nivel + 1))}</ul>}
+          {ab && <ul>{conSubgrupos(n.hijos).map((h) => ('titulo' in h ? <li key={`${n.id}-${h.titulo}`} className="mt-1 px-1 font-mono text-[9.5px] uppercase tracking-[0.12em] text-[#7F939D]" style={{ paddingLeft: 8 + (nivel + 1) * 12 }}>{h.titulo}</li> : fila(h, nivel + 1)))}</ul>}
         </li>
       );
     }
@@ -379,7 +456,7 @@ export function IndiceCapas({
               className="mt-[3px] accent-[#FFAE3B]"
             />
           )}
-          {!doc && <span className="mt-[5px] h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: puede ? colorDe(n) : '#3A4248' }} />}
+          {!doc && <Muestra e={n} activa={puede} />}
           <span className="min-w-0 flex-1">
             {doc ? (
               <button type="button" onClick={() => void abrirPlano(n)} disabled={!n.ruta_web} className="block text-left leading-snug text-[#CFE2EA] underline decoration-white/20 underline-offset-2 hover:text-white cursor-pointer disabled:opacity-40">
@@ -393,7 +470,7 @@ export function IndiceCapas({
             <span className="block font-mono text-[9.5px] text-[#61717A]">
               {String(n.id).padStart(6, '0')}
               {carga ? ' · cargando…' : ''}
-              {!puede && !doc ? ' · no disponible' : ''}
+              {!puede && !doc ? (n.sin_datos || !n.fuentes?.length ? ' · Sin datos' : ' · no disponible') : ''}
               {n.num_entidades ? ` · ${n.num_entidades.toLocaleString('es-HN')} rasgos` : ''}
               {est && hayFiltro(est.filtros) ? <span style={{ color: AMBAR }}> · filtrado</span> : null}
             </span>
@@ -448,12 +525,18 @@ export function IndiceCapas({
                     )}
                   </div>
                   <div className="flex max-h-[140px] flex-wrap gap-1 overflow-y-auto">
-                    {f.valores.map((v) => (
-                      <label key={v} className={`flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${marcados.includes(v) ? 'border-[#FFAE3B]/70 bg-[#FFAE3B]/15 text-[#FFE2B8]' : 'border-white/12 text-[#C9D5DB] hover:border-white/30'}`}>
-                        <input type="checkbox" className="sr-only" checked={marcados.includes(v)} onChange={() => cambiar(v)} />
-                        {v}
-                      </label>
-                    ))}
+                    {f.valores.map((v) => {
+                      // Junto a cada valor, su color en el mapa (correcciones v1.0, 2.3).
+                      const col = colorDeValor(n as EntradaCatalogo, f.campo, v);
+                      const etq = n.estilo?.campo === f.campo ? n.estilo.categorias?.find((c) => c.valor === v)?.etiqueta : undefined;
+                      return (
+                        <label key={v} className={`flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${marcados.includes(v) ? 'border-[#FFAE3B]/70 bg-[#FFAE3B]/15 text-[#FFE2B8]' : 'border-white/12 text-[#C9D5DB] hover:border-white/30'}`}>
+                          <input type="checkbox" className="sr-only" checked={marcados.includes(v)} onChange={() => cambiar(v)} />
+                          {col && <span className="h-2.5 w-2.5 shrink-0 rounded-sm border border-black/40" style={{ background: col }} aria-hidden />}
+                          {etq || v}
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -518,14 +601,30 @@ export function IndiceCapas({
 
       {/* La leyenda: solo de lo encendido, y solo con el índice cerrado. */}
       {!abierto && encendidas.length > 0 && (
-        <div className="pointer-events-none absolute left-3 bottom-12 z-10 max-w-[240px] rounded-lg border border-white/10 bg-black/70 px-2.5 py-1.5 text-[10.5px] text-[#DCE5EA] backdrop-blur-md">
-          {encendidas.slice(-8).reverse().map((e) => (
-            <div key={e.id} className="flex items-center gap-1.5 truncate">
-              <span className="h-2 w-2.5 shrink-0 rounded-sm" style={{ background: colorDe(e) }} />
-              <span className="truncate">{e.nombre}</span>
-              {hayFiltro(on.get(e.id)?.filtros) && <span style={{ color: AMBAR }}>·filtro</span>}
-            </div>
-          ))}
+        <div className="pointer-events-none absolute left-3 bottom-12 z-10 max-h-[45vh] max-w-[280px] overflow-hidden rounded-lg border border-white/10 bg-black/70 px-2.5 py-1.5 text-[10.5px] text-[#DCE5EA] backdrop-blur-md">
+          {encendidas.slice(-6).reverse().map((e) => {
+            const ley = leyendaDe(e as EntradaCatalogo, on.get(e.id)?.filtros);
+            return (
+              <div key={e.id} className="mb-0.5">
+                <div className="flex items-center gap-1.5 truncate">
+                  {ley.length <= 1 && <span className="h-2 w-2.5 shrink-0 rounded-sm" style={{ background: ley[0]?.color || colorDe(e) }} />}
+                  <span className="truncate font-medium">{e.nombre}</span>
+                  {hayFiltro(on.get(e.id)?.filtros) && <span style={{ color: AMBAR }}>·filtro</span>}
+                </div>
+                {ley.length > 1 && (
+                  <div className="ml-1 flex flex-wrap gap-x-2">
+                    {ley.slice(0, 12).map((l) => (
+                      <span key={l.texto + l.color} className="flex items-center gap-1 truncate text-[10px] text-[#C9D5DB]">
+                        <span className="h-2 w-2 shrink-0 rounded-sm border border-black/40" style={{ background: l.color }} />
+                        {l.texto}
+                      </span>
+                    ))}
+                    {ley.length > 12 && <span className="text-[10px] text-[#7F939D]">+{ley.length - 12}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -585,5 +684,37 @@ export function IndiceCapas({
         </aside>
       )}
     </>
+  );
+}
+
+/** Los hijos de un grupo con sus subcarpetas («KML», «Shape», «Planos») intercaladas como títulos. */
+function conSubgrupos(hijos: Nodo[]): Array<Nodo | { titulo: string }> {
+  if (!hijos.some((h) => h.subgrupo)) return hijos;
+  const rango = (h: Nodo) => {
+    const i = ORDEN_SUBGRUPO.indexOf(h.subgrupo || '');
+    return i < 0 ? ORDEN_SUBGRUPO.length : i;
+  };
+  const xs = [...hijos].sort((a, b) => rango(a) - rango(b) || a.orden - b.orden || a.id - b.id);
+  const out: Array<Nodo | { titulo: string }> = [];
+  let antes: string | undefined;
+  for (const h of xs) {
+    if (h.subgrupo && h.subgrupo !== antes) out.push({ titulo: h.subgrupo });
+    antes = h.subgrupo;
+    out.push(h);
+  }
+  return out;
+}
+
+/** El cuadrito de color de una capa: varios colores si se pinta por categorías; gris si no tiene datos. */
+function Muestra({ e, activa }: { e: EntradaIndice; activa: boolean }) {
+  if (!activa) return <span className="mt-[5px] h-2.5 w-2.5 shrink-0 rounded-sm bg-[#3A4248]" />;
+  const cols = [...new Set((e.estilo?.categorias || []).map((c) => c.color))].slice(0, 4);
+  if (cols.length < 2) return <span className="mt-[5px] h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: colorDe(e) }} />;
+  return (
+    <span className="mt-[5px] grid h-2.5 w-2.5 shrink-0 grid-cols-2 overflow-hidden rounded-sm" aria-hidden>
+      {cols.concat(cols).slice(0, 4).map((c, i) => (
+        <span key={i} style={{ background: c }} />
+      ))}
+    </span>
   );
 }

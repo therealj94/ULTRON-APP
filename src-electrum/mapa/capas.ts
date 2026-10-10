@@ -228,20 +228,31 @@ export const ESTILO_ROL: Record<string, { color: string; relleno: number; ancho:
 };
 
 /** Las tres capas de dibujo de una capa encendida: relleno, trazo y puntos. */
-export function capasDeExtra(fuente: string, rol: string, o: { opacidad?: number; filtro?: unknown[] | null; color?: string } = {}) {
-  const base: { color: string; relleno: number; ancho: number; guiones?: number[] } = ESTILO_ROL[rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
+/** El tipo de estilo del índice de una capa encendida (original del KML, por categorías, un color). */
+export type TipoEstilo = 'original' | 'categorizado' | 'unico' | 'graduado' | 'imagen';
+
+export function capasDeExtra(fuente: string, rol: string, o: { opacidad?: number; filtro?: unknown[] | null; color?: string; estilo?: TipoEstilo | null } = {}) {
+  const base0: { color: string; relleno: number; ancho: number; guiones?: number[] } = ESTILO_ROL[rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
+  // Con estilo del índice, cada rasgo trae su color (`_c` relleno, `_b` borde, `_o` opacidad del KML),
+  // calculado en el servidor con la regla de la leyenda (catalogo.ts → colorDeRasgo).
+  const porRasgo = !!o.estilo && o.estilo !== 'imagen';
+  const base = porRasgo ? { ...base0, guiones: o.estilo === 'original' ? undefined : base0.guiones, relleno: o.estilo === 'categorizado' ? Math.max(base0.relleno, 0.45) : o.estilo === 'original' ? 0.35 : base0.relleno } : base0;
   const e = o.color ? { ...base, color: o.color } : base;
   const op = o.opacidad ?? 1;
   /** El filtro del índice («solo Oro») se suma al de cada capa de dibujo (polígono, trazo, punto). */
   const con = (f: unknown[]) => (o.filtro ? ['all', f, o.filtro] : f);
-  const relleno =
-    rol === 'litologia'
+  const relleno = porRasgo
+    ? ['coalesce', ['get', '_c'], e.color]
+    : rol === 'litologia'
       ? ['match', ['get', 'clase'], ...Object.entries(COLOR_ROCA).flat(), COLOR_ROCA.otra]
       : e.color;
+  const borde = porRasgo ? ['coalesce', ['get', '_b'], e.color] : rol === 'litologia' ? 'rgba(0,0,0,0.45)' : e.color;
+  // El KML dice cuánto se ve su relleno (0 = solo el contorno); igual queda algo tocable.
+  const opRelleno = porRasgo && o.estilo === 'original' ? ['*', op, ['max', 0.01, ['to-number', ['coalesce', ['get', '_o'], e.relleno]]]] : e.relleno * op;
   const poligono = ['==', ['geometry-type'], 'Polygon'];
   return [
     ...(e.relleno > 0
-      ? [{ id: `${fuente}-relleno`, type: 'fill', source: fuente, filter: con(poligono), paint: { 'fill-color': relleno, 'fill-opacity': e.relleno * op } }]
+      ? [{ id: `${fuente}-relleno`, type: 'fill', source: fuente, filter: con(poligono), paint: { 'fill-color': relleno, 'fill-opacity': opRelleno } }]
       : // Sin relleno visible igual hace falta algo tocable dentro del polígono.
         [{ id: `${fuente}-relleno`, type: 'fill', source: fuente, filter: con(poligono), paint: { 'fill-color': e.color, 'fill-opacity': 0.01 } }]),
     {
@@ -251,7 +262,7 @@ export function capasDeExtra(fuente: string, rol: string, o: { opacidad?: number
       filter: con(['!=', ['geometry-type'], 'Point']),
       paint: {
         'line-opacity': op,
-        'line-color': rol === 'litologia' ? 'rgba(0,0,0,0.45)' : e.color,
+        'line-color': borde,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, e.ancho * 0.7, 13, e.ancho * 1.8],
         ...(e.guiones ? { 'line-dasharray': e.guiones } : {}),
       },
@@ -264,7 +275,7 @@ export function capasDeExtra(fuente: string, rol: string, o: { opacidad?: number
       paint: {
         'circle-opacity': op,
         'circle-stroke-opacity': op,
-        'circle-color': e.color,
+        'circle-color': porRasgo ? ['coalesce', ['get', '_c'], e.color] : e.color,
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 3, 13, 6],
         'circle-stroke-color': '#000000',
         'circle-stroke-width': 1,

@@ -162,7 +162,7 @@ function introDesdeElEspacio(m: maplibregl.Map) {
  */
 const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: null, resaltada: null };
 /** Las capas encendidas, por el mismo motivo: si el estilo se recarga, se reponen desde aquí. */
-const pintadoExtra = new Map<string, { rol: string; geojson: unknown; opacidad?: number; filtro?: unknown[] | null; color?: string }>();
+const pintadoExtra = new Map<string, { rol: string; geojson: unknown; opacidad?: number; filtro?: unknown[] | null; color?: string; estilo?: CapaExtra['estilo'] }>();
 /** El perímetro de Honduras y el estado del catastro en el índice de capas. Fuera de React por lo mismo. */
 let pintadoPerimetro: unknown = null;
 const catastroIndice: { visible: boolean; filtro: unknown[] | null } = { visible: true, filtro: null };
@@ -175,7 +175,7 @@ function aplicarCatastroVisible(m: maplibregl.Map) {
 }
 
 /** Lleva a las capas de dibujo ya puestas lo que cambió de una capa encendida (transparencia, filtro). */
-function aplicarExtra(m: maplibregl.Map, fuente: string, x: { rol: string; opacidad?: number; filtro?: unknown[] | null; color?: string }) {
+function aplicarExtra(m: maplibregl.Map, fuente: string, x: { rol: string; opacidad?: number; filtro?: unknown[] | null; color?: string; estilo?: CapaExtra['estilo'] }) {
   for (const c of capasDeExtra(fuente, x.rol, x) as any[]) {
     if (!m.getLayer(c.id)) continue;
     if (c.filter && JSON.stringify(m.getFilter(c.id) ?? null) !== JSON.stringify(c.filter)) m.setFilter(c.id, c.filter);
@@ -756,17 +756,28 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
     const base = ESTILO_ROL[x.rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
     const e = x.color ? { ...base, color: x.color } : base;
     const op = x.opacidad ?? 1;
-    const estilo = (feat: any) => ({
-      visible: cumpleFiltroIndice((k) => feat.getProperty(k), x.filtro),
-      fillColor: x.rol === 'litologia' ? COLOR_ROCA[feat.getProperty('clase')] || COLOR_ROCA.otra : e.color,
-      fillOpacity: e.relleno * op,
-      strokeColor: x.rol === 'litologia' ? '#000000' : e.color,
-      strokeOpacity: (x.rol === 'litologia' ? 0.4 : 0.95) * op,
-      strokeWeight: Math.max(1, e.ancho),
-      zIndex: 0,
-      icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: e.color, fillOpacity: op, strokeColor: '#000', strokeWeight: 1 },
-    });
-    const clave = JSON.stringify([x.opacidad ?? null, x.filtro ?? null, x.color ?? null]);
+    // Con estilo del índice, cada rasgo trae su color del servidor (el mismo que en MapLibre).
+    const porRasgo = !!x.estilo && x.estilo !== 'imagen';
+    const relleno = (feat: any) => {
+      if (!porRasgo) return e.relleno * op;
+      if (x.estilo === 'original') return Math.max(0.01, Number(feat.getProperty('_o') ?? 0.35)) * op;
+      return (x.estilo === 'categorizado' ? Math.max(e.relleno, 0.45) : e.relleno) * op;
+    };
+    const estilo = (feat: any) => {
+      const c = porRasgo ? feat.getProperty('_c') || e.color : x.rol === 'litologia' ? COLOR_ROCA[feat.getProperty('clase')] || COLOR_ROCA.otra : e.color;
+      const b = porRasgo ? feat.getProperty('_b') || e.color : x.rol === 'litologia' ? '#000000' : e.color;
+      return {
+        visible: cumpleFiltroIndice((k) => feat.getProperty(k), x.filtro),
+        fillColor: c,
+        fillOpacity: relleno(feat),
+        strokeColor: b,
+        strokeOpacity: (x.rol === 'litologia' && !porRasgo ? 0.4 : 0.95) * op,
+        strokeWeight: Math.max(1, e.ancho),
+        zIndex: 0,
+        icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: c, fillOpacity: op, strokeColor: '#000', strokeWeight: 1 },
+      };
+    };
+    const clave = JSON.stringify([x.opacidad ?? null, x.filtro ?? null, x.color ?? null, x.estilo ?? null]);
     const ya = extrasGoogle.get(f);
     if (ya) {
       if (ya.__clave !== clave) {
@@ -1159,7 +1170,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     }
     for (const [f, x] of quedan) {
       const antes = pintadoExtra.get(f);
-      const nueva = { rol: x.rol, geojson: x.geojson, opacidad: x.opacidad, filtro: x.filtro ?? null, color: x.color };
+      const nueva = { rol: x.rol, geojson: x.geojson, opacidad: x.opacidad, filtro: x.filtro ?? null, color: x.color, estilo: x.estilo ?? null };
       pintadoExtra.set(f, nueva);
       // Misma capa, otra transparencia u otro filtro: se cambia en sitio, sin rehacer la fuente.
       if (m && listo && antes && antes.geojson === x.geojson) aplicarExtra(m, f, nueva);

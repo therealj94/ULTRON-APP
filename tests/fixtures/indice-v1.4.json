@@ -1,0 +1,357 @@
+{
+ "fuente": "indice_capas_gis_kml.md v1.4 (secciones 1.1 a 6)",
+ "entradas": [
+  {
+   "id": 1,
+   "nombre": "Perímetro de Honduras",
+   "padre": null,
+   "orden": 0,
+   "grupo": false
+  },
+  {
+   "id": 100000,
+   "nombre": "1 Información GIS",
+   "padre": null,
+   "orden": 1,
+   "grupo": true
+  },
+  {
+   "id": 101000,
+   "nombre": "Áreas protegidas",
+   "padre": 100000,
+   "orden": 1,
+   "grupo": true
+  },
+  {
+   "id": 102000,
+   "nombre": "Buffer de carreteras primarias",
+   "padre": 100000,
+   "orden": 2,
+   "grupo": true
+  },
+  {
+   "id": 103000,
+   "nombre": "Curvas de nivel",
+   "padre": 100000,
+   "orden": 3,
+   "grupo": true
+  },
+  {
+   "id": 104000,
+   "nombre": "Derechos mineros de Honduras",
+   "padre": 100000,
+   "orden": 4,
+   "grupo": true
+  },
+  {
+   "id": 105000,
+   "nombre": "División política de Honduras",
+   "padre": 100000,
+   "orden": 5,
+   "grupo": true
+  },
+  {
+   "id": 106000,
+   "nombre": "Hojas cartográficas",
+   "padre": 100000,
+   "orden": 6,
+   "grupo": true
+  },
+  {
+   "id": 107000,
+   "nombre": "Información de concesiones Indexa",
+   "padre": 100000,
+   "orden": 7,
+   "grupo": true
+  },
+  {
+   "id": 108000,
+   "nombre": "Microcuencas declaradas (WGS 84)",
+   "padre": 100000,
+   "orden": 8,
+   "grupo": true
+  },
+  {
+   "id": 109000,
+   "nombre": "Patrimonio público forestal",
+   "padre": 100000,
+   "orden": 9,
+   "grupo": true
+  },
+  {
+   "id": 110000,
+   "nombre": "Recursos mineros de Honduras (WGS 84)",
+   "padre": 100000,
+   "orden": 10,
+   "grupo": true
+  },
+  {
+   "id": 111000,
+   "nombre": "Zonas informales",
+   "padre": 100000,
+   "orden": 11,
+   "grupo": true
+  },
+  {
+   "id": 105001,
+   "nombre": "Departamentos",
+   "padre": 105000,
+   "orden": 1,
+   "grupo": false
+  },
+  {
+   "id": 105002,
+   "nombre": "Municipios",
+   "padre": 105000,
+   "orden": 2,
+   "grupo": false
+  },
+  {
+   "id": 105003,
+   "nombre": "Caseríos",
+   "padre": 105000,
+   "orden": 3,
+   "grupo": false
+  },
+  {
+   "id": 105004,
+   "nombre": "Aldeas",
+   "padre": 105000,
+   "orden": 4,
+   "grupo": false
+  },
+  {
+   "id": 105005,
+   "nombre": "Red hídrica",
+   "padre": 105000,
+   "orden": 5,
+   "grupo": false
+  },
+  {
+   "id": 107001,
+   "nombre": "Buenavista",
+   "padre": 107000,
+   "orden": 1,
+   "grupo": false
+  },
+  {
+   "id": 107002,
+   "nombre": "Chaparro",
+   "padre": 107000,
+   "orden": 2,
+   "grupo": false
+  },
+  {
+   "id": 107003,
+   "nombre": "La Campana",
+   "padre": 107000,
+   "orden": 3,
+   "grupo": false
+  },
+  {
+   "id": 107004,
+   "nombre": "Escalera",
+   "padre": 107000,
+   "orden": 4,
+   "grupo": false
+  },
+  {
+   "id": 107005,
+   "nombre": "Pantaleona",
+   "padre": 107000,
+   "orden": 5,
+   "grupo": false
+  },
+  {
+   "id": 107006,
+   "nombre": "El Tajo",
+   "padre": 107000,
+   "orden": 6,
+   "grupo": false
+  },
+  {
+   "id": 107007,
+   "nombre": "Targets (blancos)",
+   "padre": 107000,
+   "orden": 7,
+   "grupo": false
+  },
+  {
+   "id": 110001,
+   "nombre": "Depósitos minerales",
+   "padre": 110000,
+   "orden": 1,
+   "grupo": false
+  },
+  {
+   "id": 110002,
+   "nombre": "Fichas seleccionadas (ocurrencia minera)",
+   "padre": 110000,
+   "orden": 2,
+   "grupo": false
+  },
+  {
+   "id": 200000,
+   "nombre": "2 Información geológica",
+   "padre": null,
+   "orden": 2,
+   "grupo": true
+  },
+  {
+   "id": 201000,
+   "nombre": "Estructural 2",
+   "padre": 200000,
+   "orden": 1,
+   "grupo": true
+  },
+  {
+   "id": 202000,
+   "nombre": "Estructural",
+   "padre": 200000,
+   "orden": 2,
+   "grupo": true
+  },
+  {
+   "id": 203000,
+   "nombre": "Fallas geológicas (centroamericanas)",
+   "padre": 200000,
+   "orden": 3,
+   "grupo": true
+  },
+  {
+   "id": 204000,
+   "nombre": "Geológico de Olancho (1:100,000)",
+   "padre": 200000,
+   "orden": 4,
+   "grupo": true
+  },
+  {
+   "id": 205000,
+   "nombre": "Geológicos",
+   "padre": 200000,
+   "orden": 5,
+   "grupo": true
+  },
+  {
+   "id": 206000,
+   "nombre": "Mapa estructural (1:50,000)",
+   "padre": 200000,
+   "orden": 6,
+   "grupo": true
+  },
+  {
+   "id": 207000,
+   "nombre": "Mapa geotectónico",
+   "padre": 200000,
+   "orden": 7,
+   "grupo": true
+  },
+  {
+   "id": 208000,
+   "nombre": "Mapa metalogenético",
+   "padre": 200000,
+   "orden": 8,
+   "grupo": true
+  },
+  {
+   "id": 209000,
+   "nombre": "Mapa geológico (1:500,000)",
+   "padre": 200000,
+   "orden": 9,
+   "grupo": true
+  },
+  {
+   "id": 210000,
+   "nombre": "Suelos Simmons",
+   "padre": 200000,
+   "orden": 10,
+   "grupo": true
+  },
+  {
+   "id": 300000,
+   "nombre": "3 Proyectos Indexa (planos)",
+   "padre": null,
+   "orden": 3,
+   "grupo": true
+  },
+  {
+   "id": 301000,
+   "nombre": "Pantaleona",
+   "padre": 300000,
+   "orden": 1,
+   "grupo": true
+  },
+  {
+   "id": 302000,
+   "nombre": "Buenavista Monarca",
+   "padre": 300000,
+   "orden": 2,
+   "grupo": true
+  },
+  {
+   "id": 303000,
+   "nombre": "Cimarrón",
+   "padre": 300000,
+   "orden": 3,
+   "grupo": true
+  },
+  {
+   "id": 304000,
+   "nombre": "Minas de Oro",
+   "padre": 300000,
+   "orden": 4,
+   "grupo": true
+  },
+  {
+   "id": 400000,
+   "nombre": "4 Historia de Honduras",
+   "padre": null,
+   "orden": 4,
+   "grupo": true
+  },
+  {
+   "id": 401000,
+   "nombre": "Historia de Honduras",
+   "padre": 400000,
+   "orden": 1,
+   "grupo": true
+  },
+  {
+   "id": 800000,
+   "nombre": "8 Otros",
+   "padre": null,
+   "orden": 8,
+   "grupo": true
+  }
+ ],
+ "variables": [
+  [
+   106001,
+   106999
+  ],
+  [
+   301001,
+   301999
+  ],
+  [
+   302001,
+   302999
+  ],
+  [
+   303001,
+   303999
+  ],
+  [
+   304001,
+   304999
+  ],
+  [
+   401001,
+   401999
+  ],
+  [
+   800001,
+   899999
+  ]
+ ]
+}

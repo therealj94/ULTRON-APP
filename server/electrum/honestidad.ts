@@ -37,7 +37,7 @@ export function recibosElectrum(traza: ReadonlyArray<{ herramienta: string; ok: 
   for (const t of traza) {
     if (!t?.ok) continue;
     if (t.herramienta === 'informe_pdf' || t.herramienta === 'mapa_geologico') poner('informe');
-    if (t.herramienta === 'mapa_geologico' || t.herramienta === 'mapa_garantia' || t.herramienta === 'mapas_geo_garantia' || t.herramienta === 'mapa_volar' || t.herramienta === 'mapa_capa' || t.herramienta === 'mapa_capas') poner('mapa');
+    if (t.herramienta === 'mapa_geologico' || t.herramienta === 'mapa_garantia' || t.herramienta === 'mapas_geo_garantia' || t.herramienta === 'mapa_volar' || t.herramienta === 'mapa_capa' || t.herramienta === 'encender_capa' || t.herramienta === 'aplicar_filtro' || t.herramienta === 'acercar_a') poner('mapa');
     if (ESCRIBEN.has(t.herramienta)) poner('guardado');
     poner('lectura');
   }

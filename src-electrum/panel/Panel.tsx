@@ -9,6 +9,7 @@
  * a exigir para creerle. «Consultó el catastro, midió sobre el elipsoide, encontró el traslape» vale
  * más que la respuesta sola.
  */
+import { estadoMapa } from '../mapa/estado-mapa';
 import {
   useCallback,
   useEffect,
@@ -676,6 +677,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         mesa: mesaAbierta(),
         // Pista por si la pregunta sola no dice el idioma («Olancho», «ok»).
         idioma: idiomaActual(),
+        // Lo encendido en el índice de capas: Electrum sabe qué hay en pantalla (correcciones v1.0, 4.1).
+        ...(estadoMapa() ? { mapa: estadoMapa() } : {}),
         /*
          * El hilo viaja con la pregunta. El servidor guarda el suyo y prefiere ése, pero Render
          * reinicia el proceso cuando quiere y ahí la única copia que queda es la de esta pantalla.

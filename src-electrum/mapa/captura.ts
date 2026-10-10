@@ -73,6 +73,8 @@ export type CapaExtra = {
   filtro?: unknown[] | null;
   /** Color propio de la capa del índice, en vez del de su clase. */
   color?: string;
+  /** Cómo se pinta según el índice: cada rasgo con su color (`_c`/`_b`/`_o`, del servidor). */
+  estilo?: 'original' | 'categorizado' | 'unico' | 'graduado' | 'imagen' | null;
 };
 
 /** Un mapa escaneado y georreferenciado (JICA…), servido en teselas raster desde el cubo. */

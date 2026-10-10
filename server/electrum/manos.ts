@@ -60,6 +60,7 @@ import { sqlDocumentoVisible } from './organizacion';
 import { indiceTeselas } from './teselas';
 import { inventarioCapas } from './explorar';
 import { manifiestoPara, type EntradaIndice } from './indice-capas';
+import { MANOS_CAPAS } from './manos-capas';
 import { CATEGORIAS, categoriaDeRaster, categoriaDeRol } from '../../src-electrum/mapa/categorias';
 
 const NOMBRE_CATEGORIA = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c.nombre])) as Record<string, string>;
@@ -688,7 +689,7 @@ const capas_listar: Herramienta = {
       const lineas = xs.map(linea);
       return {
         ok: true,
-        texto: `Índice Maestro de Capas v${m.version}: ${m.capas.filter((c) => c.tipo !== 'grupo').length} capas y planos. Para encender una, mapa_capas con su nombre o su ID.\n${lineas.slice(0, 220).join('\n')}${lineas.length > 220 ? `\n… y ${lineas.length - 220} más (pedí con «buscar»)` : ''}`,
+        texto: `Índice Maestro de Capas v${m.version}: ${m.capas.filter((c) => c.tipo !== 'grupo').length} capas y planos. Para encender una, encender_capa con su ID.\n${lineas.slice(0, 220).join('\n')}${lineas.length > 220 ? `\n… y ${lineas.length - 220} más (pedí con «buscar»)` : ''}`,
       };
     }
     const capas = (await inventarioCapas()).filter((c) => !q || c.nombre.toLowerCase().includes(q) || c.rol.includes(q));
@@ -711,33 +712,6 @@ const capas_listar: Herramienta = {
         `${capas.length} capas en la base (${visibles} se pueden encender en el mapa) y ${teselas.length} mapas en el índice de teselas.`,
         ...[...porCat].map(([k, xs]) => `\n${k}:\n${xs.slice(0, 60).join('\n')}${xs.length > 60 ? `\n… y ${xs.length - 60} más` : ''}`),
       ].join('\n'),
-    };
-  },
-};
-
-/**
- * Encender o apagar capas del mapa por categoría o por nombre. No baja nada aquí: el navegador
- * tiene el catálogo y resuelve lo pedido (src-electrum/mapa/categorias.ts), igual que cuando se
- * dice de palabra sin pasar por el cerebro.
- */
-const mapa_capas: Herramienta = {
-  nombre: 'mapa_capas',
-  // Corta a propósito: el system de un panel de tres tiene que caber en el proxy del nodo.
-  descripcion: 'Enciende u oculta capas del mapa («geología», «ríos», «mapa político»).',
-  esquema: {
-    type: 'object',
-    properties: { accion: { type: 'string', enum: ['mostrar', 'ocultar', 'solo'], description: '«solo» apaga lo demás' }, que: { type: 'string', description: 'Capa o categoría' } },
-    required: ['accion', 'que'],
-  },
-  plataformas: ['electrum'],
-  async ejecutar({ accion, que }) {
-    const q = String(que || '').trim().slice(0, 80);
-    if (!q) return { ok: false, texto: 'Falta qué capa o categoría.' };
-    const a = accion === 'ocultar' ? 'ocultar' : accion === 'solo' ? 'solo' : 'mostrar';
-    return {
-      ok: true,
-      texto: a === 'ocultar' ? `Apagué «${q}» en el mapa.` : a === 'solo' ? `Dejé solo «${q}» en el mapa.` : `Encendí «${q}» en el mapa.`,
-      ui: { accion: 'capas', mostrar: a !== 'ocultar', solo: a === 'solo', que: q },
     };
   },
 };
@@ -1119,8 +1093,9 @@ export const MANOS: Record<string, Herramienta> = {
   gis_medir,
   mapa_volar,
   mapa_capa,
-  mapa_capas,
   capas_listar,
+  // Las diez del índice de capas (correcciones v1.0, 4.2): las mismas órdenes que el panel.
+  ...MANOS_CAPAS,
   expediente_buscar,
   expediente_listar,
   expediente_leer,
@@ -1147,4 +1122,14 @@ export function manosDe(nombres: string[]): Herramienta[] {
  * —el taller, la bóveda, el ejecutor— no termine en el panel de Electrum porque alguien la agregó
  * al registro equivocado. Si no declara `electrum`, no existe acá.
  */
-export const TODAS = Object.values(MANOS).filter((h) => h.plataformas.includes('electrum'));
+export const TODAS = Object.values(MANOS).filter((h) => h.plataformas.includes('electrum') && !(h.nombre in MANOS_CAPAS));
+
+/**
+ * El MODO MAPA: cuando la pregunta es del mapa («ábreme las fichas de oro», «qué capas tengo»), van
+ * las diez del índice de capas y las del catastro y el mapa, sin especialistas. Con todas a la vez
+ * el system no cabe en el proxy del nodo (tests/electrum-prompt-cabe.test.ts).
+ */
+export const MAPA: Herramienta[] = [
+  ...Object.values(MANOS_CAPAS),
+  ...['capas_listar', 'mapa_volar', 'catastro_buscar', 'catastro_contar', 'concesion_entorno'].map((n) => MANOS[n]).filter(Boolean),
+];

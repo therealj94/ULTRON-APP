@@ -21,6 +21,7 @@
  * canal SSE porque no hay nada que empujar: GET y DELETE responden 405, como dice la especificación.
  */
 import crypto from 'node:crypto';
+import { CAPAS_PANTALLA } from './electrum/manos-capas';
 import type express from 'express';
 import type { Herramienta } from '../lib/agente/tipos';
 import { efectoDe } from '../lib/agente/tipos';
@@ -31,18 +32,19 @@ import { autorizar, textoDeDecision } from '../lib/cognitivo/politica';
 import { enTurno, iniciarTraza } from '../lib/cognitivo/traza';
 import { COMPARTIDAS } from '../lib/manos/compartidas';
 import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
-import { TODAS as MANOS_ELECTRUM } from './electrum/manos';
+import { MAPA, TODAS } from './electrum/manos';
 import { conOrganizacion, organizacionDePersona } from './electrum/organizacion';
 import { ALCANCE, montarOauthMcp, quienPorTokenMcp, urlMetadatosRecurso } from './mcp-oauth';
 
 export const VERSIONES_MCP = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'mapa_capas', 'informe_pdf']);
+const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'informe_pdf', ...CAPAS_PANTALLA]);
 const TOPE_POR_MINUTO = Number(process.env.MCP_TOPE_MINUTO || 60);
 const MAX_LOTE = 20;
 
 /** Lo que se ofrece por MCP en esta plataforma: lectura, y nada que solo sirva para pintar. */
 export function herramientasMcp(plataforma: Plataforma): Herramienta[] {
-  const base = plataforma === 'electrum' ? MANOS_ELECTRUM : Object.values(COMPARTIDAS);
+  // Electrum: todas, más las del índice de capas que solo leen (buscar, valores, contar).
+  const base = plataforma === 'electrum' ? [...TODAS, ...MAPA] : Object.values(COMPARTIDAS);
   const vistas = new Set<string>();
   return [...base, ...MEMORIA_ESTRUCTURADA].filter((h) => {
     if (vistas.has(h.nombre)) return false;

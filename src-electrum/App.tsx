@@ -21,7 +21,7 @@ import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
 import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
-import { IndiceCapas } from './mapa/IndiceCapas';
+import { IndiceCapas, type OrdenIndice } from './mapa/IndiceCapas';
 import type { MuestrasEncendidas, PedidoCapas } from './mapa/captura';
 import { Tablero } from './mapa/Tablero';
 import { Recorrido, prepararRecorrido, salirPantallaCompleta, entrarPantallaCompleta, type Controles, type ModoRecorrido } from './demo/Recorrido';
@@ -301,6 +301,8 @@ export default function App() {
   /** Lo último que se pidió de palabra sobre las capas («muéstrame los ríos»); lo resuelve el índice de capas. */
   const [pedidoCapas, setPedidoCapas] = useState<PedidoCapas | null>(null);
   const pedirCapas = useCallback((p: Omit<PedidoCapas, 'n'>) => setPedidoCapas({ ...p, n: Date.now() + Math.random() }), []);
+  /** Lo que mandó Dr Electrum al índice de capas (encender, filtrar, apagar…): lo hace el índice con sus casillas. */
+  const [ordenesIndice, setOrdenesIndice] = useState<{ n: number; lista: OrdenIndice[] } | null>(null);
   // Solo se dice en voz alta cuando no se pudo: lo que sí se hizo se ve en el mapa.
   const alResponderCapas = useCallback((texto: string, ok: boolean) => {
     if (!ok) void hablar(texto, 'neutral', headersElectrum());
@@ -760,6 +762,8 @@ export default function App() {
         if (d.mineral) pedirCapas({ mostrar: true, que: 'catastro' });
       } else if (d.accion === 'capa' && d.geojson) {
         setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
+      } else if (d.accion === 'indice' && Array.isArray(d.ordenes)) {
+        setOrdenesIndice({ n: Date.now() + Math.random(), lista: d.ordenes as OrdenIndice[] });
       } else if (d.accion === 'capas' && typeof d.que === 'string') {
         pedirCapas({ mostrar: d.mostrar !== false, que: d.que, solo: d.solo === true });
       } else if (d.accion === 'candidatas' && d.geojson) {
@@ -1000,6 +1004,7 @@ export default function App() {
             onProspectividad={setProspectividad}
             pedido={pedidoCapas}
             onRespuesta={alResponderCapas}
+            ordenes={ordenesIndice}
           />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
           <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md" data-tour="barra-mapa">
