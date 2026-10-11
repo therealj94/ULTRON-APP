@@ -16,6 +16,8 @@ import { MEMORIA_ESTRUCTURADA } from '../../lib/manos/memoria';
 import { fichaEnTexto, fichasMencionadas } from '../../lib/cognitivo/entidades';
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { MsgHilo } from './hilo';
+import { manifiesto } from './indice-capas';
+import { bloqueProyecto, previasDelFoco, proyectoEnFoco, proyectosDelIndice, type Foco, type Proyecto } from './proyecto-foco';
 import { garantizarMapa } from './mapa-garantia';
 import { garantizarMapasGeo } from './geo-garantia';
 import type { Contexto } from '../../lib/agente/tipos';
@@ -262,6 +264,14 @@ async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Pr
   return `DE INTERNET (lo pidieron buscar; usalo, y citá cada dato con su fuente así: (fuente: dominio). Lo que no esté acá no lo atribuyas a internet):\n${lista.join('\n\n')}`;
 }
 
+/** El proyecto en foco de este turno, con los proyectos del índice. null si no se pudo leer el índice. */
+async function focoDelTurno(mensaje: string, historial: MsgHilo[]): Promise<{ foco: Foco; proyectos: Proyecto[] } | null> {
+  const m = await manifiesto().catch(() => null);
+  if (!m) return null;
+  const proyectos = proyectosDelIndice(m.capas as any);
+  return { foco: proyectoEnFoco(mensaje, historial, proyectos), proyectos };
+}
+
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno, idTraza = ''): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado, senal } = opciones;
   const inicio = opciones.inicio ?? Date.now();
@@ -350,7 +360,10 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
 
   // Si preguntan por lo que dice un papel, lo que hay en los expedientes va pegado a la pregunta:
   // el modelo no puede decir «no lo tengo» sin haber mirado (expedientes-previos.ts).
-  const antes = historial.filter((m) => m.role === 'user').slice(-2).map((m) => String(m.content || ''));
+  // De qué proyecto se habla (proyecto-foco.ts): si cambió, lo de antes no se arrastra a la búsqueda de papeles.
+  const enFoco = await focoDelTurno(mensaje, historial);
+  const foco = enFoco?.foco ?? null;
+  const antes = enFoco ? previasDelFoco(historial, enFoco.foco, enFoco.proyectos) : historial.filter((m) => m.role === 'user').slice(-2).map((m) => String(m.content || ''));
   const deExpedientes = bloqueExpedientes(
     await expedientesDeLaPregunta(mensaje, { antes }).catch(() => ({ documento: null, trozos: [] })),
     herramientas.some((h) => h.nombre === 'expediente_leer')
@@ -361,6 +374,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   const previos = [
     ...(delCerebro.length ? [`DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}`] : []),
     ...(deInstituciones ? [deInstituciones] : []),
+    ...(foco && bloqueProyecto(foco) ? [bloqueProyecto(foco)!] : []),
     ...(deExpedientes ? [deExpedientes] : []),
     ...(deInternet ? [deInternet] : []),
     ...(deLaMesa ? [deLaMesa] : []),
