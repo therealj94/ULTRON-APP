@@ -296,20 +296,34 @@ export async function cuentaDe(correo: string): Promise<Cuenta | null> {
 /**
  * «CREAR CUENTA» (server/registro-cuentas.ts): la cuenta propia de un miembro de la comunidad, con su clave,
  * sin acceso en el padrón (sigue siendo miembro: recargarCuentas solo sube las que tienen acceso) y con el
- * correo SIN confirmar. Solo si el correo no tiene ya una fila (de nadie: ni del padrón aprobado, ni de un
- * miembro de Genesis, ni de Veta): `existe` y no se toca nada. El correo ya llega normalizado.
+ * correo SIN confirmar. Sin el código del correo no abre ninguna sesión (revisión de seguridad del PR #176).
+ *
+ *   · 'creada'    — el correo no tenía fila;
+ *   · 'reabierta' — ya había una cuenta PROPIA SIN confirmar con ese correo: se le pone esta clave (y el código
+ *                   que llegue al buzón es el que la confirma junto con ESTA clave). Así quien se adelantó a
+ *                   registrar el correo de otro no se queda con la cuenta cuando el dueño la confirme;
+ *   · 'existe'    — cualquier otra fila (confirmada, de Genesis, de Veta, del padrón aprobado): no se toca nada.
+ * El correo ya llega normalizado.
  */
-export async function crearCuentaPropia(correo: string, nombre: string, clave: string): Promise<'creada' | 'existe'> {
+export async function crearCuentaPropia(correo: string, nombre: string, clave: string): Promise<'creada' | 'reabierta' | 'existe'> {
   const hash = await cifrarClave(clave);
   const desde = Date.now();
-  const filas = await q(
+  const [f] = await q<{ nueva: boolean }>(
     `INSERT INTO cuentas.cuenta (correo, nombre, clave_hash, clave_desde, aprobada_por) VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (correo) DO NOTHING RETURNING correo`,
+     ON CONFLICT (correo) DO UPDATE SET clave_hash = EXCLUDED.clave_hash, clave_desde = EXCLUDED.clave_desde, nombre = EXCLUDED.nombre
+       WHERE cuentas.cuenta.aprobada_por = $5 AND cuentas.cuenta.correo_confirmado IS NULL
+     RETURNING (xmax = 0) AS nueva`,
     [correo, String(nombre || '').slice(0, 120), hash, desde, ORIGEN_REGISTRO]
   );
-  if (!filas.length) return 'existe';
+  if (!f) return 'existe';
   claveDesdePorCorreo.set(correo, desde);
-  return 'creada';
+  return f.nueva ? 'creada' : 'reabierta';
+}
+
+/** Deshace una cuenta propia que nunca se confirmó (el código no salió): el correo queda libre para reintentar. */
+export async function borrarCuentaSinConfirmar(correo: string): Promise<boolean> {
+  const filas = await q(`DELETE FROM cuentas.cuenta WHERE correo = $1 AND aprobada_por = $2 AND correo_confirmado IS NULL RETURNING correo`, [correo, ORIGEN_REGISTRO]);
+  return filas.length > 0;
 }
 
 /** El correo quedó probado (código, enlace del correo o Genesis). No cambia nada más. */
@@ -338,14 +352,21 @@ export async function reclamarCuentaSinConfirmar(correo: string): Promise<boolea
 /**
  * La entrada con clave propia. `sin_clave` quiere decir «esta persona todavía no se hizo clave
  * aquí»: quien llama prueba entonces con el cerebro remoto, como siempre.
+ *
+ * Una cuenta PROPIA con el correo SIN confirmar (server/registro-cuentas.ts) no abre sesión con su clave:
+ *   · clave buena → `sin_confirmar` (la puerta pide el código del correo, sin sesión);
+ *   · clave mala  → `sin_clave`: una clave que nadie probó dueña del correo no tapa la del cerebro remoto (si
+ *     alguien registró el correo de otro, el dueño sigue entrando con la suya de siempre).
  */
-export async function entrarConCuenta(correo: string, clave: string): Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave'> {
-  const [f] = await q(`SELECT clave_hash, estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+export async function entrarConCuenta(correo: string, clave: string): Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave' | 'sin_confirmar'> {
+  const [f] = await q(`SELECT clave_hash, estado, aprobada_por, correo_confirmado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
   // La suspensión va ANTES que «sin clave»: una cuenta suspendida que nunca se puso clave caía al
   // cerebro remoto, que la aceptaba, y volvía a entrar a AU-RA como miembro de la comunidad.
   if (f?.estado === 'suspendida') return 'suspendida';
   if (!f?.clave_hash) return 'sin_clave';
-  return (await claveCoincide(clave, f.clave_hash)) ? 'ok' : 'mal';
+  const coincide = await claveCoincide(clave, f.clave_hash);
+  if (f.aprobada_por === ORIGEN_REGISTRO && !f.correo_confirmado) return coincide ? 'sin_confirmar' : 'sin_clave';
+  return coincide ? 'ok' : 'mal';
 }
 
 /**

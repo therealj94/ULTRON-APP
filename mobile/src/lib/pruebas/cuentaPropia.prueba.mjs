@@ -66,6 +66,9 @@ prueba('crear cuenta: correo ocupado sin decir de quién; los campos del servido
   assert.equal(errorDeRegistro({}).codigo, 'SIN_CONEXION');
   assert.equal(errorDeRegistro({ status: 429, data: {} }).codigo, 'LIMITE');
   assert.equal(errorDeRegistro({ status: 503, data: { codigo: 'SIN_BASE', error: 'Ahora mismo no se pueden crear cuentas.' } }).codigo, 'SIN_BASE');
+  // Sin código no hay cuenta: el error lo dice y ofrece las otras puertas.
+  for (const codigo of ['SIN_ENVIO', 'CODIGO_NO_ENVIADO']) assert.match(errorDeRegistro({ status: 503, data: { codigo } }).mensaje, /Veta Wallet u Orden Global/, codigo);
+  assert.equal(errorDeEntrada({ status: 403, data: { codigo: 'CORREO_SIN_CONFIRMAR' } }).codigo, 'CORREO_SIN_CONFIRMAR');
 });
 
 prueba('el código: solo cifras, hasta 6; el malo va debajo del campo; «espera» antes de pedir otro', () => {
@@ -74,7 +77,10 @@ prueba('el código: solo cifras, hasta 6; el malo va debajo del campo; «espera�
   assert.equal(errorDeCodigo({ status: 400, data: { codigo: 'CODIGO_INVALIDO' } }).campo, 'codigo');
   assert.equal(errorDeCodigo({ status: 429, data: { codigo: 'ESPERA' } }).codigo, 'ESPERA');
   assert.equal(errorDeCodigo({ status: 429, data: { codigo: 'LIMITE' } }).codigo, 'LIMITE');
-  assert.equal(errorDeCodigo({ status: 401, data: {} }).codigo, 'SESION');
+  assert.equal(errorDeCodigo({ status: 401, data: { codigo: 'CODIGO_INVALIDO' } }).campo, 'codigo', 'el código (o la clave) malo, debajo del código');
+  assert.equal(errorDeCodigo({ status: 401, data: { codigo: 'NO_ENTRA' } }).codigo, 'NO_ENTRA');
+  assert.equal(errorDeCodigo({ status: 409, data: { codigo: 'YA_CONFIRMADO' } }).codigo, 'YA_CONFIRMADO');
+  assert.match(errorDeCodigo({ status: 502, data: { codigo: 'CODIGO_NO_ENVIADO', error: 'No pudimos enviar el código a tu correo. Entra con Veta Wallet u Orden Global, o inténtalo más tarde.' } }).mensaje, /Veta Wallet u Orden Global/);
   assert.equal(errorDeCodigo(null).codigo, 'SIN_CONEXION');
 });
 

@@ -91,6 +91,8 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
   /** ¿Se ofrece «Entrar con Veta Wallet» (Genesis ID)? null mientras se pregunta al servidor (IOS01). */
   const [conGenesis, setConGenesis] = useState<boolean | null>(null);
   const [yendoAGenesis, setYendoAGenesis] = useState(false);
+  /** Entró con una cuenta propia SIN confirmar: correo y clave para la pantalla del código (en memoria, una vez). */
+  const [pendienteCodigo, setPendienteCodigo] = useState<{ correo: string; clave: string } | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -121,7 +123,14 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
       });
       const data = await res.json().catch(() => ({}));
       setEnviando(false);
+      const claveUsada = clave;
       setClave('');
+      // Cuenta propia con el correo sin confirmar: sin sesión; el servidor mandó el código y se pide ya.
+      if (res.status === 403 && data?.codigo === 'CORREO_SIN_CONFIRMAR') {
+        setPendienteCodigo({ correo, clave: claveUsada });
+        setVista('crear');
+        return;
+      }
       if (res.ok && data.ok) {
         if (data.token) guardarTokenMesa(String(data.token));
         try {
@@ -221,14 +230,18 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
           <CrearCuenta
             tema={TEMA_AURA}
             producto="AU-RA"
-            headers={headersMesa}
+            pendiente={pendienteCodigo}
             onSesion={(t) => guardarTokenMesa(t)}
             onListo={(m) => {
+              setPendienteCodigo(null);
               playSfx('grant', soundFxEnabled);
               onAuthSuccess(m.nombre, m.rol || 'Miembro de la comunidad', m.correo);
               onClose();
             }}
-            onVolver={() => setVista('entrar')}
+            onVolver={() => {
+              setPendienteCodigo(null);
+              setVista('entrar');
+            }}
           />
         ) : vista === 'solicitar' && !usuario.authenticated ? (
           <SolicitarAcceso tema={TEMA_AURA} producto="AU-RA FP" onVolver={() => setVista('entrar')} />
@@ -299,7 +312,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
                 </p>
               )}
             </form>
-            <button type="button" onClick={() => { setVista('crear'); setError(''); }} className={`min-h-[48px] ${TEMA_AURA.secundario} flex items-center justify-center gap-2`}>
+            <button type="button" onClick={() => { setPendienteCodigo(null); setVista('crear'); setError(''); }} className={`min-h-[48px] ${TEMA_AURA.secundario} flex items-center justify-center gap-2`}>
               <UserPlus className="w-4 h-4" /> Crear cuenta
             </button>
             <button type="button" onClick={() => { setVista('olvide'); setError(''); }} className={`self-center min-h-[44px] px-3 py-1.5 rounded-full text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer ${FOCO}`}>

@@ -15,8 +15,11 @@ export type RaizParams = {
   /** `reintentar`: pedir el pase al llegar (cambia en cada pedido, como `Chats.whatsapp`). */
   Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string; reintentar?: number } | undefined;
   CrearGenesis: { motivo?: 'sin-gid' } | undefined;
-  /** «Crear cuenta» de AU-RA (correo y contraseña), con la confirmación del correo por código. `correo`: el ya escrito. */
-  CrearCuenta: { correo?: string } | undefined;
+  /**
+   * «Crear cuenta» de AU-RA (correo y contraseña), con la confirmación del correo por código. `correo`: el ya escrito.
+   * `paso: 'codigo'`: directo al código (Entrar con una cuenta sin confirmar; el correo y la clave van en memoria).
+   */
+  CrearCuenta: { correo?: string; paso?: 'codigo' } | undefined;
   /** `aviso`: lo que se dice al llegar (la sesión terminó y hay clave o huella guardada en este teléfono). */
   OtrasFormas: { aviso?: string } | undefined;
   PrimeraVez: { desdeIntro?: boolean } | undefined;

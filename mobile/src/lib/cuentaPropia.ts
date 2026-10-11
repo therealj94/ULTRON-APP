@@ -4,8 +4,11 @@
  * funcionen, sin abrir ninguna otra app»).
  *
  *   · Entrar:       POST /api/ultron/entrar        { correo, clave }            (lib/api.ts loginClave)
- *   · Crear cuenta: POST /api/ultron/cuentas/crear { nombre, correo, clave }    (lib/api.ts crearCuenta)
- *   · Confirmar:    POST /api/ultron/cuentas/confirmar { codigo } / reenviar   (con la sesión recién abierta)
+ *   · Crear cuenta: POST /api/ultron/cuentas/crear { nombre, correo, clave }    (lib/api.ts crearCuenta): SIN sesión
+ *   · Confirmar:    POST /api/ultron/cuentas/confirmar { correo, clave, codigo } → la sesión; /reenviar { correo, clave }
+ *
+ * Sin el código del correo no se entra (revisión de seguridad del PR #176): «Entrar» con una cuenta sin confirmar
+ * contesta CORREO_SIN_CONFIRMAR y la app enseña la pantalla del código.
  *
  * Las reglas de la contraseña son las MISMAS que las del servidor (server/cuentas.ts `problemaDeClave`): si el
  * teléfono deja pasar una, el servidor la acepta; si la rechaza, se dice aquí mismo, debajo del campo.
@@ -97,6 +100,7 @@ export function errorDeEntrada(e: ErrorApi): ErrorCuenta {
   }
   if (status === 403) {
     const c = codigoDe(e);
+    if (c === 'CORREO_SIN_CONFIRMAR') return { codigo: c, mensaje: e?.data?.error || tr('Confirma tu correo para entrar: te mandamos un código de 6 cifras.', 'Confirm your email to sign in: we sent you a 6-digit code.') };
     if (c === 'SUSPENDIDA') return { codigo: c, mensaje: tr('Esta cuenta está suspendida.', 'This account is suspended.') };
     return { codigo: c || 'SIN_ACCESO', mensaje: e?.data?.error || tr('Tu cuenta no tiene acceso a AU-RA.', 'Your account doesn’t have access to AU-RA.') };
   }
@@ -117,6 +121,10 @@ export function errorDeRegistro(e: ErrorApi): ErrorCuenta {
       mensaje: delServidor || tr('No se puede crear una cuenta nueva con ese correo. Si ya tienes cuenta, entra o usa «¿Olvidaste tu contraseña?».', 'A new account can’t be created with that email. If you already have one, sign in or use “Forgot your password?”.'),
     };
   }
+  // El código no pudo salir: sin código no hay cuenta (ni sesión). El servidor dice qué hacer (Veta Wallet u Orden Global).
+  if (c === 'SIN_ENVIO' || c === 'CODIGO_NO_ENVIADO') {
+    return { codigo: c, mensaje: delServidor || tr('No pudimos enviar el código a tu correo. Entra con Veta Wallet u Orden Global, o inténtalo más tarde.', 'We couldn’t send the code to your email. Sign in with Veta Wallet or Orden Global, or try again later.') };
+  }
   if (c === 'NOMBRE') return { codigo: c, campo: 'nombre', mensaje: delServidor || tr('Escribe tu nombre.', 'Enter your name.') };
   if (c === 'CORREO') return { codigo: c, campo: 'correo', mensaje: delServidor || tr('Escribe un correo válido.', 'Enter a valid email.') };
   if (c === 'CLAVE_DEBIL') return { codigo: c, campo: 'clave', mensaje: delServidor || reglasClave() };
@@ -133,7 +141,11 @@ export function errorDeCodigo(e: ErrorApi): ErrorCuenta {
     return { codigo: c, campo: 'codigo', mensaje: tr('Ese código no es válido o ya venció. Revisa el último correo o pide otro.', 'That code isn’t valid or has expired. Check the latest email or ask for another.') };
   }
   if (c === 'ESPERA') return { codigo: c, mensaje: tr('Ya te mandamos un código hace un momento. Espera un minuto antes de pedir otro.', 'We just sent you a code. Wait a minute before asking for another.') };
+  if (c === 'YA_CONFIRMADO') return { codigo: c, mensaje: tr('Tu correo ya está confirmado: vuelve y entra con tu contraseña.', 'Your email is already confirmed: go back and sign in with your password.') };
+  if (c === 'SIN_ENVIO' || c === 'CODIGO_NO_ENVIADO') {
+    return { codigo: c, mensaje: e?.data?.error || tr('No pudimos enviar el código. Entra con Veta Wallet u Orden Global, o inténtalo más tarde.', 'We couldn’t send the code. Sign in with Veta Wallet or Orden Global, or try again later.') };
+  }
   if (status === 429) return demasiados();
-  if (status === 401) return { codigo: 'SESION', mensaje: tr('Tu sesión se cerró. Entra otra vez para confirmar tu correo.', 'Your session ended. Sign in again to confirm your email.') };
+  if (status === 401) return { codigo: c || 'NO_ENTRA', mensaje: tr('El correo o la contraseña no son los de esta cuenta. Vuelve y créala otra vez.', 'The email or password don’t match this account. Go back and create it again.') };
   return { codigo: c || 'SERVIDOR', mensaje: e?.data?.error || ocupado().mensaje };
 }

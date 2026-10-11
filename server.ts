@@ -269,6 +269,7 @@ import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesion
 import {
   asegurarCuentaMiembro,
   crearCodigoCorreo,
+  borrarCuentaSinConfirmar,
   crearCuentaPropia,
   cuentaDe,
   cuentasDisponibles,
@@ -2176,6 +2177,25 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       return res.status(401).json({ error: 'Correo o clave incorrectos.', codigo: 'NO_ENTRA' });
     }
     if (propia === 'suspendida') return res.status(403).json({ error: 'Esta cuenta está suspendida.', codigo: 'SUSPENDIDA' });
+    /*
+     * Cuenta propia con la clave buena pero el correo SIN confirmar (revisión de seguridad del PR #176): sin
+     * sesión. Se le manda el código y la app enseña la pantalla del código (server/registro-cuentas.ts). En Dr
+     * Electrum estas cuentas no entran nunca: SIN_ACCESO, como cualquiera fuera de su padrón.
+     */
+    if (propia === 'sin_confirmar') {
+      if (ES_ELECTRUM || !esDeComunidad(correo, PLATAFORMA)) return res.status(403).json({ error: `Tu cuenta no tiene acceso a ${ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP'}.`, codigo: 'SIN_ACCESO' });
+      const envio = await registroCuentas.mandarCodigo(correo, nombreYRolDe(correo, (await cuentaDe(correo).catch(() => null))?.nombre).nombre).catch(() => 'fallo' as const);
+      anotarDetalle(res, `correo sin confirmar; código ${envio}`);
+      return res.status(403).json({
+        codigo: 'CORREO_SIN_CONFIRMAR',
+        confirmacion: envio,
+        correo,
+        error:
+          envio === 'enviado' || envio === 'espera'
+            ? 'Confirma tu correo para entrar: te mandamos un código de 6 cifras.'
+            : 'Confirma tu correo para entrar, pero ahora no pudimos enviarte el código. Entra con Veta Wallet u Orden Global, o inténtalo más tarde.',
+      });
+    }
     if (propia === 'ok') {
       // Una cuenta propia solo abre la plataforma que tiene aprobada: una de Dr Electrum no entra a
       // AU-RA (donde cualquier sesión abre la mesa) aunque la clave sea la misma para las dos.
@@ -2287,7 +2307,7 @@ montarRutasCuentas(app, {
  * «Crear cuenta» de la comunidad (solo AU-RA; en Dr Electrum las rutas contestan 404): la cuenta y la sesión de
  * miembro en el acto, el correo se confirma después con un código (server/registro-cuentas.ts).
  */
-montarRutasRegistro(app, {
+const registroCuentas = montarRutasRegistro(app, {
   plataforma: PLATAFORMA,
   normalizarCorreo,
   nombreYRol: nombreYRolDe,
@@ -2298,9 +2318,11 @@ montarRutasRegistro(app, {
   almacen: {
     disponible: cuentasDisponibles,
     crearCuenta: crearCuentaPropia,
+    borrarSinConfirmar: borrarCuentaSinConfirmar,
+    comprobarClave: entrarConCuenta,
     crearCodigo: (correo) => crearCodigoCorreo(correo),
     usarCodigo: usarCodigoCorreo,
-    correoConfirmado: async (correo) => !!(await cuentaDe(correo))?.correoConfirmado,
+    nombreDe: async (correo) => (await cuentaDe(correo))?.nombre || undefined,
   },
 });
 

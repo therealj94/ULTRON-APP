@@ -143,5 +143,5 @@ test('Restablecer la clave: una cuenta suspendida no recibe sesión', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'server/cuentas-rutas.ts'), 'utf8');
   const i = src.indexOf("'/api/ultron/clave/restablecer'");
   const ruta = src.slice(i, src.indexOf("'/api/ultron/clave/cambiar'", i));
-  assert.match(ruta, /estado !== 'suspendida' && puedeEntrar\(/);
+  assert.match(ruta, /estado !== 'suspendida' && \(?puedeEntrar\(/);
 });

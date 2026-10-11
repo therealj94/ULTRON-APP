@@ -39,6 +39,7 @@ import { loginClave, olvideClave } from '../../lib/api';
 import { errorDeEntrada, validarEntrada, type ErrorCuenta } from '../../lib/cuentaPropia';
 import { cancelarIntento, empezarIntento, esVencida, type Intento } from '../../lib/intentoEntrada';
 import { abrirAppOrdenGlobal, abrirTiendaOrdenGlobal } from './CrearGenesis';
+import { pedirCodigoPara } from './CrearCuenta';
 import { miga } from '../../lib/reporte';
 import { registrarTrabajoActivo } from '../../lib/barreraOta';
 import { tr, useIdioma } from '../../i18n';
@@ -261,8 +262,9 @@ export function Entrar({ navigation, route }: Props) {
     if (estadoRef.current.tipo !== 'listo') setEstado({ tipo: 'listo' });
     const i = empezarIntento();
     intentoA.current = i;
+    const clave = claveA;
     try {
-      const d = await loginClave(c, claveA, i);
+      const d = await loginClave(c, clave, i);
       if (!vivo.current) return;
       if (!d?.token) throw Object.assign(new Error('sin token'), { status: 500, data: {} });
       const nombre = d.miembro?.nombre || c.split('@')[0];
@@ -273,6 +275,13 @@ export function Entrar({ navigation, route }: Props) {
     } catch (err: any) {
       // Otra entrada la reemplazó: no hay nada que decir.
       if (esVencida(err) || !vivo.current) return;
+      // Cuenta propia con el correo sin confirmar: sin sesión; el servidor mandó el código y se pide aquí mismo.
+      if (err?.status === 403 && err?.data?.codigo === 'CORREO_SIN_CONFIRMAR') {
+        cancelarIntento(i);
+        pedirCodigoPara(c, clave);
+        navigation.navigate('CrearCuenta', { correo: c, paso: 'codigo' });
+        return;
+      }
       miga(`cuenta aura: ${String(err?.status || err?.name || 'error').slice(0, 20)}`);
       vibrar('error');
       const ec = errorDeEntrada(err);

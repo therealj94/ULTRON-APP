@@ -16,13 +16,18 @@ y, **sin Genesis ID**, como miembro con la sola cuenta de la wallet (caso f).
 José: «nadie normal puede entrar». Desde ahora lo primero de «Entrar» (app y web) es la **cuenta de AU-RA**:
 correo + contraseña + «Entrar», y **«Crear cuenta»** a la vista. Veta Wallet y Orden Global quedan como opciones.
 
-- **Crear cuenta** (`server/registro-cuentas.ts`): `POST /api/ultron/cuentas/crear {nombre, correo, clave}` abre
-  la cuenta propia (`cuentas.cuenta`, `aprobada_por='registro'`, sin acceso en el padrón) y la sesión de **miembro**
-  en el acto (marca `comunidad`, igual que Genesis abierto). El correo se confirma después con un código de 6 cifras
-  (`/confirmar`, `/reenviar`, con la sesión) por el remitente de SES de siempre; sin correo configurado se entra
-  igual y la cuenta queda sin confirmar. La junta, el padrón o un correo con cuenta contestan lo mismo (409
-  `CORREO_NO_DISPONIBLE`). Solo AU-RA (en Dr Electrum, 404). Los niveles altos siguen saliendo del padrón; la cola de
-  José («Solicitar acceso») queda para eso.
+- **Crear cuenta** (`server/registro-cuentas.ts`, corregido tras la revisión de seguridad del PR #176):
+  `POST /api/ultron/cuentas/crear {nombre, correo, clave}` abre la cuenta propia (`cuentas.cuenta`,
+  `aprobada_por='registro'`, sin acceso en el padrón) **sin confirmar y SIN sesión**, y manda un código de 6 cifras
+  por SES (`lib/correo-ses.ts`, el mismo remitente que «olvidé mi contraseña»). Solo
+  `POST /confirmar {correo, clave, codigo}` (código de 30 min, un uso, con el freno de intentos por correo y por
+  conexión) abre la sesión de **miembro** (marca `comunidad`). `/reenviar {correo, clave}` manda otro. «Entrar» con
+  una cuenta sin confirmar contesta `CORREO_SIN_CONFIRMAR` sin sesión y manda el código. Sin correo configurado
+  (503 `SIN_ENVIO`) o si SES falla (502 `CODIGO_NO_ENVIADO`, la cuenta recién abierta se deshace) no hay sesión. Un
+  correo nuevo, con cuenta, del padrón o de la junta reciben la MISMA respuesta (al que ya tenía cuenta le llega un
+  aviso, no un código). Volver a registrarse con una cuenta propia sin confirmar le pone la clave nueva, y confirmar
+  exige código Y esa clave: quien registró primero el correo de otro no se queda con la cuenta. Solo AU-RA (en Dr
+  Electrum, 404). Los niveles altos siguen saliendo del padrón; la cola de José («Solicitar acceso») queda para eso.
 - **Quien se adelanta a registrar el correo de otro** no se queda con él: si el dueño entra con Genesis ID (prueba
   el correo) o usa «¿Olvidaste tu contraseña?» (el enlace le llega a él), la clave de la cuenta sin confirmar deja de
   valer y sus sesiones se cierran (`reclamarCuentaSinConfirmar`, `restablecer`).

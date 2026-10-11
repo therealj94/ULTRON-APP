@@ -43,7 +43,7 @@ prueba('Entrar: un solo botón principal y es «Entrar» de la cuenta de AU-RA; 
   assert.equal(principales.length, 1, `un solo <Boton> sin variante (principal); hay ${principales.length}`);
   assert.match(principales[0], /titulo=\{tr\('Entrar', 'Sign in'\)\}/);
   assert.match(principales[0], /onPress=\{\(\) => void entrarCuenta\(\)\}/, 'entra con la cuenta de AU-RA');
-  assert.match(ENTRAR, /loginClave\(c, claveA, i\)/, 'por /api/ultron/entrar, con su intento');
+  assert.match(ENTRAR, /loginClave\(c, clave, i\)/, 'por /api/ultron/entrar, con su intento');
   assert.match(ENTRAR, /entrarCon\(u, null, i\)/, 'y la sesión de siempre (app/sesion.ts entrarCon)');
 });
 
@@ -68,17 +68,27 @@ prueba('errores precisos debajo del formulario: contraseña mala ≠ sin conexi�
   assert.match(CUENTA, /if \(!status\) return sinConexion\(\)/, 'sin respuesta es la red, nunca «contraseña incorrecta»');
 });
 
-prueba('«Crear cuenta»: nombre, correo, contraseña y confirmarla; después el código con «Reenviar» y «Confirmar después»', () => {
+prueba('«Crear cuenta»: nombre, correo, contraseña y confirmarla; después el código con «Reenviar»; SIN «Confirmar después»', () => {
   const CREAR = textos(leer('app/pantallas/CrearCuenta.tsx'));
-  for (const t of ["tr('Nombre', 'Name')", "tr('Correo', 'Email')", "tr('Contraseña', 'Password')", "tr('Confirmar contraseña', 'Confirm password')", "tr('Código', 'Code')", "tr('Reenviar código', 'Resend code')", "tr('Confirmar después', 'Confirm later')"]) {
+  for (const t of ["tr('Nombre', 'Name')", "tr('Correo', 'Email')", "tr('Contraseña', 'Password')", "tr('Confirmar contraseña', 'Confirm password')", "tr('Código', 'Code')", "tr('Reenviar código', 'Resend code')", "tr('Volver a entrar', 'Back to sign in')"]) {
     assert.ok(CREAR.includes(t), t);
   }
+  assert.ok(!CREAR.includes('Confirmar después'), 'sin el código no se entra: no hay «Confirmar después»');
   const botones = [...CREAR.matchAll(/<Boton\b([\s\S]*?)\/>/g)].map((m) => m[1]);
   assert.equal(botones.filter((b) => !/variante=/.test(b)).length, 2, 'un principal por paso («Crear cuenta» y «Confirmar»)');
-  assert.match(CREAR, /crearCuenta\(nombre, correo, clave, i\)/);
-  assert.match(CREAR, /entrarCon\(\{ name: m\.nombre, role: m\.rol, correo: m\.correo \}, null, i\)/, 'la sesión de siempre');
-  assert.match(CREAR, /r\.confirmacion === 'enviado'/, 'sin correo para mandar el código, se entra directo');
+  // Crear NO da sesión: ni intento ni entrarCon en ese paso; solo el código la da.
+  assert.match(CREAR, /await crearCuenta\(nombre, correo, clave\);\s*if \(!vivo\.current\) return;[\s\S]*?setPaso\('codigo'\)/, 'después de crear, al código');
+  const crear = CREAR.slice(CREAR.indexOf('const crear = async'), CREAR.indexOf('const confirmarCodigo = async'));
+  assert.doesNotMatch(crear, /entrarCon|empezarIntento/, 'crear la cuenta no entra');
+  assert.match(CREAR, /confirmarCodigoCorreo\(correo, clave, k, i\)/, 'el código, con el correo y la contraseña, abre la sesión');
+  assert.match(CREAR, /entrarCon\(\{ name: r\.miembro\.nombre/, 'y la sesión de siempre (app/sesion.ts entrarCon)');
   assert.match(leer('app/AppAura.tsx'), /<Pila\.Screen name="CrearCuenta" component=\{CrearCuenta\} \/>/);
+});
+
+prueba('Entrar con una cuenta sin confirmar (CORREO_SIN_CONFIRMAR): a la pantalla del código, sin sesión', () => {
+  assert.match(ENTRAR, /err\?\.data\?\.codigo === 'CORREO_SIN_CONFIRMAR'/);
+  assert.match(ENTRAR, /pedirCodigoPara\(c, clave\);\s*navigation\.navigate\('CrearCuenta', \{ correo: c, paso: 'codigo' \}\)/, 'correo y clave en memoria, nunca en la navegación');
+  assert.match(ENTRAR, /cancelarIntento\(i\)/, 'ese intento no deja nada guardado');
 });
 
 prueba('una marca: «AU-RA» en lo que se ve (no «AURA», ni «PULSE 2CHAT × AURA»)', () => {

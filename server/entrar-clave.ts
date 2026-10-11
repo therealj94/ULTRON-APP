@@ -7,7 +7,7 @@
  * 'sin_comprobar' y la puerta contesta 503 sin sesión. Sin base configurada (cuentasDisponibles() falso) no hay cuentas
  * que comprobar y el remoto sigue siendo la puerta, como siempre: eso lo decide server.ts antes de llamar aquí.
  */
-export type EntradaPropia = 'ok' | 'mal' | 'suspendida' | 'sin_clave' | 'sin_comprobar';
+export type EntradaPropia = 'ok' | 'mal' | 'suspendida' | 'sin_clave' | 'sin_confirmar' | 'sin_comprobar';
 
 /** Lo más que se espera a la base de cuentas en la entrada; pasado esto, no se entra. */
 export const TOPE_CLAVE_PROPIA_MS = 8000;
@@ -18,7 +18,7 @@ export const SIN_COMPROBAR = {
 } as const;
 
 export async function comprobarClavePropia(
-  entrar: (correo: string, clave: string) => Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave'>,
+  entrar: (correo: string, clave: string) => Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave' | 'sin_confirmar'>,
   correo: string,
   clave: string,
   topeMs = TOPE_CLAVE_PROPIA_MS
@@ -30,7 +30,7 @@ export async function comprobarClavePropia(
   });
   try {
     const r = await Promise.race([Promise.resolve().then(() => entrar(correo, clave)), tope]);
-    if (r === 'ok' || r === 'mal' || r === 'suspendida' || r === 'sin_clave') return r;
+    if (r === 'ok' || r === 'mal' || r === 'suspendida' || r === 'sin_clave' || r === 'sin_confirmar') return r;
     return 'sin_comprobar';
   } catch (e: any) {
     console.error('[cuentas] base sin contestar en la entrada: no entra', String(e?.message || e).slice(0, 120));

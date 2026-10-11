@@ -350,32 +350,38 @@ export async function olvideClave(correo: string): Promise<string> {
 }
 
 /**
- * «Crear cuenta» de la comunidad (server/registro-cuentas.ts): la cuenta y la sesión de miembro EN EL ACTO. El
- * token se guarda solo si el intento sigue siendo el último (como cualquier entrada). `confirmacion`: 'enviado'
- * si salió el código al correo; si no ('sin_correo', 'fallo'), se entra igual y se confirma después.
+ * «Crear cuenta» de la comunidad (server/registro-cuentas.ts): abre la cuenta SIN confirmar y manda el código de 6
+ * cifras al correo. NO da sesión (revisión de seguridad del PR #176: sin probar el buzón, cualquiera podría crear
+ * una cuenta con el correo de otra persona). Sin intento: aquí no hay token que guardar.
  */
-export async function crearCuenta(nombre: string, correo: string, clave: string, intento: Intento) {
-  exigirIntento(intento);
-  const data = await api<{ miembro?: { nombre?: string; rol?: string; correo?: string }; token?: string; confirmacion?: string; correoConfirmado?: boolean }>(
+export async function crearCuenta(nombre: string, correo: string, clave: string) {
+  return api<{ ok?: boolean; confirmacion?: string; correo?: string; message?: string }>(
     '/api/ultron/cuentas/crear',
     { method: 'POST', body: JSON.stringify({ nombre: nombre.replace(/\s+/g, ' ').trim(), correo: String(correo).trim().toLowerCase(), clave }) },
     20_000,
+    false
+  );
+}
+
+/**
+ * El código del correo, con el correo y la contraseña de la cuenta: AHORA se abre la sesión de miembro. Es una
+ * entrada como cualquier otra: el token se guarda solo si el intento sigue siendo el último.
+ */
+export async function confirmarCodigoCorreo(correo: string, clave: string, codigo: string, intento: Intento) {
+  exigirIntento(intento);
+  const data = await api<{ miembro?: { nombre?: string; rol?: string; correo?: string }; token?: string }>(
+    '/api/ultron/cuentas/confirmar',
+    { method: 'POST', body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave, codigo }) },
+    15_000,
     false
   );
   await guardarTokenDe(data.token, intento);
   return data;
 }
 
-/** El código de 6 cifras del correo, con la sesión recién abierta. */
-export async function confirmarCodigoCorreo(codigo: string): Promise<boolean> {
-  const data = await api<{ correoConfirmado?: boolean }>('/api/ultron/cuentas/confirmar', { method: 'POST', body: JSON.stringify({ codigo }) }, 15_000, false);
-  return !!data.correoConfirmado;
-}
-
-/** Otro código al correo de la sesión. */
-export async function reenviarCodigoCorreo(): Promise<{ confirmado: boolean }> {
-  const data = await api<{ correoConfirmado?: boolean }>('/api/ultron/cuentas/reenviar', { method: 'POST', body: '{}' }, 15_000, false);
-  return { confirmado: !!data.correoConfirmado };
+/** Otro código al correo (con la contraseña de la cuenta: sin ella no se manda nada). */
+export async function reenviarCodigoCorreo(correo: string, clave: string): Promise<void> {
+  await api('/api/ultron/cuentas/reenviar', { method: 'POST', body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave }) }, 15_000, false);
 }
 
 /**

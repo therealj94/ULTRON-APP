@@ -213,7 +213,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     let abre: boolean | null;
     const local = await entrarConCuenta(correo, actual);
     if (local === 'sin_clave') abre = await d.claveRemotaAbre(correo, actual);
-    else abre = local === 'ok';
+    else abre = local === 'ok' || local === 'sin_confirmar';
     if (abre === null) return res.status(502).json({ ok: false, error: 'No pude comprobar tu contraseña actual ahora mismo. Probá en un momento.' });
     if (!abre) {
       anotarFalloEntrada(correo, ip);

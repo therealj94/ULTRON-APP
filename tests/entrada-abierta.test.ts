@@ -1,23 +1,26 @@
 /**
- * LA ENTRADA ABIERTA (José, 10-oct: «nadie normal puede entrar a AU-RA»).
+ * LA ENTRADA ABIERTA (José, 10-oct: «nadie normal puede entrar a AU-RA»), con el correo PROBADO antes de entrar
+ * (revisión de seguridad del PR #176: registrar el correo de otra persona no puede dar una sesión a su nombre).
  *
  * Lo que tiene que ser verdad:
- *   · «Crear cuenta» abre la cuenta Y la sesión de MIEMBRO en el acto (comunidad: abre la mesa como miembro,
- *     nunca junta), y manda el código de 6 cifras para confirmar el correo; sin correo configurado, entra igual;
- *   · un correo con cuenta, del padrón o de la junta contesta lo MISMO (no se sabe cuál de los tres);
- *   · contraseña débil, correo malo → 400 con su campo; el código malo no confirma; el freno de códigos y el de
- *     cuentas por conexión funcionan; en Dr Electrum estas rutas no existen y una cuenta de aquí no le abre nada;
- *   · el pase que Genesis valida pero SIN destino «aura» sigue sin dar identidad de Genesis (401 PASE_INVALIDO),
- *     y la misma persona entra igual por /api/veta/entrar con el token de la wallet, que el SERVIDOR comprueba;
- *   · cada intento deja UNA línea en el registro con la ruta, el resultado, el motivo y el tiempo, y el correo
- *     enmascarado (nunca entero, nunca el token).
- *   · Con base (ELECTRUM_DB_URL de pruebas): la cuenta propia de verdad en Postgres — entra con su clave, la mala
- *     no, el duplicado no se toca, el código se gasta una vez, y Genesis o el enlace del correo le quitan la
- *     clave a quien se adelantó a registrar el correo de otro.
+ *   · «Crear cuenta» abre la cuenta SIN confirmar y manda el código: NUNCA devuelve una sesión;
+ *   · solo el código del buzón Y la clave de la cuenta abren la sesión de MIEMBRO (comunidad, nunca junta); el código
+ *     malo → 401 y cuenta para el freno; un código sirve una vez;
+ *   · la puerta (/api/ultron/entrar) a una cuenta propia sin confirmar contesta CORREO_SIN_CONFIRMAR, sin sesión, y
+ *     manda el código;
+ *   · sin correo configurado o si el envío falla: error claro, sin sesión, y la cuenta recién abierta se deshace;
+ *   · un correo nuevo, con cuenta, del padrón o de la junta reciben LA MISMA respuesta (no se sabe cuál);
+ *   · quien registró primero el correo de otro no se queda con la cuenta cuando el dueño la confirma;
+ *   · en Dr Electrum estas rutas no existen y una cuenta de aquí no le abre nada;
+ *   · el pase que Genesis valida SIN destino «aura» sigue sin dar identidad de Genesis (401 PASE_INVALIDO), y la misma
+ *     persona entra por /api/veta/entrar con el token de la wallet, que el SERVIDOR comprueba;
+ *   · cada intento deja UNA línea en el registro con el correo enmascarado (nunca entero, nunca el token).
+ *   · Con base (ELECTRUM_DB_URL de pruebas): lo mismo contra Postgres de verdad.
  */
 import './datos-prueba'; // la junta inventada de las pruebas (lo real vive en Render)
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
@@ -26,7 +29,7 @@ import type { AddressInfo } from 'node:net';
 process.env.CUENTAS_DB_URL = process.env.CUENTAS_DB_URL || process.env.ELECTRUM_DB_URL || '';
 process.env.ULTRON_SESION_SECRETO = process.env.ULTRON_SESION_SECRETO || 'secreto-de-sesion-para-pruebas-largo-1234';
 
-const { montarRutasRegistro, MENSAJE_NO_DISPONIBLE } = await import('../server/registro-cuentas');
+const { montarRutasRegistro, MENSAJE_ENVIADO, MENSAJE_SIN_ENVIO } = await import('../server/registro-cuentas');
 const { enmascararCorreo, lineaEntrada, resultadoDe } = await import('../server/registro-entrada');
 const { montarRutasGenesis, verificarPase } = await import('../server/genesis');
 const { montarRutasVeta, _reiniciarVeta } = await import('../server/veta-entrar');
@@ -68,10 +71,11 @@ async function levantar(app: express.Express) {
 
 const reqCon = (token: string) => ({ headers: { 'x-ultron-sesion': token } }) as any;
 const pasa: express.RequestHandler = (_q, _s, n) => n();
+const iguales = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-/** Un almacén en memoria con el contrato de server/cuentas.ts (crear, código, confirmar). */
+/** Un almacén en memoria con el contrato de server/cuentas.ts (crear, reabrir, clave, código). */
 function almacenEnMemoria() {
-  const filas = new Map<string, { nombre: string; clave: string; confirmado: boolean }>();
+  const filas = new Map<string, { nombre: string; clave: string; propia: boolean; confirmado: boolean }>();
   const codigos = new Map<string, { codigo: string; en: number; usado: boolean }>();
   return {
     filas,
@@ -79,42 +83,62 @@ function almacenEnMemoria() {
     almacen: {
       disponible: () => true,
       crearCuenta: async (correo: string, nombre: string, clave: string) => {
-        if (filas.has(correo)) return 'existe' as const;
-        filas.set(correo, { nombre, clave, confirmado: false });
-        return 'creada' as const;
+        const f = filas.get(correo);
+        if (!f) {
+          filas.set(correo, { nombre, clave, propia: true, confirmado: false });
+          return 'creada' as const;
+        }
+        if (f.propia && !f.confirmado) {
+          f.clave = clave;
+          f.nombre = nombre;
+          return 'reabierta' as const;
+        }
+        return 'existe' as const;
+      },
+      borrarSinConfirmar: async (correo: string) => {
+        const f = filas.get(correo);
+        if (f?.propia && !f.confirmado) filas.delete(correo);
+      },
+      comprobarClave: async (correo: string, clave: string) => {
+        const f = filas.get(correo);
+        if (!f) return 'sin_clave' as const;
+        const ok = iguales(f.clave, clave);
+        if (f.propia && !f.confirmado) return ok ? ('sin_confirmar' as const) : ('sin_clave' as const);
+        return ok ? ('ok' as const) : ('mal' as const);
       },
       crearCodigo: async (correo: string) => {
         const previo = codigos.get(correo);
         if (previo && !previo.usado && Date.now() - previo.en < 60_000) return null;
-        const codigo = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+        const codigo = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
         codigos.set(correo, { codigo, en: Date.now(), usado: false });
         return codigo;
       },
       usarCodigo: async (correo: string, codigo: string) => {
         const c = codigos.get(correo);
-        if (!c || c.usado || c.codigo !== codigo) return false;
+        if (!c || c.usado || !iguales(c.codigo, codigo)) return false;
         c.usado = true;
         filas.get(correo)!.confirmado = true;
         return true;
       },
-      correoConfirmado: async (correo: string) => !!filas.get(correo)?.confirmado,
+      nombreDe: async (correo: string) => filas.get(correo)?.nombre,
     },
   };
 }
 
 type Enviado = { para: string; asunto: string; texto: string };
 
-async function montarRegistro(o: { plataforma?: 'ultron' | 'electrum'; correo?: boolean; limitarReal?: boolean; junta?: string[] } = {}) {
+async function montarRegistro(o: { plataforma?: 'ultron' | 'electrum'; correo?: boolean; envioFalla?: boolean; limitarReal?: boolean; junta?: string[] } = {}) {
   const app = express();
   app.use(express.json());
   const m = almacenEnMemoria();
   const buzon: Enviado[] = [];
-  montarRutasRegistro(app, {
+  const registro = montarRutasRegistro(app, {
     plataforma: o.plataforma ?? 'ultron',
     normalizarCorreo: (c) => String(c || '').trim().toLowerCase(),
-    nombreYRol: (correo, nombre) => ({ nombre: nombre || correo, rol: 'Miembro · Genesis ID' }),
+    nombreYRol: (correo, nombre) => ({ nombre: nombre || correo.split('@')[0], rol: 'Miembro · Genesis ID' }),
     almacen: m.almacen,
     enviarCorreo: async (c) => {
+      if (o.envioFalla) return { ok: false, detalle: 'SES 403: sin permiso' };
       buzon.push({ para: c.para, asunto: c.asunto, texto: c.texto });
       return { ok: true, detalle: 'enviado' };
     },
@@ -122,108 +146,139 @@ async function montarRegistro(o: { plataforma?: 'ultron' | 'electrum'; correo?: 
     limitar: o.limitarReal ? limitar : () => pasa,
     esJunta: (c) => (o.junta || []).includes(c),
   });
-  return { ...(await levantar(app)), ...m, buzon };
+  return { ...(await levantar(app)), ...m, buzon, registro };
 }
 
 const codigoDe = (texto: string) => /\b(\d{6})\b/.exec(texto)?.[1] || '';
+const CLAVE = 'una frase muy larga';
 
 /* ------------------------------------------------------------------ crear cuenta */
 
-test('crear cuenta → sesión de MIEMBRO en el acto (comunidad, abre la mesa como miembro) y el código al correo', async () => {
+test('crear cuenta NO devuelve sesión: la cuenta queda sin confirmar y el código va al correo', async () => {
   const s = await montarRegistro();
   try {
-    const { r, salida } = await conConsola(() => s.pedir('/api/ultron/cuentas/crear', { nombre: '  Ana   López ', correo: 'Ana.Nueva@Correo.com', clave: 'una frase larga' }));
+    const { r, salida } = await conConsola(() => s.pedir('/api/ultron/cuentas/crear', { nombre: '  Ana   López ', correo: 'Ana.Nueva@Correo.com', clave: CLAVE }));
     assert.equal(r.status, 200, JSON.stringify(r.json));
-    assert.equal(r.json.ok, true);
-    assert.equal(r.json.nivel, 'miembro');
-    assert.equal(r.json.confirmacion, 'enviado');
-    assert.equal(r.json.correoConfirmado, false);
-    assert.deepEqual(r.json.miembro, { nombre: 'Ana López', correo: 'ana.nueva@correo.com', rol: 'Miembro · Genesis ID', gid: '' });
-    // La sesión es de verdad: firmada, de comunidad, abre AU-RA como miembro.
-    const ses = sesionDe(reqCon(r.json.token));
-    assert.ok(ses, 'la sesión vale');
-    assert.equal(ses!.correo, 'ana.nueva@correo.com');
-    assert.equal(ses!.comunidad, true, 'marca de comunidad firmada');
-    assert.equal(sesionAbreAura(ses!.correo, !!ses!.comunidad), true);
-    // La contraseña se guardó para la cuenta (en la base de verdad, cifrada con scrypt) y el correo salió con el código.
-    assert.equal(s.filas.get('ana.nueva@correo.com')?.clave, 'una frase larga');
+    assert.equal(r.json.token, undefined, 'ninguna sesión antes de probar el buzón');
+    assert.deepEqual(r.json, { ok: true, confirmacion: 'enviado', correo: 'ana.nueva@correo.com', message: MENSAJE_ENVIADO });
+    assert.deepEqual(s.filas.get('ana.nueva@correo.com'), { nombre: 'Ana López', clave: CLAVE, propia: true, confirmado: false });
     assert.equal(s.buzon.length, 1);
     assert.equal(s.buzon[0].para, 'ana.nueva@correo.com');
-    assert.match(codigoDe(s.buzon[0].texto), /^\d{6}$/);
     assert.equal(codigoDe(s.buzon[0].texto), s.codigos.get('ana.nueva@correo.com')?.codigo);
-    // UNA línea en el registro, con el correo enmascarado y sin la contraseña.
     const lineas = salida.filter((l) => l.startsWith('[entrada]'));
     assert.equal(lineas.length, 1, salida.join('\n'));
-    assert.match(lineas[0], /^\[entrada\] ruta=\/api\/ultron\/cuentas\/crear status=200 resultado=OK detalle="cuenta nueva; código enviado" ms=\d+ quien=a\*\*\*@correo\.com$/);
-    assert.ok(!salida.join('\n').includes('ana.nueva@correo.com'), 'el correo entero no sale al registro');
-    assert.ok(!salida.join('\n').includes('una frase larga'), 'la contraseña tampoco');
+    assert.match(lineas[0], /^\[entrada\] ruta=\/api\/ultron\/cuentas\/crear status=200 resultado=OK detalle="cuenta creada; código enviado" ms=\d+ quien=a\*\*\*@correo\.com$/);
+    assert.ok(!salida.join('\n').includes('ana.nueva@correo.com') && !salida.join('\n').includes(CLAVE), 'ni el correo entero ni la clave al registro');
   } finally {
     await s.cerrar();
   }
 });
 
-test('confirmar el correo: código malo no; el bueno sí, una vez; sin sesión, 401; reenviar con espera', async () => {
+test('confirmar: código malo → 401 y cuenta para el freno; clave ajena → 401 sin gastar el código; el bueno → sesión de MIEMBRO, una vez', async () => {
   const s = await montarRegistro();
   try {
-    const r = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Beto', correo: 'beto@correo.com', clave: 'otra frase larga' });
-    const token = r.json.token;
+    await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Beto', correo: 'beto@correo.com', clave: CLAVE });
     const bueno = codigoDe(s.buzon[0].texto);
     const malo = bueno === '000000' ? '111111' : '000000';
-    assert.equal((await s.pedir('/api/ultron/cuentas/confirmar', { codigo: bueno })).status, 401, 'sin sesión no se confirma nada');
-    const m = await s.pedir('/api/ultron/cuentas/confirmar', { codigo: malo }, token);
-    assert.deepEqual([m.status, m.json.codigo], [400, 'CODIGO_INVALIDO']);
-    assert.equal((await s.pedir('/api/ultron/cuentas/confirmar', { codigo: '12' }, token)).json.codigo, 'CODIGO_FORMATO');
-    // Reenviar enseguida: «espera»; el código de antes sigue valiendo.
-    const re = await s.pedir('/api/ultron/cuentas/reenviar', {}, token);
-    assert.deepEqual([re.status, re.json.codigo], [429, 'ESPERA']);
-    const ok = await s.pedir('/api/ultron/cuentas/confirmar', { codigo: `${bueno.slice(0, 3)} ${bueno.slice(3)}` }, token);
+    const m = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'beto@correo.com', clave: CLAVE, codigo: malo });
+    assert.deepEqual([m.status, m.json.codigo, m.json.token], [401, 'CODIGO_INVALIDO', undefined]);
+    const ajena = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'beto@correo.com', clave: 'otra frase muy larga', codigo: bueno });
+    assert.deepEqual([ajena.status, ajena.json.codigo], [401, 'CODIGO_INVALIDO']);
+    assert.equal(s.codigos.get('beto@correo.com')?.usado, false, 'una clave mala no gasta el código');
+    assert.equal((await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'beto@correo.com', clave: CLAVE, codigo: '12' })).json.codigo, 'CODIGO_FORMATO');
+    const ok = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'beto@correo.com', clave: CLAVE, codigo: `${bueno.slice(0, 3)} ${bueno.slice(3)}` });
     assert.equal(ok.status, 200, JSON.stringify(ok.json));
-    assert.equal(ok.json.correoConfirmado, true);
+    assert.equal(ok.json.nivel, 'miembro');
+    assert.deepEqual(ok.json.miembro, { nombre: 'Beto', correo: 'beto@correo.com', rol: 'Miembro · Genesis ID', gid: '' });
+    const ses = sesionDe(reqCon(ok.json.token));
+    assert.ok(ses, 'la sesión vale');
+    assert.equal(ses!.comunidad, true, 'marca de comunidad firmada');
+    assert.equal(sesionAbreAura(ses!.correo, !!ses!.comunidad), true);
     assert.equal(s.filas.get('beto@correo.com')?.confirmado, true);
-    assert.equal((await s.pedir('/api/ultron/cuentas/confirmar', { codigo: bueno }, token)).json.codigo, 'CODIGO_INVALIDO', 'un código sirve una vez');
-    // Ya confirmado, reenviar no manda nada.
-    const ya = await s.pedir('/api/ultron/cuentas/reenviar', {}, token);
-    assert.deepEqual([ya.status, ya.json.correoConfirmado], [200, true]);
-    assert.equal(s.buzon.length, 1);
+    const otra = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'beto@correo.com', clave: CLAVE, codigo: bueno });
+    assert.deepEqual([otra.status, otra.json.codigo, otra.json.token], [409, 'YA_CONFIRMADO', undefined], 'confirmada, se entra con la clave');
   } finally {
     await s.cerrar();
   }
 });
 
-test('probar códigos al azar se frena (por correo), aunque se tenga la sesión', async () => {
+test('el contador de intentos: probar códigos al azar se frena (por correo); con el freno puesto ni el bueno pasa', async () => {
   const s = await montarRegistro();
   try {
-    const r = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Caro', correo: 'caro.freno@correo.com', clave: 'frase larga de caro' });
+    await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Caro', correo: 'caro.freno@correo.com', clave: CLAVE });
     const bueno = codigoDe(s.buzon[0].texto);
     const estados: number[] = [];
     for (let i = 0; i < 7; i++) {
       const intento = String((Number(bueno) + 1 + i) % 1_000_000).padStart(6, '0');
-      estados.push((await s.pedir('/api/ultron/cuentas/confirmar', { codigo: intento }, r.json.token)).status);
+      estados.push((await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'caro.freno@correo.com', clave: CLAVE, codigo: intento })).status);
     }
-    assert.ok(estados.includes(429), `el freno salta: ${estados.join(',')}`);
-    // Con el freno puesto, ni el bueno pasa hasta que se enfríe.
-    assert.equal((await s.pedir('/api/ultron/cuentas/confirmar', { codigo: bueno }, r.json.token)).status, 429);
+    assert.deepEqual(estados.slice(0, 5), [401, 401, 401, 401, 401]);
+    assert.ok(estados.slice(5).every((e) => e === 429), `el freno salta: ${estados.join(',')}`);
+    const r = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'caro.freno@correo.com', clave: CLAVE, codigo: bueno });
+    assert.deepEqual([r.status, r.json.token], [429, undefined]);
+    assert.equal(s.codigos.get('caro.freno@correo.com')?.usado, false);
   } finally {
     await s.cerrar();
   }
 });
 
-test('correo con cuenta, del padrón o de la junta: la MISMA respuesta (409), sin decir cuál; nada se crea', async () => {
+test('reenviar: con la clave; enseguida, «espera»; sin la clave, nada; confirmada, YA_CONFIRMADO', async () => {
+  const s = await montarRegistro();
+  try {
+    await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Dora', correo: 'dora.reenvio@correo.com', clave: CLAVE });
+    const espera = await s.pedir('/api/ultron/cuentas/reenviar', { correo: 'dora.reenvio@correo.com', clave: CLAVE });
+    assert.deepEqual([espera.status, espera.json.codigo], [429, 'ESPERA']);
+    const sinClave = await s.pedir('/api/ultron/cuentas/reenviar', { correo: 'dora.reenvio@correo.com', clave: 'no es la clave de dora' });
+    assert.deepEqual([sinClave.status, sinClave.json.codigo], [401, 'NO_ENTRA']);
+    s.codigos.get('dora.reenvio@correo.com')!.en = 0; // pasó el minuto
+    const otro = await s.pedir('/api/ultron/cuentas/reenviar', { correo: 'dora.reenvio@correo.com', clave: CLAVE });
+    assert.equal(otro.status, 200);
+    assert.equal(s.buzon.length, 2);
+    const nuevo = codigoDe(s.buzon[1].texto);
+    assert.equal((await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'dora.reenvio@correo.com', clave: CLAVE, codigo: nuevo })).status, 200);
+    assert.equal((await s.pedir('/api/ultron/cuentas/reenviar', { correo: 'dora.reenvio@correo.com', clave: CLAVE })).json.codigo, 'YA_CONFIRMADO');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('correo nuevo, con cuenta, del padrón o de la junta: LA MISMA respuesta; al que ya tenía cuenta le llega un aviso, no un código', async () => {
   const s = await montarRegistro({ junta: ['solo.junta@ordenglobal.org'] });
   try {
-    const primero = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Dani', correo: 'dani@correo.com', clave: 'una frase muy larga' });
-    assert.equal(primero.status, 200);
-    const respuestas = [];
-    for (const correo of ['dani@correo.com', 'j.herrera@ordenglobal.org', 'solo.junta@ordenglobal.org']) {
-      const r = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Alguien', correo, clave: 'frase larga de otro' });
-      assert.equal(r.status, 409, correo);
-      assert.equal(r.json.token, undefined, `${correo}: sin sesión`);
-      respuestas.push(JSON.stringify(r.json));
+    await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Elsa', correo: 'elsa@correo.com', clave: CLAVE });
+    const k = codigoDe(s.buzon[0].texto);
+    await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'elsa@correo.com', clave: CLAVE, codigo: k });
+    s.buzon.length = 0;
+    const respuestas = new Set<string>();
+    for (const correo of ['nadie.aun@correo.com', 'elsa@correo.com', 'j.herrera@ordenglobal.org', 'solo.junta@ordenglobal.org']) {
+      const r = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Alguien', correo, clave: 'otra frase cualquiera' });
+      assert.equal(r.status, 200, correo);
+      assert.equal(r.json.token, undefined);
+      const { correo: _c, ...resto } = r.json;
+      respuestas.add(JSON.stringify(resto));
     }
-    assert.equal(new Set(respuestas).size, 1, 'las tres respuestas son idénticas');
-    assert.equal(JSON.parse(respuestas[0]).error, MENSAJE_NO_DISPONIBLE);
-    assert.equal(s.filas.get('dani@correo.com')?.clave, 'una frase muy larga', 'la cuenta que existía no se tocó');
-    assert.ok(!s.filas.has('j.herrera@ordenglobal.org'));
+    assert.equal(respuestas.size, 1, 'las cuatro respuestas son la misma');
+    assert.equal(s.filas.get('elsa@correo.com')?.clave, CLAVE, 'la cuenta confirmada no se tocó');
+    assert.ok(!s.filas.has('j.herrera@ordenglobal.org') && !s.filas.has('solo.junta@ordenglobal.org'), 'del padrón y la junta no se crea nada');
+    assert.match(s.buzon.find((b) => b.para === 'elsa@correo.com')?.asunto || '', /ya tienes una cuenta/);
+    assert.ok(!s.buzon.some((b) => b.para === 'j.herrera@ordenglobal.org'), 'al padrón no se le escribe');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('quien registra primero el correo de otro no se queda con la cuenta: el dueño la reabre con SU clave y confirma; la del intruso no confirma', async () => {
+  const s = await montarRegistro();
+  try {
+    await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Intruso', correo: 'fabi@correo.com', clave: 'clave del intruso 1' });
+    s.codigos.get('fabi@correo.com')!.en = 0;
+    await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Fabi', correo: 'fabi@correo.com', clave: CLAVE });
+    assert.equal(s.filas.get('fabi@correo.com')?.clave, CLAVE, 'reabierta con la clave del dueño');
+    const codigo = codigoDe(s.buzon[s.buzon.length - 1].texto);
+    const intruso = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'fabi@correo.com', clave: 'clave del intruso 1', codigo });
+    assert.equal(intruso.status, 401, 'aun con el código, la clave del intruso no confirma');
+    const duena = await s.pedir('/api/ultron/cuentas/confirmar', { correo: 'fabi@correo.com', clave: CLAVE, codigo });
+    assert.equal(duena.status, 200);
   } finally {
     await s.cerrar();
   }
@@ -233,8 +288,8 @@ test('formulario malo: cada cosa con su código y su campo; nada se crea', async
   const s = await montarRegistro();
   try {
     const casos: [Record<string, string>, string][] = [
-      [{ nombre: 'E', correo: 'e@correo.com', clave: 'frase larga de e' }, 'NOMBRE'],
-      [{ nombre: 'Eva', correo: 'eva@correo', clave: 'frase larga de eva' }, 'CORREO'],
+      [{ nombre: 'E', correo: 'e@correo.com', clave: CLAVE }, 'NOMBRE'],
+      [{ nombre: 'Eva', correo: 'eva@correo', clave: CLAVE }, 'CORREO'],
       [{ nombre: 'Eva', correo: 'eva@correo.com', clave: 'corta' }, 'CLAVE_DEBIL'],
       [{ nombre: 'Eva', correo: 'eva@correo.com', clave: '12345678901' }, 'CLAVE_DEBIL'],
       [{ nombre: 'Eva', correo: 'evangelina@correo.com', clave: 'xxevangelinaxx' }, 'CLAVE_DEBIL'],
@@ -249,15 +304,38 @@ test('formulario malo: cada cosa con su código y su campo; nada se crea', async
   }
 });
 
-test('sin correo configurado: se entra igual, la cuenta queda sin confirmar y no se pide código', async () => {
+test('sin correo configurado: 503 SIN_ENVIO, sin sesión y sin cuenta; el motivo queda en el registro', async () => {
   const s = await montarRegistro({ correo: false });
   try {
-    const r = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Fede', correo: 'fede@correo.com', clave: 'otra frase muy larga' });
-    assert.equal(r.status, 200);
-    assert.equal(r.json.confirmacion, 'sin_correo');
-    assert.ok(sesionDe(reqCon(r.json.token)), 'la sesión vale');
+    const { r, salida } = await conConsola(() => s.pedir('/api/ultron/cuentas/crear', { nombre: 'Gus', correo: 'gus@correo.com', clave: CLAVE }));
+    assert.deepEqual([r.status, r.json.codigo, r.json.token], [503, 'SIN_ENVIO', undefined]);
+    assert.equal(r.json.error, MENSAJE_SIN_ENVIO);
+    assert.match(r.json.error, /Veta Wallet u Orden Global/);
+    assert.equal(s.filas.size, 0);
+    assert.ok(salida.some((l) => /\[entrada\] ruta=\/api\/ultron\/cuentas\/crear status=503 resultado=SIN_ENVIO/.test(l)));
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('el envío falla (SES): 502 CODIGO_NO_ENVIADO, sin sesión, y la cuenta recién abierta se deshace (se puede reintentar)', async () => {
+  const s = await montarRegistro({ envioFalla: true });
+  try {
+    const { r, salida } = await conConsola(() => s.pedir('/api/ultron/cuentas/crear', { nombre: 'Hilda', correo: 'hilda@correo.com', clave: CLAVE }));
+    assert.deepEqual([r.status, r.json.codigo, r.json.token], [502, 'CODIGO_NO_ENVIADO', undefined]);
+    assert.equal(s.filas.has('hilda@correo.com'), false, 'se deshizo');
+    assert.ok(salida.some((l) => l.includes('no salió el correo con el código')), 'el fallo de SES queda en el registro');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('mandarCodigo (lo que usa la puerta con una cuenta sin confirmar): sin correo no inventa nada', async () => {
+  const s = await montarRegistro({ correo: false });
+  try {
+    const { r } = await conConsola(() => s.registro.mandarCodigo('ivan@correo.com', 'Iván'));
+    assert.equal(r, 'sin_correo');
     assert.equal(s.buzon.length, 0);
-    assert.equal(s.filas.get('fede@correo.com')?.confirmado, false);
   } finally {
     await s.cerrar();
   }
@@ -274,14 +352,14 @@ test('cuentas nuevas por conexión: el tope de verdad (seguridad.limitar) corta 
   }
 });
 
-test('Dr Electrum: «crear cuenta» no existe allí y una sesión de comunidad no se le emite a nadie', async () => {
+test('Dr Electrum: «crear», «confirmar» y «reenviar» no existen allí y una sesión de comunidad no se le emite a nadie', async () => {
   const s = await montarRegistro({ plataforma: 'electrum' });
   try {
-    const r = await s.pedir('/api/ultron/cuentas/crear', { nombre: 'Hugo', correo: 'hugo@correo.com', clave: 'frase larga de hugo' });
-    assert.deepEqual([r.status, r.json.codigo], [404, 'SOLO_AURA']);
-    assert.equal(r.json.token, undefined);
+    for (const ruta of ['crear', 'confirmar', 'reenviar']) {
+      const r = await s.pedir(`/api/ultron/cuentas/${ruta}`, { nombre: 'Hugo', correo: 'hugo@correo.com', clave: CLAVE, codigo: '123456' });
+      assert.deepEqual([r.status, r.json.codigo, r.json.token], [404, 'SOLO_AURA', undefined], ruta);
+    }
     assert.equal(s.filas.size, 0);
-    // La puerta de Dr Electrum mira el padrón: alguien fuera de él nunca es «de la comunidad» allí.
     assert.equal(esDeComunidad('hugo@correo.com', 'electrum'), false);
     assert.equal(esDeComunidad('hugo@correo.com', 'ultron'), true);
   } finally {
@@ -289,15 +367,21 @@ test('Dr Electrum: «crear cuenta» no existe allí y una sesión de comunidad n
   }
 });
 
-test('la puerta (server.ts): una cuenta propia solo entra a la plataforma que le toca; en Dr Electrum, SIN_ACCESO', () => {
+test('la puerta (server.ts): sin confirmar → CORREO_SIN_CONFIRMAR sin sesión y con el código; en Dr Electrum, SIN_ACCESO', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
   const i = src.indexOf("app.post(['/api/electrum/entrar', '/api/ultron/entrar']");
   const ruta = src.slice(i, src.indexOf('function nombreYRolDe', i));
+  const sinConfirmar = ruta.slice(ruta.indexOf("if (propia === 'sin_confirmar')"), ruta.indexOf("if (propia === 'ok')"));
+  assert.ok(sinConfirmar.length > 50, 'hay una rama para la cuenta sin confirmar');
+  assert.doesNotMatch(sinConfirmar, /emitirSesion/, 'la rama sin confirmar NO emite sesión');
+  assert.match(sinConfirmar, /codigo: 'CORREO_SIN_CONFIRMAR'/);
+  assert.match(sinConfirmar, /registroCuentas\.mandarCodigo\(/, 'y manda el código');
+  assert.match(sinConfirmar, /if \(ES_ELECTRUM \|\| !esDeComunidad\(correo, PLATAFORMA\)\) return res\.status\(403\)/);
   assert.match(ruta, /if \(propia === 'mal'\) \{\s*anotarFalloEntrada\(correo, ipEntrada\);\s*return res\.status\(401\)/, 'contraseña mala: 401 y cuenta para el freno');
   assert.match(ruta, /if \(!puedeEntrar\(identificar\(\{ correo \}\), PLATAFORMA\) && !esDeComunidad\(correo, PLATAFORMA\)\) \{\s*return res\.status\(403\)/, 'Dr Electrum: fuera del padrón no entra');
-  assert.match(ruta, /emitirSesion\(\{ correo, nombre, rol \}, \{ comunidad: esDeComunidad\(correo, PLATAFORMA\) \}\)/, 'en AU-RA, la sesión de comunidad');
-  assert.match(src, /montarVigilancia\(app, \['\/api\/electrum\/entrar', '\/api\/ultron\/entrar'\]\)/, 'y la puerta deja su línea en el registro');
+  assert.match(src, /montarVigilancia\(app, \['\/api\/electrum\/entrar', '\/api\/ultron\/entrar'\]\)/, 'la puerta deja su línea en el registro');
   assert.match(src, /esJunta: \(correo\) => nivelDeCorreo\(correo, PLATAFORMA\) !== 'miembro'/, 'la junta (AURA_JUNTA o padrón) no se registra');
+  assert.match(src, /comprobarClave: entrarConCuenta/, 'confirmar usa la misma comprobación de clave que la puerta');
 });
 
 /* ------------------------------------------------------------------ el registro */
@@ -416,14 +500,13 @@ async function vaciarCuentas() {
   }
 }
 
-test('cuenta propia en Postgres: entra con su clave, la mala no, el duplicado no se toca, el código una vez', { skip: sinBase ? 'sin base' : false }, async () => {
+test('Postgres: sin confirmar NO entra con su clave (sin_confirmar); la mala no tapa al remoto; el código la confirma una vez', { skip: sinBase ? 'sin base' : false }, async () => {
   await vaciarCuentas();
   assert.equal(await cuentas.crearCuentaPropia('ines@correo.com', 'Inés', 'frase larga de ines'), 'creada');
-  assert.equal(await cuentas.crearCuentaPropia('ines@correo.com', 'Otra', 'otra frase cualquiera'), 'existe');
-  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'frase larga de ines'), 'ok', 'el duplicado no le cambió la clave');
-  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'otra frase cualquiera'), 'mal');
+  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'frase larga de ines'), 'sin_confirmar', 'la clave buena no basta sin el código');
+  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'otra frase cualquiera'), 'sin_clave', 'una clave sin probar no tapa la del cerebro remoto');
   const c = await cuentas.cuentaDe('ines@correo.com');
-  assert.deepEqual([c?.propia, c?.correoConfirmado, c?.tieneClave, Object.keys(c?.acceso || {}).length], [true, false, true, 0], 'propia, sin confirmar, sin acceso en el padrón');
+  assert.deepEqual([c?.propia, c?.correoConfirmado, c?.tieneClave, Object.keys(c?.acceso || {}).length], [true, false, true, 0]);
   assert.equal(await cuentas.puedeRecuperar('ines@correo.com'), true, '«olvidé mi contraseña» también para estas cuentas');
   const k = await cuentas.crearCodigoCorreo('ines@correo.com');
   assert.match(String(k), /^\d{6}$/);
@@ -432,22 +515,29 @@ test('cuenta propia en Postgres: entra con su clave, la mala no, el duplicado no
   assert.equal(await cuentas.usarEnlace(k!), null, 'un código no sirve como enlace');
   assert.equal(await cuentas.usarCodigoCorreo('ines@correo.com', k!), true);
   assert.equal(await cuentas.usarCodigoCorreo('ines@correo.com', k!), false, 'una vez');
-  assert.equal((await cuentas.cuentaDe('ines@correo.com'))?.correoConfirmado, true);
-  // Recargar el padrón no la sube: sigue siendo miembro.
+  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'frase larga de ines'), 'ok', 'confirmada, entra con su clave');
+  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'otra frase cualquiera'), 'mal');
+  // Confirmada, registrarse otra vez no la toca.
+  assert.equal(await cuentas.crearCuentaPropia('ines@correo.com', 'Otra', 'otra frase cualquiera'), 'existe');
+  assert.equal(await cuentas.entrarConCuenta('ines@correo.com', 'frase larga de ines'), 'ok');
   await cuentas.recargarCuentas();
-  assert.equal(esDeComunidad('ines@correo.com', 'ultron'), true);
+  assert.equal(esDeComunidad('ines@correo.com', 'ultron'), true, 'sigue siendo miembro');
 });
 
-test('Genesis prueba al dueño del correo: la cuenta SIN confirmar pierde la clave que le puso otro; la confirmada no', { skip: sinBase ? 'sin base' : false }, async () => {
+test('Postgres: reabrir sin confirmar pone la clave nueva; deshacer solo borra las sin confirmar; Genesis reclama', { skip: sinBase ? 'sin base' : false }, async () => {
   await vaciarCuentas();
   await cuentas.crearCuentaPropia('juan@correo.com', 'Intruso', 'clave del intruso 1');
+  assert.equal(await cuentas.crearCuentaPropia('juan@correo.com', 'Juan', 'clave de juan 1234'), 'reabierta');
+  assert.equal(await cuentas.entrarConCuenta('juan@correo.com', 'clave de juan 1234'), 'sin_confirmar');
+  assert.equal(await cuentas.entrarConCuenta('juan@correo.com', 'clave del intruso 1'), 'sin_clave', 'la del intruso ya no es la de la cuenta');
   assert.equal(await cuentas.reclamarCuentaSinConfirmar('juan@correo.com'), true);
-  assert.equal(await cuentas.entrarConCuenta('juan@correo.com', 'clave del intruso 1'), 'sin_clave', 'la clave del intruso ya no abre');
-  assert.equal((await cuentas.cuentaDe('juan@correo.com'))?.correoConfirmado, true);
-  assert.equal(await cuentas.reclamarCuentaSinConfirmar('juan@correo.com'), false, 'no hay nada más que cortar');
+  assert.equal(await cuentas.entrarConCuenta('juan@correo.com', 'clave de juan 1234'), 'sin_clave', 'Genesis probó al dueño: ninguna clave puesta sin probar sigue');
+  assert.equal(await cuentas.borrarCuentaSinConfirmar('juan@correo.com'), false, 'confirmada (por Genesis): no se borra');
   await cuentas.crearCuentaPropia('karla@correo.com', 'Karla', 'clave de karla 123');
-  await cuentas.confirmarCorreoCuenta('karla@correo.com');
-  assert.equal(await cuentas.reclamarCuentaSinConfirmar('karla@correo.com'), false);
-  assert.equal(await cuentas.entrarConCuenta('karla@correo.com', 'clave de karla 123'), 'ok', 'la confirmada no se toca');
+  assert.equal(await cuentas.borrarCuentaSinConfirmar('karla@correo.com'), true);
+  assert.equal(await cuentas.cuentaDe('karla@correo.com'), null);
+  await cuentas.asegurarCuentaMiembro('lia@correo.com', 'Lía', 'GEN-LIA1-LIA2-L');
+  assert.equal(await cuentas.crearCuentaPropia('lia@correo.com', 'Otra', 'otra frase cualquiera'), 'existe', 'un miembro de Genesis no se reabre');
+  assert.equal(await cuentas.borrarCuentaSinConfirmar('lia@correo.com'), false);
   await cuentas._cerrarCuentas();
 });
