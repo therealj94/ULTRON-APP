@@ -231,6 +231,7 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
   const total = fuentes.reduce((s, f) => s + (f.capa ? 1 : 0), 0);
   if (!total && !fuentes.some((f) => f.cartera)) return { error: 'Esa capa no está disponible para su organización.', status: 404 };
   const features: FeatureCollection['features'] = [];
+  let peso = 0;
   for (const f of fuentes) {
     let filas: Fila[] = [];
     if (f.capa) {
@@ -261,6 +262,12 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
       ).then(conTextoReparado);
     }
     const porDefecto = colorPrincipal(e as unknown as EntradaCatalogo);
+    /*
+     * Tope de peso: el servidor tiene 512 MB y una capa de decenas de MB de GeoJSON (más su copia
+     * parseada y la respuesta serializada) lo tumbaba por memoria a mitad de una conversación.
+     */
+    peso += filas.reduce((s, r) => s + (r.g?.length || 0), 0);
+    if (peso > MAX_PESO_GEOJSON) return { error: 'Esa capa es demasiado pesada para pintarla entera: acercá el mapa o filtrala.', status: 413 };
     for (const r of filas) {
       if (!r.g) continue;
       const geometry = JSON.parse(r.g);
@@ -328,6 +335,9 @@ export async function contarIndice(id: number, filtros: Filtros = {}): Promise<n
   }
   return total;
 }
+
+/** Lo más que se sirve de geometría de una capa (texto GeoJSON): con simplificación, la más pesada pesa ~4 MB. */
+const MAX_PESO_GEOJSON = 25 * 1024 * 1024;
 
 let perimetroMem: { cuando: number; fc: FeatureCollection } | null = null;
 /** El contorno de Honduras (los departamentos disueltos en un polígono), del cubo o de la base. */
