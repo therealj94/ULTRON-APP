@@ -51,6 +51,8 @@ import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
+import { Carga, Cortina } from './ui/Carga';
+import { Emblema, Topografia } from './ui/Topografia';
 import { guardarSesion, hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
 import { AVISO_ENTRADA, fijarInvitado } from './sesion-invitado';
 import { PonerClave, enlaceEnLaUrl, faltaPara, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
@@ -147,6 +149,9 @@ export default function App() {
   /** Quién entró: para saludarlo por su nombre y recordar sus preferencias de bienvenida. */
   const [usuario, setUsuario] = useState<{ nombre: string; correo: string; invitado: boolean } | null>(null);
   // El aviso de «tu acceso temporal terminó» llega después de recargar la página (ver `cerrar`, abajo).
+  /** La cortina de entrada (después de iniciar sesión): cuenta lo que se prepara y se desvanece. */
+  const [cortina, setCortina] = useState(false);
+  const quitarCortina = useCallback(() => setCortina(false), []);
   const [avisoEntrada, setAvisoEntrada] = useState(() => {
     try {
       const a = sessionStorage.getItem(AVISO_ENTRADA) || '';
@@ -923,17 +928,16 @@ export default function App() {
     );
   }
 
-  if (puerta === 'probando') {
-    return (
-      <div className="fixed inset-0 bg-black flex items-center justify-center">
-        <div className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#FFAE3B]/50">comprobando acceso…</div>
-      </div>
-    );
-  }
+  if (puerta === 'probando') return <Carga />;
   if (puerta === 'plataforma') {
     return (
-      <div className="fixed inset-0 bg-black flex items-center justify-center px-6">
-        <div className="max-w-[360px] text-center">
+      <div className="fixed inset-0 flex items-center justify-center bg-[#050607] px-6">
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at 50% 45%, #14100A 0%, #070708 55%, #030304 100%)' }} />
+        <Topografia intensidad={0.6} />
+        <div className="relative max-w-[380px] rounded-2xl border border-white/[0.08] bg-[rgba(12,14,17,.8)] p-7 text-center backdrop-blur-xl">
+          <div className="mb-4 flex justify-center">
+            <Emblema tam={72} />
+          </div>
           <div className="font-display font-bold tracking-[0.34em] text-lg" style={{ color: '#FFAE3B' }}>
             DR ELECTRUM FP
           </div>
@@ -960,10 +964,23 @@ export default function App() {
       </div>
     );
   }
-  if (puerta === 'cerrada') return <Entrar modoInicial={modoEntrada} aviso={avisoEntrada} onAbierta={() => { setAvisoEntrada(''); setPuerta('abierta'); }} />;
+  if (puerta === 'cerrada')
+    return (
+      <Entrar
+        modoInicial={modoEntrada}
+        aviso={avisoEntrada}
+        onAbierta={() => {
+          setAvisoEntrada('');
+          // La estación se arma detrás de la cortina y aparece cuando ya está montada.
+          setCortina(true);
+          setPuerta('abierta');
+        }}
+      />
+    );
 
   return (
     <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden">
+      {cortina && <Cortina alTerminar={quitarCortina} />}
       <Barra
         escenario={escenario}
         motor={motor}

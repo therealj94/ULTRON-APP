@@ -5,16 +5,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Dr Electrum FP</title>
     <meta name="description" content="Dr Electrum FP · estación de trabajo minera. Catastro, expedientes y un panel de especialistas." />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#050607" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-    <style>html,body,#root{height:100%;margin:0;background:#000}</style>
+    <style>
+      html,body,#root{height:100%;margin:0;background:#050607}
+      /* Lo primero que se ve, antes de que llegue el JavaScript: el mismo emblema que la carga de la app. */
+      .arranque{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 45%,#14100A 0%,#070708 55%,#030304 100%);font-family:Rajdhani,ui-sans-serif,system-ui;animation:ar-entrar .5s ease-out both}
+      .arranque svg{width:124px;height:124px;filter:drop-shadow(0 0 24px rgba(255,174,59,.35))}
+      .arranque .giro{transform-origin:60px 60px;animation:ar-girar 1.6s linear infinite}
+      .arranque .hex{transform-origin:60px 60px;animation:ar-girar 28s linear infinite}
+      .arranque .nombre{margin-top:28px;color:#F7E3BA;font-weight:700;font-size:30px;letter-spacing:.42em;text-shadow:0 0 24px rgba(255,174,59,.45)}
+      .arranque .sub{margin-top:8px;color:#8FA3B0;font:500 10.5px/1 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:.34em;text-transform:uppercase}
+      @keyframes ar-girar{to{transform:rotate(360deg)}}
+      @keyframes ar-entrar{from{opacity:0}to{opacity:1}}
+      @media (prefers-reduced-motion:reduce){.arranque *{animation:none!important}}
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="arranque" role="status" aria-label="Cargando Dr Electrum">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <defs><linearGradient id="ar-oro" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#FFF1C9"/><stop offset=".45" stop-color="#FFC566"/><stop offset="1" stop-color="#B86B0C"/></linearGradient></defs>
+          <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(255,174,59,.14)" stroke-width="2"/>
+          <circle class="giro" cx="60" cy="60" r="54" fill="none" stroke="url(#ar-oro)" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="75 340"/>
+          <g class="hex"><polygon points="60,16 98,38 98,82 60,104 22,82 22,38" fill="rgba(255,174,59,.05)" stroke="url(#ar-oro)" stroke-width="1.6"/><polygon points="60,30 86,45 86,75 60,90 34,75 34,45" fill="none" stroke="url(#ar-oro)" stroke-width=".8" opacity=".55"/></g>
+          <text x="60" y="71" text-anchor="middle" font-size="30" font-weight="700" fill="url(#ar-oro)" font-family="Rajdhani, ui-sans-serif, system-ui">Au</text>
+        </svg>
+        <div class="nombre">DR ELECTRUM</div>
+        <div class="sub">Inteligencia geológico-minera · Honduras</div>
+      </div>
+    </div>
     <script type="module" src="/src-electrum/main.tsx"></script>
   </body>
 </html>
