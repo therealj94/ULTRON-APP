@@ -13,6 +13,7 @@
  */
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { MENSAJES, PASOS, PREGUNTAS_DESPUES, type FilaFicha } from './etapa1';
+import { BotonEsconder, useVentana } from '../mapa/ventanas';
 
 const ORO = '#FFAE3B';
 const ROJO = '#FF2D2D';
@@ -706,16 +707,28 @@ export function MarcoMapa({ marco }: { marco: Marco | null }) {
     window.addEventListener('electrum:rumbo', f);
     return () => window.removeEventListener('electrum:rumbo', f);
   }, []);
-  if (!marco) return null;
+  /*
+   * Ventana del mapa (mapa/ventanas.tsx): se esconde a su pastilla. En el teléfono cabe una sola
+   * ventana a la vez y manda el cuadro del recorrido: el rótulo espera en su pastilla.
+   */
+  const ventana = useVentana('marco', { nombre: 'el rótulo del mapa', etiqueta: marco ? `Rótulo · ${marco.titulo}` : 'Rótulo', activa: !!marco, prioridad: 4, rincon: 'der' });
+  if (!marco || ventana.plegada) return null;
   return (
     <div
       key={marco.titulo}
       aria-label={`Mapa: ${marco.titulo}`}
-      className="pointer-events-none absolute right-2 top-[max(11vh,88px)] z-[29] w-[min(250px,62vw)] md:right-14 md:top-[max(7vh,56px)] md:w-[280px]"
+      data-ventana-clave="marco"
+      className={`pointer-events-none absolute z-[29] flex flex-col ${
+        ventana.modo === 'franja'
+          ? 'right-2 top-[max(11vh,88px)] w-[min(250px,62vw)] max-h-[calc(100%-150px)]'
+          : ventana.modo === 'baja'
+            ? 'right-[52px] top-2 bottom-2 w-[min(280px,42%)]'
+            : 'right-14 top-[max(7vh,56px)] w-[280px] max-h-[calc(100%-70px)]'
+      }`}
       style={{ animation: 'e1-entrar-der .6s ease-out both' }}
     >
-      <div className="overflow-hidden rounded-xl border border-white/12 bg-[rgba(8,12,16,.8)] shadow-[0_14px_40px_rgba(0,0,0,.5)] backdrop-blur-xl">
-        <div className="flex items-start gap-2 border-b border-white/[0.08] px-3 py-2">
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/12 bg-[rgba(8,12,16,.8)] shadow-[0_14px_40px_rgba(0,0,0,.5)] backdrop-blur-xl">
+        <div className="flex shrink-0 items-start gap-2 border-b border-white/[0.08] py-2 pl-3 pr-1">
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-bold leading-tight text-white md:text-[13.5px]">{marco.titulo}</div>
             {marco.subtitulo && <div className="mt-0.5 truncate text-[10.5px] text-[#9FB0B8] md:text-[11.5px]">{marco.subtitulo}</div>}
@@ -727,8 +740,9 @@ export function MarcoMapa({ marco }: { marco: Marco | null }) {
               N
             </text>
           </svg>
+          <BotonEsconder nombre="el rótulo del mapa" onClick={ventana.esconder} className="-my-1" />
         </div>
-        <ul className="space-y-[3px] px-3 py-2">
+        <ul className="pointer-events-auto min-h-0 space-y-[3px] overflow-y-auto overscroll-contain px-3 py-2">
           {marco.leyenda.map((l) => (
             <li key={l.texto} className="flex items-center gap-2 text-[10.5px] text-[#DCE5EA] md:text-[11.5px]">
               <Simbolo color={l.color} forma={l.forma || 'area'} />
@@ -736,7 +750,7 @@ export function MarcoMapa({ marco }: { marco: Marco | null }) {
             </li>
           ))}
         </ul>
-        <div className="border-t border-white/[0.08] px-3 py-1.5 text-[9.5px] leading-snug text-[#8FA3B0] md:text-[10.5px]">
+        <div className="shrink-0 border-t border-white/[0.08] px-3 py-1.5 text-[9.5px] leading-snug text-[#8FA3B0] md:text-[10.5px]">
           <div className="truncate">Fuentes: {marco.fuentes.join(' · ')}</div>
           <div className="mt-0.5 flex flex-wrap gap-x-2">
             <span>UTM WGS84 16N</span>

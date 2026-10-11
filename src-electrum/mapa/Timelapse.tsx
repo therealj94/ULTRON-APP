@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { headersElectrum } from '../acceso';
 import { comentar } from '../personajes/mesa';
+import { BotonEsconder, mostrarVentana, useVentana } from './ventanas';
 
 type Cuadro = { fecha: string; nubes: number; escena: string; img: string };
 type Datos = { cuadros: Cuadro[]; ancho: number; alto: number; contorno: number[][][]; fuente: string; faltan: number[] };
@@ -25,6 +26,13 @@ export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombr
   const [lindero, setLindero] = useState(true);
   const lienzo = useRef<HTMLCanvasElement | null>(null);
   const imagenes = useRef<HTMLImageElement[]>([]);
+  /*
+   * Ventana del mapa (ventanas.tsx): ocupa toda la pantalla, así que también se esconde a su
+   * pastilla —sin perder los cuadros bajados— para volver a mirar el mapa y seguir después.
+   */
+  const ventana = useVentana('timelapse', { nombre: 'el timelapse', etiqueta: `Timelapse · ${nombre}`, activa: true, prioridad: 2, rincon: null });
+  // Pedirlo es querer verlo: arranca a la vista aunque el anterior se haya escondido.
+  useEffect(() => mostrarVentana('timelapse'), []);
 
   useEffect(() => {
     let vivo = true;
@@ -62,6 +70,7 @@ export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombr
 
   useEffect(() => {
     // En captura y cortando la propagación: Esc cierra el timelapse y NO también la ficha de atrás.
+    if (ventana.plegada) return;
     const k = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -77,7 +86,7 @@ export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombr
     };
     window.addEventListener('keydown', k, { capture: true });
     return () => window.removeEventListener('keydown', k, { capture: true });
-  }, [datos, onCerrar]);
+  }, [datos, onCerrar, ventana.plegada]);
 
   useEffect(() => {
     if (!datos || !andando || datos.cuadros.length < 2) return;
@@ -115,9 +124,10 @@ export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombr
     };
     // Ya están decodificados: se dibuja siempre el cuadro de ahora, nunca uno viejo que llega tarde.
     dibujar();
-  }, [i, datos, lindero]);
+  }, [i, datos, lindero, ventana.plegada]);
 
   const c = datos?.cuadros[i];
+  if (ventana.plegada) return null;
   // Por portal: la tarjeta tiene backdrop-filter, y dentro de ella «fixed» se mediría contra la tarjeta.
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`Timelapse satelital de ${nombre}`} onClick={onCerrar}>
@@ -129,9 +139,12 @@ export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombr
             </div>
             <div className="text-[15px] font-semibold text-[#F3F6F8]">{nombre}</div>
           </div>
-          <button type="button" onClick={onCerrar} aria-label="Cerrar" className="rounded-md px-2 py-1 text-[#9FB0B9] hover:bg-white/10 cursor-pointer">
-            ×
-          </button>
+          <div className="flex shrink-0 items-center">
+            <BotonEsconder nombre="el timelapse" onClick={ventana.esconder} />
+            <button type="button" onClick={onCerrar} aria-label="Cerrar" title="Cerrar" className="flex h-7 w-7 items-center justify-center rounded-full text-[16px] text-[#9FB0B9] hover:bg-white/10 pointer-coarse:h-10 pointer-coarse:w-10 cursor-pointer">
+              ×
+            </button>
+          </div>
         </div>
         {!datos && !error && <p className="py-16 text-center text-[#8FA3B0]">Leyendo una escena de Sentinel-2 por año desde 2018… (unos segundos)</p>}
         {error && <p className="py-10 text-center text-[#E8A08F]">{error}</p>}
