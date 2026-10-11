@@ -1,8 +1,9 @@
 /**
  * Una marca y una entrada (auditoría visual del 7-oct, A5, A6, B1, B2): lo que se ve antes de entrar.
  *   · LA CUENTA DE AU-RA PRIMERO (José, 10-oct): correo, contraseña y el ÚNICO botón principal, «Entrar»; «Crear
- *     cuenta» bien a la vista (su pantalla, con la confirmación por código); debajo, las opciones «Entrar con Veta
- *     Wallet», «Abrir Orden Global» y «Crear cuenta en Veta Wallet».
+ *     cuenta» bien a la vista (su pantalla, con la confirmación por código); debajo, UNA puerta, «Continuar con Veta
+ *     Wallet» (11-oct: «que no se confunda»), y en esa vista: la cuenta de Veta Wallet, «Abrir Orden Global» y
+ *     «Crear cuenta en Veta Wallet».
  *   · La marca visible es «AU-RA» (no «AURA» ni «PULSE 2CHAT × AURA»).
  *   · «Otras formas de entrar» NO enseña las cuentas de la junta (nombres y correos): solo la usada en este teléfono.
  *   · Lo que los flujos del emulador (pruebas/emulador/flujos) tocan sigue ahí: textos y testID.
@@ -37,23 +38,34 @@ function prueba(nombre, f) {
 const ENTRAR = leer('app/pantallas/Entrar.tsx');
 const LOGIN = leer('screens/LoginScreen.tsx');
 
-prueba('Entrar: un solo botón principal y es «Entrar» de la cuenta de AU-RA; los demás, secundarios o de texto', () => {
-  const botones = [...textos(ENTRAR).matchAll(/<Boton\b([\s\S]*?)\/>/g)].map((m) => m[1]);
-  const principales = botones.filter((b) => !/variante=/.test(b));
-  assert.equal(principales.length, 1, `un solo <Boton> sin variante (principal); hay ${principales.length}`);
-  assert.match(principales[0], /titulo=\{tr\('Entrar', 'Sign in'\)\}/);
-  assert.match(principales[0], /onPress=\{\(\) => void entrarCuenta\(\)\}/, 'entra con la cuenta de AU-RA');
+prueba('Entrar: un solo botón principal por vista: «Entrar» en la cuenta de AU-RA, «Entrar con Veta Wallet» en la suya', () => {
+  const t = textos(ENTRAR);
+  const deVista = (desde, hasta) => [...t.slice(t.indexOf(desde), t.indexOf(hasta)).matchAll(/<Boton\b([\s\S]*?)\/>/g)].map((m) => m[1]);
+  const esPrincipal = (b) => !/variante=/.test(b) || /variante="principal"/.test(b);
+  const cuenta = deVista('const cuerpoCuenta = (', 'const cuerpoWallet = (').filter(esPrincipal);
+  assert.equal(cuenta.length, 1, `un solo principal en la vista de la cuenta; hay ${cuenta.length}`);
+  assert.match(cuenta[0], /titulo=\{tr\('Entrar', 'Sign in'\)\}/);
+  assert.match(cuenta[0], /onPress=\{\(\) => void entrarCuenta\(\)\}/, 'entra con la cuenta de AU-RA');
+  const wallet = deVista('const cuerpoWallet = (', 'const cuerpo = enWallet').filter(esPrincipal);
+  assert.equal(wallet.length, 1, `un solo principal en la vista de Veta Wallet; hay ${wallet.length}`);
+  assert.match(wallet[0], /onPress=\{\(\) => void entrarClave\(\)\}/);
   assert.match(ENTRAR, /loginClave\(c, clave, i\)/, 'por /api/ultron/entrar, con su intento');
   assert.match(ENTRAR, /entrarCon\(u, null, i\)/, 'y la sesión de siempre (app/sesion.ts entrarCon)');
 });
 
-prueba('«Crear cuenta» a la vista, antes de las opciones; las opciones: Veta Wallet, Orden Global y crear cuenta en Veta Wallet', () => {
+prueba('«Crear cuenta» a la vista, antes de la puerta de Veta Wallet; en su vista: la wallet, Orden Global y crear cuenta en Veta Wallet', () => {
   const t = textos(ENTRAR);
   const crear = t.indexOf("tr('Crear cuenta', 'Create account')");
+  const puerta = t.indexOf("tr('Continuar con Veta Wallet', 'Continue with Veta Wallet')");
+  const vistaWallet = t.indexOf('const cuerpoWallet = (');
   const veta = t.indexOf("tr('Entrar con Veta Wallet', 'Sign in with Veta Wallet')");
   const og = t.indexOf("tr('Abrir Orden Global', 'Open Orden Global')");
   const crearVeta = t.indexOf("tr('Crear cuenta en Veta Wallet', 'Create a Veta Wallet account')");
-  assert.ok(crear > 0 && veta > crear && og > veta && crearVeta > og, 'cuenta de AU-RA → Veta Wallet → Orden Global → crear en Veta Wallet');
+  assert.ok(crear > 0 && puerta > crear && vistaWallet > puerta, 'cuenta de AU-RA → «Continuar con Veta Wallet»');
+  assert.ok(veta > vistaWallet && og > veta && crearVeta > og, 'vista de la wallet: Veta Wallet → Orden Global → crear en Veta Wallet');
+  assert.match(t, /onPress=\{\(\) => abrirVista\('wallet'\)\}/, 'la puerta abre la vista de la wallet');
+  assert.match(t, /BackHandler\.addEventListener\('hardwareBackPress'/, 'el «atrás» de Android vuelve a la cuenta');
+  assert.match(t, /if \(esDeWallet\(estado\)\) setVista\('wallet'\)/, 'las tarjetas de la wallet se ven en su vista');
   assert.match(t, /navigation\.navigate\('CrearCuenta'/, '«Crear cuenta» abre su pantalla');
   assert.match(t, /onPress=\{\(\) => void entrarGenesis\(\)\}/, '«Abrir Orden Global» es el botón de Genesis de siempre');
   assert.match(t, /entrarConVetaWallet\(c, clave\)/, 'Veta Wallet sigue por lib/genesis.ts (con su respaldo sin Genesis)');
@@ -68,11 +80,15 @@ prueba('errores precisos debajo del formulario: contraseña mala ≠ sin conexi�
   assert.match(CUENTA, /if \(!status\) return sinConexion\(\)/, 'sin respuesta es la red, nunca «contraseña incorrecta»');
 });
 
-prueba('«Crear cuenta»: nombre, correo, contraseña y confirmarla; después el código con «Reenviar»; SIN «Confirmar después»', () => {
+prueba('«Crear cuenta»: nombre, correo y contraseña (una vez, con su regla viva); después seis casillas que confirman solas, «Reenviar» con espera; SIN «Confirmar después»', () => {
   const CREAR = textos(leer('app/pantallas/CrearCuenta.tsx'));
-  for (const t of ["tr('Nombre', 'Name')", "tr('Correo', 'Email')", "tr('Contraseña', 'Password')", "tr('Confirmar contraseña', 'Confirm password')", "tr('Código', 'Code')", "tr('Reenviar código', 'Resend code')", "tr('Volver a entrar', 'Back to sign in')"]) {
+  for (const t of ["tr('Nombre', 'Name')", "tr('Correo', 'Email')", "tr('Contraseña', 'Password')", "tr('Reenviar código', 'Resend code')", "tr('Volver a entrar', 'Back to sign in')", "tr('Cambiar correo', 'Change email')"]) {
     assert.ok(CREAR.includes(t), t);
   }
+  assert.ok(!CREAR.includes('Confirmar contraseña'), 'la contraseña se pide una vez (con el ojito)');
+  assert.match(CREAR, /<CampoCodigo[\s\S]*?alCompletar=\{\(k\) => void confirmarCodigo\(k\)\}/, 'las seis casillas confirman solas');
+  assert.match(CREAR, /deshabilitado=\{ocupado \|\| espera > 0\}/, '«Reenviar» espera su minuto');
+  assert.match(CREAR, /problemaDeClave\(clave, correo\)/, 'la regla de la contraseña, viva');
   assert.ok(!CREAR.includes('Confirmar después'), 'sin el código no se entra: no hay «Confirmar después»');
   const botones = [...CREAR.matchAll(/<Boton\b([\s\S]*?)\/>/g)].map((m) => m[1]);
   assert.equal(botones.filter((b) => !/variante=/.test(b)).length, 2, 'un principal por paso («Crear cuenta» y «Confirmar»)');

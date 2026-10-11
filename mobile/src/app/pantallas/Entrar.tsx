@@ -1,32 +1,32 @@
 /**
  * ENTRAR: con el espíritu de la puerta de Veta Wallet / Orden Global (la marca en serif, una sola acción dorada,
- * «Protegido por Orden Global» al pie).
+ * «Protegido por Orden Global» al pie). Dos vistas en la misma pantalla (José, 11-oct: «que se mire bien, que no se
+ * confunda, que se vea nativo, que no fallemos en lo principal»):
  *
- * LO PRIMERO, LA CUENTA DE AU-RA (José, 10-oct: «nadie normal puede entrar»; «login y registro que simplemente
- * funcionen, sin abrir ninguna otra app»):
- *   · correo + contraseña + «Entrar» (el único botón dorado) → POST /api/ultron/entrar (lib/api.ts loginClave).
- *     Errores debajo del formulario y precisos: contraseña mala ≠ sin conexión ≠ servidor ocupado
- *     (lib/cuentaPropia.ts errorDeEntrada). «¿Olvidaste tu contraseña?» manda el enlace de AU-RA a ese correo.
- *   · «Crear cuenta», bien a la vista → pantalla propia (CrearCuenta.tsx): nombre, correo, contraseña y
- *     confirmarla; la cuenta y la sesión de miembro en el acto, y el correo se confirma con un código.
+ * LA CUENTA DE AU-RA, lo que se ve al abrir (José, 10-oct: «nadie normal puede entrar»):
+ *   · correo + contraseña (con el ojito) + «¿Olvidaste tu contraseña?» pegado a la derecha + «Entrar», el único botón
+ *     dorado → POST /api/ultron/entrar (lib/api.ts loginClave). Errores debajo del campo o del formulario, precisos:
+ *     contraseña mala ≠ sin conexión ≠ servidor ocupado (lib/cuentaPropia.ts errorDeEntrada).
+ *   · «Crear cuenta» justo debajo → su pantalla (CrearCuenta.tsx): nombre, correo y contraseña; el código del correo.
+ *   · «o» y UNA puerta: «Continuar con Veta Wallet». Al pie, chiquito, «Otras formas de entrar» (la huella, la cuenta
+ *     guardada en este teléfono y el modo local).
  *
- * DEBAJO, LAS OPCIONES:
- *   · «Entrar con Veta Wallet»: abre el formulario de la wallet (correo y contraseña de Veta Wallet). El TELÉFONO
- *     hace login en la wallet, intenta el pase de Genesis ID y, si no hay pase o AU-RA no lo acepta (el «pase no
- *     válido» del 10-oct), entra igual como miembro «Veta Wallet» (lib/entrarConClave.ts, 4b y 4c). La
- *     contraseña va directo a la wallet: nunca al servidor de AU-RA; se borra del estado al terminar.
- *   · «Abrir Orden Global» (src/lib/genesis.ts): la wallet de la persona —la app Orden Global o la web de Veta
- *     Wallet— pide permiso y devuelve un pase que solo este teléfono puede canjear. Mientras tanto dice
- *     «Esperando tu wallet…». Sus casos tienen tarjeta propia, como antes: PENDIENTE (en revisión), GID_PENDIENTE,
- *     NO_VINCULADA, SIN_WALLET (con «Instalar Orden Global» y «Usar Veta Wallet en la web»), CORREO_SIN_CONFIRMAR,
- *     LIMITE, RED; SIN_GID o «No tengo Genesis ID» → «Crea tu Genesis ID». La vuelta TARDÍA de la wallet se
- *     escucha mientras la pantalla está montada; `reintentar` (lo manda «Crea tu Genesis ID») pide el pase.
- *   · «Crear cuenta en Veta Wallet»: la web de la wallet con el pedido de AU-RA (`#sso-aura`): ahí se crea la
- *     cuenta y vuelve sola.
- *   · «Otras formas de entrar», chiquito: la huella, la cuenta guardada en este teléfono y el modo local.
+ * LA VISTA DE VETA WALLET (flecha atrás o el «atrás» de Android vuelven a la cuenta):
+ *   · la cuenta de Veta Wallet (correo y contraseña; su botón es el dorado de esta vista). El TELÉFONO hace login en
+ *     la wallet, intenta el pase de Genesis ID y, si no hay pase o AU-RA no lo acepta (el «pase no válido» del 10-oct),
+ *     entra igual como miembro «Veta Wallet» (lib/entrarConClave.ts, 4b y 4c). La contraseña va directo a la wallet:
+ *     nunca al servidor de AU-RA; se borra del estado al terminar.
+ *   · «Abrir Orden Global» (src/lib/genesis.ts): la wallet pide permiso y devuelve un pase que solo este teléfono
+ *     puede canjear («Esperando tu wallet…»). Sus casos tienen tarjeta propia y, vengan de donde vengan, se ven en
+ *     esta vista (`esDeWallet`): PENDIENTE, GID_PENDIENTE, NO_VINCULADA, SIN_WALLET (con «Instalar Orden Global» y
+ *     «Usar Veta Wallet en la web»), CORREO_SIN_CONFIRMAR, LIMITE, RED; SIN_GID o «No tengo Genesis ID» → «Crea tu
+ *     Genesis ID». La vuelta TARDÍA de la wallet se escucha mientras la pantalla está montada; `reintentar` (lo manda
+ *     «Crea tu Genesis ID») pide el pase.
+ *   · «Crear cuenta en Veta Wallet»: la web de la wallet con el pedido de AU-RA (`#sso-aura`): ahí se crea la cuenta
+ *     y vuelve sola.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View, useWindowDimensions, type TextInput } from 'react-native';
+import { BackHandler, ScrollView, StyleSheet, View, useWindowDimensions, type TextInput } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -44,7 +44,7 @@ import { miga } from '../../lib/reporte';
 import { registrarTrabajoActivo } from '../../lib/barreraOta';
 import { tr, useIdioma } from '../../i18n';
 import { MEDIDA, useTema } from '../../nucleo/tema';
-import { Aparecer, Aura, Boton, BotonCheck, Campo, Icono, SelectorIdioma, Texto, vibrar, type NombreIcono } from '../../ui';
+import { Aparecer, Aura, Boton, BotonCheck, BotonRedondo, Campo, Icono, SelectorIdioma, Texto, vibrar, type NombreIcono } from '../../ui';
 import { fuenteDisplay } from '../../ui/tipografia';
 import type { RaizParams } from '../rutas';
 import { entrarCon, type Compartido } from '../sesion';
@@ -73,6 +73,11 @@ function estadoPorCodigo(codigo: string | undefined, mensaje: string): Estado {
   if (codigo === 'SIN_WALLET') return { tipo: 'sinWallet' };
   if (codigo === 'CANCELADO' || codigo === 'SIN_GID') return { tipo: 'listo' };
   return { tipo: 'error', mensaje, codigo };
+}
+
+/** Lo que solo tiene sentido en la vista de Veta Wallet: sus tarjetas, la espera y los errores con código. */
+function esDeWallet(e: Estado): boolean {
+  return e.tipo === 'esperando' || e.tipo === 'pendiente' || e.tipo === 'gidPendiente' || e.tipo === 'noVinculada' || e.tipo === 'sinWallet' || (e.tipo === 'error' && !!e.codigo);
 }
 
 /**
@@ -179,6 +184,33 @@ export function Entrar({ navigation, route }: Props) {
       ? { tipo: 'error', mensaje: route.params.aviso }
       : { tipo: 'listo' };
   const [estado, setEstado] = useState<Estado>(inicial);
+  // Dos vistas en la misma pantalla (José, 11-oct: «que se mire bien, no se confunda, se vea nativo»): la cuenta de
+  // AU-RA (lo principal: correo, contraseña, Entrar, Crear cuenta) y, detrás de UNA puerta, todo lo de Veta Wallet.
+  const [vista, setVista] = useState<'cuenta' | 'wallet'>(() => (esDeWallet(inicial) ? 'wallet' : 'cuenta'));
+  const abrirVista = (v: 'cuenta' | 'wallet') => {
+    if (estadoRef.current.tipo === 'exito') return;
+    // De vuelta a la cuenta, las tarjetas y la espera de la wallet se quitan (si la wallet contesta tarde, igual entra:
+    // escucharVueltaTardia sigue puesto).
+    if (v === 'cuenta' && esDeWallet(estadoRef.current)) setEstado({ tipo: 'listo' });
+    setVista(v);
+    setErrorA(null);
+    setErrorClave(null);
+  };
+  const abrirVistaRef = useRef(abrirVista);
+  abrirVistaRef.current = abrirVista;
+  // Lo que dice la wallet o Genesis ID (su tarjeta, sus botones) se ve en su vista, venga de donde venga.
+  useEffect(() => {
+    if (esDeWallet(estado)) setVista('wallet');
+  }, [estado]);
+  // El «atrás» de Android en la vista de la wallet vuelve a la cuenta de AU-RA (no cierra la app).
+  useEffect(() => {
+    if (vista !== 'wallet') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      abrirVistaRef.current('cuenta');
+      return true;
+    });
+    return () => sub.remove();
+  }, [vista]);
   const vivo = useRef(true);
   useEffect(() => {
     // Volvía de la wallet en un arranque en frío (Intro) sin Genesis ID: a crearlo, como en caliente.
@@ -406,7 +438,8 @@ export function Entrar({ navigation, route }: Props) {
   const esperando = estado.tipo === 'esperando';
   // Mientras se entra por un camino, los otros esperan (y nada se toca con la palomita puesta).
   const ocupado = esperando || enviando || entrandoA || estado.tipo === 'exito';
-  const tamAura = horizontal ? Math.min(260, height * 0.56) : Math.min(220, width * 0.56, height * 0.28);
+  // Chica en vertical: el formulario entero cabe en la pantalla sin bajar (en la vista de la wallet, más chica aún).
+  const tamAura = horizontal ? Math.min(240, height * 0.5) : Math.min(vista === 'wallet' ? 96 : 150, width * 0.4, height * 0.18);
 
   const marca = (
     <View style={[s.marca, horizontal && s.marcaH]}>
@@ -422,7 +455,7 @@ export function Entrar({ navigation, route }: Props) {
           </View>
         )}
       </View>
-      <Texto v="etiqueta" color="acentoTexto" centro={!horizontal} style={{ marginTop: MEDIDA.espacio.l }}>
+      <Texto v="etiqueta" color="acentoTexto" centro={!horizontal} style={{ marginTop: MEDIDA.espacio.s }}>
         AU-RA
       </Texto>
       {/* Acostado, el idioma va debajo de la marca para no pisar el título. */}
@@ -485,20 +518,22 @@ export function Entrar({ navigation, route }: Props) {
     </>
   );
 
-  const cuerpo = (
+  /** Los avisos de la wallet y de Genesis ID (tarjeta propia): solo en la vista de Veta Wallet. */
+  const enWallet = vista === 'wallet';
+
+  const cuerpoCuenta = (
     <View style={[s.cuerpo, horizontal && s.cuerpoH]}>
-      <View style={{ gap: 8 }}>
+      <View style={{ gap: 6 }}>
         <Texto v="heroe" centro={!horizontal} accessibilityRole="header">
           {estado.tipo === 'exito' ? `${tr('¡Hola', 'Hi')}, ${estado.nombre}!` : tr('Entra a AU-RA', 'Sign in to AU-RA')}
         </Texto>
         <Texto v="cuerpo" color="texto2" centro={!horizontal}>
-          {estado.tipo === 'exito'
-            ? tr('Listo: ya estás dentro.', 'Done: you’re in.')
-            : tr('Con tu correo y tu contraseña. ¿Primera vez? Crea tu cuenta en un minuto, sin otra app.', 'With your email and password. First time? Create your account in a minute, no other app needed.')}
+          {estado.tipo === 'exito' ? tr('Listo: ya estás dentro.', 'Done: you’re in.') : tr('Con tu correo y tu contraseña.', 'With your email and password.')}
         </Texto>
       </View>
 
-      {avisos}
+      {/* Un aviso que trajo la navegación (p. ej. la sesión venció) se dice aquí; los de la wallet, en su vista. */}
+      {estado.tipo === 'error' && !estado.codigo && <Aviso icono="alerta" tono="aviso" {...textoError(estado.codigo, estado.mensaje)} />}
 
       {/* LO PRIMERO: la cuenta de AU-RA. */}
       {estado.tipo !== 'exito' && (
@@ -525,30 +560,42 @@ export function Entrar({ navigation, route }: Props) {
             error={errorA?.campo === 'correo' ? errorA.mensaje : undefined}
             accessibilityLabel={tr('Correo de tu cuenta de AU-RA', 'Email of your AU-RA account')}
           />
-          <Campo
-            ref={refClaveA}
-            etiqueta={tr('Contraseña', 'Password')}
-            clave
-            value={claveA}
-            onChangeText={(t) => {
-              setClaveA(t);
-              escritoEn.current = t || correoA ? Date.now() : 0;
-              if (errorA) setErrorA(null);
-            }}
-            autoComplete="password"
-            textContentType="password"
-            importantForAutofill="yes"
-            returnKeyType="go"
-            onSubmitEditing={() => void entrarCuenta()}
-            editable={!ocupado}
-            error={errorA?.campo === 'clave' ? errorA.mensaje : undefined}
-            accessibilityLabel={tr('Contraseña de tu cuenta de AU-RA', 'Password of your AU-RA account')}
-          />
+          <View>
+            <Campo
+              ref={refClaveA}
+              etiqueta={tr('Contraseña', 'Password')}
+              clave
+              value={claveA}
+              onChangeText={(t) => {
+                setClaveA(t);
+                escritoEn.current = t || correoA ? Date.now() : 0;
+                if (errorA) setErrorA(null);
+              }}
+              autoComplete="password"
+              textContentType="password"
+              importantForAutofill="yes"
+              returnKeyType="go"
+              onSubmitEditing={() => void entrarCuenta()}
+              editable={!ocupado}
+              error={errorA?.campo === 'clave' ? errorA.mensaje : undefined}
+              accessibilityLabel={tr('Contraseña de tu cuenta de AU-RA', 'Password of your AU-RA account')}
+            />
+            {/* Como en las apps del teléfono: el «¿Olvidaste…?» pegado a la contraseña, a la derecha. */}
+            <Boton
+              titulo={tr('¿Olvidaste tu contraseña?', 'Forgot your password?')}
+              variante="fantasma"
+              tam="chico"
+              onPress={() => void olvideCuenta()}
+              cargando={recuperandoA}
+              deshabilitado={ocupado}
+              style={{ alignSelf: 'flex-end', marginTop: 2, marginRight: -6 }}
+              etiqueta={tr('¿Olvidaste tu contraseña de AU-RA? Te mandamos un enlace a tu correo', 'Forgot your AU-RA password? We’ll email you a link')}
+            />
+          </View>
           {!!errorA && !errorA.campo && <Aviso icono="alerta" tono="aviso" titulo={tr('No se pudo entrar', 'Couldn’t sign in')} texto={errorA.mensaje} />}
           {!!avisoOlvideA && <Aviso icono="correo" tono="acento" titulo={tr('Revisa tu correo', 'Check your email')} texto={avisoOlvideA} />}
           <Boton
             titulo={tr('Entrar', 'Sign in')}
-            icono="candado"
             onPress={() => void entrarCuenta()}
             cargando={entrandoA}
             textoCargando={tr('Entrando…', 'Signing in…')}
@@ -557,136 +604,151 @@ export function Entrar({ navigation, route }: Props) {
           />
           <Boton
             titulo={tr('Crear cuenta', 'Create account')}
-            icono="persona"
             variante="secundario"
             onPress={() => navigation.navigate('CrearCuenta', correoValido(correoA.trim()) ? { correo: correoA.trim() } : undefined)}
             deshabilitado={ocupado}
-            etiqueta={tr('Crear tu cuenta de AU-RA: entras en cuanto la creas', 'Create your AU-RA account: you’re in as soon as you create it')}
-          />
-          <Boton
-            titulo={tr('¿Olvidaste tu contraseña?', 'Forgot your password?')}
-            variante="fantasma"
-            tam="chico"
-            onPress={() => void olvideCuenta()}
-            cargando={recuperandoA}
-            deshabilitado={ocupado}
-            etiqueta={tr('¿Olvidaste tu contraseña de AU-RA? Te mandamos un enlace a tu correo', 'Forgot your AU-RA password? We’ll email you a link')}
+            etiqueta={tr('Crear tu cuenta de AU-RA: te mandamos un código a tu correo', 'Create your AU-RA account: we’ll email you a code')}
           />
         </View>
       )}
 
       {estado.tipo !== 'exito' && (
-        <View style={s.separador} accessible={false}>
-          <View style={[s.linea, { backgroundColor: tema.borde }]} />
-          <Texto v="chica" color="texto3">
-            {tr('o entra con', 'or sign in with')}
-          </Texto>
-          <View style={[s.linea, { backgroundColor: tema.borde }]} />
-        </View>
-      )}
-
-      {/* LAS OPCIONES: Veta Wallet y Orden Global. */}
-      {estado.tipo !== 'exito' && (
-        <View style={{ gap: MEDIDA.espacio.m }}>
+        <>
+          <View style={s.separador} accessible={false}>
+            <View style={[s.linea, { backgroundColor: tema.borde }]} />
+            <Texto v="chica" color="texto3">
+              {tr('o', 'or')}
+            </Texto>
+            <View style={[s.linea, { backgroundColor: tema.borde }]} />
+          </View>
+          {/* LA OPCIÓN, una sola puerta: todo lo de la wallet vive en su vista. */}
           <Boton
-            titulo={tr('Entrar con Veta Wallet', 'Sign in with Veta Wallet')}
+            titulo={tr('Continuar con Veta Wallet', 'Continue with Veta Wallet')}
             icono="wallet"
             variante="secundario"
-            onPress={() => {
-              setVerWallet((v) => !v);
-              setErrorClave(null);
-            }}
+            onPress={() => abrirVista('wallet')}
             deshabilitado={ocupado}
-            etiqueta={verWallet ? tr('Ocultar la entrada con Veta Wallet', 'Hide signing in with Veta Wallet') : tr('Entrar con el correo y la contraseña de tu cuenta de Veta Wallet', 'Sign in with the email and password of your Veta Wallet account')}
+            etiqueta={tr('Entrar con tu cuenta de Veta Wallet o con la app Orden Global', 'Sign in with your Veta Wallet account or the Orden Global app')}
           />
-          {verWallet && (
-            <View style={[s.opcion, { borderColor: tema.borde }]}>
-              <Texto v="cuerpoFuerte" accessibilityRole="header">
-                {tr('Tu cuenta de Veta Wallet', 'Your Veta Wallet account')}
-              </Texto>
-              <Campo
-                etiqueta={tr('Correo de Veta Wallet', 'Veta Wallet email')}
-                value={correo}
-                onChangeText={(t) => {
-                  setCorreo(t);
-                  escritoEn.current = t || clave ? Date.now() : 0;
-                  if (errorClave) setErrorClave(null);
-                }}
-                placeholder={tr('tu@correo.com', 'you@email.com')}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-                textContentType="emailAddress"
-                importantForAutofill="yes"
-                returnKeyType="next"
-                submitBehavior="submit"
-                onSubmitEditing={() => refClave.current?.focus()}
-                editable={!ocupado}
-                error={errorClave?.campo === 'correo' ? errorClave.mensaje : undefined}
-                accessibilityLabel={tr('Correo de tu cuenta de Veta Wallet', 'Email of your Veta Wallet account')}
-              />
-              <Campo
-                ref={refClave}
-                etiqueta={tr('Contraseña de Veta Wallet', 'Veta Wallet password')}
-                clave
-                value={clave}
-                onChangeText={(t) => {
-                  setClave(t);
-                  escritoEn.current = t || correo ? Date.now() : 0;
-                  if (errorClave) setErrorClave(null);
-                }}
-                autoComplete="password"
-                textContentType="password"
-                importantForAutofill="yes"
-                returnKeyType="go"
-                onSubmitEditing={() => void entrarClave()}
-                editable={!ocupado}
-                error={errorClave?.campo === 'clave' ? errorClave.mensaje : undefined}
-                accessibilityLabel={tr('Contraseña de tu cuenta de Veta Wallet', 'Password of your Veta Wallet account')}
-                accessibilityHint={tr('Va directo a Veta Wallet. AU-RA no la guarda.', 'It goes straight to Veta Wallet. AU-RA doesn’t keep it.')}
-              />
-              {!!errorClave && !errorClave.campo && <Aviso icono="alerta" tono="aviso" titulo={tr('No se pudo entrar con Veta Wallet', 'Couldn’t sign in with Veta Wallet')} texto={errorClave.mensaje} />}
-              {!!avisoCorreo && (
-                <Aviso
-                  icono="correo"
-                  tono="acento"
-                  titulo={tr('Revisa tu correo', 'Check your email')}
-                  texto={tr(
-                    `Si ${avisoCorreo} tiene cuenta en Veta Wallet, te mandamos un enlace para poner una contraseña nueva. Ábrelo, cámbiala y vuelve aquí a entrar.`,
-                    `If ${avisoCorreo} has a Veta Wallet account, we sent a link to set a new password. Open it, change it and come back here to sign in.`
-                  )}
-                />
+        </>
+      )}
+
+      <Boton titulo={tr('Otras formas de entrar', 'Other ways to sign in')} variante="fantasma" tam="chico" onPress={() => navigation.navigate('OtrasFormas')} deshabilitado={ocupado} style={{ alignSelf: horizontal ? 'flex-start' : 'center' }} />
+    </View>
+  );
+
+  const cuerpoWallet = (
+    <View style={[s.cuerpo, horizontal && s.cuerpoH]}>
+      <View style={s.filaVolver}>
+        <BotonRedondo onPress={() => abrirVista('cuenta')} etiqueta={tr('Volver a entrar con tu correo de AU-RA', 'Back to signing in with your AU-RA email')} />
+      </View>
+      <View style={{ gap: 6 }}>
+        <Texto v="heroe" centro={!horizontal} accessibilityRole="header">
+          {estado.tipo === 'exito' ? `${tr('¡Hola', 'Hi')}, ${estado.nombre}!` : 'Veta Wallet'}
+        </Texto>
+        <Texto v="cuerpo" color="texto2" centro={!horizontal}>
+          {estado.tipo === 'exito'
+            ? tr('Listo: ya estás dentro.', 'Done: you’re in.')
+            : tr('Entra con tu cuenta de Veta Wallet o con tu app Orden Global.', 'Sign in with your Veta Wallet account or your Orden Global app.')}
+        </Texto>
+      </View>
+
+      {avisos}
+
+      {estado.tipo !== 'exito' && (
+        <View style={{ gap: MEDIDA.espacio.m }}>
+          <Campo
+            etiqueta={tr('Correo de Veta Wallet', 'Veta Wallet email')}
+            value={correo}
+            onChangeText={(t) => {
+              setCorreo(t);
+              escritoEn.current = t || clave ? Date.now() : 0;
+              if (errorClave) setErrorClave(null);
+            }}
+            placeholder={tr('tu@correo.com', 'you@email.com')}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            textContentType="emailAddress"
+            importantForAutofill="yes"
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => refClave.current?.focus()}
+            editable={!ocupado}
+            error={errorClave?.campo === 'correo' ? errorClave.mensaje : undefined}
+            accessibilityLabel={tr('Correo de tu cuenta de Veta Wallet', 'Email of your Veta Wallet account')}
+          />
+          <View>
+            <Campo
+              ref={refClave}
+              etiqueta={tr('Contraseña de Veta Wallet', 'Veta Wallet password')}
+              clave
+              value={clave}
+              onChangeText={(t) => {
+                setClave(t);
+                escritoEn.current = t || correo ? Date.now() : 0;
+                if (errorClave) setErrorClave(null);
+              }}
+              autoComplete="password"
+              textContentType="password"
+              importantForAutofill="yes"
+              returnKeyType="go"
+              onSubmitEditing={() => void entrarClave()}
+              editable={!ocupado}
+              error={errorClave?.campo === 'clave' ? errorClave.mensaje : undefined}
+              accessibilityLabel={tr('Contraseña de tu cuenta de Veta Wallet', 'Password of your Veta Wallet account')}
+              accessibilityHint={tr('Va directo a Veta Wallet. AU-RA no la guarda.', 'It goes straight to Veta Wallet. AU-RA doesn’t keep it.')}
+            />
+            <Boton
+              titulo={tr('¿Olvidaste tu contraseña?', 'Forgot your password?')}
+              variante="fantasma"
+              tam="chico"
+              onPress={() => void olvide()}
+              cargando={recuperando}
+              deshabilitado={ocupado}
+              style={{ alignSelf: 'flex-end', marginTop: 2, marginRight: -6 }}
+              etiqueta={tr('¿Olvidaste tu contraseña de Veta Wallet? Te mandamos un enlace a tu correo', 'Forgot your Veta Wallet password? We’ll email you a link')}
+            />
+          </View>
+          {!!errorClave && !errorClave.campo && <Aviso icono="alerta" tono="aviso" titulo={tr('No se pudo entrar con Veta Wallet', 'Couldn’t sign in with Veta Wallet')} texto={errorClave.mensaje} />}
+          {!!avisoCorreo && (
+            <Aviso
+              icono="correo"
+              tono="acento"
+              titulo={tr('Revisa tu correo', 'Check your email')}
+              texto={tr(
+                `Si ${avisoCorreo} tiene cuenta en Veta Wallet, te mandamos un enlace para poner una contraseña nueva. Ábrelo, cámbiala y vuelve aquí a entrar.`,
+                `If ${avisoCorreo} has a Veta Wallet account, we sent a link to set a new password. Open it, change it and come back here to sign in.`
               )}
-              <Boton
-                titulo={tr('Entrar con Veta Wallet', 'Sign in with Veta Wallet')}
-                icono="candado"
-                variante="secundario"
-                onPress={() => void entrarClave()}
-                cargando={enviando}
-                textoCargando={tr('Entrando con Veta Wallet…', 'Signing in with Veta Wallet…')}
-                deshabilitado={ocupado}
-                etiqueta={tr('Entrar con tu cuenta de Veta Wallet', 'Sign in with your Veta Wallet account')}
-              />
-              <Boton
-                titulo={tr('¿Olvidaste tu contraseña de Veta Wallet?', 'Forgot your Veta Wallet password?')}
-                variante="fantasma"
-                tam="chico"
-                onPress={() => void olvide()}
-                cargando={recuperando}
-                deshabilitado={ocupado}
-                etiqueta={tr('¿Olvidaste tu contraseña de Veta Wallet? Te mandamos un enlace a tu correo', 'Forgot your Veta Wallet password? We’ll email you a link')}
-              />
-              <View style={s.confianza}>
-                <Icono nombre="candado" tam={15} color={tema.texto3} />
-                <Texto v="chica" color="texto3" style={{ flex: 1 }}>
-                  {tr(
-                    'Tu contraseña de Veta Wallet va directo de este teléfono a Veta Wallet: el servidor de AU-RA nunca la ve y no se guarda.',
-                    'Your Veta Wallet password goes straight from this phone to Veta Wallet: the AU-RA server never sees it and it isn’t stored.'
-                  )}
-                </Texto>
-              </View>
-            </View>
+            />
           )}
+          <Boton
+            titulo={tr('Entrar con Veta Wallet', 'Sign in with Veta Wallet')}
+            variante="principal"
+            onPress={() => void entrarClave()}
+            cargando={enviando}
+            textoCargando={tr('Entrando con Veta Wallet…', 'Signing in with Veta Wallet…')}
+            deshabilitado={ocupado}
+            etiqueta={tr('Entrar con tu cuenta de Veta Wallet', 'Sign in with your Veta Wallet account')}
+          />
+          <View style={s.confianza}>
+            <Icono nombre="candado" tam={14} color={tema.texto3} />
+            <Texto v="mini" color="texto3" style={{ flexShrink: 1 }}>
+              {tr('Tu contraseña va directo a Veta Wallet; AU-RA no la ve ni la guarda.', 'Your password goes straight to Veta Wallet; AU-RA never sees or keeps it.')}
+            </Texto>
+          </View>
+        </View>
+      )}
+
+      {estado.tipo !== 'exito' && (
+        <View style={{ gap: MEDIDA.espacio.m }}>
+          <View style={s.separador} accessible={false}>
+            <View style={[s.linea, { backgroundColor: tema.borde }]} />
+            <Texto v="chica" color="texto3">
+              {tr('o', 'or')}
+            </Texto>
+            <View style={[s.linea, { backgroundColor: tema.borde }]} />
+          </View>
           <Boton
             titulo={estado.tipo === 'error' || estado.tipo === 'sinWallet' ? tr('Abrir Orden Global otra vez', 'Open Orden Global again') : tr('Abrir Orden Global', 'Open Orden Global')}
             icono="huella"
@@ -699,35 +761,38 @@ export function Entrar({ navigation, route }: Props) {
           />
           {estado.tipo === 'sinWallet' && (
             <>
-              <Boton titulo={tr('Instalar Orden Global', 'Install Orden Global')} icono="wallet" variante="secundario" onPress={() => void abrirTiendaOrdenGlobal()} />
+              <Boton titulo={tr('Instalar Orden Global', 'Install Orden Global')} icono="descargar" variante="secundario" onPress={() => void abrirTiendaOrdenGlobal()} />
               <Boton titulo={tr('Usar Veta Wallet en la web', 'Use Veta Wallet on the web')} icono="globo" variante="secundario" onPress={() => void entrarGenesis({ web: true })} />
             </>
           )}
           {estado.tipo === 'noVinculada' && (
             <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
           )}
-          <Boton
-            titulo={tr('Crear cuenta en Veta Wallet', 'Create a Veta Wallet account')}
-            variante="fantasma"
-            onPress={() => void entrarGenesis({ web: true })}
-            deshabilitado={ocupado}
-            etiqueta={tr('Crear tu cuenta en la web de Veta Wallet; al terminar vuelves a AU-RA', 'Create your account on the Veta Wallet website; when you’re done you come back to AU-RA')}
-          />
-          {/* Con el Genesis ID en verificación no se ofrece crear otro: ya tiene uno, solo falta que lo aprueben. */}
-          {estado.tipo !== 'gidPendiente' && (
-            <Boton titulo={tr('No tengo Genesis ID', 'I don’t have a Genesis ID')} variante="fantasma" tam="chico" onPress={() => navigation.navigate('CrearGenesis')} deshabilitado={ocupado} />
-          )}
+          <View style={s.filaEnlaces}>
+            <Boton
+              titulo={tr('Crear cuenta en Veta Wallet', 'Create a Veta Wallet account')}
+              variante="fantasma"
+              tam="chico"
+              onPress={() => void entrarGenesis({ web: true })}
+              deshabilitado={ocupado}
+              etiqueta={tr('Crear tu cuenta en la web de Veta Wallet; al terminar vuelves a AU-RA', 'Create your account on the Veta Wallet website; when you’re done you come back to AU-RA')}
+            />
+            {/* Con el Genesis ID en verificación no se ofrece crear otro: ya tiene uno, solo falta que lo aprueben. */}
+            {estado.tipo !== 'gidPendiente' && (
+              <Boton titulo={tr('No tengo Genesis ID', 'I don’t have a Genesis ID')} variante="fantasma" tam="chico" onPress={() => navigation.navigate('CrearGenesis')} deshabilitado={ocupado} />
+            )}
+          </View>
         </View>
       )}
-
-      <Boton titulo={tr('Otras formas de entrar', 'Other ways to sign in')} variante="fantasma" tam="chico" onPress={() => navigation.navigate('OtrasFormas')} deshabilitado={ocupado} style={{ alignSelf: horizontal ? 'flex-start' : 'center' }} />
     </View>
   );
+
+  const cuerpo = enWallet ? cuerpoWallet : cuerpoCuenta;
 
   return (
     <View style={[s.raiz, { backgroundColor: tema.fondo }]}>
       <ScrollView
-        contentContainerStyle={[s.contenido, { paddingTop: ins.top + (horizontal ? 20 : 64), paddingBottom: ins.bottom + 20 }, horizontal && s.contenidoH]}
+        contentContainerStyle={[s.contenido, { paddingTop: ins.top + (horizontal ? 20 : 52), paddingBottom: ins.bottom + 20 }, horizontal && s.contenidoH]}
         showsVerticalScrollIndicator={false}
         bounces={false}
         keyboardShouldPersistTaps="handled"
@@ -735,7 +800,7 @@ export function Entrar({ navigation, route }: Props) {
         <Aparecer desde="escala" style={horizontal ? { flex: 1, alignItems: 'center' } : undefined}>
           {marca}
         </Aparecer>
-        <Aparecer retraso={120} style={horizontal ? { flex: 1.1 } : { width: '100%', maxWidth: 460 }}>
+        <Aparecer retraso={vista === 'cuenta' ? 120 : 0} clave={vista} desde={vista === 'wallet' ? 'derecha' : 'abajo'} style={horizontal ? { flex: 1.1 } : { width: '100%', maxWidth: 460 }}>
           {cuerpo}
         </Aparecer>
         {!horizontal && (
@@ -782,4 +847,6 @@ const s = StyleSheet.create({
   separador: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   opcion: { gap: MEDIDA.espacio.m, padding: MEDIDA.espacio.l, borderRadius: MEDIDA.radio.m, borderWidth: StyleSheet.hairlineWidth },
   linea: { flex: 1, height: StyleSheet.hairlineWidth },
+  filaVolver: { flexDirection: 'row', marginBottom: -MEDIDA.espacio.m },
+  filaEnlaces: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', columnGap: 4 },
 });
