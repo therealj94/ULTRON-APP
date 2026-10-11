@@ -231,6 +231,7 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
   const total = fuentes.reduce((s, f) => s + (f.capa ? 1 : 0), 0);
   if (!total && !fuentes.some((f) => f.cartera)) return { error: 'Esa capa no está disponible para su organización.', status: 404 };
   const features: FeatureCollection['features'] = [];
+  let peso = 0;
   for (const f of fuentes) {
     let filas: Fila[] = [];
     if (f.capa) {
@@ -243,14 +244,23 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
        * no les cambia nada. El análisis de áreas usa la geometría completa de la base, no esta ruta.
        */
       const n = (e.num_entidades || 0) > 4000 ? 0.0005 : 0.0003;
-      filas = await consultaConTope<Fila>(
-        `SELECT e.id::text, ${nombreDe(rol)} AS nombre,
-                (SELECT jsonb_object_agg(a.k, a.v) FROM jsonb_each_text(e.atributos) a(k, v) WHERE a.k = ANY($2::text[])) AS props,
-                ST_AsGeoJSON(CASE WHEN $3::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $3::float8) ELSE e.geom END, 5)::text AS g
-           FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS + 1}`,
-        [f.capa, campos, n],
+      /*
+       * El tope de peso se mide EN LA BASE: si la geometría de la capa pasa lo que queda del tope,
+       * llega una sola fila con el total (y la respuesta es 413), no la capa entera a la memoria.
+       */
+      const crudas = await consultaConTope<Fila & { peso: string }>(
+        `SELECT * FROM (
+           SELECT t.*, sum(length(t.g)) OVER ()::text AS peso, row_number() OVER () AS rn FROM (
+             SELECT e.id::text, ${nombreDe(rol)} AS nombre,
+                    (SELECT jsonb_object_agg(a.k, a.v) FROM jsonb_each_text(e.atributos) a(k, v) WHERE a.k = ANY($2::text[])) AS props,
+                    ST_AsGeoJSON(CASE WHEN $3::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $3::float8) ELSE e.geom END, 5)::text AS g
+               FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS + 1}) t) x
+          WHERE x.peso::bigint <= $4 OR x.rn = 1`,
+        [f.capa, campos, n, MAX_PESO_GEOJSON - peso],
         20000
-      ).then(conTextoReparado);
+      );
+      if (crudas.length && Number(crudas[0].peso) > MAX_PESO_GEOJSON - peso) return { error: 'Esa capa es demasiado pesada para pintarla entera: acercá el mapa o filtrala.', status: 413 };
+      filas = conTextoReparado(crudas);
     } else if (f.cartera) {
       filas = await consultaConTope<Fila>(
         `SELECT c.id::text, c.nombre, jsonb_build_object('estado', c.estado, 'titular', c.titular) AS props, ST_AsGeoJSON(c.geom, 6)::text AS g
@@ -261,6 +271,12 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
       ).then(conTextoReparado);
     }
     const porDefecto = colorPrincipal(e as unknown as EntradaCatalogo);
+    /*
+     * Tope de peso: el servidor tiene 512 MB y una capa de decenas de MB de GeoJSON (más su copia
+     * parseada y la respuesta serializada) lo tumbaba por memoria a mitad de una conversación.
+     */
+    peso += filas.reduce((s, r) => s + (r.g?.length || 0), 0);
+    if (peso > MAX_PESO_GEOJSON) return { error: 'Esa capa es demasiado pesada para pintarla entera: acercá el mapa o filtrala.', status: 413 };
     for (const r of filas) {
       if (!r.g) continue;
       const geometry = JSON.parse(r.g);
@@ -328,6 +344,9 @@ export async function contarIndice(id: number, filtros: Filtros = {}): Promise<n
   }
   return total;
 }
+
+/** Lo más que se sirve de geometría de una capa (texto GeoJSON): con simplificación, la más pesada pesa ~4 MB. */
+const MAX_PESO_GEOJSON = 25 * 1024 * 1024;
 
 let perimetroMem: { cuando: number; fc: FeatureCollection } | null = null;
 /** El contorno de Honduras (los departamentos disueltos en un polígono), del cubo o de la base. */
