@@ -331,7 +331,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
   return (
     <>
       {/* Botonera, debajo del zoom de MapLibre. */}
-      <div className="pointer-events-auto absolute right-[10px] top-[118px] z-10 flex flex-col overflow-hidden rounded-md border border-white/15 bg-black/75 shadow-lg backdrop-blur-md" data-tour="herramientas">
+      <div className="pointer-events-auto absolute right-[10px] top-[118px] z-10 flex max-h-[calc(100%-130px)] flex-col overflow-y-auto overflow-x-hidden [scrollbar-width:none] rounded-md border border-white/15 bg-black/75 shadow-lg backdrop-blur-md" data-tour="herramientas">
         <BotonHerr activo={modo === 'medir'} onClick={() => empezar('medir')} titulo="Medir distancia y área">
           <path d="M3 17 17 3m-11 3 2 2m1-5 2 2m1 1 2 2m1-5 2 2" />
         </BotonHerr>
@@ -354,7 +354,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
       <Orbita mapa={mapa} activa={orbitando} onParar={pararOrbita} tresD={tresD} />
 
       {modo && (
-        <div className="pointer-events-auto absolute right-[52px] top-[118px] z-30 w-[240px] rounded-lg border border-white/12 bg-[#0A0C0E]/94 p-2.5 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl">
+        <div className="pointer-events-auto absolute right-[52px] top-[118px] z-30 w-[240px] max-md:left-2 max-md:right-[52px] max-md:top-auto max-md:bottom-12 max-md:w-auto rounded-lg border border-white/12 bg-[#0A0C0E]/94 p-2.5 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl">
           <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
             {modo === 'medir' ? 'Medir' : modo === 'area' ? 'Área nueva' : 'Perfil topográfico'}
           </div>
@@ -422,7 +422,7 @@ export function BotonHerr({ activo, onClick, titulo, children }: { activo: boole
       aria-label={titulo}
       aria-pressed={activo}
       onClick={onClick}
-      className="flex h-[30px] w-[30px] items-center justify-center border-b border-white/10 last:border-b-0 hover:bg-white/10 cursor-pointer"
+      className="flex h-[30px] w-[30px] max-md:h-10 max-md:w-10 shrink-0 items-center justify-center border-b border-white/10 last:border-b-0 hover:bg-white/10 cursor-pointer"
       style={activo ? { background: 'rgba(255,174,59,0.25)' } : undefined}
     >
       <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke={activo ? AMBAR : '#DCE5EA'} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -618,7 +618,7 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
   const [cargando, setCargando] = useState(false);
   const [armando, setArmando] = useState(false);
   const geojson = useMemo(() => ({ type: 'Polygon', coordinates: [[...puntos, puntos[0]]] }), [puntos]);
-  const hf = (x: number) => x.toLocaleString('es-HN', { maximumFractionDigits: 2 });
+  const hf = (x: number) => (Number.isFinite(x) ? x.toLocaleString('es-HN', { maximumFractionDigits: 2 }) : '—');
 
   useEffect(() => {
     let vivo = true;
@@ -630,6 +630,8 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
         const j = await res.json().catch(() => null);
         if (!vivo) return;
         if (!res.ok) setError(j?.error || (res.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${res.status}.`));
+        // Una respuesta sin cifras no puede tumbar el mapa entero (el panel la leía sin mirar).
+        else if (typeof j?.ha !== 'number' || !Array.isArray(j?.traslapes)) setError('El servidor devolvió un análisis incompleto. Pruebe de nuevo.');
         else setR(j);
       })
       .catch(() => vivo && setError('No alcancé el servidor.'))

@@ -150,7 +150,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
       aria-label={`${etiqueta}: ${titulo}`}
       data-tour="ficha"
       data-ventana
-      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-[48px] bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-[52px] md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
+      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-[48px] bottom-2 max-h-[min(calc(100%-118px),62%)] md:left-auto md:right-[52px] md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
     >
       <header className="flex items-start gap-2 border-b border-white/[0.08] px-4 pt-3 pb-2.5 shrink-0">
         <div className="min-w-0 flex-1">
@@ -162,7 +162,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         <button
           type="button"
           onClick={onCerrar}
-          className="-mr-1 flex h-7 w-7 items-center justify-center rounded-full text-[16px] text-[#8FA3B0] hover:bg-white/10 hover:text-white cursor-pointer"
+          className="-mr-1 flex h-10 w-10 md:h-7 md:w-7 items-center justify-center rounded-full text-[16px] text-[#8FA3B0] hover:bg-white/10 hover:text-white cursor-pointer"
           aria-label="Cerrar"
         >
           ×
@@ -244,7 +244,7 @@ function Boton({ children, onClick, fuerte = false, tour }: { children: ReactNod
       type="button"
       onClick={onClick}
       data-tour={tour}
-      className="rounded-lg border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer"
+      className="whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer"
       style={fuerte ? { background: AMBAR, borderColor: AMBAR, color: '#000' } : { borderColor: 'rgba(255,255,255,.14)', color: '#DCE5EA' }}
     >
       {children}
@@ -297,7 +297,9 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar, invitado }: { f: Ficha; 
   return (
     <>
       {timelapse && <Timelapse id={f.id} nombre={f.nombre} resumen={f.satelite?.estado === 'ok' ? f.satelite.renglones.join(' ') : undefined} onCerrar={() => setTimelapse(false)} />}
-      <div className="flex flex-wrap gap-1.5">
+      {/* En el teléfono, una sola fila que se desliza: con seis botones en varias filas, la tarjeta
+          mostraba solo botones y los datos del catastro quedaban fuera de la vista. */}
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] max-md:flex-nowrap md:flex-wrap [&>*]:shrink-0">
         {f.geojson && f.encuadre && <Boton onClick={() => onVolar({ accion: 'volar', geojson: f.geojson!, encuadre: f.encuadre! })}>Volar aquí</Boton>}
         <Boton fuerte tour="btn-pdf" onClick={() => onFicha(f.id)}>
           Ficha PDF
@@ -516,7 +518,8 @@ function Exportes({ id }: { id: number }) {
   };
   return (
     <div data-tour="exportes">
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* Una fila que se desliza en el teléfono, igual que las acciones: dos filas tapaban los datos. */}
+      <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] max-md:flex-nowrap md:flex-wrap [&>*]:shrink-0">
         <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[#7F939D]">Bajar</span>
         {[
           ['kml', 'KML · Google Earth'],
@@ -530,7 +533,7 @@ function Exportes({ id }: { id: number }) {
             type="button"
             disabled={!!bajando}
             onClick={() => void bajar(f)}
-            className="rounded-md border border-white/15 px-2 py-1 font-mono text-[10.5px] text-[#DCE5EA] hover:border-white/35 disabled:opacity-50 cursor-pointer"
+            className="whitespace-nowrap rounded-md border border-white/15 px-2 py-1 font-mono text-[10.5px] text-[#DCE5EA] hover:border-white/35 disabled:opacity-50 cursor-pointer"
           >
             {bajando === f ? 'Bajando…' : t}
           </button>

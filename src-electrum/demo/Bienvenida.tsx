@@ -52,7 +52,7 @@ export function Bienvenida({
 
   return (
     <div className="absolute inset-x-0 bottom-5 z-[35] flex justify-center px-4" role="dialog" aria-label="Bienvenida">
-      <div className="w-full max-w-[560px] rounded-2xl border border-[#FFAE3B]/30 bg-black/80 p-4 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl md:p-5">
+      <div className="w-full max-w-[560px] max-h-[calc(100dvh-84px)] overflow-y-auto rounded-2xl border border-[#FFAE3B]/30 bg-black/80 p-4 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl md:p-5 [@media(max-height:480px)]:p-3">
         <p className="font-display text-[20px] font-bold leading-tight text-[#F3F6F8] md:text-[24px]">{saludo}</p>
         <p className="mt-1 text-[13.5px] leading-snug text-[#9FB0B8] md:text-[14.5px]">¿Quiere un tutorial para aprender lo que podemos hacer?</p>
         {/* La Etapa 1 es la presentación: va primero, a todo lo ancho. */}
