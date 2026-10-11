@@ -191,7 +191,11 @@ export function Entrar({ navigation, route }: Props) {
     if (estadoRef.current.tipo === 'exito') return;
     // De vuelta a la cuenta, las tarjetas y la espera de la wallet se quitan (si la wallet contesta tarde, igual entra:
     // escucharVueltaTardia sigue puesto).
-    if (v === 'cuenta' && esDeWallet(estadoRef.current)) setEstado({ tipo: 'listo' });
+    if (v === 'cuenta' && esDeWallet(estadoRef.current)) {
+      // La espera en curso ya no manda: si contesta tarde con un error, no regresa a la wallet.
+      esperaGenesis.current++;
+      setEstado({ tipo: 'listo' });
+    }
     setVista(v);
     setErrorA(null);
     setErrorClave(null);
@@ -250,13 +254,24 @@ export function Entrar({ navigation, route }: Props) {
     setEstado(e);
   };
 
+  /**
+   * El número de la espera de Genesis vigente: solo la última puede cambiar la pantalla. Si la persona vuelve a la
+   * cuenta de AU-RA, entra por otro camino o pide otra espera, el resultado tardío de la anterior (p. ej. SIN_VUELTA a
+   * los minutos) ya no la arrastra a la vista de la wallet ni le tapa un error del formulario (revisión del 11-oct).
+   * Un pase bueno sigue entrando: entrarCon valida su intento, y las vueltas tardías siguen por escucharVueltaTardia.
+   */
+  const esperaGenesis = useRef(0);
   const entrarGenesis = async (o: OpcionesEntrada = {}) => {
+    const n = ++esperaGenesis.current;
     setEstado({ tipo: 'esperando' });
     try {
-      await alVolver(await entrarConGenesis(o));
+      const r = await entrarConGenesis(o);
+      if (n !== esperaGenesis.current && !r.ok) return;
+      await alVolver(r);
     } catch (e: any) {
       miga(`genesis: ${String(e?.message || e).slice(0, 80)}`);
-      if (vivo.current) setEstado({ tipo: 'error', mensaje: tr('No pude entrar con Genesis ID. Prueba de nuevo.', 'Couldn’t sign in with Genesis ID. Try again.') });
+      // Con código: se dice en la vista de la wallet, no debajo de «Entra a AU-RA».
+      if (vivo.current && n === esperaGenesis.current) setEstado({ tipo: 'error', codigo: 'GENESIS_FALLO', mensaje: tr('No pude entrar con Genesis ID. Prueba de nuevo.', 'Couldn’t sign in with Genesis ID. Try again.') });
     }
   };
 
@@ -288,6 +303,7 @@ export function Entrar({ navigation, route }: Props) {
       return setErrorA(e);
     }
     entrandoARef.current = true;
+    esperaGenesis.current++;
     setEntrandoA(true);
     setErrorA(null);
     setAvisoOlvideA(null);
@@ -310,6 +326,21 @@ export function Entrar({ navigation, route }: Props) {
       // Cuenta propia con el correo sin confirmar: sin sesión; el servidor mandó el código y se pide aquí mismo.
       if (err?.status === 403 && err?.data?.codigo === 'CORREO_SIN_CONFIRMAR') {
         cancelarIntento(i);
+        // Solo si el código salió (server.ts manda `confirmacion`): sin código no tiene caso la pantalla del código.
+        const conf = err?.data?.confirmacion;
+        if (conf && conf !== 'enviado' && conf !== 'espera') {
+          vibrar('error');
+          setErrorA({
+            codigo: 'CORREO_SIN_CONFIRMAR',
+            mensaje:
+              err?.data?.error ||
+              tr(
+                'Confirma tu correo para entrar, pero ahora no pudimos enviarte el código. Entra con Veta Wallet u Orden Global, o inténtalo más tarde.',
+                'Confirm your email to sign in, but we couldn’t send you the code right now. Sign in with Veta Wallet or Orden Global, or try again later.'
+              ),
+          });
+          return;
+        }
         pedirCodigoPara(c, clave);
         navigation.navigate('CrearCuenta', { correo: c, paso: 'codigo' });
         return;
@@ -373,6 +404,7 @@ export function Entrar({ navigation, route }: Props) {
       return setErrorClave({ campo: 'clave', mensaje: tr('Escribe tu contraseña de Veta Wallet.', 'Enter your Veta Wallet password.') });
     }
     enviandoRef.current = true;
+    esperaGenesis.current++;
     setEnviando(true);
     setErrorClave(null);
     setAvisoCorreo(null);

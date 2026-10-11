@@ -20,7 +20,7 @@
  * guarda en ningún lado. Errores debajo del campo que hay que arreglar, o del formulario.
  */
 import { useEffect, useRef, useState } from 'react';
-import { AppState, StyleSheet, View, type TextInput } from 'react-native';
+import { AppState, BackHandler, StyleSheet, View, type TextInput } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { crearCuenta, confirmarCodigoCorreo, reenviarCodigoCorreo } from '../../lib/api';
 import { errorDeCodigo, errorDeRegistro, normalizarCodigo, problemaDeClave, reglasClave, validarRegistro, type ErrorCuenta } from '../../lib/cuentaPropia';
@@ -215,6 +215,19 @@ export function CrearCuenta({ navigation, route }: Props) {
     setPaso('datos');
     setTimeout(() => refCorreo.current?.focus(), 80);
   };
+
+  // El «atrás» de Android en el paso del código hace lo mismo que la flecha: volver a los datos (no tirar la pantalla).
+  // Confirmando, se queda: el servidor ya pudo gastar el código y la sesión está por llegar.
+  useEffect(() => {
+    if (paso !== 'codigo' || desdeEntrar) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (yendo !== 'confirmar') cambiarCorreo();
+      return true;
+    });
+    return () => sub.remove();
+    // cambiarCorreo solo usa setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paso, desdeEntrar, yendo]);
 
   const ocupado = !!yendo;
   const correoVisto = correo.trim().toLowerCase();
