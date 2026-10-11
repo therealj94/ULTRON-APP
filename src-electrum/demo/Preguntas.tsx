@@ -13,6 +13,7 @@ import { capturarDicho } from '../panel/oido';
 import { esAfirmativa, esNegativa, recorridoPedido } from '../panel/comandos';
 import type { ModoRecorrido } from './Recorrido';
 import { PREGUNTAS_DESPUES } from './etapa1';
+import { BotonEsconder, mostrarVentana, useVentana } from '../mapa/ventanas';
 
 const AMBAR = '#FFAE3B';
 /** Si nadie dice nada en este rato, se despide solo y deja la pantalla libre. */
@@ -38,6 +39,9 @@ export function Preguntas({
   cara: (f: 'IDLE' | 'SPEAKING' | 'THINKING') => void;
 }) {
   const [texto, setTexto] = useState('¿Tiene alguna pregunta? Dígamela en voz alta o escríbala abajo.');
+  // Ventana del mapa (mapa/ventanas.tsx): se esconde a su pastilla y sigue escuchando.
+  const ventana = useVentana('preguntas', { nombre: 'las preguntas', etiqueta: '¿Alguna pregunta?', activa: true, prioridad: 3, rincon: 'centro' });
+  useEffect(() => mostrarVentana('preguntas'), []);
   const [esperando, setEsperando] = useState(false);
   const c = useRef({ onPreguntar, onOtro, onCerrar, cara });
   c.current = { onPreguntar, onOtro, onCerrar, cara };
@@ -102,8 +106,20 @@ export function Preguntas({
   }, []);
 
   return (
-    <div className="absolute inset-x-0 bottom-3 z-[32] flex justify-center px-3" role="dialog" aria-label="¿Alguna pregunta?">
-      <div className="w-full max-w-[520px] rounded-2xl border border-[#FFAE3B]/30 bg-black/85 p-4 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl">
+    <div
+      className={`absolute z-[32] flex justify-center ${ventana.plegada ? 'hidden' : ''} ${
+        ventana.modo === 'franja'
+          ? 'inset-x-2 bottom-[52px] pointer-coarse:bottom-[60px] max-h-[46%]'
+          : ventana.modo === 'baja'
+            ? 'right-[52px] top-2 max-h-[calc(100%-16px)] w-[min(520px,46%)]'
+            : 'inset-x-0 bottom-3 max-h-[45%] px-3'
+      }`}
+      role="dialog"
+      aria-label="¿Alguna pregunta?"
+      data-ventana
+      data-ventana-clave="preguntas"
+    >
+      <div className="w-full max-w-[520px] overflow-y-auto overscroll-contain rounded-2xl border border-[#FFAE3B]/30 bg-black/85 p-4 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl max-md:p-3">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" style={{ background: AMBAR }} />
@@ -112,9 +128,12 @@ export function Preguntas({
           <span className="font-mono text-[10.5px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
             {esperando ? 'Buscando la respuesta…' : 'Lo escucho'}
           </span>
-          <button type="button" onClick={onCerrar} className="ml-auto rounded-md px-1.5 text-[13px] text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Cerrar">
-            ✕
-          </button>
+          <span className="ml-auto flex items-center">
+            <BotonEsconder nombre="las preguntas" onClick={ventana.esconder} />
+            <button type="button" onClick={onCerrar} className="flex h-7 w-7 items-center justify-center rounded-full text-[13px] text-[#9FB0B8] hover:text-white pointer-coarse:h-10 pointer-coarse:w-10 cursor-pointer" aria-label="Cerrar" title="Cerrar">
+              ✕
+            </button>
+          </span>
         </div>
         <p className="mt-2 text-[14px] leading-snug text-[#F3F6F8] md:text-[15px]">{texto}</p>
         {/* Modo consulta (Etapa 1, sección 7): lo que se le puede pedir, a un toque. */}
