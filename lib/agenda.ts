@@ -162,8 +162,70 @@ export async function anotarDespertarPendiente(tipo: TipoAgenda, dueno: string, 
     },
     o.almacen || almacenDurable()
   ).catch((e) => ({ ok: false as const, conflicto: false, detalle: String(e?.message || e) }));
-  if (lleno) avisar('la lista de despertares pendientes está llena: la marca queda solo en el objeto');
-  return r.ok === true && !lleno;
+  if (lleno) {
+    // Desborde (Codex, PR #181): la lista está llena; el dueño queda en otra lista, chica (una entrada por cuenta),
+    // para que la vuelta del planificador revise sus tareas por su índice. Así la tarea sigue siendo descubrible.
+    avisar('la lista de despertares pendientes está llena: se anota la cuenta para revisar sus tareas');
+    return anotarDuenoDesbordado(d, o);
+  }
+  return r.ok === true;
+}
+
+/* Cuentas con despertares que no cupieron en la lista: la reparación las recorre por su índice de tareas. */
+type Desbordados = { v: 1; duenos: { dueno: string; t: number }[] };
+/** Tope de cuentas desbordadas (muy por encima de las cuentas reales; si se llena, se avisa). */
+export const MAX_DESBORDADOS = 20000;
+const claveDesbordados = () => claveDe('planificador', DUENO_AGENDA, 'despertares-desbordados');
+
+/** Anota una cuenta cuyo despertar no cupo en la lista. true si quedó anotada. Nunca lanza. */
+export async function anotarDuenoDesbordado(dueno: string, o: { almacen?: AlmacenDurable; ahora?: number } = {}): Promise<boolean> {
+  const d = String(dueno || '').trim().toLowerCase();
+  if (!d) return false;
+  const t = o.ahora ?? Date.now();
+  let lleno = false;
+  const r = await modificarDurable<Desbordados>(
+    claveDesbordados(),
+    (p) => {
+      lleno = false;
+      const duenos = p?.duenos || [];
+      const i = duenos.findIndex((x) => x.dueno === d);
+      if (i >= 0) {
+        duenos[i] = { dueno: d, t: Math.max(t, duenos[i].t + 1) };
+        return { v: 1, duenos };
+      }
+      if (duenos.length >= MAX_DESBORDADOS) {
+        lleno = true;
+        return undefined;
+      }
+      return { v: 1, duenos: [...duenos, { dueno: d, t }] };
+    },
+    o.almacen || almacenDurable()
+  ).catch(() => null);
+  if (lleno) avisar('la lista de cuentas desbordadas está llena: la marca queda solo en el objeto');
+  return !!r && r.ok === true && !lleno;
+}
+
+/** Las cuentas desbordadas (la más vieja primero). `ok: false` si el almacén no contestó. */
+export async function leerDuenosDesbordados(a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; duenos: { dueno: string; t: number }[] } | { ok: false; detalle: string }> {
+  const l = await a.leer<Desbordados>(claveDesbordados()).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (l.ok === false) return { ok: false, detalle: l.detalle };
+  const duenos = (l.valor?.duenos || []).filter((x) => x && typeof x.dueno === 'string');
+  return { ok: true, duenos: duenos.sort((x, y) => x.t - y.t) };
+}
+
+/** Quita una cuenta desbordada, solo si sigue con la marca `t` que se vio. */
+export async function quitarDuenoDesbordado(dueno: string, t: number, a: AlmacenDurable = almacenDurable()): Promise<boolean> {
+  const r = await modificarDurable<Desbordados>(
+    claveDesbordados(),
+    (p) => {
+      const duenos = p?.duenos || [];
+      const i = duenos.findIndex((x) => x.dueno === dueno);
+      if (i < 0 || duenos[i].t !== t) return undefined;
+      return { v: 1, duenos: duenos.filter((_, j) => j !== i) };
+    },
+    a
+  ).catch(() => null);
+  return !!r && r.ok === true && r.cambiado;
 }
 
 /** Los despertares pendientes (el más viejo primero). `ok: false` si el almacén no contestó. */

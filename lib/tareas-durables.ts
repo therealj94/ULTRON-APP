@@ -48,7 +48,7 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { agendarDetallado, anotarDespertarPendiente, leerDespertaresPendientes, llaveAgenda, quitarDespertarPendiente, type ResultadoAgendar } from './agenda';
+import { agendarDetallado, anotarDespertarPendiente, leerDespertaresPendientes, leerDuenosDesbordados, llaveAgenda, quitarDespertarPendiente, quitarDuenoDesbordado, type ResultadoAgendar } from './agenda';
 import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, remiteAOtroLugar, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
@@ -1807,6 +1807,27 @@ export async function repararDespertares(o: { dueno?: string; almacen?: AlmacenD
       }
       res.pendientes++;
       if (d.estado === 'bloqueada') res.llena = true;
+    }
+    // Las cuentas cuyo despertar no cupo en la lista (desborde): se revisan por su índice, con su propio cupo (que
+    // una lista llena no las deje sin turno): hasta 5 cuentas y 20 tareas con marca por vuelta. Se quitan cuando la
+    // revisión vio todas sus tareas sin dejar ninguna pendiente.
+    if (!res.llena) {
+      const dd = await leerDuenosDesbordados(a);
+      if (dd.ok === false) res.ok = false;
+      else {
+        let cupo = 20;
+        for (const x of dd.duenos.slice(0, 5)) {
+          if (res.llena || cupo <= 0) break;
+          const r = await repararDespertares({ dueno: x.dueno, almacen: a, ahora, max: cupo });
+          cupo -= r.vistas;
+          res.vistas += r.vistas;
+          res.reparadas += r.reparadas;
+          res.pendientes += r.pendientes;
+          if (r.llena) res.llena = true;
+          if (r.ok === false) res.ok = false;
+          else if (r.pendientes === 0 && cupo > 0) await quitarDuenoDesbordado(x.dueno, x.t, a);
+        }
+      }
     }
     return res;
   } catch (e: any) {

@@ -15,7 +15,7 @@
  */
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { leerAgenda, leerDespertaresPendientes, MAX_AGENDA, llaveAgenda } from '../lib/agenda';
+import { leerAgenda, leerDespertaresPendientes, leerDuenosDesbordados, MAX_AGENDA, MAX_PENDIENTES, llaveAgenda } from '../lib/agenda';
 import { almacenEnMemoria, claveDe, _usarAlmacenDurable, type AlmacenDurable, type Escrito } from '../lib/durable';
 import { autorizarEjecucion, cambiarTarea, claveTarea, crearTarea, leerTarea, listarTareasPagina, repararDespertares, vistaTarea, _olvidarEsperasListado, type RegistroTarea } from '../lib/tareas-durables';
 import { vueltaPlanificador, type DepsPlanificador } from '../server/planificador';
@@ -415,4 +415,34 @@ test('dos creaciones a la vez con el mismo requestId: ninguna devuelve «agendad
     assert.equal(r.tarea.despertar, undefined, 'la tarea devuelta no trae la marca vieja');
     assert.equal((vistaTarea(r.tarea, T0) as any).wakeUp, undefined, 'la vista no dice «pendiente» de algo agendado');
   }
+});
+
+test('agenda Y lista de pendientes llenas (Codex, PR #181): la cuenta queda anotada y la vuelta global la repara al haber sitio', async () => {
+  const { a } = almacenConFallos();
+  const yo = correo();
+  const llenas = Array.from({ length: MAX_AGENDA }, (_, i) => ({ k: llaveAgenda('tarea', 'otro@ejemplo.com', `tk_relleno${i}`), tipo: 'tarea', dueno: 'otro@ejemplo.com', id: `tk_relleno${i}`, cuando: T0 + 86_400_000, t: 1 }));
+  a.objetos.set(CLAVE_AGENDA, JSON.stringify({ v: 1, entradas: llenas }));
+  const CLAVE_PEND = claveDe('planificador', 'aura-planificador', 'despertares');
+  // Lista de pendientes llena con entradas viejas de otros (fuera de gracia y sin tarea: la vuelta las va soltando).
+  const pend = Array.from({ length: MAX_PENDIENTES }, (_, i) => ({ k: llaveAgenda('tarea', 'otro@ejemplo.com', `tk_p${i}`), tipo: 'tarea', dueno: 'otro@ejemplo.com', id: `tk_p${i}`, motivo: 'agenda-llena', t: T0 + 10 + i }));
+  a.objetos.set(CLAVE_PEND, JSON.stringify({ v: 1, entradas: pend }));
+  const r = await crearTarea(yo, enCola('desp-desborde-1'), { almacen: a, ahora: T0 });
+  assert.ok(r.ok && r.creada);
+  const id = r.ok ? r.tarea.id : '';
+  const p = await leerDespertaresPendientes(a);
+  assert.ok(p.ok && !p.entradas.some((e) => e.id === id), 'no cupo en la lista de pendientes');
+  const dd = await leerDuenosDesbordados(a);
+  assert.ok(dd.ok && dd.duenos.some((x) => x.dueno === yo), 'pero la cuenta quedó anotada como desbordada');
+  // Se hace sitio en la agenda; la lista de pendientes sigue llena: la vuelta global igual la encuentra por la cuenta.
+  a.objetos.set(CLAVE_AGENDA, JSON.stringify({ v: 1, entradas: [] }));
+  a.objetos.set(CLAVE_PEND, JSON.stringify({ v: 1, entradas: pend }));
+  let rep = { reparadas: 0 } as Awaited<ReturnType<typeof repararDespertares>>;
+  for (let i = 0; i < 3 && (await entradasDe(a, id)).length === 0; i++) rep = await repararDespertares({ almacen: a, ahora: T0 + 10 * 60_000 + i });
+  assert.equal((await entradasDe(a, id)).length, 1, 'agendada sin que nadie repita ni abra la lista');
+  assert.equal((await registro(a, yo, id)).despertar, undefined);
+  void rep;
+  // Revisada sin pendientes: la cuenta sale de los desbordados.
+  await repararDespertares({ almacen: a, ahora: T0 + 20 * 60_000 });
+  const dd2 = await leerDuenosDesbordados(a);
+  assert.ok(dd2.ok && !dd2.duenos.some((x) => x.dueno === yo), 'fuera de los desbordados');
 });
