@@ -111,14 +111,18 @@ jobs:
           APK=$(ls AU-RA-FP-*.apk | head -n 1)
           RT=$(cat runtime-ultron.txt 2>/dev/null || echo "")
           OTA=""
+          TIPO=""
           if [ -f ota-aura.json ] && [ -n "$RT" ]; then
             OTA=$(jq -r --arg rt "$RT" '[.publicaciones[]? | select(.plataforma == "ultron" and .canal == "production" and .runtimeVersion == $rt and .tipo == "ota")][0].androidUpdateId // ""' ota-aura.json)
+            TIPO=$(jq -r --arg rt "$RT" '[.publicaciones[]? | select(.plataforma == "ultron" and .canal == "production" and .runtimeVersion == $rt)][0].tipo // ""' ota-aura.json 2>/dev/null || echo "")
           fi
           TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           # Qué se exige: después de publicar una OTA, su aceptación; a mano, también si hay OTA esperada y no se
           # pidió solo humo.
+          # Volver a la APK a propósito (ota.yml «volver-a-la-apk» deja la ficha en tipo «embebido»): no hay OTA que
+          # aceptar, la app debe correr su JS embebido; solo humo. Una ficha que falta sigue en aceptación (rojo).
           MODO=aceptacion
-          if [ "$EVENTO" != "workflow_run" ] && { [ "$SOLO_HUMO" = "true" ] || [ -z "$OTA" ]; }; then MODO=humo; fi
+          if [ "$TIPO" = "embebido" ] || { [ "$EVENTO" != "workflow_run" ] && { [ "$SOLO_HUMO" = "true" ] || [ -z "$OTA" ]; }; }; then MODO=humo; fi
           echo "apk=$RUNNER_TEMP/apk/$APK" >> "$GITHUB_OUTPUT"
           echo "ota=$OTA" >> "$GITHUB_OUTPUT"
           echo "runtime=$RT" >> "$GITHUB_OUTPUT"

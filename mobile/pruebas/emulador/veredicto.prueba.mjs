@@ -219,7 +219,9 @@ prueba('correr.sh ya no toma «Stored update found» como «la carga» y escribe
   assert.doesNotMatch(veredicto, /grep -qx FALLA/, 'el veredicto viejo solo miraba FALLA');
   assert.doesNotMatch(flujo, /OMITIDO \(sin cuenta\) no es un fallo/);
   assert.match(flujo, /veredicto\.mjs .*--markdown >> "\$GITHUB_STEP_SUMMARY"/);
-  assert.match(flujo, /if \[ "\$EVENTO" != "workflow_run" \]/, 'después de una OTA, siempre modo aceptación');
+  assert.match(flujo, /\[ "\$EVENTO" != "workflow_run" \]/, 'después de una OTA, siempre modo aceptación');
+  // Revisión adversarial: volver a la APK a propósito (ficha «embebido») es solo humo, no una aceptación en rojo.
+  assert.match(flujo, /if \[ "\$TIPO" = "embebido" \] \|\|/, 'ficha embebido → solo humo');
 });
 
 console.log(`\n${n - fallos}/${n} pruebas del veredicto del emulador`);
