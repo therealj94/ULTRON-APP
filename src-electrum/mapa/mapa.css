@@ -73,3 +73,10 @@ summary:focus-visible {
   outline: 2px solid #ffae3b;
   outline-offset: 2px;
 }
+
+/* Con el teléfono acostado o el mapa en franja, la escala se montaba sobre el «−» del zoom. */
+@media (max-height: 520px) {
+  .maplibregl-ctrl-scale {
+    display: none;
+  }
+}

@@ -474,6 +474,14 @@ export default function App() {
     mq.addEventListener('change', alCambiar);
     return () => mq.removeEventListener('change', alCambiar);
   }, []);
+  // El alto de la ventana: la cara se mide contra lo que de verdad le queda al mapa, no contra el
+  // reparto (en un teléfono acostado, «mitad y mitad» deja 130 px de mapa).
+  const [altoVentana, setAltoVentana] = useState(typeof window === 'undefined' ? 900 : window.innerHeight);
+  useEffect(() => {
+    const f = () => setAltoVentana(window.innerHeight);
+    window.addEventListener('resize', f);
+    return () => window.removeEventListener('resize', f);
+  }, []);
 
   /**
    * La cara cede el paso sola. La primera orden del mapa es la que abre el escenario de trabajo:
@@ -1242,9 +1250,13 @@ export default function App() {
                * poco que hay. No se pliega sola —eso sería pelearse con lo que el usuario pidió—
                * pero ocupa lo que corresponde a lo que queda.
                */
-              ancho && alto <= 0.6
-              ? { left: 16, top: 64, width: 132, height: 132, zIndex: 30 }
-              : { left: 12, top: 60, width: 96, height: 96, zIndex: 30 }
+              (() => {
+                const altoMapa = altoVentana * (1 - alto) - 52;
+                if (ancho && altoMapa > 360) return { left: 16, top: 64, width: 132, height: 132, zIndex: 30 };
+                if (altoMapa > 220) return { left: 12, top: 60, width: 96, height: 96, zIndex: 30 };
+                // Franja corta: la cara se hace chica para no tapar «Índice de capas» ni las herramientas.
+                return { left: 10, top: 58, width: 60, height: 60, zIndex: 30 };
+              })()
             : mostrarBienvenida
               ? // Con la bienvenida abajo, la cara sube y se achica un poco: las opciones no la tapan.
                 { left: '50%', top: '33%', width: 'min(64vmin, 440px)', height: 'min(64vmin, 440px)', transform: 'translate(-50%,-50%)', zIndex: 30 }

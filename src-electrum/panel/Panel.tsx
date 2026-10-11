@@ -1248,14 +1248,14 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       {/* El asa de repartir. En Expedientes no: ahí el panel se lleva la pantalla entera. */}
       {!completo && <Asa alto={alto} onAlto={onAlto} onArrastrar={setArrastrando} />}
       {/* La cabecera: siempre visible, nunca fuera de pantalla, y dice por dónde se sube. */}
-      <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0" data-tour="pestanas">
+      <div className="flex min-w-0 items-center gap-1 px-2 sm:px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0" data-tour="pestanas">
         {(['chat', 'expedientes', 'infra'] as const).map((v) => (
           <button
             key={v}
             type="button"
             onClick={() => onVista(v)}
             aria-pressed={vista === v}
-            className="px-3 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase transition-colors cursor-pointer"
+            className="shrink-0 px-2 sm:px-3 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.06em] sm:tracking-[0.14em] uppercase transition-colors cursor-pointer"
             style={
               vista === v
                 ? { background: 'rgba(255,174,59,0.14)', color: AMBAR }
@@ -1265,7 +1265,11 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             {v === 'chat' ? (
               'Consulta'
             ) : v === 'expedientes' ? (
-              'Expedientes'
+              // A 360 px, con el reparto y Borrar, «Expedientes» empujaba fuera de la pantalla «Más chat».
+              <>
+                <span className="sm:hidden">Exped.</span>
+                <span className="hidden sm:inline">Expedientes</span>
+              </>
             ) : (
               // En un teléfono de 360 px no caben las tres pestañas con el nombre entero.
               <>
@@ -1285,7 +1289,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
          * arrastrar con precisión en un teléfono: tres botones visibles dicen qué se puede hacer.
          */}
         {!completo && (
-          <div className="ml-auto flex items-center gap-0.5 rounded-lg border border-white/10 p-0.5" role="group" aria-label="Repartir la pantalla" data-tour="reparto">
+          <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-lg border border-white/10 p-0.5" role="group" aria-label="Repartir la pantalla" data-tour="reparto">
             {(
               [
                 ['mapa', ALTURAS.mapa, 'Más mapa', 'M3 4h18v12H3z M3 19h18'],
@@ -1302,7 +1306,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   aria-pressed={activo}
                   title={t}
                   aria-label={t}
-                  className="flex h-7 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors cursor-pointer"
+                  className="flex h-9 md:h-7 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors cursor-pointer"
                   style={activo ? { background: 'rgba(255,174,59,0.16)', color: AMBAR } : { color: '#8FA3B0' }}
                 >
                   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
@@ -1319,10 +1323,15 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             type="button"
             onClick={olvidar}
             disabled={pensando}
-            className={`${completo ? 'ml-auto ' : ''}px-2.5 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase text-[#8FA3B0] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed`}
+            className={`${completo ? 'ml-auto ' : ''}shrink-0 flex h-9 md:h-auto items-center px-2 sm:px-2.5 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase text-[#8FA3B0] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed`}
             title="Borrar esta conversación, acá y en el servidor"
+            aria-label="Borrar esta conversación"
           >
-            Borrar
+            {/* En el teléfono, el ícono: con la palabra no cabían las pestañas y el reparto. */}
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="sm:hidden">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+            </svg>
+            <span className="hidden sm:inline">Borrar</span>
           </button>
         )}
       </div>
@@ -1611,7 +1620,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               aria-label="Tu pregunta para Dr Electrum"
               data-tour="chat"
               autoComplete="off"
-              className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#7D909A] focus:outline-none focus:border-[#FFAE3B]/60"
+              className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-base md:text-sm text-[#E7EEF2] placeholder:text-[#7D909A] focus:outline-none focus:border-[#FFAE3B]/60"
             />
             <button
               type="button"

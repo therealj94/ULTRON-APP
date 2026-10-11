@@ -236,6 +236,8 @@ export const REGLAS_MAPA =
 // Solo cuando nombra el mapa o sus capas: «muéstrame los vencimientos» es del catastro, no del mapa
 // (revisión de Codex en #169: un verbo suelto se llevaba las herramientas del especialista).
 const DEL_MAPA = /\b(capas?|mapa|indice de capas|leyenda|filtr\w*)\b/;
+// «Hazme un mapa geológico», «informe PDF con mapa»: piden al geólogo o un informe, no las capas del índice.
+const NO_ES_DE_CAPAS = /\b(mapa geologico|mapa litologico|mapa estructural|informe|reporte|pdf)\b/;
 // Órdenes de pantalla, no temas: «pon el satélite» sí; «¿qué dicen los datos de satélite?» no (revisión de Codex en #170).
 const ORDEN_PANTALLA = /\b(pon|ponme|ponga|cambia|cambialo|cambiame|activa|activame|quita|quitame|abre|abreme|muestrame|ensename|analiza|analizame)\b.{0,30}\b(satelite|relieve|3d|calles|timelapse|pantalla completa|vertices)\b/;
 
@@ -304,7 +306,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   ctx = { ...ctx, riesgo: clas.riesgo, historial: historial.map((m) => ({ role: m.role, content: m.content })) };
   const { panel, fuente } = await panelP;
   // Del mapa y desde la pantalla del mapa: las del índice de capas, sin especialistas que no las traen.
-  const modoMapa = !!ctx.mapa && !opciones.mesa && (DEL_MAPA.test(normalizar(mensaje)) || ORDEN_PANTALLA.test(normalizar(mensaje)));
+  const modoMapa = !!ctx.mapa && !opciones.mesa && !NO_ES_DE_CAPAS.test(normalizar(mensaje)) && (DEL_MAPA.test(normalizar(mensaje)) || ORDEN_PANTALLA.test(normalizar(mensaje)));
   if (modoMapa) panel.splice(0, panel.length);
   // Quién de la mesa contesta: el dueño de cada especialidad convocada (personajes.ts).
   const mesa = fuente === 'mesa';

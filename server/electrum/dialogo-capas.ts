@@ -130,7 +130,7 @@ export async function conversarCapas(mensaje: string, x: Entorno): Promise<Respu
     if (e) {
       const f = filtrosEnTexto(e, t);
       if (f) return abrir(x, e, f, false);
-      if (TODAS.test(t) || /^(si|dale|ok|bueno|claro)\b/.test(t)) return abrir(x, e, {}, false);
+      if (TODAS.test(t) || /^(si|dale|ok|bueno|claro)( (por favor|claro|dale|esa|esas|abrela|abrelas|todas))?[.! ]*$/.test(t)) return abrir(x, e, {}, false);
     }
   }
   if (p?.tipo === 'elegir') {

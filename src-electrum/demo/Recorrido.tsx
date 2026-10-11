@@ -1868,19 +1868,26 @@ export function Recorrido({
           >
             <span className="h-2 w-2 shrink-0 animate-pulse rounded-full" style={{ background: AMBAR }} />
             <span className="min-w-0 flex-1 truncate font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
-              {n > 0 ? `Capítulo ${n} de ${total} · ` : ''}
+              {n > 0 ? (
+                <>
+                  <span className="max-sm:hidden">{`Capítulo ${n} de ${total} · `}</span>
+                  <span className="sm:hidden">{`${n}/${total} · `}</span>
+                </>
+              ) : (
+                ''
+              )}
               {cap.titulo}
             </span>
-            <button type="button" onClick={alternarPantallaCompleta} className="shrink-0 rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Pantalla completa" title="Pantalla completa">
+            <button type="button" onClick={alternarPantallaCompleta} className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Pantalla completa" title="Pantalla completa">
               ⛶
             </button>
-            <button type="button" onClick={saltar} disabled={n === 0} className="shrink-0 rounded-md border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#DCE5EA] hover:border-white/35 disabled:opacity-40 cursor-pointer" title="Pasar al capítulo siguiente">
+            <button type="button" onClick={saltar} disabled={n === 0} className="h-8 shrink-0 rounded-md border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#DCE5EA] hover:border-white/35 disabled:opacity-40 cursor-pointer" title="Pasar al capítulo siguiente">
               Siguiente ▸
             </button>
-            <button type="button" onClick={() => setChico(true)} className="shrink-0 rounded-md px-1.5 text-[14px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Achicar el cuadro" title="Achicar">
+            <button type="button" onClick={() => setChico(true)} className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[14px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Achicar el cuadro" title="Achicar">
               –
             </button>
-            <button type="button" onClick={detener} className="shrink-0 rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Detener el recorrido" title="Detener">
+            <button type="button" onClick={detener} className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Detener el recorrido" title="Detener">
               ■
             </button>
           </div>

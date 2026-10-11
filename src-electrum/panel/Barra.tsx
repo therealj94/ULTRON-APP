@@ -26,8 +26,8 @@ type Props = {
 
 const AMBAR = '#FFAE3B';
 
-function Grupo({ children }: { children: ReactNode }) {
-  return <div className="flex items-center shrink-0 rounded-full border border-white/12 bg-black/55 backdrop-blur-md overflow-hidden">{children}</div>;
+function Grupo({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={`flex items-center shrink-0 rounded-full border border-white/12 bg-black/55 backdrop-blur-md overflow-hidden ${className}`}>{children}</div>;
 }
 
 function Opcion({
@@ -90,7 +90,7 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
 
       {/* A 400 px los tres grupos no caben: se arrastran en vez de cortarse. */}
       <div
-        className="flex min-w-0 items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[42vw] md:max-w-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-w-0 items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[56vw] md:max-w-none max-md:[mask-image:linear-gradient(90deg,transparent,#000_10%)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ opacity: enTrabajo ? 1 : 0, pointerEvents: enTrabajo ? 'auto' : 'none' }}
         /*
          * Invisible también para el teclado. Con la cara en el centro estos botones tienen opacidad
@@ -100,7 +100,13 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
         inert={!enTrabajo}
         aria-hidden={!enTrabajo}
       >
-        <Grupo>
+        {/* En el teléfono, un solo botón que alterna: los dos lados no cabían junto a Cuenta y Salir. */}
+        <Grupo className="md:hidden">
+          <Opcion activa onClick={() => onFondo(fondo === 'satelite' ? 'calles' : 'satelite')} titulo="Cambiar el fondo del mapa">
+            {fondo === 'satelite' ? 'Satélite' : 'Calles'}
+          </Opcion>
+        </Grupo>
+        <Grupo className="max-md:hidden">
           <Opcion activa={fondo === 'satelite'} onClick={() => onFondo('satelite')}>
             Satélite
           </Opcion>
@@ -109,7 +115,8 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
           </Opcion>
         </Grupo>
 
-        <Grupo>
+        {/* El motor (MapLibre / Google) es para la computadora; en el teléfono se queda el de trabajo. */}
+        <Grupo className="max-md:hidden">
           <Opcion activa={motor === 'maplibre'} onClick={() => onMotor('maplibre')} titulo="Motor de trabajo: aguanta miles de polígonos">
             MapLibre
           </Opcion>

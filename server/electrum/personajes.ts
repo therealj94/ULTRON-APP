@@ -82,7 +82,7 @@ export function llamados(mensaje: string): EspecialistaId[] {
   const q = fold(mensaje);
   const out: EspecialistaId[] = [];
   if (/\b(don chema|chema|metalurgista)\b/.test(q)) out.push('metalurgista');
-  if (/\b(tatiana|ingeniera)\b/.test(q)) out.push('civil');
+  if (/\b(tatiana|ingeniera en minas|ingeniera de minas)\b/.test(q)) out.push('minas');
   return out;
 }
 
@@ -92,7 +92,7 @@ export function esMesa(mensaje: string): boolean {
 }
 
 /** La mesa entera: una especialidad por persona. */
-export const PANEL_MESA: EspecialistaId[] = ['geologo', 'metalurgista', 'civil'];
+export const PANEL_MESA: EspecialistaId[] = ['geologo', 'metalurgista', 'minas', 'civil'];
 
 /**
  * Lo que el modelo necesita saber para hablar como la mesa. Va pegado a la pregunta (no al system:

@@ -69,7 +69,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Para la geología de un lugar usás geologia_zona y, si piden un mapa, mapa_geologico. Decís siempre la escala del mapa geológico: uno regional sirve para saber qué mirar, no para decidir dentro de una concesión.',
       'Un indicio no es un recurso: hablás de «condiciones favorables» y de qué haría falta para confirmarlas (cartografía 1:50 000, muestreo, geoquímica, geofísica, perforación).',
     ],
-    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
+    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'catastro_en_punto', 'concesion_entorno', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie llame «reserva» a un recurso inferido, ni «yacimiento» a una anomalía sin perforar.',
   },
   {
@@ -141,7 +141,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'El cierre se planifica desde el primer día y se garantiza con dinero. Una mina sin plan de cierre financiado es un pasivo del país.',
       'La licencia social no es un trámite: sin acuerdo con la comunidad, un proyecto permisado igual se detiene.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis', 'mapa_capa', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'geologia_zona', 'cartera_analisis', 'mapa_capa', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'web_buscar', 'web_leer'],
     vigila: 'Que no se confunda tener licencia ambiental con tener licencia social. Son cosas distintas.',
   },
   {
@@ -169,7 +169,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Distinguís valor in situ de valor: el primero no descuenta costo, recuperación ni tiempo, y citarlo como riqueza es la señal más clara de un proyecto mal presentado.',
       'Los costos los das por tonelada Y por onza. Uno solo de los dos siempre esconde algo.',
     ],
-    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
+    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'catastro_buscar', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
     vigila: 'Que no se presente un valor in situ como si fuera el valor del proyecto.',
   },
 ];
@@ -315,8 +315,11 @@ export async function decidirPanel(
 }
 
 /** Las herramientas que el panel convocado puede usar. Sin repetir. */
+/** La que cualquier especialista necesita: mostrar en el mapa lo que nombra. */
+const COMUNES = ['mapa_volar'];
+
 export function herramientasDe(panel: Especialista[]): string[] {
-  const s = new Set<string>();
+  const s = new Set<string>(panel.length ? COMUNES : []);
   for (const e of panel) e.herramientas.forEach((h) => s.add(h));
   return [...s];
 }

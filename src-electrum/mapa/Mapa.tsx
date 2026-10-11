@@ -993,6 +993,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     // A la derecha, no a la izquierda: abajo a la izquierda vive la cara cuando cede el paso, y la
     // escala le asomaba por detrás como un recorte de papel blanco.
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    // En pantallas táctiles MapLibre abre los créditos desplegados y la línea de «Imagen: Esri, Maxar…»
+    // pasaba por detrás de «Índice de capas». Se dejan plegados en la «i»; siguen a un toque.
+    m.once('load', () => m.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
     // El norte del marco de mapa del recorrido gira con la cámara.
     m.on('rotate', () => window.dispatchEvent(new CustomEvent('electrum:rumbo', { detail: m.getBearing() })));
     if (introPendiente) m.once('style.load', () => prepararGlobo(m));

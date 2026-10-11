@@ -267,7 +267,7 @@ export function Biblioteca() {
       <div className="shrink-0 px-4 pt-3 pb-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Cifra titulo="Documentos" valor={nf(resumen.documentos)} nota={`${nf(resumen.fragmentos)} fragmentos`} />
         <Cifra titulo="Capas del mapa" valor={nf(resumen.capas)} />
-        <Cifra titulo="Texto indexado" valor={`${(resumen.caracteres / 1e6).toLocaleString('es-HN', { maximumFractionDigits: 1 })} M`} nota="caracteres" />
+        <Cifra titulo="Texto indexado" valor={`${((Number(resumen.caracteres) || 0) / 1e6).toLocaleString('es-HN', { maximumFractionDigits: 1 })} M`} nota="caracteres" />
         <Cifra titulo="Carpetas" valor={nf(Math.max(0, resumen.carpetas))} nota={resumen.sinCarpeta ? `${nf(resumen.sinCarpeta)} sueltos` : 'todo ordenado'} onClick={() => setLugar('~')} />
         <Cifra
           titulo="Necesitan atención"
