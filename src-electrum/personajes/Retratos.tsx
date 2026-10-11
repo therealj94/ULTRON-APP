@@ -532,7 +532,7 @@ export function Retratos({ enRecorrido = false }: { enRecorrido?: boolean }) {
     const quien = hablante || orden[0];
     const r = RETRATOS[quien] || RETRATOS.narrador;
     return createPortal(
-      <div className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center pl-3 pr-14 md:px-3" data-retratos="plegada">
+      <div className="pointer-events-none fixed inset-x-0 top-[104px] z-[34] flex justify-center pl-3 pr-14 md:px-3" data-retratos="plegada">
         <button
           type="button"
           onClick={() => plegar(false)}
@@ -557,7 +557,7 @@ export function Retratos({ enRecorrido = false }: { enRecorrido?: boolean }) {
 
   return createPortal(
     <div
-      className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center pl-3 pr-14 md:px-3"
+      className="pointer-events-none fixed inset-x-0 top-[104px] z-[34] flex justify-center pl-3 pr-14 md:px-3"
       role="status"
       aria-label={`En conversación: ${orden.map((q) => RETRATOS[q]?.nombre || q).join(', ')}${hablante ? `. Habla ${RETRATOS[hablante]?.nombre || hablante}` : ''}`}
       data-retratos={participantes ? 'abierta' : 'saliendo'}

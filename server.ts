@@ -291,7 +291,7 @@ import { montarEnlacesApp } from './server/enlaces-app';
 import { correoListo, enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
-import { montarRutasIndice } from './server/electrum/indice-capas';
+import { conTurnoDeCapa, montarRutasIndice } from './server/electrum/indice-capas';
 import { estadoDelCliente } from './server/electrum/dialogo-capas';
 import { montarRutasRecorrido } from './server/electrum/recorrido-target';
 import { montarRutasMuestras } from './server/electrum/muestras';
@@ -1081,7 +1081,7 @@ app.get('/api/electrum/mapa/capa/:id', exigirPlataforma('electrum'), limitar(30)
   const id = idDe(req.params.id);
   if (!id) return res.status(400).json({ error: 'Id de capa inválido.', honesto: true });
   try {
-    const c = await capaParaMapa(id);
+    const c = await conTurnoDeCapa(() => capaParaMapa(id));
     if (!c) return res.status(404).json({ error: 'Esa capa no se puede pintar (no existe o es demasiado grande).', honesto: true });
     res.setHeader('Cache-Control', 'private, max-age=300');
     return enviarJsonComprimido(req, res, c);
@@ -1387,6 +1387,15 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
  * Exige nivel de ESCRITURA. Es lo que separa mirar de alimentar: quien consulta puede ver todo el
  * catastro y no puede cambiarlo.
  */
+
+/** Las lecturas de archivos subidos, de a una (ver /api/electrum/subir). */
+let lecturaEnCurso: Promise<unknown> = Promise.resolve();
+function conTurnoDeLectura<T>(fn: () => Promise<T>): Promise<T> {
+  const r = lecturaEnCurso.then(fn, fn);
+  lecturaEnCurso = r.catch(() => undefined);
+  return r;
+}
+
 app.post(
   '/api/electrum/subir',
   exigirPlataforma('electrum'),
@@ -1436,12 +1445,14 @@ app.post(
         if (g.ok) archivo = `s3://${process.env.ELECTRUM_EXPEDIENTES_BUCKET}/${clave}`;
         else console.warn('[electrum] no guardé el original en el cubo:', g.detalle);
       }
-      const r = await aprenderElectrum(nombre, datos, {
+      // De a uno: leer un PDF grande (pdf.js, OCR, geometrías) ocupa memoria y CPU del mismo proceso
+      // que contesta las preguntas; dos o tres a la vez trababan las respuestas de todos.
+      const r = await conTurnoDeLectura(() => aprenderElectrum(nombre, datos, {
         subidoPor: id?.persona.nombre,
         mime: String(req.headers['content-type'] || ''),
         carpeta,
         archivo,
-      });
+      }));
       return res.json({
         clase: r.clase,
         dicho: r.dicho,

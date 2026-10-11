@@ -74,7 +74,7 @@ test('F08 · la puerta dice QUÉ pasó, no solo que no abre', async (t) => {
     assert.equal(p.estado, 'servicio-caido');
     // Lo que importa de verdad: lo que se le dice a la persona.
     const dicho = a.porQueNoAbre(p, 'llave');
-    assert.match(dicho, /no es tu credencial/i);
+    assert.match(dicho, /no es (tu|su) credencial/i);
     assert.ok(!/no abre|no tiene acceso/i.test(dicho), 'no se le puede echar la culpa a la llave');
   });
 

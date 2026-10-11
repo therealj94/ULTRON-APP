@@ -179,7 +179,7 @@ function ListaConflictos({ lista, onIr, color }: { lista: Conflicto[]; onIr: (id
             onClick={() => onIr(c.id)}
             className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer"
           >
-            <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+            <span className="w-4 shrink-0 font-mono text-[10px] text-[#7F939D]">{i + 1}</span>
             <span className="min-w-0 flex-1">
               <Nombre texto={c.concesion} />
               <span className="text-[#7F939D]"> · {c.con}</span>
@@ -356,7 +356,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
 
             <div className="grid gap-3 md:grid-cols-2">
               {d.areasProtegidas && d.areasProtegidas.lista.length > 0 && (
-                <Tarjeta titulo="Pisan áreas protegidas · tocá una para ir">
+                <Tarjeta titulo="Pisan áreas protegidas · toque una para ir">
                   <ListaConflictos lista={d.areasProtegidas.lista} onIr={onIr} color="#2ECC71" />
                 </Tarjeta>
               )}
@@ -371,7 +371,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                     {d.poblados.lista.slice(0, 8).map((p, i) => (
                       <li key={p.id}>
                         <button type="button" onClick={() => onIr(p.id)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
-                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#7F939D]">{i + 1}</span>
                           <span className="min-w-0 flex-1">
                             <Nombre texto={p.concesion} />
                             {p.nombres.length > 0 && <span className="text-[#7F939D]"> · {p.nombres.join(', ')}</span>}
@@ -389,7 +389,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                     {prospectas.slice(0, 8).map((p, i) => (
                       <li key={p.id}>
                         <button type="button" onClick={() => onIr(p.id)} className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
-                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#7F939D]">{i + 1}</span>
                           <span className="min-w-0 flex-1 truncate">
                             <Nombre texto={p.nombre} />
                           </span>
@@ -411,7 +411,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                     {perdidas.map((p, i) => (
                       <li key={p.id}>
                         <button type="button" onClick={() => onIr(p.id)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
-                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#7F939D]">{i + 1}</span>
                           <span className="min-w-0 flex-1">
                             <Nombre texto={p.nombre} />
                           </span>
@@ -433,7 +433,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                     {d.traslapes.mayores.map((t, i) => (
                       <li key={`${t.aId}-${t.bId}`}>
                         <button type="button" onClick={() => onIr(t.aId)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
-                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#7F939D]">{i + 1}</span>
                           <span className="min-w-0 flex-1 text-[#E7EEF2]">
                             <Nombre texto={t.a} /> <span className="text-[#7F939D]">con</span> <Nombre texto={t.b} />
                           </span>
@@ -455,7 +455,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                 </Tarjeta>
               )}
             </div>
-            <p className="pb-2 text-[11px] text-[#61717A]">
+            <p className="pb-2 text-[11px] text-[#7F939D]">
               Cruces hechos en PostGIS con las capas cargadas (catastro nacional, áreas protegidas, microcuencas declaradas, patrimonio forestal y caseríos) y mediciones de Copernicus Sentinel-2. Actualizado{' '}
               {new Date(d.generado).toLocaleString('es-HN')}.
             </p>

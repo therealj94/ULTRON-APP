@@ -143,6 +143,22 @@ test('lo que manda el navegador no se cree a ojos cerrados', async (t) => {
     const r = hiloDelCliente([{ rol: 'persona', texto: 'x'.repeat(50_000) }]);
     assert.equal(r[0].texto.length, 1500);
   });
+
+  await t.test('las dos últimas respuestas del doctor van casi enteras; las viejas, recortadas', () => {
+    const largo = (c: string) => c.repeat(5000);
+    const m = fusionarHiloElectrum({
+      servidor: [
+        { rol: 'persona', texto: 'a' },
+        { rol: 'electrum', texto: largo('v') },
+        { rol: 'persona', texto: 'b' },
+        { rol: 'electrum', texto: largo('w') },
+        { rol: 'persona', texto: 'c' },
+        { rol: 'electrum', texto: largo('z') },
+      ],
+      mensaje: '¿y el octavo?',
+    });
+    assert.deepEqual(m.filter((x) => x.role === 'assistant').map((x) => x.content.length), [1500, 5000, 5000]);
+  });
 });
 
 test('fusionar lo del servidor con lo de la pantalla', async (t) => {

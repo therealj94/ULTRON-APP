@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { headersElectrum } from '../acceso';
+import { senalConTope } from '../red';
 import type { CapaExtra, MuestrasEncendidas, PedidoCapas, RasterEncendido, RasterEscaneado } from './captura';
 import type { ElementoMuestra } from './muestras';
 import {
@@ -69,7 +70,10 @@ function guardar(on: Map<number, Estado>) {
 }
 
 async function json<T>(url: string): Promise<T> {
-  const r = await fetch(url, { headers: headersElectrum() });
+  // Con tope de espera: un servidor ocupado no puede dejar la casilla «cargando» para siempre.
+  const r = await fetch(url, { headers: headersElectrum(), signal: senalConTope(60_000) }).catch((e) => {
+    throw new Error(e?.name === 'TimeoutError' || e?.name === 'AbortError' ? 'El servidor tardó demasiado; pruebe de nuevo en un momento.' : 'No alcancé el servidor.');
+  });
   const j = await r.json().catch(() => null);
   if (!r.ok) throw new Error(j?.error || `El servidor contestó ${r.status}.`);
   return j as T;
@@ -102,6 +106,10 @@ export function IndiceCapas({
   ordenes?: { n: number; lista: OrdenIndice[] } | null;
 }) {
   const [abierto, setAbierto] = useState(false);
+  // La cara de Dr Electrum vive en la misma esquina: se aparta mientras el índice está abierto.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('electrum:indice-abierto', { detail: abierto }));
+  }, [abierto]);
   const [capas, setCapas] = useState<EntradaIndice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rastersIdx, setRastersIdx] = useState<RasterEscaneado[]>([]);
@@ -119,10 +127,15 @@ export function IndiceCapas({
 
   /* ---------------------------------------------------------------- al montar: índice, teselas, perímetro */
 
-  useEffect(() => {
+  /** El índice en sí; se puede volver a pedir con «Reintentar» si falló (antes había que recargar la página). */
+  const cargarIndice = useCallback(() => {
+    setError(null);
     json<{ capas: EntradaIndice[] }>('/api/electrum/mapa/indice')
       .then((j) => setCapas(j.capas || []))
-      .catch((e) => setError(String(e?.message || e)));
+      .catch((e) => setError(`No pude cargar el índice de capas. ${String(e?.message || e)}`));
+  }, []);
+  useEffect(() => {
+    cargarIndice();
     json<{ rasters: RasterEscaneado[] }>('/api/electrum/mapa/rasters')
       .then((j) => setRastersIdx(j.rasters || []))
       .catch(() => setRastersIdx([]));
@@ -363,6 +376,9 @@ export function IndiceCapas({
       const url = URL.createObjectURL(b);
       const pdf = /pdf/.test(b.type);
       window.dispatchEvent(new CustomEvent('electrum:visor', { detail: { tipo: pdf ? 'pdf' : 'imagen', nombre: e.nombre, url, titulo: `${String(e.id).padStart(6, '0')} · ${e.nombre}` } }));
+      // El visor lo lee enseguida y se queda con su propia copia: esta se suelta (si no, cada plano
+      // abierto quedaba en memoria hasta cerrar la página).
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (err: any) {
       setFallos((m) => new Map(m).set(e.id, String(err?.message || err)));
     } finally {
@@ -421,7 +437,7 @@ export function IndiceCapas({
             <button type="button" onClick={() => desplegar(n.id)} aria-expanded={ab} className="flex min-w-0 flex-1 items-start justify-between gap-2 text-left cursor-pointer">
               <span className="min-w-0">
                 <span className={`block leading-snug ${nivel === 0 ? 'font-semibold text-[#F1F5F7]' : 'text-[#E7EEF2]'} ${vacio ? 'opacity-50' : ''}`}>{n.nombre}</span>
-                <span className="block font-mono text-[9.5px] text-[#61717A]">{id6}{vacio ? ' · sin capas' : ''}</span>
+                <span className="block font-mono text-[9.5px] text-[#7F939D]">{id6}{vacio ? ' · sin capas' : ''}</span>
               </span>
               <span className="mt-[2px] shrink-0 font-mono text-[10px] text-[#7F939D]">
                 {prendidas ? <span style={{ color: AMBAR }}>{prendidas}/</span> : null}
@@ -467,7 +483,7 @@ export function IndiceCapas({
                 {n.nombre}
               </span>
             )}
-            <span className="block font-mono text-[9.5px] text-[#61717A]">
+            <span className="block font-mono text-[9.5px] text-[#7F939D]">
               {String(n.id).padStart(6, '0')}
               {carga ? ' · cargando…' : ''}
               {!puede && !doc ? (n.sin_datos || !n.fuentes?.length ? ' · Sin datos' : ' · no disponible') : ''}
@@ -541,7 +557,7 @@ export function IndiceCapas({
                 </div>
               );
             })}
-            <p className="text-[10.5px] text-[#61717A]">Sin nada marcado se ve todo.</p>
+            <p className="text-[10.5px] text-[#7F939D]">Sin nada marcado se ve todo.</p>
           </div>
         )}
         {est && (
@@ -670,15 +686,30 @@ export function IndiceCapas({
               onChange={(e) => setBusca(e.target.value)}
               placeholder="Buscar por nombre o ID…"
               aria-label="Buscar capa por nombre o ID"
-              className="w-full rounded-md border border-white/12 bg-black/50 px-2 py-1.5 text-[12px] text-[#E7EEF2] placeholder:text-[#61717A] outline-none focus:border-white/30"
+              className="w-full rounded-md border border-white/12 bg-black/50 px-2 py-1.5 text-[12px] text-[#E7EEF2] placeholder:text-[#7F939D] outline-none focus:border-white/30"
             />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-            {error && <p className="px-1 text-[#E8A08F]">{error}</p>}
-            {!capas && !error && <p className="px-1 text-[#7F939D]">Cargando el índice…</p>}
+            {error && (
+              <div className="mx-1 rounded-lg border border-[#E8A08F]/30 bg-[#E8A08F]/[0.06] px-2.5 py-2">
+                <p className="text-[#E8A08F]">{error}</p>
+                <button type="button" onClick={cargarIndice} className="mt-1.5 rounded-md border border-white/15 px-2.5 py-1 text-[11.5px] text-[#DCE5EA] hover:border-white/35 cursor-pointer">
+                  Reintentar
+                </button>
+              </div>
+            )}
+            {!capas && !error && <p className="px-1 text-[#8FA3B0]">Cargando el índice…</p>}
             <ul>{arbol.map((n) => fila(n, 0))}</ul>
+            {capas && q && !arbol.some(casa) && (
+              <div className="px-1 py-3 text-[#8FA3B0]">
+                <p>Ninguna capa coincide con «{busca}».</p>
+                <button type="button" onClick={() => setBusca('')} className="mt-1.5 rounded-md border border-white/15 px-2.5 py-1 text-[11.5px] text-[#DCE5EA] hover:border-white/35 cursor-pointer">
+                  Limpiar búsqueda
+                </button>
+              </div>
+            )}
           </div>
-          <footer className="border-t border-white/[0.08] px-3 py-1.5 text-[10.5px] leading-snug text-[#61717A]">
+          <footer className="border-t border-white/[0.08] px-3 py-1.5 text-[10.5px] leading-snug text-[#8FA3B0]">
             Nada se baja hasta que lo enciende. También de palabra: «muéstrame los ríos», «esconde la geología», «deja solo el catastro».
           </footer>
         </aside>

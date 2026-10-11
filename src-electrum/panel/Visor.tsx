@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { headersElectrum } from '../acceso';
+import { senalConTope } from '../red';
 
 export type Fuente = { tipo: 'imagen' | 'pdf'; nombre: string; url: string; titulo?: string };
 
@@ -52,7 +53,9 @@ function encajar(v: Vista, caja: { w: number; h: number }, base: { w: number; h:
 }
 
 export async function pedirArchivo(url: string): Promise<Blob> {
-  const r = await fetch(url, { headers: headersElectrum() });
+  const r = await fetch(url, { headers: headersElectrum(), signal: senalConTope(120_000) }).catch((e) => {
+    throw new Error(e?.name === 'TimeoutError' || e?.name === 'AbortError' ? 'El archivo tardó demasiado en llegar; pruebe de nuevo.' : 'No alcancé el servidor.');
+  });
   if (!r.ok) {
     const j = await r.json().catch(() => ({}) as any);
     throw new Error(j?.error || (r.status === 404 ? 'Ya caducó (se guardan media hora); pedímelo otra vez.' : `El servidor contestó ${r.status}.`));
@@ -64,6 +67,9 @@ export async function pedirArchivo(url: string): Promise<Blob> {
  * Las páginas del PDF, dibujadas una vez a buena resolución para verlas enteras. Al acercarse, lo
  * que queda a la vista se vuelve a dibujar nítido encima (ver `Nitido`).
  */
+/** Píxeles de lienzo para todas las páginas juntas (~160 MB en memoria). */
+const PIXELES_DOCUMENTO = 40_000_000;
+
 async function dibujarPdf(datos: ArrayBuffer, anchoPantalla: number, vivo: () => boolean): Promise<{ doc: PDFDocumentProxy; paginas: Pagina[] }> {
   // La versión «legacy» trae los rellenos que piden los navegadores de hace un par de años: la
   // moderna usa funciones de JavaScript tan nuevas que en muchos teléfonos el PDF no abría.
@@ -73,8 +79,16 @@ async function dibujarPdf(datos: ArrayBuffer, anchoPantalla: number, vivo: () =>
   const doc = await pdfjs.getDocument({ data: new Uint8Array(datos) }).promise;
   const paginas: Pagina[] = [];
   // ~1,5× el ancho en pantalla, con tope: se ve bien entero sin comerse la memoria del teléfono.
-  const objetivo = Math.min(1800, Math.max(900, anchoPantalla * (window.devicePixelRatio || 1) * 1.5));
   const n = Math.min(doc.numPages, 60);
+  /*
+   * Presupuesto de píxeles para TODO el documento: 60 páginas a 1 800 px de ancho eran ~1 GB de
+   * lienzos y trababan (o cerraban) la pestaña. Con muchas páginas cada una se dibuja más chica;
+   * al acercarse, `Nitido` vuelve a dibujar nítido lo que está a la vista.
+   */
+  const primera = (await doc.getPage(1)).getViewport({ scale: 1 });
+  const aspecto = primera.width / primera.height;
+  const porPresupuesto = Math.sqrt((PIXELES_DOCUMENTO * aspecto) / n);
+  const objetivo = Math.max(600, Math.min(1800, porPresupuesto, Math.max(900, anchoPantalla * (window.devicePixelRatio || 1) * 1.5)));
   for (let i = 1; i <= n && vivo(); i++) {
     const pag = await doc.getPage(i);
     const v1 = pag.getViewport({ scale: 1 });

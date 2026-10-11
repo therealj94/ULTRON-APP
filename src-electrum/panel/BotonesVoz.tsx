@@ -26,7 +26,7 @@ export function BotonVoces() {
       data-tour="voces"
       className={pastilla}
       style={mudo ? { borderColor: 'rgba(255,255,255,.14)', color: '#9FB0B8' } : { borderColor: `${AMBAR}66`, color: AMBAR }}
-      title={mudo ? 'En silencio: nadie habla, todo se lee. Tocá para que vuelvan a hablar.' : 'Hablan en voz alta. Tocá para explorar en silencio.'}
+      title={mudo ? 'En silencio: nadie habla, todo se lee. Toque para que vuelvan a hablar.' : 'Hablan en voz alta. Toque para explorar en silencio.'}
     >
       <span aria-hidden>{mudo ? '🔇' : '🔊'}</span>
       <span className="hidden sm:inline">{mudo ? 'Silencio' : 'Voces'}</span>
@@ -44,7 +44,7 @@ export function BotonInterrumpir({ activo, onCambiar }: { activo: boolean; onCam
       data-tour="interrumpir"
       className={pastilla}
       style={activo ? { borderColor: `${AMBAR}66`, color: AMBAR } : { borderColor: 'rgba(255,255,255,.14)', color: '#9FB0B8' }}
-      title={activo ? 'Si le habla encima, se calla y le escucha. Tocá para que termine siempre lo que dice.' : 'Termina lo que dice aunque le hable. Tocá para poder interrumpirlo hablando.'}
+      title={activo ? 'Si le habla encima, se calla y le escucha. Toque para que termine siempre lo que dice.' : 'Termina lo que dice aunque le hable. Toque para poder interrumpirlo hablando.'}
     >
       <span aria-hidden>✋</span>
       <span className="hidden md:inline">Interrumpir</span>
@@ -67,7 +67,7 @@ export function BotonMesa() {
       data-tour="mesa"
       className={pastilla}
       style={abierta ? { borderColor: '#5CD6C4aa', color: '#5CD6C4' } : { borderColor: 'rgba(255,255,255,.14)', color: '#9FB0B8' }}
-      title={abierta ? 'Mesa técnica abierta: cada pregunta la discuten los tres. Tocá para cerrarla.' : 'Abrir la mesa técnica: Dr Electrum, Don Chema y la Ing. Tatiana discuten lo que pregunte.'}
+      title={abierta ? 'Mesa técnica abierta: cada pregunta la discuten los tres. Toque para cerrarla.' : 'Abrir la mesa técnica: Dr Electrum, Don Chema y la Ing. Tatiana discuten lo que pregunte.'}
     >
       <span aria-hidden>👥</span>
       <span className="hidden sm:inline">Mesa</span>

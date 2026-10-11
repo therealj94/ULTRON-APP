@@ -15,9 +15,10 @@ test('consultaConTope: la base cancela lo que tarda y el pool queda libre', { sk
     await Promise.all(Array.from({ length: 12 }, () => consultaConTope('SELECT pg_sleep(5)', [], 200).catch(() => null)));
     const [f] = await consultaConTope<{ uno: number }>('SELECT 1 AS uno', [], 1000);
     assert.equal(f.uno, 1);
-    // Y el tope es de esa transacción: la consulta normal siguiente no lo hereda.
+    // Y el tope es de esa transacción: la consulta normal siguiente no lo hereda (vuelve al de la
+    // sesión: 0 o el tope general de ELECTRUM_SQL_TOPE_MS, nunca los 200-1000 ms de arriba).
     const [g] = await consulta<{ statement_timeout: string }>('SHOW statement_timeout');
-    assert.equal(g.statement_timeout, '0');
+    assert.ok(!['200ms', '300ms', '1s'].includes(g.statement_timeout), `heredó el tope local: ${g.statement_timeout}`);
   } finally {
     await cerrarBase();
   }

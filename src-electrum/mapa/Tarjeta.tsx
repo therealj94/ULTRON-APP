@@ -192,8 +192,8 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         <input
           value={pregunta}
           onChange={(e) => setPregunta(e.target.value)}
-          placeholder="Preguntale a Dr Electrum sobre esto…"
-          className="min-w-0 flex-1 rounded-lg border border-white/12 bg-black/40 px-3 py-1.5 text-[13px] text-[#E7EEF2] placeholder:text-[#61717A] focus:border-[#FFAE3B]/60 focus:outline-none"
+          placeholder="Pregúntele a Dr Electrum sobre esto…"
+          className="min-w-0 flex-1 rounded-lg border border-white/12 bg-black/40 px-3 py-1.5 text-[13px] text-[#E7EEF2] placeholder:text-[#7F939D] focus:border-[#FFAE3B]/60 focus:outline-none"
         />
         <button type="submit" className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-black cursor-pointer" style={{ background: AMBAR }}>
           Preguntar
@@ -450,7 +450,7 @@ function MuestraVista({ m, onTocar, onPreguntar }: { m: Muestra; onTocar: Props[
             </div>
           ))}
         </dl>
-        <p className="mt-2 text-[11px] leading-snug text-[#61717A]">
+        <p className="mt-2 text-[11px] leading-snug text-[#7F939D]">
           «&lt;» es bajo el límite de detección; «&gt;», sobre el tope del laboratorio.
           {!m.completa && ' De esta muestra solo se leyeron con seguridad el oro y la plata.'} Leído del informe escaneado: si una cifra decide algo, verificala en la tabla original.
         </p>

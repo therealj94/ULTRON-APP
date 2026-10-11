@@ -51,7 +51,10 @@ import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
+import { Carga, Cortina } from './ui/Carga';
+import { Emblema, Topografia } from './ui/Topografia';
 import { guardarSesion, hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
+import { AVISO_ENTRADA, fijarInvitado } from './sesion-invitado';
 import { PonerClave, enlaceEnLaUrl, faltaPara, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
 import { Cuenta, TEMA_ELECTRUM } from './Cuenta';
 import {
@@ -145,7 +148,19 @@ export default function App() {
   const [vence, setVence] = useState<string | null>(null);
   /** Quién entró: para saludarlo por su nombre y recordar sus preferencias de bienvenida. */
   const [usuario, setUsuario] = useState<{ nombre: string; correo: string; invitado: boolean } | null>(null);
-  const [avisoEntrada, setAvisoEntrada] = useState('');
+  // El aviso de «tu acceso temporal terminó» llega después de recargar la página (ver `cerrar`, abajo).
+  /** La cortina de entrada (después de iniciar sesión): cuenta lo que se prepara y se desvanece. */
+  const [cortina, setCortina] = useState(false);
+  const quitarCortina = useCallback(() => setCortina(false), []);
+  const [avisoEntrada, setAvisoEntrada] = useState(() => {
+    try {
+      const a = sessionStorage.getItem(AVISO_ENTRADA) || '';
+      sessionStorage.removeItem(AVISO_ENTRADA);
+      return a;
+    } catch {
+      return '';
+    }
+  });
   const [, setTic] = useState(0);
   useEffect(() => {
     if (puerta !== 'abierta') {
@@ -158,6 +173,7 @@ export default function App() {
       .then((j) => {
         if (!vivo) return;
         setVence(j?.user?.vence || null);
+        fijarInvitado(j?.user?.invitado === true);
         setUsuario(j?.user?.correo ? { nombre: String(j.user.nombre || ''), correo: String(j.user.correo), invitado: j.user.invitado === true } : null);
       })
       .catch(() => {});
@@ -168,18 +184,57 @@ export default function App() {
   useEffect(() => {
     if (!vence) return;
     const fin = new Date(vence).getTime();
+    let cerrado = false;
+    /*
+     * Al vencer, el acceso se termina del todo: el servidor ya rechaza el token (y el mismo código no
+     * vuelve a entrar), y aquí se borra lo que quedó en este aparato —la conversación, la credencial—
+     * y se recarga la página, para que no quede en memoria nada de lo que se vio (mapas, fichas,
+     * informes). El aviso se muestra en la entrada después de recargar.
+     */
     const cerrar = () => {
+      if (cerrado) return;
+      cerrado = true;
+      const aviso = 'Tu acceso temporal terminó y se cerró en este aparato. El mismo código ya no vale: para seguir, pida un código nuevo o solicite una cuenta.';
+      try {
+        sessionStorage.removeItem('electrum.hilo');
+        sessionStorage.setItem(AVISO_ENTRADA, aviso);
+      } catch {
+        /* sin almacenamiento no hay nada que quitar */
+      }
+      void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum(), keepalive: true }).catch(() => {});
       salir();
       setVence(null);
-      setAvisoEntrada('Tu acceso temporal terminó. Para seguir, pedí un código nuevo o solicitá una cuenta.');
+      setAvisoEntrada(aviso);
       setPuerta('cerrada');
+      try {
+        window.location.reload();
+      } catch {
+        /* sin recarga, al menos la puerta ya está cerrada */
+      }
     };
     if (fin <= Date.now()) return cerrar();
+    // Un temporizador se atrasa con la pestaña de fondo o el equipo dormido: se mira también el reloj
+    // cada 30 s y al volver a la pestaña.
+    const mirar = () => {
+      if (Date.now() >= fin) cerrar();
+    };
     const t = setTimeout(cerrar, Math.min(fin - Date.now(), 2_147_000_000));
-    const tic = setInterval(() => setTic((n) => n + 1), 30_000);
+    // La conversación del servidor se borra ANTES de vencer, mientras el token todavía vale: al vencer,
+    // el servidor ya rechaza ese DELETE y el hilo quedaría guardado hasta su caducidad.
+    const borrarHilo = () => void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum(), keepalive: true }).catch(() => {});
+    const previo = setTimeout(borrarHilo, Math.max(0, Math.min(fin - Date.now() - 20_000, 2_147_000_000)));
+    const tic = setInterval(() => {
+      setTic((n) => n + 1);
+      mirar();
+    }, 30_000);
+    document.addEventListener('visibilitychange', mirar);
+    window.addEventListener('focus', mirar);
     return () => {
       clearTimeout(t);
+      clearTimeout(previo);
       clearInterval(tic);
+      document.removeEventListener('visibilitychange', mirar);
+      window.removeEventListener('focus', mirar);
     };
   }, [vence]);
   useEffect(() => {
@@ -248,6 +303,13 @@ export default function App() {
    * quitaría no poder.
    */
   const [caraPlegada, setCaraPlegada] = useState(() => leerPreferencia('caraPlegada', false, (v) => typeof v === 'boolean'));
+  /** El índice de capas abierto ocupa la esquina de la cara: mientras está abierto, la cara se aparta. */
+  const [indiceAbierto, setIndiceAbierto] = useState(false);
+  useEffect(() => {
+    const f = (e: Event) => setIndiceAbierto(Boolean((e as CustomEvent<boolean>).detail));
+    window.addEventListener('electrum:indice-abierto', f);
+    return () => window.removeEventListener('electrum:indice-abierto', f);
+  }, []);
   const plegarCara = useCallback((v: boolean) => {
     setCaraPlegada(v);
     guardarPreferencia('caraPlegada', v);
@@ -871,17 +933,16 @@ export default function App() {
     );
   }
 
-  if (puerta === 'probando') {
-    return (
-      <div className="fixed inset-0 bg-black flex items-center justify-center">
-        <div className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#FFAE3B]/50">comprobando acceso…</div>
-      </div>
-    );
-  }
+  if (puerta === 'probando') return <Carga />;
   if (puerta === 'plataforma') {
     return (
-      <div className="fixed inset-0 bg-black flex items-center justify-center px-6">
-        <div className="max-w-[360px] text-center">
+      <div className="fixed inset-0 flex items-center justify-center bg-[#050607] px-6">
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at 50% 45%, #14100A 0%, #070708 55%, #030304 100%)' }} />
+        <Topografia intensidad={0.6} />
+        <div className="relative max-w-[380px] rounded-2xl border border-white/[0.08] bg-[rgba(12,14,17,.8)] p-7 text-center backdrop-blur-xl">
+          <div className="mb-4 flex justify-center">
+            <Emblema tam={72} />
+          </div>
           <div className="font-display font-bold tracking-[0.34em] text-lg" style={{ color: '#FFAE3B' }}>
             DR ELECTRUM FP
           </div>
@@ -908,10 +969,23 @@ export default function App() {
       </div>
     );
   }
-  if (puerta === 'cerrada') return <Entrar modoInicial={modoEntrada} aviso={avisoEntrada} onAbierta={() => { setAvisoEntrada(''); setPuerta('abierta'); }} />;
+  if (puerta === 'cerrada')
+    return (
+      <Entrar
+        modoInicial={modoEntrada}
+        aviso={avisoEntrada}
+        onAbierta={() => {
+          setAvisoEntrada('');
+          // La estación se arma detrás de la cortina y aparece cuando ya está montada.
+          setCortina(true);
+          setPuerta('abierta');
+        }}
+      />
+    );
 
   return (
     <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden">
+      {cortina && <Cortina alTerminar={quitarCortina} />}
       <Barra
         escenario={escenario}
         motor={motor}
@@ -1030,7 +1104,7 @@ export default function App() {
                 texto: '3D',
                 activo: tresD && motor === 'maplibre',
                 alTocar: () => (motor === 'maplibre' ? setTresD((v) => !v) : setMotor('maplibre')),
-                titulo: motor === 'maplibre' ? 'Terreno real en tres dimensiones' : 'El 3D es del motor MapLibre: tocá para cambiar',
+                titulo: motor === 'maplibre' ? 'Terreno real en tres dimensiones' : 'El 3D es del motor MapLibre: toque para cambiar',
               },
               {
                 k: 'recorrido',
@@ -1144,15 +1218,15 @@ export default function App() {
          * Expedientes— su botón de plegar seguía siendo enfocable: quien navega con teclado se
          * topaba con un control de algo que no está en pantalla. Mismo caso que el panel oculto.
          */
-        inert={enTrabajo && (panel !== 'chat' || caraPlegada)}
+        inert={enTrabajo && (panel !== 'chat' || caraPlegada || indiceAbierto)}
         style={{
           /*
             En Expedientes el panel ocupa toda la altura y la cara se quedaba encima de la pestaña
             «Consulta», tapando justo el botón para volver. La cara se apoya en el mapa; cuando no
             hay mapa a la vista, no tiene dónde apoyarse y sobra. Se aparta en lugar de estorbar.
           */
-          opacity: enTrabajo && (panel !== 'chat' || caraPlegada) ? 0 : 1,
-          pointerEvents: enTrabajo && (panel !== 'chat' || caraPlegada) ? 'none' : 'auto',
+          opacity: enTrabajo && (panel !== 'chat' || caraPlegada || indiceAbierto) ? 0 : 1,
+          pointerEvents: enTrabajo && (panel !== 'chat' || caraPlegada || indiceAbierto) ? 'none' : 'auto',
           ...(enTrabajo
             ? /*
                * Arriba a la izquierda, SOBRE EL MAPA — no abajo.

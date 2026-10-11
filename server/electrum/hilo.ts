@@ -37,6 +37,12 @@ export type MsgHilo = { role: 'user' | 'assistant'; content: string };
 const MAX_TURNOS = 24;
 /** Un mensaje suelto no puede llevarse el contexto entero: un expediente pegado son miles de letras. */
 const TOPE_TEXTO = 1500;
+/**
+ * Las dos últimas respuestas del doctor van casi enteras: «¿y el octavo?» después de una lista de
+ * diez concesiones apunta al final de esa lista, y con 1 500 letras el final no estaba. Las de más
+ * atrás sí se recortan: son contexto, no lo que se está señalando.
+ */
+const TOPE_RECIENTE = 6000;
 /** Seis horas. Lo de anteayer no es contexto. */
 const CADUCA_MS = 6 * 60 * 60 * 1000;
 /** Techo de conversaciones vivas, para que esto no crezca sin final en un proceso de meses. */
@@ -186,7 +192,7 @@ function guardarEnBase(clave: string) {
 /** Guarda la ida y la vuelta juntas: un turno a medias no le sirve de contexto a nadie. */
 export function recordarHilo(clave: string, persona: string, doctor: string) {
   const p = String(persona || '').trim().slice(0, TOPE_TEXTO);
-  const d = String(doctor || '').trim().slice(0, TOPE_TEXTO);
+  const d = String(doctor || '').trim().slice(0, TOPE_RECIENTE);
   if (!p && !d) return;
   const prev = hilos.get(clave)?.turnos || [];
   const turnos: TurnoHilo[] = [...prev];
@@ -210,9 +216,9 @@ export function hiloDelCliente(crudo: unknown): TurnoHilo[] {
   if (!Array.isArray(crudo)) return [];
   const out: TurnoHilo[] = [];
   for (const t of crudo.slice(-MAX_TURNOS)) {
-    const texto = String((t as any)?.texto || '').trim().slice(0, TOPE_TEXTO);
-    if (!texto) continue;
     const rol = (t as any)?.rol === 'electrum' || (t as any)?.de === 'electrum' ? 'electrum' : 'persona';
+    const texto = String((t as any)?.texto || '').trim().slice(0, rol === 'electrum' ? TOPE_RECIENTE : TOPE_TEXTO);
+    if (!texto) continue;
     out.push({ rol, texto });
   }
   return out;
@@ -238,9 +244,19 @@ export function fusionarHiloElectrum(opts: {
   const cliente = opts.cliente || [];
   const fuente = servidor.length >= 2 ? servidor : cliente.length ? cliente : servidor;
 
-  const msgs: MsgHilo[] = fuente.slice(-(opts.max ?? MAX_TURNOS)).map((t) => ({
+  const tramo = fuente.slice(-(opts.max ?? MAX_TURNOS));
+  // Desde dónde van casi enteras: las dos últimas respuestas del doctor.
+  let recientes = 0;
+  let desde = tramo.length;
+  for (let k = tramo.length - 1; k >= 0 && recientes < 2; k--) {
+    if (tramo[k].rol === 'electrum') {
+      recientes++;
+      desde = k;
+    }
+  }
+  const msgs: MsgHilo[] = tramo.map((t, k) => ({
     role: t.rol === 'electrum' ? ('assistant' as const) : ('user' as const),
-    content: t.texto.slice(0, TOPE_TEXTO),
+    content: t.texto.slice(0, t.rol === 'electrum' && k >= desde ? TOPE_RECIENTE : TOPE_TEXTO),
   }));
 
   const actual = String(opts.mensaje || '').trim().slice(0, TOPE_TEXTO);

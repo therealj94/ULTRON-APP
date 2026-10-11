@@ -138,7 +138,7 @@ export function headersElectrum(): Record<string, string> {
 
 /** Lo que se le dice a alguien al que el servidor no le abre. Sin jerga y sin culparlo. */
 export const SIN_PUERTA =
-  'Dr Electrum FP es privado y esta sesión no tiene acceso. Entrá con tu correo, o con el código de prueba que te dio José.';
+  'Dr Electrum FP es privado y esta sesión no tiene acceso. Entre con su correo, o con el código de prueba que le dio José.';
 
 /** Guarda el token de sesión que devuelve AU-RA al entrar. Lo comparten las dos plataformas. */
 export function guardarSesion(token: string): Donde {
@@ -252,7 +252,7 @@ export function porQueNoAbre(p: Puerta, cual: 'sesion' | 'llave'): string {
         ? 'Esa llave no abre. Pedile a José la vigente.'
         : 'Tu credencial es buena, pero tu cuenta no tiene acceso a Dr Electrum FP. Pedíselo a José.';
     case 'servicio-caido':
-      return `El servidor contestó ${p.codigo}. No es tu credencial: es la plataforma. Probá de nuevo en un momento.`;
+      return `El servidor contestó ${p.codigo}. No es su credencial: es la plataforma. Pruebe de nuevo en un momento.`;
     case 'lento':
       return 'El servidor tardó más de doce segundos en contestar. Puede ser tu conexión o la plataforma despertando. Volvé a intentarlo.';
     case 'sin-red':

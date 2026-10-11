@@ -18,6 +18,7 @@ import { estiloCalles, estiloSatelite } from './estilos';
 import { sinMovimiento } from '../movimiento';
 import type { Fondo } from './captura';
 import { headersElectrum } from '../acceso';
+import { esInvitadoAhora } from '../sesion-invitado';
 
 type Modo = 'medir' | 'perfil' | 'area' | null;
 let enUso: Modo = null;
@@ -359,7 +360,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
           </div>
           {puntos.length < 2 ? (
             <p className="text-[#8FA3B0]">
-              {modo === 'area' ? 'Dibujá el área que pensás pedir: tocá cada vértice; ' : 'Tocá el mapa para poner puntos; '}doble toque o Enter para terminar, Esc para salir.
+              {modo === 'area' ? 'Dibuje el área que piensa pedir: toque cada vértice; ' : 'Toque el mapa para poner puntos; '}doble toque o Enter para terminar, Esc para salir.
             </p>
           ) : (
             <p>
@@ -399,7 +400,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
       {modo === 'area' && cerrado && puntos.length >= 3 && <PanelArea puntos={puntos} />}
 
       {c && coord && (
-        <div className="pointer-events-none absolute bottom-[52px] left-3 z-10 hidden rounded-md bg-black/70 sm:block px-2 py-1 font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-md bg-black/70 sm:block px-2 py-1 text-center font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
           {coord.lat.toFixed(5)}°, {coord.lon.toFixed(5)}°
           <br />
           UTM {c.zona}N WGS84 {Math.round(c.e).toLocaleString('es-HN')} E · {Math.round(c.n).toLocaleString('es-HN')} N
@@ -474,7 +475,7 @@ function GraficoPerfil({ p }: { p: Perfil }) {
           {km(p.total)}
         </text>
       </svg>
-      <p className="mt-1 text-[10.5px] text-[#61717A]">Modelo de elevación abierto (Terrarium, ≈ 38 m por píxel): sirve para planificar, no reemplaza un levantamiento topográfico.</p>
+      <p className="mt-1 text-[10.5px] text-[#7F939D]">Modelo de elevación abierto (Terrarium, ≈ 38 m por píxel): sirve para planificar, no reemplaza un levantamiento topográfico.</p>
     </div>
   );
 }
@@ -648,6 +649,13 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
       const b = await fetch(j.url, { headers: headersElectrum() });
       if (!b.ok) return setError(`No pude bajar el PDF (${b.status}).`);
       const url = URL.createObjectURL(await b.blob());
+      // Con un código temporal se mira en el visor de la app, sin ofrecer guardarlo.
+      if (esInvitadoAhora()) {
+        window.dispatchEvent(new CustomEvent('electrum:visor', { detail: { tipo: 'pdf', nombre: j.nombre || 'area-solicitada.pdf', url, titulo: j.nombre || 'Área solicitada' } }));
+        // El visor la lee al abrir y guarda lo suyo; esta URL se suelta después para no retener el PDF.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return;
+      }
       const a = document.createElement('a');
       a.href = url;
       a.download = j.nombre || 'area-solicitada.pdf';
@@ -711,7 +719,7 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
               ))}
             </ul>
           </div>
-          <p className="text-[10.5px] text-[#61717A]">Revisión previa con lo cargado en la plataforma: no es una constancia del catastro oficial.</p>
+          <p className="text-[10.5px] text-[#7F939D]">Revisión previa con lo cargado en la plataforma: no es una constancia del catastro oficial.</p>
         </div>
       )}
     </div>
