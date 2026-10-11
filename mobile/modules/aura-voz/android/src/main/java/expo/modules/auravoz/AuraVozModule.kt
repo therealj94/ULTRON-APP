@@ -18,8 +18,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
  *
  * Avisa por `onVoz` ({ tipo, id, … }): «listo» (juntó el prebúfer), «sonando» (la pista avanzó dentro de la frase),
  * «posicion» (ms por los cuadros que sonaron + volumen ahí, ~30 por segundo), «bajado» (duración total), «termino»
- * (sonó; `cortada` / `truncada`) y «error» (falló ANTES de sonar: código red/http/formato/vacio/pista). Los revisa
- * src/lib/vozNativa.ts (eventoVozValido).
+ * (sonó; `cortada` / `truncada`) y «error» (falló ANTES de sonar: código red/http/formato/vacio/pista/foco). Los revisa
+ * src/lib/vozNativa.ts (eventoVozValido). `foco` (motivo foco-denegado / foco-perdido / foco-pausado): el sistema no dio
+ * el foco de audio o lo quitó antes de que sonara; esa frase va por texto (Reproductor.kt PoliticaFoco).
  */
 class AuraVozModule : Module() {
   private var reproductor: Reproductor? = null
@@ -37,7 +38,8 @@ class AuraVozModule : Module() {
     Events("onVoz")
 
     Function("disponible") { true }
-    Function("version") { 1 }
+    // 2: respeta el foco de audio (VOZ-01): sin foco concedido no suena; «error» `foco`.
+    Function("version") { 2 }
 
     Function("encolar") { id: String, url: String, cabeceras: Map<String, Any?>?, opciones: Map<String, Any?>? ->
       if (id.isEmpty() || id.length > 80 || !(url.startsWith("https://") || url.startsWith("http://"))) return@Function false

@@ -5,10 +5,12 @@
  *  · lo puro: qué camino toma la voz, lo que llega del nativo revisado, la boca por el volumen real, la posición por
  *    los bytes que sonaron, cuándo un fallo apaga el camino nuevo, el interruptor remoto;
  *  · SonidoVivo y la central con un puente simulado: los avisos del nativo → estados como los de expo-av, encadenar,
- *    el respaldo por el camino de siempre si falla antes de sonar, cancelar;
+ *    el respaldo por el camino de siempre si falla antes de sonar, cancelar; sin foco de audio, por texto (sin respaldo);
  *  · los CONTRATOS DEL PUENTE leídos del código: lo que Kotlin manda (nombres de eventos y campos) es lo que JS lee;
  *    las cabeceras y la ruta del servidor son las que el nativo pide; los atributos de audio; el autolinking (mismo
- *    molde que aura-mic y aura-camara); el manifiesto no pide nada que comprobar-apk rechace; la versión de la app.
+ *    molde que aura-mic y aura-camara); el manifiesto no pide nada que comprobar-apk rechace; la versión de la app;
+ *    la política del foco de audio (VOZ-01) leída de Reproductor.kt: sin foco concedido no se escribe; perderlo calla y
+ *    suelta; transitorio igual; recuperarlo no reanuda nada viejo; se suelta una vez.
  *
  * El reproductor en sí (Reproductor.kt) corre en la JVM con un AudioTrack de mentira: pruebas/voz/jvm/correr.sh.
  * Con el código real de la mesa (tts.ts) y el nativo simulado: pruebas/oido/vozvivo.cjs.
@@ -91,7 +93,7 @@ function sonidoArchivo() {
 function crear(o = {}) {
   const m = puente(o.puente);
   const c = new CentralVoz(m);
-  const r = { fallos: [], listos: 0, sonados: 0, respaldos: 0, estados: [] };
+  const r = { fallos: [], sinFoco: [], listos: 0, sonados: 0, respaldos: 0, estados: [] };
   const respaldo = 'respaldo' in o ? o.respaldo : sonidoArchivo();
   const s = c.crear({
     url: 'https://x/api/tts/pcm?text=hola',
@@ -103,6 +105,7 @@ function crear(o = {}) {
     alFallar: (f) => r.fallos.push(f),
     alListo: () => r.listos++,
     alSonar: () => r.sonados++,
+    alSinFoco: (f) => r.sinFoco.push(f),
   });
   s?.setOnPlaybackStatusUpdate((st) => r.estados.push(st));
   return { m, c, s, r, respaldo, id: s?.id };
@@ -149,6 +152,7 @@ prueba('eventoVozValido: lo que manda el nativo, revisado; basura → null', () 
   // Una APK de antes (sin «vacio») con este JS por aire: la frase sin audio llega como «formato» con su motivo.
   assert.equal(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'formato', status: 200, motivo: 'llegó sin audio' }).codigo, 'vacio', 'el nativo viejo');
   assert.equal(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'formato', status: 200, motivo: 'no es PCM (text/html, 0 Hz)' }).codigo, 'formato', 'sin PCM sigue siendo formato');
+  assert.deepEqual(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'foco', status: 0, motivo: 'foco-denegado' }), { tipo: 'error', id: 'a', codigo: 'foco', motivo: 'foco-denegado' }, 'sin foco de audio (VOZ-01)');
 });
 
 prueba('qué camino: el nuevo solo con todo a favor; si no, el de siempre y el motivo', () => {
@@ -176,6 +180,9 @@ prueba('cuándo un fallo apaga el camino nuevo en la sesión', () => {
   assert.equal(falloDeSesion({ codigo: 'vacio', status: 200 }, 1), false, 'llegó sin audio: solo esa frase');
   assert.equal(falloDeSesion(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'formato', status: 200, motivo: 'llegó sin audio' }), 1), false, 'tampoco con el nativo viejo');
   assert.equal(falloDeSesion({ codigo: 'vacio' }, 2), true, 'dos seguidas sí: algo anda mal');
+  // VOZ-01: sin foco de audio (una llamada) el teléfono está ocupado; el camino nuevo no falló.
+  assert.equal(falloDeSesion({ codigo: 'foco' }, 1), false, 'foco negado: no apaga');
+  assert.equal(falloDeSesion({ codigo: 'foco' }, 9), false, 'ni con muchos seguidos');
 });
 
 prueba('el interruptor remoto y las cabeceras', () => {
@@ -312,6 +319,39 @@ prueba('sin respaldo posible (el servidor tampoco da voz): un aviso de error y p
   assert.deepEqual(r.estados.at(-1), { isLoaded: false, error: 'sin voz' });
 });
 
+prueba('sin foco de audio (VOZ-01, ya pedida): termina por texto, SIN respaldo (expo-av sonaría encima de la llamada)', async () => {
+  const { m, s, r, id } = crear();
+  let detras = 0;
+  s.cuandoSuene(() => detras++);
+  await s.playAsync();
+  m.avisar({ tipo: 'error', id, codigo: 'foco', status: 0, motivo: 'foco-denegado' });
+  await espera();
+  await espera();
+  assert.deepEqual(r.estados.at(-1), { isLoaded: false, error: 'foco' }, 'playPrepared la da por terminada (la boca se cierra)');
+  assert.equal(r.respaldos, 0, 'no se pide por el camino de siempre');
+  assert.deepEqual(r.fallos, [], 'no es un fallo del camino nuevo (no cuenta para apagarlo)');
+  assert.deepEqual(r.sinFoco, [{ codigo: 'foco', motivo: 'foco-denegado' }]);
+  assert.equal(s.enRespaldo, false);
+  assert.equal(s.nivelBoca(), null);
+  assert.equal(detras, 0, 'lo encadenado detrás no se suelta');
+  m.avisar({ tipo: 'sonando', id });
+  assert.equal(r.estados.length, 1, 'un aviso tardío del nativo no la revive');
+  await s.unloadAsync();
+  assert.ok(!m.llamadas.some((l) => l[0] === 'cancelar'), 'el nativo ya la tiró: no se le cancela');
+});
+
+prueba('sin foco antes de pedirla (preparada detrás): al pedirla termina sin voz y no se suelta en el nativo', async () => {
+  const { m, s, r, id } = crear();
+  m.avisar({ tipo: 'error', id, codigo: 'foco', status: 0, motivo: 'foco-perdido' });
+  await espera();
+  assert.equal(r.estados.length, 0, 'sin playAsync no se avisa');
+  s.encadenar();
+  await s.playAsync();
+  assert.ok(!m.llamadas.some((l) => l[0] === 'soltar'), 'la generación vieja no se suelta: nada viejo vuelve a sonar');
+  assert.deepEqual(r.estados, [{ isLoaded: false, error: 'foco' }]);
+  assert.equal(r.respaldos, 0);
+});
+
 prueba('cancelar (stop/unload): el nativo la suelta y nada más se avisa; dos veces, una', async () => {
   const { m, s, r, id } = crear();
   await s.playAsync();
@@ -373,6 +413,53 @@ prueba('los avisos: cada tipo y campo que manda Kotlin es uno que eventoVozValid
   for (const c of ['pista']) assert.ok(codigos.has(c));
   for (const c of [...kt.matchAll(/falloAntes\(f, "([a-z]+)"/g)].map((m) => m[1])) assert.ok(['red', 'http', 'formato', 'vacio'].includes(c), c);
   assert.match(kt, /falloAntes\(f, "vacio", "llegó sin audio"/, 'la frase sin audio es «vacio», no «formato»');
+});
+
+prueba('el foco de audio (VOZ-01), leído de Reproductor.kt: sin foco concedido no se escribe; perderlo calla; no se reanuda nada viejo', () => {
+  const kt = leer(`${KT}/Reproductor.kt`);
+  const cuerpo = (nombre) => {
+    const i = kt.indexOf(`private fun ${nombre}(`);
+    assert.ok(i >= 0, nombre);
+    const j = kt.indexOf('\n  private fun ', i + 10);
+    return kt.slice(i, j < 0 ? undefined : j);
+  };
+  // El pedido: ANTES de abrir la pista; solo GRANTED deja seguir.
+  const escribir = cuerpo('escribir');
+  assert.ok(escribir.indexOf('pedirFoco()') >= 0 && escribir.indexOf('pedirFoco()') < escribir.indexOf('abrirPista('), 'el foco antes que la pista');
+  assert.ok(escribir.indexOf('tirarGeneracion(PoliticaFoco.DENEGADO)') < escribir.indexOf('abrirPista('), 'negado: no se abre ni se escribe');
+  assert.ok(escribir.indexOf('tirarGeneracion(PoliticaFoco.DENEGADO)') < escribir.indexOf('p.write('), 'negado: ningún write');
+  assert.doesNotMatch(cuerpo('abrirPista'), /pedirFoco/, 'la pista ya no pide (ni ignora) el foco por su cuenta');
+  assert.match(kt, /fun puedeSonar\(resultado: Int\): Boolean = resultado == AudioManager\.AUDIOFOCUS_REQUEST_GRANTED/);
+  const pedir = cuerpo('pedirFoco');
+  assert.match(pedir, /if \(!PoliticaFoco\.puedeSonar\(resultado\)\) return PoliticaFoco\.Pedido\.NEGADO/, 'el resultado se mira');
+  assert.match(pedir, /setWillPauseWhenDucked\(true\)/, 'la voz no se agacha: se calla');
+  assert.doesNotMatch(kt, /setAcceptsDelayedFocusGain\(true\)/, 'un foco diferido sería una frase vieja sonando tarde');
+  assert.doesNotMatch(kt, /setOnAudioFocusChangeListener \{ \}/, 'el oyente ya no está vacío');
+  assert.match(pedir, /setOnAudioFocusChangeListener \{ que -> alCambiarFoco\(dueno, que\) \}/);
+  // Los avisos: perdido → PERDIDO; transitorio y «agáchate» → PAUSA; lo demás (GAIN) → NADA.
+  assert.match(kt, /AudioManager\.AUDIOFOCUS_LOSS -> Accion\.PERDIDO/);
+  assert.match(kt, /AudioManager\.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager\.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Accion\.PAUSA/);
+  assert.match(kt, /else -> Accion\.NADA/);
+  assert.doesNotMatch(kt, /AUDIOFOCUS_GAIN ->/, 'recuperarlo no tiene camino propio: no reanuda');
+  const cambio = cuerpo('alCambiarFoco');
+  assert.match(cambio, /if \(!vivo \|\| foco == null \|\| dueno != focoDueno\) return/, 'un aviso de un pedido soltado no toca lo de ahora');
+  assert.match(cambio, /PoliticaFoco\.Accion\.NADA -> return/);
+  // Tirar la generación: calla (pausa + vaciar), suelta pista y foco, y cada frase de la cola sale (cortada o «error» foco).
+  const tirar = cuerpo('tirarGeneracion');
+  assert.match(tirar, /p\.pause\(\)\s*\n\s*p\.flush\(\)/);
+  assert.match(tirar, /soltarPista\(p\)/);
+  assert.match(tirar, /else soltarFoco\(\)/);
+  assert.match(tirar, /cola\.remove\(f\)\s*\n\s*quitar\(f\)/, 'nada de la generación queda en la cola para volver');
+  assert.match(tirar, /"codigo" to "foco"/);
+  // Se suelta UNA vez: null antes de soltar, y soltarPista (el único dueño de la pista) lo suelta.
+  assert.match(cuerpo('soltarFoco'), /val r = foco \?: return\s*\n\s*foco = null\s*\n/);
+  assert.match(cuerpo('soltarPista'), /soltarFoco\(\)/);
+  // Los motivos que llegan a JS son los que dice vozNativa.ts.
+  const motivos = [...kt.matchAll(/const val [A-Z]+ = "(foco-[a-z]+)"/g)].map((x) => x[1]).sort();
+  assert.deepEqual(motivos, ['foco-denegado', 'foco-pausado', 'foco-perdido']);
+  const js = leer('src/lib/vozNativa.ts');
+  for (const mo of motivos) assert.ok(js.includes(mo), `vozNativa.ts nombra ${mo}`);
+  assert.match(leer(`${KT}/AuraVozModule.kt`), /Function\("version"\) \{ 2 \}/, 'la versión del módulo sube con el foco');
 });
 
 prueba('lo que el nativo pide es lo que el servidor da: ruta, tipo, cabecera de frecuencia', () => {

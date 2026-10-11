@@ -43,8 +43,13 @@ export function nivelDeRms(rms: number): number {
   return Math.max(0, Math.min(1, (db + 50) / 38));
 }
 
-/** `vacio`: el servidor contestó PCM pero sin un solo byte de audio (un ElevenLabs que terminó sin voz): un fallo suelto. */
-export type CodigoFallo = 'red' | 'http' | 'formato' | 'vacio' | 'pista' | 'interno' | 'puente';
+/**
+ * `vacio`: el servidor contestó PCM pero sin un solo byte de audio (un ElevenLabs que terminó sin voz): un fallo suelto.
+ * `foco`: el sistema no dio el foco de audio (una llamada, otra app) o lo quitó antes de que sonara (motivo
+ * foco-denegado / foco-perdido / foco-pausado, Reproductor.kt PoliticaFoco): esa frase va por TEXTO, no por el camino
+ * de siempre (expo-av tampoco tiene foco), y no es un fallo del camino nuevo.
+ */
+export type CodigoFallo = 'red' | 'http' | 'formato' | 'vacio' | 'pista' | 'interno' | 'puente' | 'foco';
 
 export type EventoVoz =
   /** Juntó el prebúfer (o bajó entera si era más corta): lo que la traza llama «audio» (lib/trazaTurno.ts). */
@@ -57,10 +62,10 @@ export type EventoVoz =
   | { tipo: 'bajado'; id: string; ms: number }
   /** Sonó toda (o la cortaron: `cortada`; o la red se cortó a media frase y sonó lo que llegó: `truncada`). */
   | { tipo: 'termino'; id: string; ms: number; cortada?: boolean; truncada?: boolean }
-  /** Falló ANTES de sonar (nada de ella llegó a la pista): quien la pidió la dice por el camino de siempre. */
+  /** Falló ANTES de sonar (nada de ella llegó a la pista): quien la pidió la dice por el camino de siempre (`foco`: por texto). */
   | { tipo: 'error'; id: string; codigo: CodigoFallo; status?: number; motivo: string };
 
-const CODIGOS: readonly CodigoFallo[] = ['red', 'http', 'formato', 'vacio', 'pista', 'interno', 'puente'];
+const CODIGOS: readonly CodigoFallo[] = ['red', 'http', 'formato', 'vacio', 'pista', 'interno', 'puente', 'foco'];
 /** Lo que dice el nativo de antes (APK sin `vacio`, con este JS por aire) cuando la frase llegó sin audio. */
 const SIN_AUDIO_VIEJO = /sin audio/i;
 const num = (x: unknown, min: number, max: number): number | null => (typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max ? x : null);
@@ -107,9 +112,11 @@ export function eventoVozValido(e: unknown): EventoVoz | null {
  * error interno o del puente), si el servidor no tiene la ruta (404/405: uno viejo) o no manda PCM; o si van
  * `fallosSeguidosMax` frases seguidas que no sonaron (red, 5xx o sin audio). Una sola caída de red no: esa frase va por
  * el camino de siempre y la siguiente lo vuelve a intentar. Una frase que llegó SIN audio (`vacio`) tampoco: es esa
- * frase (ElevenLabs no la dio), no el servidor ni el teléfono.
+ * frase (ElevenLabs no la dio), no el servidor ni el teléfono. Sin foco de audio (`foco`) nunca: el teléfono está
+ * ocupado (una llamada), el camino nuevo no falló.
  */
 export function falloDeSesion(f: { codigo: CodigoFallo; status?: number }, seguidos: number): boolean {
+  if (f.codigo === 'foco') return false;
   if (f.codigo === 'pista' || f.codigo === 'interno' || f.codigo === 'puente' || f.codigo === 'formato') return true;
   // Un 401 suelto es un token vencido (la voz pide sesión desde el 7-oct): el respaldo lo renueva y la siguiente frase
   // vuelve por aquí. Dos seguidos, abajo, sí apagan el camino nuevo.

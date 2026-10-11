@@ -81,6 +81,12 @@ internal class Frase(
  * Así el volumen, la salida (altavoz/auriculares) y la cancelación de eco del oído Turbo (aura-mic con
  * VOICE_COMMUNICATION + AcousticEchoCanceler) ven la voz igual que antes. USAGE_VOICE_COMMUNICATION la mandaría por la
  * ruta de llamada (auricular de oreja, volumen de llamada): un cambio aparte, que habría que medir en teléfono.
+ *
+ * El foco de audio (auditoría 11-oct, VOZ-01): NADA se escribe en una pista sin el foco concedido. Se pide ANTES de
+ * crear la pista; si el sistema lo niega (una llamada, otra app que no lo suelta), la generación entera (lo que está
+ * en la cola) falla con «error» `foco` y JS dice esas frases por texto, no por el camino de siempre. Si se pierde
+ * mientras habla, se calla ya y la generación se tira (PoliticaFoco): una frase vieja nunca vuelve a sonar al
+ * recuperar el foco; solo las que se encolen después.
  */
 internal class Reproductor(private val contexto: Context?, private val avisar: (Map<String, Any?>) -> Unit) {
   private val candado = ReentrantLock()
@@ -102,7 +108,10 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
   private var drenarDesde = 0L
   private var ultimaCabeza = -1L
   private var cabezaQuietaDesde = 0L
+  /** El pedido de foco vigente (null: no lo tenemos). Se tiene SOLO mientras hay pista. */
   private var foco: AudioFocusRequest? = null
+  /** El dueño del pedido vigente: un aviso de un pedido ya soltado (de otra pista) no toca la de ahora. */
+  private var focoDueno = 0
 
   /** Pone una frase en la cola y empieza a bajarla. `esperar`: bajarla ya pero no sonarla hasta `soltar`. */
   fun encolar(id: String, url: String, cabeceras: Map<String, String>, esperar: Boolean, prebufferMs: Int) {
@@ -161,6 +170,8 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
     parar()
     candado.withLock {
       vivo = false
+      // Sin pista ya no hay foco (lo suelta soltarPista); por si acaso, y es idempotente: se suelta una sola vez.
+      soltarFoco()
       cambio.signalAll()
     }
     try {
@@ -360,11 +371,30 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
 
   /** Escribe un trozo (sin bloquear). false: no escribió nada (pista llena o esperando red). */
   private fun escribir(f: Frase): Boolean {
-    if (pista == null && !abrirPista(f.hz, f.prebufferMs)) {
-      cola.remove(f)
-      quitar(f)
-      avisar(mapOf("tipo" to "error", "id" to f.id, "codigo" to "pista", "status" to 0, "motivo" to "no se pudo abrir la salida de audio a ${f.hz} Hz"))
-      return true
+    if (pista == null) {
+      // El foco ANTES que la pista: sin foco concedido no se crea ni se escribe nada.
+      when (pedirFoco()) {
+        PoliticaFoco.Pedido.CONCEDIDO -> {}
+        PoliticaFoco.Pedido.NEGADO -> {
+          tirarGeneracion(PoliticaFoco.DENEGADO)
+          return true
+        }
+        PoliticaFoco.Pedido.SIN_SERVICIO -> {
+          // Sin AudioManager no hay a quién pedirlo: el módulo no sirve aquí («pista»: JS apaga el camino nuevo en la
+          // sesión y la dice por el de siempre, que maneja su propio foco).
+          cola.remove(f)
+          quitar(f)
+          avisar(mapOf("tipo" to "error", "id" to f.id, "codigo" to "pista", "status" to 0, "motivo" to "sin servicio de audio para pedir el foco"))
+          return true
+        }
+      }
+      if (!abrirPista(f.hz, f.prebufferMs)) {
+        soltarFoco()
+        cola.remove(f)
+        quitar(f)
+        avisar(mapOf("tipo" to "error", "id" to f.id, "codigo" to "pista", "status" to 0, "motivo" to "no se pudo abrir la salida de audio a ${f.hz} Hz"))
+        return true
+      }
     }
     val p = pista ?: return false
     if (!f.enPista) {
@@ -427,7 +457,6 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
       t.release()
       return false
     }
-    pedirFoco()
     pista = t
     pistaHz = hz
     pistaGen += 1
@@ -577,22 +606,36 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
 
   /**
    * Mientras habla: foco transitorio «puede bajar el volumen» (la música de otra app se agacha, como cuando habla
-   * expo-av). Se suelta al soltar la pista. Si el sistema no lo da, la voz suena igual.
+   * expo-av), con los mismos atributos que la pista (USAGE_MEDIA + SPEECH: USAGE_ASSISTANT cambiaría el flujo y el
+   * volumen, ver arriba). Se pide ANTES de abrir la pista (dentro del candado) y se suelta al soltarla.
+   * `setWillPauseWhenDucked`: que el sistema no la agache por su cuenta y avise (la voz se calla, no se oye a medias).
+   * Sin `setAcceptsDelayedFocusGain`: un foco «diferido» sería una frase vieja sonando tarde; cuenta como negado.
    */
-  private fun pedirFoco() {
-    if (foco != null) return
-    try {
-      val am = contexto?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-      val r = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+  private fun pedirFoco(): PoliticaFoco.Pedido {
+    if (foco != null) return PoliticaFoco.Pedido.CONCEDIDO
+    val am = contexto?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return PoliticaFoco.Pedido.SIN_SERVICIO
+    val dueno = ++focoDueno
+    // Pedirlo tronó: no se sabe si lo tenemos; sin foco concedido no se suena.
+    val r = try {
+      AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
         .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-        .setOnAudioFocusChangeListener { }
+        .setWillPauseWhenDucked(true)
+        .setOnAudioFocusChangeListener { que -> alCambiarFoco(dueno, que) }
         .build()
-      am.requestAudioFocus(r)
-      foco = r
     } catch (_: Exception) {
+      return PoliticaFoco.Pedido.NEGADO
     }
+    val resultado = try {
+      am.requestAudioFocus(r)
+    } catch (_: Exception) {
+      return PoliticaFoco.Pedido.NEGADO
+    }
+    if (!PoliticaFoco.puedeSonar(resultado)) return PoliticaFoco.Pedido.NEGADO
+    foco = r
+    return PoliticaFoco.Pedido.CONCEDIDO
   }
 
+  /** Suelta el foco UNA vez (lo pone en null antes de soltarlo: una segunda llamada no hace nada). */
   private fun soltarFoco() {
     val r = foco ?: return
     foco = null
@@ -600,5 +643,75 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
       (contexto?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.abandonAudioFocusRequest(r)
     } catch (_: Exception) {
     }
+  }
+
+  /** El aviso del sistema (en el hilo principal): solo cuenta si es del pedido vigente. */
+  private fun alCambiarFoco(dueno: Int, que: Int) {
+    candado.withLock {
+      if (!vivo || foco == null || dueno != focoDueno) return
+      when (PoliticaFoco.alCambiar(que)) {
+        // Lo recuperó (o un aviso que no quita nada): no se reanuda nada viejo; lo nuevo que se encole, suena.
+        PoliticaFoco.Accion.NADA -> return
+        PoliticaFoco.Accion.PERDIDO -> tirarGeneracion(PoliticaFoco.PERDIDO)
+        PoliticaFoco.Accion.PAUSA -> tirarGeneracion(PoliticaFoco.PAUSADO)
+      }
+      cambio.signalAll()
+    }
+  }
+
+  /**
+   * Sin foco (negado o perdido): se calla ya (pausa + vaciar), se suelta la pista y el foco (una vez), y la generación
+   * de ahora (todo lo que está en la cola, sonando, escrito detrás o en espera) se tira: lo que alcanzó a sonar termina
+   * «cortada»; lo que no, «error» `foco` (JS la dice por texto, no por el camino de siempre, que tampoco tiene foco).
+   * Nada de esto vuelve: al recuperar el foco solo suena lo que se encole después.
+   */
+  private fun tirarGeneracion(motivo: String) {
+    val p = pista
+    val gen = pistaGen
+    if (p != null) {
+      try {
+        p.pause()
+        p.flush()
+      } catch (_: Exception) {
+      }
+      soltarPista(p)
+    } else soltarFoco()
+    for (f in ArrayList(cola)) {
+      cola.remove(f)
+      quitar(f)
+      if (f.termino) continue
+      f.termino = true
+      if (f.enPista && f.pistaGen == gen && f.sono) avisar(mapOf("tipo" to "termino", "id" to f.id, "ms" to msDe(f, ultimaCabeza.coerceAtLeast(f.inicio)), "cortada" to true))
+      else avisar(mapOf("tipo" to "error", "id" to f.id, "codigo" to "foco", "status" to 0, "motivo" to motivo))
+    }
+  }
+}
+
+/**
+ * La política del foco de audio, pura (sin estado ni Android más que las constantes): la prueban pruebas/voz/jvm y su
+ * espejo en JS (pruebas/voz/nativa.prueba.mjs lee estas reglas del código).
+ *
+ *  · pedido: suena SOLO con AUDIOFOCUS_REQUEST_GRANTED; FAILED o DELAYED (no lo aceptamos) → no se escribe nada;
+ *  · AUDIOFOCUS_LOSS → se calla, se tira la generación y se suelta el foco;
+ *  · AUDIOFOCUS_LOSS_TRANSIENT → pausa; para la voz hablada, cancelar la frase (y su generación) es mejor que retomar
+ *    una frase vieja minutos después (una llamada, la navegación);
+ *  · AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK → igual que la transitoria: la voz agachada no se entiende; no se agacha;
+ *  · AUDIOFOCUS_GAIN (y cualquier otro) → nada: NO se reanuda una generación vieja; solo suenan frases nuevas.
+ */
+internal object PoliticaFoco {
+  enum class Pedido { CONCEDIDO, NEGADO, SIN_SERVICIO }
+  enum class Accion { NADA, PERDIDO, PAUSA }
+
+  /** Los motivos del «error» `foco` que llega a JS. */
+  const val DENEGADO = "foco-denegado"
+  const val PERDIDO = "foco-perdido"
+  const val PAUSADO = "foco-pausado"
+
+  fun puedeSonar(resultado: Int): Boolean = resultado == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+
+  fun alCambiar(que: Int): Accion = when (que) {
+    AudioManager.AUDIOFOCUS_LOSS -> Accion.PERDIDO
+    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Accion.PAUSA
+    else -> Accion.NADA
   }
 }

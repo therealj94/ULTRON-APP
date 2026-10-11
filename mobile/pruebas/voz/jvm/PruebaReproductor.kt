@@ -1,5 +1,7 @@
 package expo.modules.auravoz
 
+import android.content.Context
+import android.media.AudioManager
 import android.media.AudioTrack
 import java.util.Collections
 import kotlin.math.abs
@@ -16,7 +18,10 @@ import kotlin.system.exitProcess
  *  · `esperar` no suena hasta `soltar`; cancelar la que suena la calla ya y sigue la de detrás; parar() calla todo;
  *  · fallar antes de sonar (404, sin PCM, PCM sin un byte, red cortada antes del prebúfer) → «error»; la red cortada a
  *    media frase → suena lo que llegó y «termino» truncada; el volumen por bloques sale del audio real (la boca);
- *  · sin nada que sonar, el escritor y el reloj NO despiertan (esperan sin plazo) y vuelven en cuanto llega trabajo.
+ *  · sin nada que sonar, el escritor y el reloj NO despiertan (esperan sin plazo) y vuelven en cuanto llega trabajo;
+ *  · el foco de audio (VOZ-01): negado → no se crea pista ni se escribe, «error» foco; perdido → se calla, se tira la
+ *    generación y se suelta el foco; transitorio (y «agáchate») → igual, sin agacharse; recuperado → nada viejo vuelve;
+ *    el foco se suelta UNA vez por pedido concedido; un aviso de un pedido ya soltado no toca lo de ahora.
  *
  *   sh mobile/pruebas/voz/jvm/correr.sh   (necesita kotlinc y un android.jar: ver correr.sh)
  */
@@ -127,6 +132,11 @@ private class Servidor {
   }
 }
 
+/** Un contexto de mentira con su AudioManager de mentira (el foco: concedido por omisión). */
+private fun contexto(am: AudioManager = AudioManager()): Context = object : Context() {
+  override fun getSystemService(nombre: String): Any? = if (nombre == Context.AUDIO_SERVICE) am else null
+}
+
 private class Registro {
   val t0 = System.nanoTime()
   val eventos: MutableList<Pair<Long, Map<String, Any?>>> = Collections.synchronizedList(ArrayList())
@@ -148,7 +158,7 @@ fun main() {
   println("[aura-voz en la JVM] empieza con el prebúfer y avisa en orden\n")
   run {
     val r = Registro()
-    val rep = Reproductor(null) { r.anotar(it) }
+    val rep = Reproductor(contexto()) { r.anotar(it) }
     rep.encolar("a", "$base/pcm?ms=800&ttfb=150&vel=3", mapOf("Accept" to "audio/pcm"), false, 150)
     r.espera(3000) { r.primero("a", "termino") >= 0 }
     val listo = r.primero("a", "listo")
@@ -173,7 +183,7 @@ fun main() {
   println("\n[aura-voz en la JVM] la cola sin hueco\n")
   run {
     val r = Registro()
-    val rep = Reproductor(null) { r.anotar(it) }
+    val rep = Reproductor(contexto()) { r.anotar(it) }
     val antes = AudioTrack.creadas.size
     rep.encolar("b1", "$base/pcm?ms=600&ttfb=100&vel=4", emptyMap(), false, 150)
     rep.encolar("b2", "$base/pcm?ms=600&ttfb=100&vel=4", emptyMap(), false, 150)
@@ -191,7 +201,7 @@ fun main() {
   println("\n[aura-voz en la JVM] esperar, soltar, cancelar, parar\n")
   run {
     val r = Registro()
-    val rep = Reproductor(null) { r.anotar(it) }
+    val rep = Reproductor(contexto()) { r.anotar(it) }
     rep.encolar("c", "$base/pcm?ms=500&ttfb=50&vel=8", emptyMap(), true, 150)
     r.espera(600)
     ok("con `esperar`: se baja (listo) pero NO suena", r.primero("c", "listo") >= 0 && r.primero("c", "sonando") < 0)
@@ -226,7 +236,7 @@ fun main() {
   println("\n[aura-voz en la JVM] fallas: antes de sonar → error; a media frase → truncada\n")
   run {
     val r = Registro()
-    val rep = Reproductor(null) { r.anotar(it) }
+    val rep = Reproductor(contexto()) { r.anotar(it) }
     rep.encolar("f404", "$base/404", emptyMap(), false, 150)
     rep.encolar("fhtml", "$base/sinpcm", emptyMap(), false, 150)
     rep.encolar("fcorta", "$base/pcm?ms=2000&ttfb=50&vel=1&corta=2000", emptyMap(), false, 300)
@@ -253,7 +263,7 @@ fun main() {
   run {
     AudioTrack.cabezaACeroAlDrenar = true
     val r = Registro()
-    val rep = Reproductor(null) { r.anotar(it) }
+    val rep = Reproductor(contexto()) { r.anotar(it) }
     rep.encolar("h", "$base/pcm?ms=400&ttfb=50&vel=8", emptyMap(), false, 150)
     r.espera(2000) { r.primero("h", "termino") >= 0 }
     val th = r.de("h", "termino").firstOrNull()?.second
@@ -267,7 +277,7 @@ fun main() {
     // Los hilos de ESTE reproductor (los de las pruebas de arriba ya se cerraron o se están cerrando).
     val antes = Thread.getAllStackTraces().keys.map { it.id }.toSet()
     val r = Registro()
-    val rep = Reproductor(null) { r.anotar(it) }
+    val rep = Reproductor(contexto()) { r.anotar(it) }
     fun hilos() = Thread.getAllStackTraces().filter { (t, _) -> t.id !in antes && t.isAlive && (t.name == "AuraVoz-escritor" || t.name == "AuraVoz-reloj") }
     /** Cada ~50 ms durante `ms`: ¿todos los hilos esperan SIN plazo (WAITING, no TIMED_WAITING ni corriendo)? */
     fun quietos(ms: Long): Pair<Boolean, String> {
@@ -305,6 +315,123 @@ fun main() {
     r.espera(500) { AudioTrack.creadas.last().liberada }
     val (q3, d3) = quietos(300)
     ok("y vuelven a dormir sin plazo al terminar", q3, d3)
+    rep.cerrar()
+  }
+
+  println("\n[aura-voz en la JVM] el foco de audio: la política, pura\n")
+  run {
+    ok("solo el foco CONCEDIDO deja sonar", PoliticaFoco.puedeSonar(AudioManager.AUDIOFOCUS_REQUEST_GRANTED))
+    ok("negado o diferido: no suena", !PoliticaFoco.puedeSonar(AudioManager.AUDIOFOCUS_REQUEST_FAILED) && !PoliticaFoco.puedeSonar(AudioManager.AUDIOFOCUS_REQUEST_DELAYED))
+    ok("perdido → PERDIDO", PoliticaFoco.alCambiar(AudioManager.AUDIOFOCUS_LOSS) == PoliticaFoco.Accion.PERDIDO)
+    ok("transitorio y «agáchate» → PAUSA (no se agacha la voz)", PoliticaFoco.alCambiar(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) == PoliticaFoco.Accion.PAUSA && PoliticaFoco.alCambiar(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) == PoliticaFoco.Accion.PAUSA)
+    ok("recuperado → NADA (no reanuda)", PoliticaFoco.alCambiar(AudioManager.AUDIOFOCUS_GAIN) == PoliticaFoco.Accion.NADA && PoliticaFoco.alCambiar(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT) == PoliticaFoco.Accion.NADA)
+  }
+
+  println("\n[aura-voz en la JVM] foco negado: no se escribe nada\n")
+  run {
+    for (negado in listOf(AudioManager.AUDIOFOCUS_REQUEST_FAILED, AudioManager.AUDIOFOCUS_REQUEST_DELAYED)) {
+      val am = AudioManager().apply { resultado = negado }
+      val r = Registro()
+      val rep = Reproductor(contexto(am)) { r.anotar(it) }
+      val pistas = AudioTrack.creadas.size
+      rep.encolar("n1", "$base/pcm?ms=400&ttfb=50&vel=8", emptyMap(), false, 150)
+      rep.encolar("n2", "$base/pcm?ms=400&ttfb=50&vel=8", emptyMap(), true, 150)
+      r.espera(2000) { r.de("n1", "error").isNotEmpty() && r.de("n2", "error").isNotEmpty() }
+      val e1 = r.de("n1", "error").firstOrNull()?.second
+      val e2 = r.de("n2", "error").firstOrNull()?.second
+      ok("[$negado] la frase falla con «error» foco-denegado", e1?.get("codigo") == "foco" && e1["motivo"] == PoliticaFoco.DENEGADO, e1)
+      ok("[$negado] … y la generación entera (la que esperaba `soltar`, también)", e2?.get("codigo") == "foco", e2)
+      ok("[$negado] ninguna pista creada: nada escrito, nada sonó", AudioTrack.creadas.size == pistas && r.primero("n1", "sonando") < 0 && r.primero("n2", "sonando") < 0, AudioTrack.creadas.size - pistas)
+      ok("[$negado] un solo pedido y nada que soltar (no se concedió)", am.pedidos.size == 1 && am.soltados.isEmpty(), "pedidos=${am.pedidos.size} soltados=${am.soltados.size}")
+      ok("[$negado] el pedido: transitorio que agacha a otros, y la voz se pausa en vez de agacharse", am.pedidos[0].foco == AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK && am.pedidos[0].pausaAlAgachar)
+      // Lo da después (terminó la llamada): una frase NUEVA suena; las viejas no vuelven.
+      am.resultado = AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+      rep.encolar("n3", "$base/pcm?ms=300&ttfb=50&vel=8", emptyMap(), false, 150)
+      r.espera(2000) { r.primero("n3", "termino") >= 0 }
+      r.espera(500) { am.soltados.size == 1 }
+      ok("[$negado] con el foco de vuelta, la frase nueva suena entera", r.primero("n3", "sonando") >= 0 && r.primero("n3", "termino") > 0)
+      ok("[$negado] … las viejas no («sonando» nunca)", r.primero("n1", "sonando") < 0 && r.primero("n2", "sonando") < 0)
+      ok("[$negado] … y al soltar la pista se suelta su foco, una vez", am.pedidos.size == 2 && am.soltados.size == 1 && am.soltados[0] === am.pedidos[1], "pedidos=${am.pedidos.size} soltados=${am.soltados.size}")
+      rep.cerrar()
+    }
+  }
+
+  println("\n[aura-voz en la JVM] foco perdido, transitorio o «agáchate»: se calla y nada viejo vuelve\n")
+  run {
+    for (que in listOf(AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)) {
+      val am = AudioManager()
+      val r = Registro()
+      val rep = Reproductor(contexto(am)) { r.anotar(it) }
+      rep.encolar("p1", "$base/pcm?ms=1500&ttfb=50&vel=6", emptyMap(), false, 150)
+      rep.encolar("p2", "$base/pcm?ms=600&ttfb=50&vel=6", emptyMap(), false, 150)
+      rep.encolar("p3", "$base/pcm?ms=600&ttfb=50&vel=6", emptyMap(), true, 150)
+      r.espera(2000) { r.primero("p1", "sonando") >= 0 }
+      r.espera(300)
+      val pista = AudioTrack.creadas.last()
+      val pistas = AudioTrack.creadas.size
+      val tPerder = (System.nanoTime() - r.t0) / 1_000_000
+      am.avisar(que)
+      r.espera(300)
+      val t1 = r.de("p1", "termino").firstOrNull()?.second
+      ok("[$que] la que sonaba termina «cortada» en el acto", t1?.get("cortada") == true && r.primero("p1", "termino") - tPerder < 60, t1)
+      val tarde = r.de("p1", "posicion").filter { it.first > tPerder + 40 }
+      ok("[$que] … y deja de avisar posición (se calló)", tarde.isEmpty(), tarde.size)
+      val esperado = if (que == AudioManager.AUDIOFOCUS_LOSS) PoliticaFoco.PERDIDO else PoliticaFoco.PAUSADO
+      val e2 = r.de("p2", "error").firstOrNull()?.second
+      val e3 = r.de("p3", "error").firstOrNull()?.second
+      ok("[$que] las de detrás de la generación: «error» foco ($esperado), no suenan", e2?.get("codigo") == "foco" && e2["motivo"] == esperado && e3?.get("codigo") == "foco" && r.primero("p2", "sonando") < 0, listOf(e2, e3))
+      ok("[$que] la pista se soltó y el foco se soltó una vez", pista.liberada && am.soltados.size == 1 && am.soltados[0] === am.pedidos[0], "soltados=${am.soltados.size}")
+      // Vuelve el foco (al pedido viejo): NADA viejo se reanuda.
+      val avisos = r.eventos.size
+      am.avisar(AudioManager.AUDIOFOCUS_GAIN)
+      rep.soltar("p3")
+      r.espera(500)
+      ok("[$que] recuperado: ni una pista nueva ni un aviso de lo viejo", AudioTrack.creadas.size == pistas && r.eventos.size == avisos, r.eventos.drop(avisos).map { it.second })
+      ok("[$que] … ni se pidió el foco otra vez por lo viejo", am.pedidos.size == 1, am.pedidos.size)
+      // Lo nuevo sí suena (otra generación), con su pedido propio.
+      rep.encolar("p4", "$base/pcm?ms=300&ttfb=50&vel=8", emptyMap(), false, 150)
+      r.espera(2000) { r.primero("p4", "termino") >= 0 }
+      r.espera(500) { am.soltados.size == 2 }
+      ok("[$que] una frase nueva suena entera con su propio foco, soltado al terminar", r.primero("p4", "termino") > 0 && am.pedidos.size == 2 && am.soltados.size == 2 && am.soltados[1] === am.pedidos[1], "pedidos=${am.pedidos.size} soltados=${am.soltados.size}")
+      rep.cerrar()
+    }
+  }
+
+  println("\n[aura-voz en la JVM] el foco se suelta UNA vez; un aviso de un pedido soltado no toca lo de ahora\n")
+  run {
+    val am = AudioManager()
+    val r = Registro()
+    val rep = Reproductor(contexto(am)) { r.anotar(it) }
+    rep.encolar("u1", "$base/pcm?ms=300&ttfb=50&vel=8", emptyMap(), false, 150)
+    r.espera(2000) { r.primero("u1", "termino") >= 0 }
+    r.espera(500) { am.soltados.size == 1 }
+    val viejo = am.pedidos[0]
+    rep.encolar("u2", "$base/pcm?ms=1500&ttfb=50&vel=6", emptyMap(), false, 150)
+    r.espera(2000) { r.primero("u2", "sonando") >= 0 }
+    am.avisar(viejo, AudioManager.AUDIOFOCUS_LOSS)
+    r.espera(200)
+    ok("perder el foco de un pedido ya soltado no corta la frase de ahora", r.de("u2", "termino").isEmpty() && r.de("u2", "error").isEmpty() && !AudioTrack.creadas.last().liberada)
+    rep.parar()
+    rep.parar()
+    rep.cerrar()
+    rep.cerrar()
+    ok("parar, parar, cerrar, cerrar: cada pedido concedido se suelta exactamente una vez", am.pedidos.size == 2 && am.soltados.size == 2 && am.soltados.toSet().size == 2 && am.soltados.toSet() == am.pedidos.toSet(), "pedidos=${am.pedidos.size} soltados=${am.soltados.size}")
+    val avisos = r.eventos.size
+    am.avisar(AudioManager.AUDIOFOCUS_LOSS)
+    am.avisar(AudioManager.AUDIOFOCUS_GAIN)
+    r.espera(150)
+    ok("cerrado: los avisos de foco ya no hacen nada", r.eventos.size == avisos && am.soltados.size == 2)
+  }
+
+  println("\n[aura-voz en la JVM] sin servicio de audio (sin contexto): «pista», nada suena\n")
+  run {
+    val r = Registro()
+    val rep = Reproductor(null) { r.anotar(it) }
+    val pistas = AudioTrack.creadas.size
+    rep.encolar("s1", "$base/pcm?ms=300&ttfb=50&vel=8", emptyMap(), false, 150)
+    r.espera(2000) { r.de("s1", "error").isNotEmpty() }
+    val e = r.de("s1", "error").firstOrNull()?.second
+    ok("sin AudioManager no hay a quién pedir el foco: «error» pista (JS va por el camino de siempre) y ninguna pista", e?.get("codigo") == "pista" && AudioTrack.creadas.size == pistas, e)
     rep.cerrar()
   }
 

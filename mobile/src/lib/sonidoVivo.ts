@@ -13,6 +13,10 @@
  *  · Si falla ANTES de sonar (nada llegó a la pista), la frase NO se pierde: se pide por el camino de siempre
  *    (`respaldo`, /api/tts + expo-av) y suena eso, con los mismos avisos. Quien la creó decide si eso apaga el camino
  *    nuevo en la sesión (`alFallar`, lib/vozNativa.ts falloDeSesion).
+ *  · Sin foco de audio (el nativo avisa «error» `foco`: lo negó o lo quitó antes de sonar) NO hay respaldo: expo-av
+ *    tampoco tiene foco y sonaría encima de una llamada. La frase termina con `{ isLoaded: false, error: 'foco' }`
+ *    (playPrepared la da por terminada: la boca se cierra y queda el texto) y se avisa `alSinFoco`, no `alFallar`
+ *    (no es un fallo del camino nuevo: no cuenta para apagarlo).
  *
  * Puro: el módulo nativo se inyecta (las pruebas usan uno simulado).
  */
@@ -33,6 +37,8 @@ type OpcionesSonido = {
   alListo?: () => void;
   /** Sonó por el nativo (los fallos seguidos vuelven a cero). */
   alSonar?: () => void;
+  /** El sistema no dio (o quitó) el foco de audio antes de que sonara: va por texto, sin respaldo. */
+  alSinFoco?: (f: FalloVoz) => void;
 };
 
 export class SonidoVivo implements Reproducible {
@@ -81,7 +87,7 @@ export class SonidoVivo implements Reproducible {
 
   /** Puede sonar en cuanto termine lo de delante (sin hueco). Va por el respaldo o ya la soltaron: nada. */
   encadenar() {
-    if (this.muerto || this.respaldo || this.soltado) return;
+    if (this.muerto || this.respaldo || this.soltado || this.final) return;
     this.soltado = true;
     try {
       this.modulo.soltar(this.id);
@@ -193,9 +199,22 @@ export class SonidoVivo implements Reproducible {
           this.dar(this.final);
           return;
         }
+        if (e.codigo === 'foco') return this.sinFoco({ codigo: e.codigo, motivo: e.motivo });
         this.falla({ codigo: e.codigo, status: e.status, motivo: e.motivo });
         return;
     }
+  }
+
+  /** Sin foco antes de sonar: termina sin voz (ni respaldo ni nada encadenado detrás); el nativo ya la soltó. */
+  private sinFoco(f: FalloVoz) {
+    this.alSonarNativo = [];
+    this.final = { isLoaded: false, error: 'foco' };
+    try {
+      this.o.alSinFoco?.(f);
+    } catch {
+      /* */
+    }
+    this.dar(this.final);
   }
 
   /** La duración, solo cuando ya suena y se sabe (playPrepared pone su guardia con ella). */
