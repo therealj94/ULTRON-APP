@@ -9,7 +9,7 @@
  * parte de no hacer perder el tiempo a nadie.
  */
 import { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { UltronFace } from '../components/UltronFace';
 import { ACENTO } from '../variante';
 import { entrar, guardarLlave, guardarSesion, porQueNoAbre, probarPuerta } from './api';
@@ -110,7 +110,8 @@ export function EntrarScreen({ onDentro, motivo = '' }: { onDentro: () => void; 
           paddingRight: (apaisado ? 28 : 20) + b.derecha,
         },
       ]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // También en Android: con edge-to-edge la ventana no se achica sola y ENTRAR quedaba bajo el teclado.
+      behavior="padding"
     >
       {/* Dos columnas: quién te recibe a un lado, lo que tenés que hacer al otro. Apilado en
           horizontal, el teclado al abrirse tapaba el formulario entero. En vertical sí se apila:

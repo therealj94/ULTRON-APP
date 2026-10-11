@@ -170,7 +170,7 @@ export const sistema_estado: Herramienta = {
         `Base de datos: ${b.viva ? `viva (PostGIS ${b.postgis}), ${b.concesiones} concesiones en el catastro` : `CAÍDA (${b.motivo})`}.`,
         `Índice de capas: ${m ? `v${m.version}, ${capas.length} capas y planos (${capas.filter((c: any) => c.sin_datos).length} sin datos)` : 'no se pudo leer'}.`,
         `Mapas en teselas: ${t ? `${(t as any).rasters?.length ?? 0}` : 'no se pudo leer el índice'}.`,
-        `Cerebro: ${nodoConfigurado() ? 'nodo configurado y contestando (esta respuesta sale de él)' : 'sin nodo configurado'}.`,
+        `Cerebro: ${nodoConfigurado() ? 'nodo propio configurado (si no contesta, responde el modelo de respaldo)' : 'sin nodo propio: responde el modelo de respaldo'}.`,
       ].join('\n'),
     };
   },

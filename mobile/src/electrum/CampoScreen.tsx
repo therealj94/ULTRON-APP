@@ -26,10 +26,10 @@ import {
   Alert,
   AppState,
   BackHandler,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -43,6 +43,7 @@ import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { UltronFace } from '../components/UltronFace';
+import { Icono } from '../ui/Icono';
 import { ACENTO } from '../variante';
 import { quitarEco, RegistroVoz } from '../lib/interrupcion';
 import { cuerpoTurno, preguntarCuerpo, preguntarEnVivo, salud, subirFoto, SinPuerta } from './api';
@@ -176,6 +177,17 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
   const apaisado = width > height;
   // Lo que tapan la barra de estado y la de navegación (edge-to-edge de Expo 54): ver bordes.ts.
   const b = useBordes();
+  // Con el teclado abierto, en vertical, la cara y «¿DÓNDE ESTOY?» se apartan: el hilo es lo que se
+  // necesita ver mientras se escribe (en un 360×640 le quedaban 30–100 dp).
+  const [teclado, setTeclado] = useState(false);
+  useEffect(() => {
+    const a = Keyboard.addListener('keyboardDidShow', () => setTeclado(true));
+    const c = Keyboard.addListener('keyboardDidHide', () => setTeclado(false));
+    return () => {
+      a.remove();
+      c.remove();
+    };
+  }, []);
 
   const [oyendo, setOyendo] = useState(false);
   const escucha = useRef<Escucha | null>(null);
@@ -981,12 +993,13 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
 
   return (
     <KeyboardAvoidingView
-      style={[s.raiz, { paddingTop: b.arriba, paddingBottom: b.abajo, paddingLeft: b.izquierda, paddingRight: b.derecha }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[s.raiz, { paddingTop: b.arriba, paddingBottom: teclado ? 0 : b.abajo, paddingLeft: b.izquierda, paddingRight: b.derecha }]}
+      // También en Android: con edge-to-edge la ventana ya no se achica sola al abrir el teclado.
+      behavior="padding"
     >
       <View style={s.barra}>
         <View style={{ flex: 1 }}>
-          <Text style={s.marca} accessibilityRole="header">
+          <Text style={[s.marca, !apaisado && { letterSpacing: 1.2 }]} accessibilityRole="header" numberOfLines={1} maxFontSizeMultiplier={1.3}>
             DR ELECTRUM FP
           </Text>
           {/* Si falló, la línea de estado es el botón de reintentar: no hay que buscar otro sitio. */}
@@ -998,7 +1011,7 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
             accessibilityHint={estado === 'fallo' ? 'Vuelve a comprobar la conexión con el catastro' : undefined}
           >
             {/* En vertical, dos renglones: en uno solo se cortaba justo «tocá para reintentar». */}
-            <Text style={[s.estado, estado === 'fallo' && { color: '#D9705A' }]} numberOfLines={apaisado ? 1 : 2}>
+            <Text style={[s.estado, estado === 'fallo' && { color: '#D9705A' }]} numberOfLines={apaisado ? 1 : 2} maxFontSizeMultiplier={1.3}>
               {lineaEstado}
             </Text>
           </Pressable>
@@ -1015,9 +1028,13 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
             accessibilityLabel="Manos libres"
             accessibilityHint="Te escucha sin tocar el micrófono y manda lo que digas. Se le puede hablar encima."
             accessibilityState={{ checked: manosLibres }}
-            style={[s.chip, manosLibres && s.chipOn, manosLibres && oyendoManos && s.chipOyendo]}
+            style={[s.chip, !apaisado && s.chipIcono, manosLibres && s.chipOn, manosLibres && oyendoManos && s.chipOyendo]}
           >
-            <Text style={[s.chipTexto, manosLibres && { color: ACENTO }]}>{apaisado ? 'MANOS LIBRES' : 'MANOS'}</Text>
+            {apaisado ? (
+              <Text style={[s.chipTexto, manosLibres && { color: ACENTO }]} maxFontSizeMultiplier={1.3}>MANOS LIBRES</Text>
+            ) : (
+              <Icono nombre="oido" tam={20} color={manosLibres ? ACENTO : GRIS} />
+            )}
           </Pressable>
         )}
         <Pressable
@@ -1027,18 +1044,22 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
           accessibilityLabel="Voz del doctor"
           accessibilityHint="Lee las respuestas en voz alta"
           accessibilityState={{ checked: vozActiva }}
-          style={[s.chip, vozActiva && s.chipOn]}
+          style={[s.chip, !apaisado && s.chipIcono, vozActiva && s.chipOn]}
         >
-          <Text style={[s.chipTexto, vozActiva && { color: ACENTO }]}>VOZ</Text>
+          {apaisado ? (
+            <Text style={[s.chipTexto, vozActiva && { color: ACENTO }]} maxFontSizeMultiplier={1.3}>VOZ</Text>
+          ) : (
+            <Icono nombre="volumen" tam={20} color={vozActiva ? ACENTO : GRIS} />
+          )}
         </Pressable>
-        <Pressable onPress={pedirSalir} hitSlop={6} accessibilityRole="button" accessibilityLabel="Salir y cerrar la sesión" style={s.chip}>
-          <Text style={s.chipTexto}>SALIR</Text>
+        <Pressable onPress={pedirSalir} hitSlop={6} accessibilityRole="button" accessibilityLabel="Salir y cerrar la sesión" style={[s.chip, !apaisado && s.chipIcono]}>
+          {apaisado ? <Text style={s.chipTexto} maxFontSizeMultiplier={1.3}>SALIR</Text> : <Icono nombre="salir" tam={20} color={GRIS} />}
         </Pressable>
       </View>
 
       <View style={[s.cuerpo, !apaisado && { flexDirection: 'column' }]}>
-        <View style={[s.izquierda, !apaisado && s.izquierdaVertical]}>
-          <View style={[s.caraCaja, !apaisado && s.caraCajaVertical]} accessible={false} importantForAccessibility="no-hide-descendants">
+        <View style={[s.izquierda, !apaisado && s.izquierdaVertical, !apaisado && teclado && { display: 'none' }]}>
+          <View style={[s.caraCaja, apaisado && { height: Math.max(110, Math.min(210, height - 170)) }, !apaisado && s.caraCajaVertical]} accessible={false} importantForAccessibility="no-hide-descendants">
             <UltronFace face={cara} acento={ACENTO} size={apaisado ? 56 : 40} stageHeight={apaisado ? 150 : 110} />
           </View>
           <Pressable
@@ -1213,7 +1234,7 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
                 accessibilityState={{ disabled: pensando }}
                 hitSlop={8}
               >
-                <Text style={[s.redondoTexto, oyendo && { color: '#000' }]}>{oyendo ? '■' : '🎙'}</Text>
+                {oyendo ? <Icono nombre="detener" tam={20} color="#000" /> : <Icono nombre="microfono" tam={20} color="#E7EEF2" />}
               </Pressable>
             )}
             <Pressable
@@ -1225,7 +1246,7 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
               accessibilityState={{ disabled: ocupado }}
               hitSlop={8}
             >
-              <Text style={s.redondoTexto}>📷</Text>
+              <Icono nombre="camara" tam={20} color="#E7EEF2" />
             </Pressable>
             <Pressable
               onPress={() => void mandar(texto, true)}
@@ -1317,6 +1338,8 @@ const s = StyleSheet.create({
   chipOn: { borderColor: ACENTO },
   // Manos libres oyendo de verdad (el micrófono entrega audio): el borde más grueso, para verlo de reojo.
   chipOyendo: { borderWidth: 2 },
+  // En vertical, solo el ícono: con texto, MANOS + VOZ + SALIR dejaban 90 dp para la marca y el estado.
+  chipIcono: { width: 44, paddingHorizontal: 0, alignItems: 'center' },
   chipTexto: { color: GRIS, fontSize: 13, letterSpacing: 1.2, fontWeight: '600' },
   // `overflow` recorta a propósito: los anillos del halo miden 4,3 veces el iris y desbordaban
   // la caja, pisando el texto de abajo. Recortados quedan como una banda, que es lo que se busca.

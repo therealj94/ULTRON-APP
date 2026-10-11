@@ -19,6 +19,7 @@ import { instruccionHermes } from '../lib/agente/protocolo';
 import { manosDe, MAPA, TODAS } from '../server/electrum/manos';
 import { REGLAS_MAPA } from '../server/electrum/turno';
 import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
+import { PANEL_MESA } from '../server/electrum/personajes';
 
 const PROXY = fs.readFileSync('scripts/nodo-a10g/ollama-proxy-ndjson.py', 'utf8');
 const MAX_PROXY = Number(PROXY.match(/PROXY_MAX_CHARS", "(\d+)"/)?.[1]);
@@ -40,6 +41,8 @@ test('el system de Dr Electrum cabe entero en el proxy del nodo, con cualquier p
       for (let k = j + 1; k < E.length; k++) paneles.push([E[i], E[j], E[k]]);
     }
   }
+  // La mesa técnica entera (cuatro especialidades) también tiene que caber.
+  paneles.push(PANEL_MESA.map((id) => E.find((e) => e.id === id)!).filter(Boolean));
   for (const panel of paneles) {
     const herramientas = [...(panel.length ? manosDe(herramientasDe(panel)) : TODAS), ...MEMORIA_ESTRUCTURADA];
     const system = [

@@ -16,10 +16,12 @@ test('cada especialidad tiene dueño en la mesa', () => {
 
 test('llamarlos por su nombre los trae a contestar', () => {
   assert.deepEqual(llamados('Don Chema, ¿qué planta ocupo para oro en sulfuros?'), ['metalurgista']);
-  assert.deepEqual(llamados('Tatiana, ¿cómo construyo eso?'), ['civil']);
+  assert.deepEqual(llamados('Tatiana, ¿cómo construyo eso?'), ['minas']);
+  // «Soy ingeniera…» no es llamarla.
+  assert.deepEqual(llamados('soy ingeniera y quiero saber cuántas concesiones hay'), []);
   assert.deepEqual(llamados('¿cuántas concesiones hay en Olancho?'), []);
   assert.equal(convocar('Don Chema, ¿y eso cuánto cuesta?')[0].id, 'metalurgista');
-  assert.equal(convocar('Ingeniera Tatiana, ¿qué necesito?')[0].id, 'civil');
+  assert.equal(convocar('Ingeniera Tatiana, ¿qué necesito?')[0].id, 'minas');
 });
 
 test('«mesa técnica» junta a los tres', async () => {

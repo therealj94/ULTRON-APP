@@ -160,14 +160,19 @@ module.exports = ({ config }) => {
       package: ELECTRUM.paquete,
       // Permisos: cámara para leer un afloramiento o un papel, micrófono para hablarle, y
       // ubicación para la pregunta que solo tiene sentido en el campo: «¿de quién es esto?».
+      // Sin los de AU-RA que el doctor no usa (Bluetooth, huella, cámara en segundo plano): cada uno
+      // es una declaración más en Play Store y una pregunta más de la persona.
       permissions: [
         ...new Set([
-          ...(expo.android?.permissions || []),
+          ...(expo.android?.permissions || []).filter((x) => !/BLUETOOTH|BIOMETRIC|FINGERPRINT|FOREGROUND_SERVICE_CAMERA/.test(x)),
           'android.permission.ACCESS_FINE_LOCATION',
           'android.permission.ACCESS_COARSE_LOCATION',
         ]),
       ],
       adaptiveIcon: { ...expo.android?.adaptiveIcon, foregroundImage: ELECTRUM.iconoAdaptable, backgroundColor: '#000000' },
+      // Con el teclado abierto la pantalla se acomoda (el hilo se achica) en vez de correrse hacia
+      // arriba y esconder la barra de arriba.
+      softwareKeyboardLayoutMode: 'resize',
     },
     plugins: (expo.plugins || []).map((p) => {
       if (!Array.isArray(p)) return p;
