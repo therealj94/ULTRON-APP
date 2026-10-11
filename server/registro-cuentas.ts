@@ -18,8 +18,10 @@
  *
  * Por qué el código Y la clave: si alguien registra primero el correo de otra persona con SU clave y el dueño luego
  * confirma con el código de su buzón, la cuenta no puede quedar con la clave del intruso. Registrarse de nuevo con
- * una cuenta propia sin confirmar le pone la clave nueva (cuentas.crearCuentaPropia → 'reabierta'); confirmar exige
- * que la clave coincida con la que está puesta. El dueño, además, puede siempre «olvidé mi contraseña» (el enlace le
+ * una cuenta propia sin confirmar le pone la clave nueva (cuentas.crearCuentaPropia → 'reabierta', que deja sin valor
+ * los códigos de la clave anterior: cada código va atado a la revisión de la clave con que se emitió); confirmar exige
+ * que la clave coincida con la que está puesta, y gastar el código y confirmar son UNA escritura que vuelve a mirar
+ * que esa clave sigue puesta (SEC01). El dueño, además, puede siempre «olvidé mi contraseña» (el enlace le
  * llega a él) o entrar con Genesis ID, y la clave puesta por otro deja de valer (cuentas.reclamarCuentaSinConfirmar).
  *
  * El código: 6 cifras, 30 minutos, un uso, guardado como huella SHA-256 atada al correo (la comparación es de huellas
@@ -57,8 +59,12 @@ export type AlmacenRegistro = {
   comprobarClave: (correo: string, clave: string) => Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave' | 'sin_confirmar'>;
   /** Un código nuevo de 6 cifras, o null si se mandó uno hace muy poco. */
   crearCodigo: (correo: string) => Promise<string | null>;
-  /** Gasta el código y deja el correo confirmado. */
-  usarCodigo: (correo: string, codigo: string) => Promise<boolean>;
+  /**
+   * Gasta el código y deja el correo confirmado, en UNA escritura y atado a `clave` (SEC01): false si la clave ya no
+   * es la de la cuenta, si el código no es de la revisión de esa clave, o si venció o ya se usó. Si falla a medias, el
+   * código no se quema (cuentas.usarCodigoCorreo).
+   */
+  usarCodigo: (correo: string, codigo: string, clave: string) => Promise<boolean>;
   /** El nombre con que se registró (para saludar). */
   nombreDe?: (correo: string) => Promise<string | undefined>;
 };
@@ -218,7 +224,10 @@ export function montarRutasRegistro(app: Express, d: DepsRegistro): { mandarCodi
       if (k === 'suspendida') return res.status(403).json({ ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' });
       if (k === 'ok') return res.status(409).json({ ok: false, codigo: 'YA_CONFIRMADO', error: 'Tu correo ya está confirmado: entra con tu contraseña.' });
       if (k !== 'sin_confirmar') return fallo('clave que no es la de una cuenta sin confirmar');
-      if (!(await d.almacen.usarCodigo(correo, codigo))) return fallo('código malo o vencido');
+      // SEC01: la clave va también aquí. Entre la comprobación de arriba y esto, /crear puede haber puesto otra clave
+      // a la cuenta pendiente: el almacén vuelve a mirarla con la fila tomada y gasta el código y confirma juntos solo
+      // si sigue siendo ESTA. Si no, ni se confirma ni hay sesión.
+      if (!(await d.almacen.usarCodigo(correo, codigo, clave))) return fallo('código malo o vencido, o la clave cambió');
     } catch (e: any) {
       console.error('[registro] no pude comprobar el código:', String(e?.message || e).slice(0, 160));
       return res.status(503).json({ ok: false, codigo: 'SIN_BASE', error: 'Ahora no puedo confirmar tu correo. Intenta en un momento.' });

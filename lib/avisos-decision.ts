@@ -71,10 +71,16 @@ export function esperaAviso(n: number, azar: () => number = Math.random): number
 
 /**
  * Deja la intención de avisar (una vez por dueño + decisión + revisión) y su entrada en la agenda. Si ya estaba, devuelve
- * el que había (sin tocarlo). `ok: false` si el almacén no contestó (quien llama lo reintenta: la decisión sigue
- * agendada).
+ * el que había (sin tocarlo). `ok: true` SOLO si el aviso quedó guardado y, si sigue vivo, agendado: lo único que lo
+ * trabaja sin que nadie abra la app es su entrada en la agenda. `ok: false` si el almacén no contestó; con
+ * `pendiente: true` el aviso sí quedó escrito pero sin agenda (EX-01). En los dos casos quien llama lo reintenta (el
+ * objetivo sigue agendado: server/planificador.ts) y repetirlo no duplica (mismo id, «crear una vez»).
  */
-export async function encolarAvisoDecision(correo: string, ref: RefAviso, o: { almacen?: AlmacenDurable; ahora?: number; venceMs?: number } = {}): Promise<{ ok: true; nuevo: boolean; aviso: AvisoDecision } | { ok: false; detalle: string }> {
+export async function encolarAvisoDecision(
+  correo: string,
+  ref: RefAviso,
+  o: { almacen?: AlmacenDurable; ahora?: number; venceMs?: number } = {}
+): Promise<{ ok: true; nuevo: boolean; aviso: AvisoDecision } | { ok: false; detalle: string; pendiente?: true; nuevo?: boolean; aviso?: AvisoDecision }> {
   const a = o.almacen || almacenDurable();
   const t = o.ahora ?? Date.now();
   const id = idAviso(ref);
@@ -97,8 +103,12 @@ export async function encolarAvisoDecision(correo: string, ref: RefAviso, o: { a
   };
   const r = await crearUnaVez(claveAviso(correo, id), aviso, a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
   if (r.ok === false) return { ok: false, detalle: r.detalle };
-  // La agenda también si ya existía y sigue pendiente (una entrada perdida se repone).
-  if (r.creado || !TERMINALES_AVISO.has(r.valor.estado)) await agendar('aviso', correo, id, r.valor.proximoIntento, { almacen: a, ahora: t }).catch(() => false);
+  // La agenda también si ya existía y sigue pendiente (una entrada perdida se repone). Si no se pudo, se dice: un aviso
+  // vivo sin agenda nadie lo trabaja (EX-01).
+  if (!TERMINALES_AVISO.has(r.valor.estado)) {
+    const agendado = await agendar('aviso', correo, id, r.valor.proximoIntento, { almacen: a, ahora: t }).catch(() => false);
+    if (!agendado) return { ok: false, pendiente: true, detalle: 'el aviso quedó guardado pero no pude agendarlo', nuevo: r.creado, aviso: r.valor };
+  }
   return { ok: true, nuevo: r.creado, aviso: r.valor };
 }
 

@@ -2,20 +2,24 @@
 # LA PRUEBA EN EL EMULADOR: AU-RA FP publicada + la OTA de producción, contra https://aura-fp.onrender.com.
 #
 # Corre DENTRO de reactivecircus/android-emulator-runner (.github/workflows/emulador-android.yml), con el emulador
-# ya encendido y `adb` apuntándole. Instala la APK del Release, la deja traer la OTA (abrir → esperar → reabrir),
-# entra con la cuenta de PRUEBA (si están los secretos y cuenta-prueba.mjs dijo que es segura) y corre los
+# ya encendido y `adb` apuntándole. Instala la APK del Release, la deja traer la OTA (abrir → esperar → reabrir, en
+# ciclos hasta que corra la OTA esperada; qué corre lo dice la base de expo-updates, ota-cargada.py), entra con la
+# cuenta de PRUEBA (si están los secretos y cuenta-prueba.mjs dijo que es segura) y corre los
 # escenarios por el chat de la mesa (texto, nunca el micrófono). Lo que ve lo lee de la pantalla
 # (transcripcion.mjs sobre `maestro hierarchy`).
 #
 # Evidencia en $EVIDENCIA: capturas/ (una por paso), video/ (trozos de <3 min), logcat-app.txt (solo la app),
-# datos/ (lo leído en cada paso) y resultados.tsv (escenario, PASA|FALLA|OMITIDO, detalle) para el resumen.
+# datos/ (lo leído en cada paso; datos/ota.json: la OTA esperada, la que corre y el JS embebido) y resultados.tsv
+# (escenario, PASA|FALLA|OMITIDO, detalle). Este guion NO decide si la OTA queda aceptada: lo decide veredicto.mjs
+# (humo y aceptación por separado; omitido u OTA sin cargar nunca es aceptado).
 #
 # LO QUE NUNCA SALE EN LA EVIDENCIA (el repositorio es público y los artefactos se pueden bajar): ni el correo ni
 # la clave de la cuenta de prueba. Durante la entrada no hay capturas ni grabación, el registro de Maestro de esos
 # pasos no se sube y todo lo de texto pasa por `enmascarar`.
 #
 # Entorno: EVIDENCIA, APK_AURA (ruta del .apk), CUENTA_SEGURA (true|false), CUENTA_MOTIVO, OTA_ESPERADA (updateId
-# de la OTA publicada para el runtime de esa APK, o vacío) y, solo si hay cuenta, AURA_PRUEBA_CORREO/CLAVE.
+# de la OTA publicada para el runtime de esa APK, o vacío), RUNTIME_ESPERADO (la huella de la APK), CANAL_APK (el canal
+# que pide la APK, si se pudo leer), OTA_CICLOS (opcional, 3) y, solo si hay cuenta, AURA_PRUEBA_CORREO/CLAVE.
 set -uo pipefail
 
 PKG="link.ordenglobal.ultronfp"
@@ -248,23 +252,65 @@ if [ "${CUENTA_SEGURA:-false}" != "true" ]; then
   # Sin cuenta no se escribe nada privado: se graba desde la apertura.
   grabar_inicio
 fi
+# Qué JS corre la app: la base de expo-updates (ota-cargada.py explica por qué la base y no el logcat). En la imagen
+# google_apis el `su` del shell lee /data/data; la copia se queda en $TMP (no es evidencia) y solo sale el resumen.
+leer_ota() { # → $TMP/ota-db.json
+  local d="$TMP/updates-db"
+  rm -rf "$d"
+  mkdir -p "$d"
+  if adb shell "su 0 sh -c 'cp /data/data/$PKG/databases/updates.db* /data/local/tmp/ && chmod 644 /data/local/tmp/updates.db*'" > /dev/null 2>&1; then
+    for f in updates.db updates.db-wal updates.db-shm; do adb pull "/data/local/tmp/$f" "$d/$f" > /dev/null 2>&1 || true; done
+    adb shell "su 0 sh -c 'rm -f /data/local/tmp/updates.db*'" > /dev/null 2>&1 || true
+  fi
+  python3 -I "$AQUI/ota-cargada.py" "$d/updates.db" > "$TMP/ota-db.json" 2>> "$TMP/ota-db.err" || echo '{"leida":false,"motivo":"ota-cargada.py falló"}' > "$TMP/ota-db.json"
+}
+ota_lanzada() { jq -r '.lanzada.updateId // ""' "$TMP/ota-db.json" 2>/dev/null | tr 'A-F' 'a-f'; }
+ota_fuente() { jq -r '.lanzada.fuente // "desconocida"' "$TMP/ota-db.json" 2>/dev/null; }
+
+ESPERADA_MIN=$(printf '%s' "${OTA_ESPERADA:-}" | tr 'A-F' 'a-f')
+# El JS embebido de la APK (assets/app.manifest), para el resumen: las dos fuentes de JS, una al lado de la otra.
+JS_EMBEBIDO=$(unzip -p "$APK" assets/app.manifest 2>/dev/null | jq -r '.id // ""' 2>/dev/null || echo "")
+
+# Abrir → esperar → reabrir, hasta que corra la OTA esperada o se acaben los ciclos (OTA_CICLOS, por defecto 3).
+# Con checkAutomatically ON_LOAD y fallbackToCacheTimeout 0, la OTA se baja en un arranque y se lanza en el siguiente.
+OTA_CICLOS="${OTA_CICLOS:-3}"
 lanzar
 sleep 45
 captura "primer-arranque"
-adb shell am force-stop "$PKG"
-sleep 2
-lanzar
-sleep 20
-captura "segundo-arranque"
-# La actualización que la app guardó y carga (expo-updates: «Stored update found: ID = …»), frente a la publicada.
-OTA_CARGADA=$(grep -oE 'Stored update found: ID = [0-9a-fA-F-]+' "$LOGCAT" | tail -n 1 | awk '{print $NF}')
-if [ -z "$OTA_CARGADA" ]; then
-  OTA_VISTA="no (la app sigue con el JS de la APK)"
-elif [ -n "${OTA_ESPERADA:-}" ] && [ "$(echo "$OTA_CARGADA" | tr 'A-F' 'a-f')" = "$(echo "$OTA_ESPERADA" | tr 'A-F' 'a-f')" ]; then
-  OTA_VISTA="sí, la publicada ($OTA_CARGADA)"
-else
-  OTA_VISTA="otra: $OTA_CARGADA"
-fi
+CICLO=0
+while :; do
+  CICLO=$((CICLO + 1))
+  adb shell am force-stop "$PKG"
+  sleep 2
+  lanzar
+  sleep 20
+  captura "arranque-$((CICLO + 1))"
+  leer_ota
+  echo "Ciclo $CICLO de la OTA: corre $(ota_fuente) $(ota_lanzada) (esperada: ${OTA_ESPERADA:-ninguna}); bajadas sin lanzar: $(jq -r '.descargadas // [] | join(",")' "$TMP/ota-db.json" 2>/dev/null)"
+  [ -z "$ESPERADA_MIN" ] && break
+  [ "$(ota_fuente)" = "ota" ] && [ "$(ota_lanzada)" = "$ESPERADA_MIN" ] && break
+  [ "$CICLO" -ge "$OTA_CICLOS" ] && break
+  # Tiempo para que el arranque de ahora la baje (o termine de bajarla) antes de reabrir.
+  sleep 25
+done
+OTA_FUENTE=$(ota_fuente)
+OTA_CARGADA=$(ota_lanzada)
+case "$OTA_FUENTE" in
+  ota) if [ -n "$ESPERADA_MIN" ] && [ "$OTA_CARGADA" = "$ESPERADA_MIN" ]; then OTA_VISTA="sí, la publicada ($OTA_CARGADA)"; else OTA_VISTA="otra: $OTA_CARGADA"; fi ;;
+  embebido) OTA_VISTA="no (la app sigue con el JS embebido de la APK${JS_EMBEBIDO:+ $JS_EMBEBIDO})" ;;
+  *) OTA_VISTA="no se pudo leer ($(jq -r '.motivo // "sin motivo"' "$TMP/ota-db.json" 2>/dev/null))" ;;
+esac
+# Para el veredicto (veredicto.mjs): la OTA esperada, lo que corre y las dos fuentes de JS. Sin datos de la cuenta.
+jq -n --slurpfile db "$TMP/ota-db.json" \
+  --arg esperada "${OTA_ESPERADA:-}" --arg runtime "${RUNTIME_ESPERADO:-}" --arg canalApk "${CANAL_APK:-}" \
+  --arg embebidaApk "$JS_EMBEBIDO" --argjson ciclos "$CICLO" '
+  ($db[0] // {}) as $d
+  | { esperada: $esperada, runtimeEsperado: $runtime, canalEsperado: "production", canalApk: $canalApk,
+      embebida: (if $embebidaApk != "" then $embebidaApk else ($d.embebida // "") end),
+      lanzada: ($d.lanzada // null), descargadas: ($d.descargadas // []), leida: ($d.leida // false),
+      motivo: ($d.motivo // ""), ciclos: $ciclos }' > "$EVID/datos/ota.json" 2>/dev/null \
+  || printf '{"esperada":"%s","lanzada":null,"motivo":"no se pudo escribir ota.json"}\n' "${OTA_ESPERADA:-}" > "$EVID/datos/ota.json"
+echo "OTA: $OTA_VISTA"
 
 ANTES=$(cierres)
 if maestro_flujo "abrir" no abrir.yaml && enfocada; then

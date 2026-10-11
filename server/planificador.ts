@@ -29,8 +29,8 @@ import { cerrarEntrada, leerAgenda, type EntradaAgenda } from '../lib/agenda';
 import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, leerDurable, modificarDurable, PROCESO_DURABLE, type AlmacenDurable, type Lease } from '../lib/durable';
 import { entregarAviso } from '../lib/avisos-decision';
 import { cambiarObjetivo, esTerminalObjetivo, leerObjetivo, type Objetivo } from '../lib/objetivos';
-import { cambiarTarea, esDelPlanificador, esTerminal, leerTarea, type RegistroTarea } from '../lib/tareas-durables';
-import { reconciliarObjetivoConTareas, type DepsObjetivos } from './objetivos';
+import { cambiarTarea, esDelPlanificador, esTerminal, leerTarea, repararDespertares, type RegistroTarea } from '../lib/tareas-durables';
+import { reconciliarObjetivoConTareas, reconciliarYAvisar, REINTENTO_AVISOS_MS, type DepsObjetivos } from './objetivos';
 import { claveLeaseTarea } from './trabajos';
 
 /** Lo que devuelve un ejecutor al intentar arrancar una tarea en cola. Solo `empezada` cuenta como arrancada. */
@@ -62,6 +62,8 @@ export const LEASE_PLANIFICADOR_MS = 60_000;
 export const MAX_INTENTOS_ARRANQUE = 5;
 const REINTENTO_MS = 5 * 60_000;
 const OBJETIVO_INCIERTO_MS = 5 * 60_000;
+/** El tope de la espera para volver a un objetivo cuyos avisos no quedaron guardados (EX-01). */
+const REINTENTO_AVISOS_MAX_MS = 15 * 60_000;
 /** Lo que dice una tarea en cola que el planificador no arranca sin permiso. */
 export const PASO_SIN_AUTORIZACION = 'Esperando que lo autorices';
 export const TOPE_DIARIO_POR_OMISION = 10;
@@ -126,6 +128,9 @@ export async function vueltaPlanificador(d: DepsPlanificador): Promise<ResumenVu
   const reloj = d.ahora || Date.now;
   const titular = d.titular || PROCESO_DURABLE;
   const r: ResumenVuelta = { ok: true, vistas: 0, arrancadas: 0, revisadas: 0, objetivos: 0, ocupadas: 0, inciertas: 0 };
+  // EX-02: las tareas aceptadas cuyo despertar no quedó en la agenda (fallo o agenda llena) se vuelven a agendar
+  // aquí, sin esperar a que la persona repita la petición o abra su lista. Sin duplicar: entrada por id de tarea.
+  await repararDespertares({ almacen: a, ahora: reloj() }).catch(() => null);
   const ag = await leerAgenda(a);
   if (ag.ok === false) return { ...r, ok: false, detalle: ag.detalle };
   const t0 = reloj();
@@ -290,9 +295,17 @@ async function trabajarObjetivo(e: EntradaAgenda, d: DepsPlanificador, a: Almace
   const obj = l.objetivo;
   if (!obj || esTerminalObjetivo(obj.estado) || (obj.estado !== 'incierto' && obj.estado !== 'esperando-decision')) return { quitar: true };
   r.objetivos++;
-  // Esperando decisión: reconciliar encola sus avisos (crear una vez) y los intenta; los reintentos ya van por su cuenta.
-  const final = await reconciliarObjetivoConTareas(e.dueno, obj, { revisarTarea: d.revisar, avisarDecision: d.avisarDecision, almacen: a, ahora: reloj() });
-  return final.estado === 'incierto' ? { cuando: reloj() + OBJETIVO_INCIERTO_MS } : { quitar: true };
+  // Esperando decisión: reconciliar encola sus avisos (crear una vez) y los intenta; los reintentos ya van por su cuenta
+  // (cada aviso tiene su entrada en la agenda).
+  const res = await reconciliarYAvisar(e.dueno, obj, { revisarTarea: d.revisar, avisarDecision: d.avisarDecision, almacen: a, ahora: reloj(), agendarSiFalta: false });
+  if (res.objetivo.estado === 'incierto') return { cuando: reloj() + OBJETIVO_INCIERTO_MS };
+  // EX-01: mientras alguna decisión vigente no tenga su aviso guardado Y agendado, el objetivo NO sale de la agenda: la
+  // próxima vuelta lo reintenta (crear una vez + agendar: no duplica), con espera creciente y acotada.
+  if (!res.avisosCompletos) {
+    const intentos = intentoDe(e) + 1;
+    return { cuando: reloj() + Math.min(REINTENTO_AVISOS_MS * 2 ** (intentos - 1), REINTENTO_AVISOS_MAX_MS), intentos };
+  }
+  return { quitar: true };
 }
 
 /** Un aviso de la bandeja de salida: un intento de entrega (reclamo con CAS dentro). */

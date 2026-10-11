@@ -48,7 +48,7 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { agendar } from './agenda';
+import { agendarDetallado, anotarDespertarPendiente, leerDespertaresPendientes, leerDuenosDesbordados, llaveAgenda, quitarDespertarPendiente, quitarDuenoDesbordado, type ResultadoAgendar } from './agenda';
 import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, remiteAOtroLugar, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
@@ -198,6 +198,13 @@ export type RegistroTarea = {
   ejecutar?: boolean;
   enlace?: EnlaceTarea;
   proximaRevision?: number;
+  /**
+   * EX-02: la intención durable de despertarla (entrar en la agenda del planificador) que todavía no se confirmó. Se
+   * escribe CON el objeto (al crearla) o en la MISMA escritura del cambio que la vuelve elegible (en cola, autorizada,
+   * una revisión nueva) y se borra al confirmar la entrada en la agenda. Si sigue ahí, alguien tiene que repararla
+   * (`repararDespertares`, el mismo requestId, la lista). No sube la versión ni deja evento. No sale al cliente tal cual.
+   */
+  despertar?: MarcaDespertar;
   condicionParada: string;
   creada: number;
   actualizada: number;
@@ -205,6 +212,21 @@ export type RegistroTarea = {
   secuencia: number;
   eventos: EventoTarea[];
 };
+
+/**
+ * EX-02: por qué el despertar sigue sin confirmar. `sin-confirmar`: se escribió la intención y todavía no se supo nada
+ * (o el proceso murió antes de agendar); `almacen`: la agenda no se pudo escribir; `agenda-llena`: la agenda llegó a su
+ * tope (estado BLOQUEADO visible, se recupera cuando se hace sitio).
+ */
+export type MotivoDespertar = 'sin-confirmar' | 'almacen' | 'agenda-llena';
+/** `marca`: quién la puso (solo esa misma marca se borra: una más nueva, de otro cambio, se queda). */
+export type MarcaDespertar = { cuando: number; marca: string; motivo: MotivoDespertar; desde: number };
+/**
+ * Lo que se le dice a quien crea o cambia una tarea sobre su despertar: `agendada` (está en la agenda), `pendiente` (no
+ * se pudo; queda marcada y anotada para repararla), `bloqueada` (la agenda está llena; ídem) o `no-aplica` (nada que
+ * despertar: no es del planificador, ya empezó o terminó).
+ */
+export type EstadoDespertar = 'agendada' | 'pendiente' | 'bloqueada' | 'no-aplica';
 
 /** Cuántos eventos se guardan con la tarea (el resto se reconstruye con el snapshot). */
 export const MAX_EVENTOS = 60;
@@ -419,7 +441,8 @@ export function registroNuevo(id: string, d: NuevaTarea, ahora: number): Registr
   return reg;
 }
 
-export type ResultadoCrearTarea = { ok: true; creada: boolean; tarea: RegistroTarea } | { ok: false; motivo: 'almacen' | 'invalida'; detalle: string };
+/** `despertar` (EX-02): si quedó en la agenda del planificador; `pendiente`/`bloqueada` es creada, pero sin despertar aún. */
+export type ResultadoCrearTarea = { ok: true; creada: boolean; tarea: RegistroTarea; despertar: EstadoDespertar } | { ok: false; motivo: 'almacen' | 'invalida'; detalle: string };
 
 type Opciones = { almacen?: AlmacenDurable; ahora?: number };
 
@@ -441,12 +464,23 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
   if (ix.ok === false) return { ok: false, motivo: 'almacen', detalle: `no pude anotar la tarea en tu índice; no la creé (${ix.detalle.slice(0, 100)})` };
   // Si quien reservó murió antes de escribir la tarea, el siguiente la escribe con el MISMO id. Con la huella de su dueño
   // dentro (A7): el inventario no se fía solo de la carpeta en que está el objeto.
-  const c = await crearUnaVez(claveTarea(dueno, r.id), { ...registroNuevo(r.id, d, ahora), dueno: huellaDueno(dueno) }, a);
+  const nuevo: RegistroTarea = { ...registroNuevo(r.id, d, ahora), dueno: huellaDueno(dueno) };
+  // EX-02: la intención de despertarla viaja CON el objeto. Si el proceso muere entre esta escritura y la agenda, la
+  // marca ya está y cualquiera la repara (el mismo requestId, la lista, `repararDespertares`).
+  const cuando = cuandoDespertar(null, nuevo);
+  if (cuando !== null) nuevo.despertar = marcaNueva(cuando, ahora);
+  // Y ANTES del objeto, su anotación en la lista global (el id ya se sabe): si el proceso muere después de escribir la
+  // tarea y antes de la agenda, la vuelta del planificador (que solo mira esa lista) la encuentra sin saber de quién es.
+  // Si muere antes del objeto, la vuelta no la suelta hasta pasada la gracia (GRACIA_DESPERTAR_MS).
+  const anotada = cuando !== null && (await anotarDespertarPendiente('tarea', dueno, r.id, 'sin-confirmar', { almacen: a, ahora }).catch(() => false));
+  const c = await crearUnaVez(claveTarea(dueno, r.id), nuevo, a);
   if (c.ok === false) return { ok: false, motivo: 'almacen', detalle: c.detalle };
   // Fase 2: lo que espera a que alguien lo corra (`queued`) o tiene una revisión programada entra en la agenda del
   // planificador (server/planificador.ts): sin esto, nadie lo miraba hasta que la persona abría la lista.
-  if (c.creado) await agendarSiToca(dueno, null, c.valor, a);
-  return { ok: true, creada: c.creado, tarea: c.valor };
+  // EX-02: también al REPETIR el pedido (antes, `creado: false` no volvía a agendar y un despertar perdido no se reparaba):
+  // con la marca, se reintenta; sin marca (una tarea de antes), si sigue en cola y autorizada, se agenda si falta.
+  const dsp = c.creado ? await despertarTarea(dueno, c.valor, a, ahora) : await repararAlRepetir(dueno, c.valor, a, ahora, anotada);
+  return { ok: true, creada: c.creado, tarea: dsp.tarea, despertar: dsp.estado };
 }
 
 /**
@@ -1403,6 +1437,14 @@ export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a
     });
   }
   const reparado = await repararIndice(dueno, { fines, podar }, a);
+  // EX-02: lo que trae la marca `despertar` (un despertar sin confirmar) se intenta agendar ya; pocas por lectura.
+  let intentos = 0;
+  for (const [j, t] of tareas.entries()) {
+    if (!t.despertar) continue;
+    if (++intentos > 3) break;
+    const d = await despertarTarea(dueno, t, a, ahora).catch(() => null);
+    if (d) tareas[j] = d.tarea;
+  }
   const quedan = i < candidatas.length;
   const total = indice?.ids.length ?? 0;
   const terminadas = (indice?.ids || []).filter((x) => x.fin || fines.has(x.id)).length;
@@ -1429,7 +1471,8 @@ export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDur
 
 /* ------------------------------------------------------------------ cambiar */
 
-export type ResultadoCambio = { ok: true; tarea: RegistroTarea; cambiado: boolean } | { ok: false; motivo: MotivoRechazo; tarea?: RegistroTarea; detalle?: string };
+/** `despertar` (EX-02): solo cuando el cambio la volvió elegible para la agenda (en cola, autorizada, revisión nueva). */
+export type ResultadoCambio = { ok: true; tarea: RegistroTarea; cambiado: boolean; despertar?: EstadoDespertar } | { ok: false; motivo: MotivoRechazo; tarea?: RegistroTarea; detalle?: string };
 
 /**
  * Cambia la tarea con CAS. `cambio` recibe el registro actual (una copia) y devuelve el cambio, o null para
@@ -1445,36 +1488,73 @@ export async function cambiarTarea(
   let motivo: MotivoRechazo | null = null;
   let visto: RegistroTarea | undefined;
   let cambiado = false;
-  const r = await modificarDurable<RegistroTarea>(
-    claveTarea(dueno, id),
-    (reg) => {
-      motivo = null;
-      cambiado = false;
-      visto = reg && !esDeOtro(reg, dueno) ? reg : undefined;
-      if (!reg || !visto) return void (motivo = 'no-existe');
-      if (o.expectedVersion !== undefined && reg.version !== o.expectedVersion) return void (motivo = 'version');
-      const c = cambio(reg);
-      if (!c) return undefined;
-      const ap = aplicarCambio(reg, c, o.ahora ?? Date.now());
-      if (ap.ok === false) return void (motivo = ap.motivo);
-      cambiado = ap.cambiado;
-      return ap.cambiado || c.soloLatido ? ap.reg : undefined;
-    },
-    a
-  );
+  let marca: string | null = null;
+  const t = o.ahora ?? Date.now();
+  // EX-02: toda marca `despertar` se anota en la lista global ANTES de escribirse. Si este cambio la va a poner y aún no
+  // se anotó, el CAS no escribe (`falta`), se anota y se repite: solo los cambios que la vuelven elegible pagan esa
+  // vuelta de más (no los latidos ni el progreso).
+  let anotada = false;
+  let falta = false;
+  const escribir = () =>
+    modificarDurable<RegistroTarea>(
+      claveTarea(dueno, id),
+      (reg) => {
+        motivo = null;
+        cambiado = false;
+        marca = null;
+        falta = false;
+        visto = reg && !esDeOtro(reg, dueno) ? reg : undefined;
+        if (!reg || !visto) return void (motivo = 'no-existe');
+        if (o.expectedVersion !== undefined && reg.version !== o.expectedVersion) return void (motivo = 'version');
+        const c = cambio(reg);
+        if (!c) return undefined;
+        const ap = aplicarCambio(reg, c, t);
+        if (ap.ok === false) return void (motivo = ap.motivo);
+        cambiado = ap.cambiado;
+        if (ap.cambiado) {
+          // EX-02: si este cambio la vuelve elegible para la agenda, la intención va en ESTA escritura (morir antes de
+          // agendar no la pierde); si deja de serlo (arrancó, terminó), la marca vieja se va con él.
+          const cuando = cuandoDespertar(reg, ap.reg);
+          if (cuando !== null && !anotada) {
+            falta = true;
+            return undefined;
+          }
+          if (cuando !== null) {
+            ap.reg.despertar = marcaNueva(cuando, t);
+            marca = ap.reg.despertar.marca;
+          } else if (ap.reg.despertar && !elegibleDespertar(ap.reg)) delete ap.reg.despertar;
+        }
+        return ap.cambiado || c.soloLatido ? ap.reg : undefined;
+      },
+      a
+    );
+  let r = await escribir();
+  if (falta && r.ok === true) {
+    // Aunque no se pudiera anotar, la marca va igual (la reparación por dueño y la lista de la persona la encuentran).
+    await anotarDespertarPendiente('tarea', dueno, id, 'sin-confirmar', { almacen: a, ahora: t }).catch(() => false);
+    anotada = true;
+    r = await escribir();
+    // Si al final este cambio no puso marca (otro se adelantó), la anotación sobra: la vuelta global la suelta pasada la
+    // gracia (tarea sin marca). Soltarla aquí podría llevarse la de otro cambio que la está poniendo ahora mismo.
+  }
   if (r.ok === false) return { ok: false, motivo: 'almacen', detalle: r.detalle, tarea: visto };
   if (motivo) return { ok: false, motivo, tarea: visto };
-  const final = (r.valor as RegistroTarea | null) || visto!;
+  let final = (r.valor as RegistroTarea | null) || visto!;
   // Terminó: su entrada del índice pasa a historial (solo esas se recortan). Si no se puede anotar, queda como «puede
   // seguir activa» (la lista la lee y lo repara): nunca al revés.
   if (cambiado && visto && !esTerminal(visto.estado) && esTerminal(final.estado)) await repararIndice(dueno, { fines: new Map([[id, final.actualizada]]) }, a);
-  if (cambiado && visto) await agendarSiToca(dueno, visto, final, a);
+  if (cambiado && marca && final.despertar?.marca === marca) {
+    const dsp = await despertarTarea(dueno, final, a, t);
+    final = dsp.tarea;
+    return { ok: true, tarea: final, cambiado, despertar: dsp.estado };
+  }
   return { ok: true, tarea: final, cambiado };
 }
 
 /**
  * La persona autoriza que el planificador trabaje sola una tarea en cola que ya existía (`ejecutar: true` sobre el mismo
- * requestId). Idempotente; vuelve a la agenda (agendarSiToca) y se borra el «Esperando que lo autorices».
+ * requestId). Idempotente; vuelve a la agenda (la marca `despertar` va en la misma escritura: ver `cambiarTarea`) y se borra
+ * el «Esperando que lo autorices».
  */
 export async function autorizarEjecucion(dueno: string, id: string, o: Opciones = {}): Promise<ResultadoCambio> {
   return cambiarTarea(dueno, id, (t) => (t.estado === 'queued' && !t.ejecutar ? { ejecutar: true, pasoActual: null } : null), o);
@@ -1487,18 +1567,272 @@ export async function autorizarEjecucion(dueno: string, id: string, o: Opciones 
  */
 export const esDelPlanificador = (reg: Pick<RegistroTarea, 'origen' | 'entorno'> | null | undefined): boolean => reg?.origen?.kind === 'api' && reg?.entorno?.id === 'api';
 
+/* ------------------------------------------------------------------ despertar (agenda del planificador) */
+
+/** ¿Tiene algo que despertar? Lo del planificador, no terminado, en cola o con una revisión programada. */
+export function elegibleDespertar(reg: RegistroTarea): boolean {
+  return !esTerminal(reg.estado) && esDelPlanificador(reg) && (reg.estado === 'queued' || !!reg.proximaRevision);
+}
+
 /**
- * Fase 2: a la agenda del planificador si la tarea acaba de quedar `queued` (o, en cola, la acaban de autorizar) o le
+ * Fase 2: ¿toca agendarla por ESTE cambio? Si acaba de quedar `queued` (o, en cola, la acaban de autorizar) o le
  * pusieron (o adelantaron) una `proximaRevision`. Solo las que el planificador sabe trabajar (`esDelPlanificador`).
- * Lo mejor posible: si la agenda no se pudo escribir, la tarea sigue como está (la lista la ve igual).
+ * Devuelve para cuándo, o null.
  */
-async function agendarSiToca(dueno: string, antes: RegistroTarea | null, ahora: RegistroTarea, a: AlmacenDurable): Promise<void> {
-  if (esTerminal(ahora.estado) || !esDelPlanificador(ahora)) return;
+function cuandoDespertar(antes: RegistroTarea | null, ahora: RegistroTarea): number | null {
+  if (esTerminal(ahora.estado) || !esDelPlanificador(ahora)) return null;
   const encolada = ahora.estado === 'queued' && (antes?.estado !== 'queued' || (!!ahora.ejecutar && !antes?.ejecutar));
   const revision = !!ahora.proximaRevision && ahora.proximaRevision !== antes?.proximaRevision;
-  if (!encolada && !revision) return;
-  const cuando = encolada ? ahora.actualizada : Math.max(ahora.actualizada, ahora.proximaRevision!);
-  await agendar('tarea', dueno, ahora.id, cuando, { almacen: a }).catch(() => false);
+  if (!encolada && !revision) return null;
+  return encolada ? ahora.actualizada : Math.max(ahora.actualizada, ahora.proximaRevision!);
+}
+
+/** Para cuándo despertar una elegible sin marca (una tarea de antes): en cola, ya; si no, su revisión. */
+const cuandoElegible = (reg: RegistroTarea) => (reg.estado === 'queued' ? reg.actualizada : Math.max(reg.actualizada, reg.proximaRevision || reg.actualizada));
+
+const marcaNueva = (cuando: number, ahora: number): MarcaDespertar => ({ cuando, marca: crypto.randomBytes(6).toString('hex'), motivo: 'sin-confirmar', desde: ahora });
+
+/**
+ * Pone, cambia o quita la marca `despertar` de una tarea SIN tocar su versión ni sus eventos (como el latido: el
+ * expectedVersion que tiene el cliente sigue valiendo). `f` recibe el registro actual y devuelve la marca nueva, null para
+ * quitarla o undefined para no tocar nada. Devuelve el registro escrito (o null si no cambió o falló). Nunca lanza.
+ */
+async function ajustarMarca(dueno: string, id: string, f: (reg: RegistroTarea) => MarcaDespertar | null | undefined, a: AlmacenDurable): Promise<RegistroTarea | null> {
+  const w = await modificarDurable<RegistroTarea>(
+    claveTarea(dueno, id),
+    (reg) => {
+      if (!reg || esDeOtro(reg, dueno)) return undefined;
+      const m = f(reg);
+      if (m === undefined) return undefined;
+      if (m === null) {
+        if (!reg.despertar) return undefined;
+        delete reg.despertar;
+        return reg;
+      }
+      return { ...reg, despertar: m };
+    },
+    a
+  ).catch(() => null);
+  return w && w.ok === true && w.cambiado ? (w.valor as RegistroTarea) : null;
+}
+
+/**
+ * EX-02: intenta dejar la tarea en la agenda del planificador (idempotente: la entrada es por tarea, y arrancarla sigue
+ * pasando por su lease y `ejecutarUnaVez`: despertarla dos veces no la corre dos veces).
+ *   · agendada: se borra SU marca (solo si sigue siendo la misma) y su anotación en los despertares pendientes;
+ *   · no se pudo: se anota en los despertares pendientes (lib/agenda.ts, otra clave) y la marca dice por qué
+ *     (`almacen` o `agenda-llena`); la respuesta lo dice (`pendiente` o `bloqueada`), nunca un éxito callado;
+ *   · ya no es elegible (arrancó, terminó): se quita la marca (y su anotación) y nada más.
+ * `soloSiFalta`: si ya hay entrada no se toca (las reparaciones de tareas sin marca). `soltar`: quitar la anotación al
+ * confirmar (por omisión, si traía marca: toda marca se anota ANTES de escribirse); la vuelta global pasa false porque la
+ * quita ella con la marca `t` que vio. Nunca lanza.
+ */
+async function despertarTarea(
+  dueno: string,
+  reg: RegistroTarea,
+  a: AlmacenDurable,
+  ahora: number,
+  o: { soloSiFalta?: boolean; soltar?: boolean } = {}
+): Promise<{ estado: EstadoDespertar; tarea: RegistroTarea }> {
+  const m = reg.despertar;
+  const soltar = o.soltar ?? !!m;
+  // Borra SU marca; si otro la borró antes, la vista que se devuelve tampoco la trae (C: dos creaciones a la vez con el
+  // mismo requestId, la segunda no devuelve «agendada» con un wakeUp pendiente). Con una marca MÁS NUEVA (otro cambio)
+  // la anotación se queda: es de esa.
+  const borrarMarca = async (soloSi: (x: RegistroTarea) => boolean): Promise<RegistroTarea> => {
+    if (!m) {
+      if (soltar) await soltarPendiente(dueno, reg.id, a);
+      return reg;
+    }
+    // Qué vio el CAS: `borra` (la suya, se borra), `sin` (ya no había marca), `queda` (sigue una marca: otra o la suya).
+    let visto: 'borra' | 'sin' | 'queda' | null = null;
+    const q = await ajustarMarca(
+      dueno,
+      reg.id,
+      (x) => {
+        if (x.despertar?.marca === m.marca && soloSi(x)) {
+          visto = 'borra';
+          return null;
+        }
+        visto = x.despertar ? 'queda' : 'sin';
+        return undefined;
+      },
+      a
+    );
+    if (soltar && ((visto === 'borra' && q) || visto === 'sin')) await soltarPendiente(dueno, reg.id, a);
+    return q ?? (reg.despertar?.marca === m.marca ? { ...reg, despertar: undefined } : reg);
+  };
+  if (!elegibleDespertar(reg)) {
+    if (!m && !o.soltar) return { estado: 'no-aplica', tarea: reg };
+    return { estado: 'no-aplica', tarea: await borrarMarca((x) => !elegibleDespertar(x)) };
+  }
+  const r = await agendarDetallado('tarea', dueno, reg.id, m?.cuando ?? cuandoElegible(reg), { almacen: a, ahora, soloSiFalta: o.soloSiFalta }).catch((): ResultadoAgendar => ({ ok: false, motivo: 'almacen' }));
+  if (r.ok === true) return { estado: 'agendada', tarea: await borrarMarca(() => true) };
+  const motivo: MotivoDespertar = r.ok === false && r.motivo === 'lleno' ? 'agenda-llena' : 'almacen';
+  // Primero la lista global (para que el planificador la encuentre sin saber de quién es), después la marca.
+  await anotarDespertarPendiente('tarea', dueno, reg.id, motivo, { almacen: a, ahora }).catch(() => false);
+  const q = await ajustarMarca(
+    dueno,
+    reg.id,
+    (x) => {
+      if (!elegibleDespertar(x)) return undefined;
+      if (m) return x.despertar?.marca === m.marca && x.despertar.motivo !== motivo ? { ...x.despertar, motivo } : undefined;
+      // Sin marca (una de antes): se le pone ahora, si nadie le puso otra entretanto.
+      return x.despertar ? undefined : { ...marcaNueva(cuandoElegible(x), ahora), motivo };
+    },
+    a
+  );
+  return { estado: motivo === 'agenda-llena' ? 'bloqueada' : 'pendiente', tarea: q ?? reg };
+}
+
+/**
+ * Quita la anotación de esta tarea en los despertares pendientes (la que se puso antes de escribir su marca), solo con la
+ * marca `t` que se ve ahora: si alguien la vuelve a anotar entretanto (otro cambio, otra marca), `t` sube y se queda.
+ * Lo mejor posible: si falla, la vuelta global la suelta (tarea sin marca) pasada la gracia. Nunca lanza.
+ */
+async function soltarPendiente(dueno: string, id: string, a: AlmacenDurable): Promise<void> {
+  const k = llaveAgenda('tarea', String(dueno || '').trim().toLowerCase(), id);
+  const p = await leerDespertaresPendientes(a).catch(() => null);
+  const e = p && p.ok ? p.entradas.find((x) => x.k === k) : undefined;
+  if (e) await quitarDespertarPendiente(e.k, e.t, a).catch(() => false);
+}
+
+/**
+ * El mismo requestId otra vez (EX-02): con marca, se reintenta; sin marca, si sigue en cola y AUTORIZADA (`ejecutar`) y
+ * es del planificador, se agenda solo si falta (una tarea de antes de esta revisión que perdió su despertar). `anotada`:
+ * esta petición ya la anotó en los despertares pendientes (antes de saber que era una repetición): si no queda nada que
+ * despertar, se suelta.
+ */
+async function repararAlRepetir(dueno: string, reg: RegistroTarea, a: AlmacenDurable, ahora: number, anotada = false): Promise<{ estado: EstadoDespertar; tarea: RegistroTarea }> {
+  if (reg.despertar) return despertarTarea(dueno, reg, a, ahora);
+  if (reg.estado === 'queued' && reg.ejecutar === true && elegibleDespertar(reg)) return despertarTarea(dueno, reg, a, ahora, { soloSiFalta: true, soltar: anotada });
+  if (anotada) await soltarPendiente(dueno, reg.id, a);
+  return { estado: 'no-aplica', tarea: reg };
+}
+
+/**
+ * EX-02: cuánto se respeta una anotación `sin-confirmar` cuya tarea aún no existe (o no trae marca). Se anota ANTES de
+ * escribir el objeto: sin esta gracia, una vuelta que pasara justo entre las dos escrituras la soltaría y, si el proceso
+ * muriera tras escribir la tarea, nadie la encontraría sin saber de quién es.
+ */
+export const GRACIA_DESPERTAR_MS = 5 * 60_000;
+
+export type ResultadoReparacion = { ok: boolean; vistas: number; reparadas: number; pendientes: number; llena: boolean; detalle?: string };
+
+/**
+ * EX-02: repara los despertares que no se confirmaron. Idempotente y sin duplicar (la entrada de la agenda es por tarea;
+ * arrancar sigue pasando por el lease y `ejecutarUnaVez`).
+ *   · sin `dueno` (lo llama el planificador en cada vuelta): la lista global de despertares pendientes (lib/agenda.ts);
+ *     una entrada cuya tarea ya no tiene marca (ya se agendó, arrancó o terminó) se quita; si es `sin-confirmar` (se
+ *     anota ANTES de escribir la tarea o su marca), solo pasada la gracia (GRACIA_DESPERTAR_MS): antes puede ser que el
+ *     objeto aún no esté escrito. Un `objetivo` (lib/objetivos.ts: su reintento de avisos no cupo en la agenda, EX-01) se
+ *     vuelve a agendar si falta (lo que haya que hacer con él lo decide el planificador al trabajarlo). Si la agenda
+ *     sigue llena, para ahí (`llena: true`) y lo deja para la próxima vuelta;
+ *   · con `dueno`: recorre el índice de ESE dueño (las que pueden seguir activas) y repara las que traen la marca, aunque
+ *     no hayan llegado a la lista global (el proceso murió antes de anotarlas).
+ * `max`: cuántas mira como mucho por llamada. Nunca lanza.
+ */
+export async function repararDespertares(o: { dueno?: string; almacen?: AlmacenDurable; ahora?: number; max?: number } = {}): Promise<ResultadoReparacion> {
+  const a = o.almacen || almacenDurable();
+  const ahora = o.ahora ?? Date.now();
+  const max = Math.max(1, Math.floor(o.max ?? 50));
+  const res: ResultadoReparacion = { ok: true, vistas: 0, reparadas: 0, pendientes: 0, llena: false };
+  try {
+    if (o.dueno) {
+      const ix = await leerDurable<Indice>(claveIndice(o.dueno), a);
+      if (ix.ok === false) return { ...res, ok: false, detalle: ix.detalle };
+      const ids = (ix.valor?.ids || []).filter((x) => !x.fin).map((x) => x.id);
+      for (let i = 0; i < ids.length && res.vistas < max && !res.llena; i += 10) {
+        const leidas = await Promise.all(ids.slice(i, i + 10).map((id) => leerTarea(o.dueno!, id, a).catch(() => null)));
+        for (const l of leidas) {
+          if (!l || l.ok === false) {
+            res.ok = false;
+            continue;
+          }
+          if (!l.tarea?.despertar || res.vistas >= max || res.llena) continue;
+          res.vistas++;
+          const d = await despertarTarea(o.dueno, l.tarea, a, ahora);
+          if (d.estado === 'agendada') res.reparadas++;
+          else if (d.estado !== 'no-aplica') res.pendientes++;
+          if (d.estado === 'bloqueada') res.llena = true;
+        }
+      }
+      return res;
+    }
+    const p = await leerDespertaresPendientes(a);
+    if (p.ok === false) return { ...res, ok: false, detalle: p.detalle };
+    for (const e of p.entradas.filter((x) => x.tipo === 'tarea' || x.tipo === 'objetivo')) {
+      if (res.vistas >= max) {
+        res.pendientes++;
+        continue;
+      }
+      if (res.llena) {
+        res.pendientes++;
+        continue;
+      }
+      res.vistas++;
+      if (e.tipo === 'objetivo') {
+        const g = await agendarDetallado('objetivo', e.dueno, e.id, ahora, { almacen: a, ahora, soloSiFalta: true }).catch((): ResultadoAgendar => ({ ok: false, motivo: 'almacen' }));
+        if (g.ok === true || g.motivo === 'invalida') {
+          if (g.ok === true) res.reparadas++;
+          await quitarDespertarPendiente(e.k, e.t, a);
+          continue;
+        }
+        res.pendientes++;
+        if (g.motivo === 'lleno') res.llena = true;
+        else res.ok = false;
+        continue;
+      }
+      const l = await leerTarea(e.dueno, e.id, a).catch(() => null);
+      if (!l || l.ok === false) {
+        res.ok = false;
+        res.pendientes++;
+        continue;
+      }
+      // Sin tarea o sin marca: ya no hay nada que despertar por esta vía (se agendó, arrancó o terminó). Salvo una
+      // `sin-confirmar` todavía en gracia: quien la anotó puede estar escribiendo el objeto (o su marca) ahora mismo.
+      if (!l.tarea?.despertar) {
+        if (e.motivo === 'sin-confirmar' && ahora - e.t < GRACIA_DESPERTAR_MS) {
+          res.pendientes++;
+          continue;
+        }
+        await quitarDespertarPendiente(e.k, e.t, a);
+        continue;
+      }
+      const d = await despertarTarea(e.dueno, l.tarea, a, ahora, { soltar: false });
+      if (d.estado === 'agendada' || d.estado === 'no-aplica') {
+        if (d.estado === 'agendada') res.reparadas++;
+        await quitarDespertarPendiente(e.k, e.t, a);
+        continue;
+      }
+      res.pendientes++;
+      if (d.estado === 'bloqueada') res.llena = true;
+    }
+    // Las cuentas cuyo despertar no cupo en la lista (desborde): se revisan por su índice, con su propio cupo (que
+    // una lista llena no las deje sin turno): hasta 5 cuentas y 20 tareas con marca por vuelta. Se quitan cuando la
+    // revisión vio todas sus tareas sin dejar ninguna pendiente.
+    if (!res.llena) {
+      const dd = await leerDuenosDesbordados(a);
+      if (dd.ok === false) res.ok = false;
+      else {
+        let cupo = 20;
+        for (const x of dd.duenos.slice(0, 5)) {
+          if (res.llena || cupo <= 0) break;
+          const r = await repararDespertares({ dueno: x.dueno, almacen: a, ahora, max: cupo });
+          cupo -= r.vistas;
+          res.vistas += r.vistas;
+          res.reparadas += r.reparadas;
+          res.pendientes += r.pendientes;
+          if (r.llena) res.llena = true;
+          if (r.ok === false) res.ok = false;
+          else if (r.pendientes === 0 && cupo > 0) await quitarDuenoDesbordado(x.dueno, x.t, a);
+        }
+      }
+    }
+    return res;
+  } catch (e: any) {
+    return { ...res, ok: false, detalle: String(e?.message || e).slice(0, 160) };
+  }
 }
 
 /* ------------------------------------------------------------------ decisiones */
@@ -1592,6 +1926,11 @@ export type TaskSnapshot = {
   updatedAt: string;
   origin: Origen;
   goalId?: string;
+  /**
+   * EX-02: la tarea está creada pero su despertar (la agenda del planificador) no se confirmó: `pending` (se reintenta
+   * solo) o `blocked` (la agenda está llena; se recupera cuando haya sitio). Sin esto, nada que avisar.
+   */
+  wakeUp?: { status: 'pending' | 'blocked'; reason: MotivoDespertar; since: string };
   controls: { pause: boolean; resume: boolean; cancel: boolean; open?: 'computadora' };
 };
 
@@ -1654,6 +1993,7 @@ export function vistaTarea(reg: RegistroTarea, ahora = Date.now()): TaskSnapshot
     updatedAt: iso(reg.actualizada)!,
     origin: reg.origen,
     ...(reg.objetivoId ? { goalId: reg.objetivoId } : {}),
+    ...(reg.despertar && !terminal ? { wakeUp: { status: reg.despertar.motivo === 'agenda-llena' ? ('blocked' as const) : ('pending' as const), reason: reg.despertar.motivo, since: iso(reg.despertar.desde)! } } : {}),
     controls: {
       // Una investigación en segundo plano no se pausa (corre de un tirón con su tope); se puede cancelar.
       pause: !terminal && PAUSABLES.has(reg.estado) && !esInvestigacion(reg),
