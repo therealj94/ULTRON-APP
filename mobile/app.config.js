@@ -173,6 +173,16 @@ module.exports = ({ config }) => {
       // Con el teclado abierto la pantalla se acomoda (el hilo se achica) en vez de correrse hacia
       // arriba y esconder la barra de arriba.
       softwareKeyboardLayoutMode: 'resize',
+      // Los plugins que siguen (huella, servicio de llamada) los vuelven a agregar después del filtro
+      // de arriba: bloqueados aquí, salen del manifiesto final.
+      blockedPermissions: [
+        ...new Set([
+          ...(expo.android?.blockedPermissions || []),
+          'android.permission.USE_BIOMETRIC',
+          'android.permission.USE_FINGERPRINT',
+          'android.permission.FOREGROUND_SERVICE_CAMERA',
+        ]),
+      ],
     },
     plugins: (expo.plugins || []).map((p) => {
       if (!Array.isArray(p)) return p;
