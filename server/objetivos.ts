@@ -48,7 +48,7 @@ import {
 import { claveManifiesto, type ManifiestoArchivo } from '../lib/oficina/almacen';
 import { bloqueObjetivosTurno, objetivosAlCaso, type ObjetivoParaTurno } from '../lib/objetivos-turno';
 import { agendar } from '../lib/agenda';
-import { encolarAvisoDecision, entregarAviso, type RefAviso } from '../lib/avisos-decision';
+import { encolarAvisoDecision, entregarAviso, TERMINALES_AVISO, type EstadoAviso, type RefAviso } from '../lib/avisos-decision';
 import { datosPushDecision, enviarPush, pedirDecisionPorPush, type PushDecision } from '../lib/push';
 import { autorizarEjecucion, cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea, type Vinculo } from '../lib/tareas-durables';
 import { operacionDeBorrador } from '../lib/envios';
@@ -81,11 +81,25 @@ const conCorreo = (c: string) => {
 /* ------------------------------------------------------------------ reconciliar y avisar */
 
 /**
+ * Lo que quedó de cada aviso (EX-01), por referencia:
+ *   · `agendado`: guardado en la bandeja de salida y con su entrada en la agenda (el planificador lo trabaja solo);
+ *   · `terminado`: ya no hace falta agenda (entregado, invalidado, diagnosticado, agotado o vencido);
+ *   · `sin-registrar`: no se pudo guardar el aviso;
+ *   · `sin-agendar`: se guardó pero sin entrada en la agenda (nadie lo trabajaría sin otra reconciliación).
+ * `completo`: todos `agendado` o `terminado`. Si no, quien llama deja el objetivo agendado para reintentarlo.
+ */
+export type EstadoAvisoRef = 'agendado' | 'terminado' | 'sin-registrar' | 'sin-agendar';
+export type ResultadoAvisos = { completo: boolean; resultados: { ref: RefAviso; estado: EstadoAvisoRef; detalle?: string }[] };
+
+/** Cuánto espera el planificador para volver a un objetivo cuyos avisos no quedaron guardados (una vuelta, con espera). */
+export const REINTENTO_AVISOS_MS = 60_000;
+
+/**
  * «Necesito tu decisión» por cada decisión pendiente del objetivo y por cada tarea suya que espera aprobación (F04): cada
  * una queda en la bandeja de salida durable (lib/avisos-decision.ts, una vez por decisión + revisión) y se intenta
  * entregar ya con `avisar` (el transporte). Si falla, el planificador la reintenta con espera; si la decisión cambia o se
  * resuelve antes, no sale. Sin `avisar` solo se encola (la entrega la hace el planificador). Llamarlo dos veces no avisa
- * dos veces. Devuelve cuántas decisiones esperan. Nunca lanza.
+ * dos veces. Devuelve qué quedó guardado de cada una (EX-01: no cuántas había). Nunca lanza.
  */
 export async function avisarDecisionesPendientes(
   correo: string,
@@ -93,19 +107,33 @@ export async function avisarDecisionesPendientes(
   tareas: (RegistroTarea | null)[],
   avisar?: DepsObjetivos['avisarDecision'],
   o: { almacen?: AlmacenDurable; ahora?: number } = {}
-): Promise<number> {
-  if (obj.estado !== 'esperando-decision' || esTerminalObjetivo(obj.estado)) return 0;
+): Promise<ResultadoAvisos> {
+  if (obj.estado !== 'esperando-decision' || esTerminalObjetivo(obj.estado)) return { completo: true, resultados: [] };
   const refs: RefAviso[] = [];
   for (const d of obj.decisiones) if (!d.elegida) refs.push({ objetivoId: obj.id, decisionId: d.id, revision: d.version });
   for (const t of tareas) {
     if (!t || esTerminal(t.estado) || t.estado !== 'awaiting_approval' || !t.decision) continue;
     refs.push({ objetivoId: obj.id, tareaId: t.id, decisionId: t.decision.id, revision: t.version });
   }
+  const resultados: ResultadoAvisos['resultados'] = [];
   for (const ref of refs) {
-    const e = await encolarAvisoDecision(correo, ref, { almacen: o.almacen, ahora: o.ahora }).catch(() => null);
-    if (avisar && e && e.ok && e.aviso.estado === 'pendiente') await entregarAviso(correo, e.aviso.id, { transporte: avisar, almacen: o.almacen, ahora: o.ahora }).catch(() => null);
+    const e = await encolarAvisoDecision(correo, ref, { almacen: o.almacen, ahora: o.ahora }).catch((err) => ({ ok: false as const, detalle: String(err?.message || err), aviso: undefined }));
+    const aviso = e.aviso;
+    let estado: EstadoAvisoRef = e.ok ? (TERMINALES_AVISO.has(e.aviso.estado) ? 'terminado' : 'agendado') : aviso ? 'sin-agendar' : 'sin-registrar';
+    if (avisar && aviso && aviso.estado === 'pendiente') {
+      const s = await entregarAviso(correo, aviso.id, { transporte: avisar, almacen: o.almacen, ahora: o.ahora }).catch(() => null);
+      // Cerrado en línea (entregado, invalidado, diagnosticado): ya no le hace falta la agenda aunque no la tuviera.
+      if (s && TERMINALES_AVISO.has(s.estado as EstadoAviso)) estado = 'terminado';
+    }
+    resultados.push({ ref, estado, ...(e.ok === false && estado !== 'terminado' ? { detalle: e.detalle } : {}) });
   }
-  return refs.length;
+  return { completo: resultados.every((x) => x.estado === 'agendado' || x.estado === 'terminado'), resultados };
+}
+
+/** EX-01: el objetivo vuelve a la agenda para que el planificador reintente sus avisos (idempotente; nunca lanza). */
+async function agendarReintentoAvisos(dueno: string, objetivoId: string, a: AlmacenDurable | undefined, ahora?: number): Promise<boolean> {
+  const t = ahora ?? Date.now();
+  return agendar('objetivo', dueno, objetivoId, t + REINTENTO_AVISOS_MS, { almacen: a, ahora: t }).catch(() => false);
 }
 
 /**
@@ -119,8 +147,26 @@ export async function reconciliarObjetivoConTareas(
   obj: Objetivo,
   o: { revisarTarea?: DepsObjetivos['revisarTarea']; avisarDecision?: DepsObjetivos['avisarDecision']; almacen?: AlmacenDurable; ahora?: number } = {}
 ): Promise<Objetivo> {
-  if (esTerminalObjetivo(obj.estado)) return obj.estado === 'cancelado' && obj.enVueloAlCancelar?.length ? anotarTardios(dueno, obj, o) : obj;
+  return (await reconciliarYAvisar(dueno, obj, o)).objetivo;
+}
+
+/**
+ * Lo mismo, diciendo además si cada decisión que espera tiene su aviso guardado y agendado (`avisosCompletos`, EX-01).
+ * Si no (el aviso o su agenda no se pudieron escribir, una tarea no se pudo leer, el objetivo no se pudo guardar), el
+ * objetivo vuelve a la agenda para que el planificador lo reintente sin que nadie abra la app; el planificador, que ya
+ * tiene la entrada en la mano, pasa `agendarSiFalta: false` y decide él cuándo vuelve.
+ */
+export async function reconciliarYAvisar(
+  dueno: string,
+  obj: Objetivo,
+  o: { revisarTarea?: DepsObjetivos['revisarTarea']; avisarDecision?: DepsObjetivos['avisarDecision']; almacen?: AlmacenDurable; ahora?: number; agendarSiFalta?: boolean } = {}
+): Promise<{ objetivo: Objetivo; avisosCompletos: boolean; avisos?: ResultadoAvisos }> {
+  if (esTerminalObjetivo(obj.estado)) return { objetivo: obj.estado === 'cancelado' && obj.enVueloAlCancelar?.length ? await anotarTardios(dueno, obj, o) : obj, avisosCompletos: true };
   const a = o.almacen || almacenDurable();
+  const incompleto = async (objetivo: Objetivo, avisos?: ResultadoAvisos) => {
+    if (o.agendarSiFalta !== false) await agendarReintentoAvisos(dueno, objetivo.id, a, o.ahora);
+    return { objetivo, avisosCompletos: false, ...(avisos ? { avisos } : {}) };
+  };
   const leidas: (RegistroTarea | null)[] = await Promise.all(
     obj.tareas.map(async (id) => {
       const l = await leerTarea(dueno, id, a).catch(() => ({ ok: false as const }));
@@ -134,11 +180,17 @@ export async function reconciliarObjetivoConTareas(
   let final = obj;
   if (c) {
     const r = await cambiarObjetivo(dueno, obj.id, (x) => reconciliarObjetivo(x, min), { almacen: a, ahora: o.ahora }).catch(() => null);
-    if (!r || r.ok === false) return obj;
+    if (!r || r.ok === false) {
+      // No se guardó: si había (o iba a haber) una decisión esperando, sus avisos no se intentaron.
+      return obj.estado === 'esperando-decision' || c.estado === 'esperando-decision' ? incompleto(obj) : { objetivo: obj, avisosCompletos: true };
+    }
     final = r.objetivo;
   }
-  if (final.estado === 'esperando-decision') await avisarDecisionesPendientes(dueno, final, leidas, o.avisarDecision, { almacen: a, ahora: o.ahora });
-  return final;
+  if (final.estado !== 'esperando-decision') return { objetivo: final, avisosCompletos: true };
+  const avisos = await avisarDecisionesPendientes(dueno, final, leidas, o.avisarDecision, { almacen: a, ahora: o.ahora });
+  // Una tarea que no se pudo leer puede estar esperando una aprobación sin aviso: tampoco está completo.
+  if (!avisos.completo || leidas.some((t) => t === null)) return incompleto(final, avisos);
+  return { objetivo: final, avisosCompletos: true, avisos };
 }
 
 /**
@@ -651,6 +703,8 @@ export async function pedirDecisionObjetivo(
   if (r.ok === false) return r;
   olvidarObjetivosDelTurno(dueno);
   const nueva = [...r.objetivo.decisiones].reverse().find((x) => !x.elegida)!;
-  await avisarDecisionesPendientes(dueno, r.objetivo, [], o.avisarDecision ?? ((c, p) => enviarPush(c, datosPushDecision(p))), { almacen: o.almacen, ahora: o.ahora });
+  const avisos = await avisarDecisionesPendientes(dueno, r.objetivo, [], o.avisarDecision ?? ((c, p) => enviarPush(c, datosPushDecision(p))), { almacen: o.almacen, ahora: o.ahora });
+  // EX-01: si el aviso (o su agenda) no quedó escrito, el objetivo sigue en la agenda para que el planificador lo reintente.
+  if (!avisos.completo) await agendarReintentoAvisos(dueno, objetivoId, o.almacen, o.ahora);
   return { ok: true, objetivo: r.objetivo, decisionId: nueva.id };
 }
