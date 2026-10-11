@@ -26,6 +26,7 @@ import { ALTURAS } from '../preferencias';
 import type { OrdenIndice } from '../mapa/IndiceCapas';
 import { estadoMapa } from '../mapa/estado-mapa';
 import { Escenario, Flujo, MarcoMapa, type Escena, type Marco, type Quien } from './Escenas';
+import { BotonEsconder, asegurarVisible, mostrarVentana, useVentana } from '../mapa/ventanas';
 import { PASOS, fechaMapa, fichaFactibilidad, km, lecturaAguaYVias, lecturaCatastro, lecturaFichas, lecturaFuentesIndicios, lecturaHallazgos, lecturaIndicios, lecturaPolitica, lecturaPremisas, lecturaRestricciones, nombreFicha, ocurrenciasCerca, tipoProbable, type Inventario, type TargetEjemplo } from './etapa1';
 
 export { nombreParaDecir } from './guion';
@@ -163,7 +164,19 @@ export function Recorrido({
   const [n, setN] = useState(0);
   const [total, setTotal] = useState(8);
   const [cap, setCap] = useState<Capitulo>({ titulo: 'Preparando el recorrido' });
-  const [chico, setChico] = useState(false);
+  /*
+   * El cuadro es una ventana del mapa (mapa/ventanas.tsx): se esconde a su pastilla con el capítulo
+   * en curso, y si la ficha se abre en su sitio (en el teléfono cabe una sola) se aparta y vuelve
+   * sola al cerrarla.
+   */
+  const ventana = useVentana('recorrido', {
+    nombre: 'el cuadro del recorrido',
+    etiqueta: `${n > 0 ? `${n}/${total} · ` : ''}${cap.titulo}`,
+    activa: activo,
+    prioridad: 0,
+    rincon: 'centro',
+  });
+  const chico = ventana.plegada;
   /** Dónde lo dejó quien lo arrastró (px dentro del mapa); null = su sitio de siempre. */
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   /** El control de la pantalla que se está explicando (selector CSS), con un anillo alrededor. */
@@ -249,7 +262,7 @@ export function Recorrido({
       if (indiceAntes) c0.indice?.([{ op: 'solo', ids: [...indiceAntes.capas.map((x) => x.id), 104001] }, ...indiceAntes.capas.map((x) => ({ op: 'encender' as const, id: x.id, filtros: x.filtros }))]);
     };
     setPos(null);
-    setChico(false);
+    mostrarVentana('recorrido');
 
     const capitulo = (i: number, k: Capitulo) => {
       nActual.current = i;
@@ -1822,9 +1835,14 @@ export function Recorrido({
   const lugar = pos
     ? { left: pos.x, top: pos.y }
     : undefined;
+  const vmodo = ventana.modo;
   const clasesLugar = pos
-    ? ''
-    : `left-2 right-2 bottom-2 md:bottom-3 md:right-auto md:left-1/2 md:-translate-x-1/2 ${fichaAbierta ? 'md:left-[calc(50%-212px)]' : ''}`;
+    ? `w-[min(460px,calc(100%-16px))] ${vmodo === 'amplia' ? 'max-h-[45%]' : 'max-h-[55%]'}`
+    : vmodo === 'franja'
+      ? 'left-2 right-2 bottom-[52px] pointer-coarse:bottom-[60px] max-h-[46%]'
+      : vmodo === 'baja'
+        ? 'right-[52px] top-2 max-h-[calc(100%-16px)] w-[min(420px,46%)]'
+        : `bottom-3 -translate-x-1/2 max-h-[45%] w-[min(460px,calc(100%-460px))] ${fichaAbierta ? 'left-[calc(50%-212px)]' : 'left-1/2'}`;
 
   return (
     <>
@@ -1837,28 +1855,18 @@ export function Recorrido({
     <div
       ref={caja}
       style={lugar}
-      className={`absolute ${foco ? 'z-[75]' : 'z-[30]'} md:w-[min(460px,calc(100%-460px))] ${pos ? 'w-[min(460px,calc(100%-16px))]' : ''} ${clasesLugar}`}
+      className={`absolute ${foco ? 'z-[75]' : 'z-[30]'} flex flex-col ${chico ? 'hidden' : ''} ${clasesLugar}`}
       role="region"
       aria-label="Recorrido guiado"
+      data-ventana
+      data-ventana-clave="recorrido"
     >
-      {chico ? (
-        <button
-          type="button"
-          onClick={() => setChico(false)}
-          className="flex w-full items-center gap-2 rounded-full border border-[#FFAE3B]/35 bg-black/80 px-3 py-1.5 text-left shadow-lg backdrop-blur-xl cursor-pointer"
-          title="Abrir el cuadro del recorrido"
-        >
-          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full" style={{ background: AMBAR }} />
-          <span className="truncate font-mono text-[10.5px] tracking-[0.12em] uppercase" style={{ color: AMBAR }}>
-            {n > 0 ? `${n}/${total} · ` : ''}
-            {cap.titulo}
-          </span>
-        </button>
-      ) : (
-        <div className="overflow-hidden rounded-2xl border border-[#FFAE3B]/30 bg-black/82 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl max-md:max-h-[42vh] max-md:overflow-y-auto">
+      {/* Escondido, su pastilla vive en la bandeja de abajo a la izquierda (mapa/ventanas.tsx). */}
+      {chico ? null : (
+        <div className="min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-[#FFAE3B]/30 bg-black/82 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl">
           {/* La barra de arriba es el asa: de ahí se arrastra. Doble toque, vuelve a su sitio. */}
           <div
-            className="flex cursor-grab items-center gap-2 px-3.5 pt-2.5 active:cursor-grabbing touch-none select-none"
+            className="sticky top-0 z-[1] flex cursor-grab items-center gap-2 bg-black/70 px-3.5 pt-2.5 pb-0.5 active:cursor-grabbing touch-none select-none"
             onPointerDown={empezar}
             onPointerMove={mover}
             onPointerUp={soltar}
@@ -1878,16 +1886,14 @@ export function Recorrido({
               )}
               {cap.titulo}
             </span>
-            <button type="button" onClick={alternarPantallaCompleta} className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Pantalla completa" title="Pantalla completa">
+            <button type="button" onClick={alternarPantallaCompleta} className="flex h-8 min-w-8 pointer-coarse:h-10 pointer-coarse:min-w-10 shrink-0 items-center justify-center rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Pantalla completa" title="Pantalla completa">
               ⛶
             </button>
-            <button type="button" onClick={saltar} disabled={n === 0} className="h-8 shrink-0 rounded-md border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#DCE5EA] hover:border-white/35 disabled:opacity-40 cursor-pointer" title="Pasar al capítulo siguiente">
+            <button type="button" onClick={saltar} disabled={n === 0} className="h-8 pointer-coarse:h-10 shrink-0 rounded-md border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#DCE5EA] hover:border-white/35 disabled:opacity-40 cursor-pointer" title="Pasar al capítulo siguiente">
               Siguiente ▸
             </button>
-            <button type="button" onClick={() => setChico(true)} className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[14px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Achicar el cuadro" title="Achicar">
-              –
-            </button>
-            <button type="button" onClick={detener} className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Detener el recorrido" title="Detener">
+            <BotonEsconder nombre="el cuadro del recorrido" onClick={ventana.esconder} />
+            <button type="button" onClick={detener} className="flex h-8 min-w-8 pointer-coarse:h-10 pointer-coarse:min-w-10 shrink-0 items-center justify-center rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Detener el recorrido" title="Detener">
               ■
             </button>
           </div>
@@ -1940,6 +1946,8 @@ function Foco({ selector }: { selector: string }) {
     const paso = () => {
       if (!vivo) return;
       const el = document.querySelector(selector) as HTMLElement | null;
+      // Un control dentro de una ventana escondida (la ficha en su pastilla) no se puede señalar: se abre.
+      if (el && !el.offsetParent) asegurarVisible(el);
       const b = el?.getBoundingClientRect();
       const nuevo = b && b.width > 0 ? { x: b.left - 6, y: b.top - 6, w: b.width + 12, h: b.height + 12 } : null;
       const k = JSON.stringify(nuevo);

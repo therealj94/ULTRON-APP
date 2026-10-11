@@ -19,6 +19,7 @@ import { sinMovimiento } from '../movimiento';
 import type { Fondo } from './captura';
 import { headersElectrum } from '../acceso';
 import { esInvitadoAhora } from '../sesion-invitado';
+import { BotonEsconder, mostrarVentana, useVentana } from './ventanas';
 
 type Modo = 'medir' | 'perfil' | 'area' | null;
 let enUso: Modo = null;
@@ -328,6 +329,26 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
   const dist = largo(puntos);
   const area = (modo === 'medir' || modo === 'area') && puntos.length >= 3 ? areaM2(puntos) : 0;
 
+  /*
+   * Ventana del mapa (ventanas.tsx): la ayuda, las medidas, el perfil y la revisión del área van en
+   * UN cuadro (antes eran dos que en el teléfono caían uno encima del otro). Se esconde a su
+   * pastilla y la herramienta sigue puesta: se puede mirar el mapa entero y seguir marcando.
+   */
+  const titulo = modo === 'medir' ? 'Medir' : modo === 'area' ? 'Área nueva' : 'Perfil topográfico';
+  const conResultado = cerrado && ((modo === 'perfil' && puntos.length >= 2) || (modo === 'area' && puntos.length >= 3));
+  const ventana = useVentana('herramienta', {
+    nombre: 'la herramienta',
+    etiqueta: `${modo === 'perfil' ? 'Perfil' : titulo}${puntos.length >= 2 ? ` · ${km(dist)}` : ''}`,
+    activa: !!modo,
+    prioridad: 2,
+    rincon: 'der',
+  });
+  // Empezar una herramienta es querer ver su cuadro.
+  useEffect(() => {
+    if (modo) mostrarVentana('herramienta');
+  }, [modo]);
+  const vmodo = ventana.modo;
+
   return (
     <>
       {/* Botonera, debajo del zoom de MapLibre. */}
@@ -353,54 +374,70 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
       {comparar && <Comparador mapa={mapa} fondo={fondo} onCerrar={() => setComparar(false)} />}
       <Orbita mapa={mapa} activa={orbitando} onParar={pararOrbita} tresD={tresD} />
 
-      {modo && (
-        <div className="pointer-events-auto absolute right-[52px] top-[118px] z-30 w-[240px] max-md:left-2 max-md:right-[52px] max-md:top-auto max-md:bottom-12 max-md:w-auto rounded-lg border border-white/12 bg-[#0A0C0E]/94 p-2.5 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl">
-          <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
-            {modo === 'medir' ? 'Medir' : modo === 'area' ? 'Área nueva' : 'Perfil topográfico'}
-          </div>
-          {puntos.length < 2 ? (
-            <p className="text-[#8FA3B0]">
-              {modo === 'area' ? 'Dibuje el área que piensa pedir: toque cada vértice; ' : 'Toque el mapa para poner puntos; '}doble toque o Enter para terminar, Esc para salir.
-            </p>
-          ) : (
-            <p>
-              Distancia: <b className="text-[#F3F6F8]">{km(dist)}</b>
-              {area > 0 && (
-                <>
-                  <br />
-                  Área: <b className="text-[#F3F6F8]">{ha(area)}</b>
-                </>
-              )}
-            </p>
-          )}
-          <div className="mt-2 flex gap-1.5">
-            {!cerrado && puntos.length >= (modo === 'area' ? 3 : 2) && (
-              <button type="button" onClick={() => setCerrado(true)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-black cursor-pointer" style={{ background: AMBAR }}>
-                Terminar
-              </button>
+      {modo && !ventana.plegada && (
+        <section
+          aria-label={titulo}
+          data-ventana
+          data-ventana-clave="herramienta"
+          className={`pointer-events-auto absolute z-30 flex flex-col overflow-hidden rounded-lg border border-white/12 bg-[#0A0C0E]/94 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl ${
+            vmodo === 'franja'
+              ? 'left-2 right-[52px] bottom-[52px] pointer-coarse:bottom-[60px] max-h-[50%]'
+              : vmodo === 'baja'
+                ? `right-[52px] top-2 max-h-[calc(100%-16px)] ${conResultado ? 'w-[min(420px,46%)]' : 'w-[min(260px,40%)]'}`
+                : `right-[52px] top-[118px] max-h-[calc(100%-130px)] ${conResultado ? 'w-[420px]' : 'w-[240px]'}`
+          }`}
+        >
+          <header className="flex shrink-0 items-center gap-2 pl-2.5 pr-0.5">
+            <span className="min-w-0 flex-1 truncate font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
+              {titulo}
+            </span>
+            <BotonEsconder nombre="la herramienta" onClick={ventana.esconder} />
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-2.5">
+            {puntos.length < 2 ? (
+              <p className="text-[#8FA3B0]">
+                {modo === 'area' ? 'Dibuje el área que piensa pedir: toque cada vértice; ' : 'Toque el mapa para poner puntos; '}doble toque o Enter para terminar, Esc para salir.
+              </p>
+            ) : (
+              <p>
+                Distancia: <b className="text-[#F3F6F8]">{km(dist)}</b>
+                {area > 0 && (
+                  <>
+                    <br />
+                    Área: <b className="text-[#F3F6F8]">{ha(area)}</b>
+                  </>
+                )}
+              </p>
             )}
-            <button type="button" onClick={() => { setPuntos([]); setCerrado(false); setPerfil(null); }} className="rounded-md border border-white/15 px-2 py-1 text-[11px] hover:bg-white/10 cursor-pointer">
-              Borrar
-            </button>
-            <button type="button" onClick={cerrar} className="rounded-md border border-white/15 px-2 py-1 text-[11px] hover:bg-white/10 cursor-pointer">
-              Salir
-            </button>
+            <div className="mt-2 flex gap-1.5">
+              {!cerrado && puntos.length >= (modo === 'area' ? 3 : 2) && (
+                <button type="button" onClick={() => setCerrado(true)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-black pointer-coarse:py-2 cursor-pointer" style={{ background: AMBAR }}>
+                  Terminar
+                </button>
+              )}
+              <button type="button" onClick={() => { setPuntos([]); setCerrado(false); setPerfil(null); }} className="rounded-md border border-white/15 px-2 py-1 text-[11px] hover:bg-white/10 pointer-coarse:py-2 cursor-pointer">
+                Borrar
+              </button>
+              <button type="button" onClick={cerrar} className="rounded-md border border-white/15 px-2 py-1 text-[11px] hover:bg-white/10 pointer-coarse:py-2 cursor-pointer">
+                Salir
+              </button>
+            </div>
+
+            {modo === 'perfil' && cerrado && (
+              <div className="mt-2.5 border-t border-white/[0.08] pt-2">
+                {calculando && <p className="text-[12px] text-[#8FA3B0]">Leyendo la elevación…</p>}
+                {perfilError && <p className="text-[12px] text-[#E8A08F]">{perfilError}</p>}
+                {perfil && <GraficoPerfil p={perfil} />}
+              </div>
+            )}
+
+            {modo === 'area' && cerrado && puntos.length >= 3 && <PanelArea puntos={puntos} />}
           </div>
-        </div>
+        </section>
       )}
-
-      {modo === 'perfil' && cerrado && (
-        <div className="pointer-events-auto absolute left-3 right-3 bottom-12 z-10 mx-auto max-w-[760px] rounded-xl border border-white/12 bg-[#0A0C0E]/95 p-3 shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl">
-          {calculando && <p className="text-[12px] text-[#8FA3B0]">Leyendo la elevación…</p>}
-          {perfilError && <p className="text-[12px] text-[#E8A08F]">{perfilError}</p>}
-          {perfil && <GraficoPerfil p={perfil} />}
-        </div>
-      )}
-
-      {modo === 'area' && cerrado && puntos.length >= 3 && <PanelArea puntos={puntos} />}
 
       {c && coord && (
-        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-md bg-black/70 sm:block px-2 py-1 text-center font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-md bg-black/70 sm:block pointer-coarse:hidden px-2 py-1 text-center font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
           {coord.lat.toFixed(5)}°, {coord.lon.toFixed(5)}°
           <br />
           UTM {c.zona}N WGS84 {Math.round(c.e).toLocaleString('es-HN')} E · {Math.round(c.n).toLocaleString('es-HN')} N
@@ -673,7 +710,7 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
   };
 
   return (
-    <div className="pointer-events-auto absolute left-3 right-3 bottom-12 z-30 mx-auto max-h-[60%] max-w-[560px] overflow-y-auto rounded-xl border border-white/12 bg-[#0A0C0E]/95 p-3 text-[12px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl">
+    <div className="mt-2.5 border-t border-white/[0.08] pt-2.5">
       <div className="mb-2 flex items-center gap-2">
         <input
           value={nombre}

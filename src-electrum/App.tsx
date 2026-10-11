@@ -22,6 +22,7 @@ import type { Emocion } from '../lib/emocion';
 import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
 import { IndiceCapas, type OrdenIndice } from './mapa/IndiceCapas';
+import { MedidorMapa, asegurarVisible } from './mapa/ventanas';
 
 /** Lo que Dr Electrum puede accionar en pantalla (server/electrum/manos-pantalla.ts). Ni salir ni el micrófono. */
 const COMANDOS_DEL_CEREBRO = new Set(['fondo', 'tresD', 'pais', 'norte', 'cenital', 'inclinar', 'orbitar', 'ubicacion', 'zoom', 'rotar', 'mover', 'abrir', 'ficha', 'mesa', 'silencio', 'reparto', 'pantalla', 'cerrar']);
@@ -635,6 +636,8 @@ export default function App() {
           // Lo mismo que tocar el botón de la ficha abierta. Sin ficha abierta, se dice qué hacer.
           const boton = { pdf: 'btn-pdf', geologico: 'btn-geologicos', timelapse: 'btn-timelapse', analizar: 'btn-analizar' }[cmd.que];
           const el = document.querySelector(`[data-tour="${boton}"]`) as HTMLElement | null;
+          // La ficha pudo quedar escondida en su pastilla: se vuelve a abrir para que se vea qué hizo.
+          asegurarVisible(el);
           if (el) el.click();
           else void hablar('Primero abra una concesión: tóquela en el mapa o dígame su nombre, y lo hago.', 'neutral', headersElectrum());
           break;
@@ -1059,6 +1062,8 @@ export default function App() {
           // El mapa termina donde empieza el panel, que nunca baja de ALTO_COMPACTO_PX.
           style={{ bottom: `max(${alto * 100}%, ${ALTO_COMPACTO_PX}px)` }}
         >
+          {/* Mide la caja del mapa: las ventanas de encima se reparten según lo que quede de mapa. */}
+          <MedidorMapa />
           <SinMapa>
           <Suspense
             fallback={

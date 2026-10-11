@@ -15,6 +15,7 @@ import { headersElectrum } from '../acceso';
 import type { OrdenMapa, Tocado } from './captura';
 import { colorProsp } from './prospectividad';
 import { Timelapse } from './Timelapse';
+import { BotonEsconder, mostrarVentana, useVentana } from './ventanas';
 
 const AMBAR = '#FFAE3B';
 
@@ -105,13 +106,29 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
     return () => corte.abort();
   }, [tocado]);
 
-  // Esc cierra, como cualquier ventana.
+  /*
+   * Ventana del mapa (ventanas.tsx): se esconde a su pastilla sin perder lo cargado, y aparta a la
+   * leyenda o al cuadro del recorrido mientras está abierta. Tocar algo nuevo es pedir verla: se abre.
+   */
+  const ventana = useVentana('ficha', {
+    nombre: 'la ficha',
+    etiqueta: !tocado ? 'Ficha' : tocado.tipo === 'punto' ? '¿Qué hay aquí?' : `${tocado.tipo === 'concesion' ? 'Ficha' : tocado.tipo === 'muestra' ? 'Muestra' : 'Rasgo'}${tocado.nombre ? ` · ${tocado.nombre}` : ''}`,
+    activa: !!tocado,
+    prioridad: 1,
+    rincon: 'der',
+  });
   useEffect(() => {
-    if (!tocado) return;
+    if (tocado) mostrarVentana('ficha');
+  }, [tocado]);
+  const modo = ventana.modo;
+
+  // Esc cierra, como cualquier ventana (escondida no: el Esc es de lo que esté a la vista).
+  useEffect(() => {
+    if (!tocado || ventana.plegada) return;
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [tocado, onCerrar]);
+  }, [tocado, onCerrar, ventana.plegada]);
 
   if (!tocado) return null;
 
@@ -144,32 +161,70 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
     onPreguntar(base + q);
   };
 
+  /*
+   * La pregunta sobre lo tocado. En la computadora, fija al pie; en el teléfono va al final de lo que
+   * se desplaza: fija se comía la mitad del cuadro y los datos del catastro no se alcanzaban a ver.
+   */
+  const formulario = (
+    <form
+      className={modo === 'amplia' ? 'flex gap-2 border-t border-white/[0.08] px-3 py-2.5 shrink-0' : 'flex gap-2 border-t border-white/[0.08] pt-3'}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (pregunta.trim()) preguntarSobre(pregunta.trim());
+        setPregunta('');
+      }}
+    >
+      <input
+        value={pregunta}
+        onChange={(e) => setPregunta(e.target.value)}
+        placeholder="Pregúntele a Dr Electrum sobre esto…"
+        className="min-w-0 flex-1 rounded-lg border border-white/12 bg-black/40 px-3 py-1.5 text-[13px] text-[#E7EEF2] placeholder:text-[#7F939D] focus:border-[#FFAE3B]/60 focus:outline-none"
+      />
+      <button type="submit" className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-black cursor-pointer" style={{ background: AMBAR }}>
+        Preguntar
+      </button>
+    </form>
+  );
+
   return (
     <section
       role="dialog"
       aria-label={`${etiqueta}: ${titulo}`}
       data-tour="ficha"
       data-ventana
-      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-[48px] bottom-2 max-h-[min(calc(100%-118px),62%)] md:left-auto md:right-[52px] md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
+      data-ventana-clave="ficha"
+      /*
+       * Escondida sigue montada (oculta): conserva lo cargado, el timelapse que corre y lo escrito en
+       * la pregunta, y el recorrido puede encontrar sus botones para volver a abrirla.
+       */
+      className={`absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl ${ventana.plegada ? 'hidden' : ''} ${
+        modo === 'franja'
+          ? 'left-2 right-[52px] bottom-[52px] pointer-coarse:bottom-[60px] max-h-[48%]'
+          : modo === 'baja'
+            ? 'right-[52px] top-2 bottom-2 w-[min(372px,46%)]'
+            : 'right-[52px] top-[118px] bottom-3 w-[372px]'
+      }`}
     >
-      <header className="flex items-start gap-2 border-b border-white/[0.08] px-4 pt-3 pb-2.5 shrink-0">
+      <header className={`flex items-start gap-1 border-b border-white/[0.08] shrink-0 ${modo === 'amplia' ? 'px-4 pt-3 pb-2.5' : 'pl-3.5 pr-2 pt-2 pb-1.5'}`}>
         <div className="min-w-0 flex-1">
           <div className="font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
             {etiqueta}
           </div>
           <h2 className="mt-0.5 text-[15px] font-semibold leading-snug text-[#F3F6F8] break-words">{titulo}</h2>
         </div>
+        <BotonEsconder nombre="la ficha" onClick={ventana.esconder} />
         <button
           type="button"
           onClick={onCerrar}
-          className="-mr-1 flex h-10 w-10 md:h-7 md:w-7 items-center justify-center rounded-full text-[16px] text-[#8FA3B0] hover:bg-white/10 hover:text-white cursor-pointer"
+          className="-mr-1 flex h-7 w-7 items-center justify-center rounded-full text-[16px] text-[#8FA3B0] hover:bg-white/10 hover:text-white pointer-coarse:h-10 pointer-coarse:w-10 cursor-pointer"
           aria-label="Cerrar"
+          title="Cerrar"
         >
           ×
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[13px] leading-relaxed text-[#C9D5DB]">
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain space-y-4 text-[13px] leading-relaxed text-[#C9D5DB] ${modo === 'amplia' ? 'px-4 py-3' : 'px-3.5 py-2.5'}`}>
         {error && <p className="text-[#E8A08F]">{error}</p>}
         {!error && !datos && <Cargando />}
 
@@ -179,26 +234,10 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         {datos && tocado.tipo === 'punto' && <AquiVista a={datos as Aqui} onTocar={onTocar} onPreguntar={onPreguntar} />}
         {datos && tocado.tipo === 'rasgo' && <RasgoVista r={datos as Rasgo} />}
         {datos && tocado.tipo === 'muestra' && <MuestraVista m={datos as Muestra} onTocar={onTocar} onPreguntar={onPreguntar} />}
+        {modo !== 'amplia' && formulario}
       </div>
 
-      <form
-        className="flex gap-2 border-t border-white/[0.08] px-3 py-2.5 shrink-0"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (pregunta.trim()) preguntarSobre(pregunta.trim());
-          setPregunta('');
-        }}
-      >
-        <input
-          value={pregunta}
-          onChange={(e) => setPregunta(e.target.value)}
-          placeholder="Pregúntele a Dr Electrum sobre esto…"
-          className="min-w-0 flex-1 rounded-lg border border-white/12 bg-black/40 px-3 py-1.5 text-[13px] text-[#E7EEF2] placeholder:text-[#7F939D] focus:border-[#FFAE3B]/60 focus:outline-none"
-        />
-        <button type="submit" className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-black cursor-pointer" style={{ background: AMBAR }}>
-          Preguntar
-        </button>
-      </form>
+      {modo === 'amplia' && formulario}
     </section>
   );
 }

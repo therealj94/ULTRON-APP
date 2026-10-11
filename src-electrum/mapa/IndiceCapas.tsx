@@ -31,6 +31,7 @@ import { normalizar } from './categorias';
 import { leyendaProsp } from './prospectividad';
 import { colorDeValor, cumpleFiltros, leyendaDe, type EntradaCatalogo, type Filtros } from './catalogo';
 import { fijarEstadoMapa } from './estado-mapa';
+import { BandejaVentanas, BotonEsconder, useVentana } from './ventanas';
 
 /** Una orden de Dr Electrum para el índice (server/electrum/dialogo-capas.ts → OrdenMapa). */
 export type OrdenIndice =
@@ -602,58 +603,117 @@ export function IndiceCapas({
 
   const encendidas = [...on.keys()].map((i) => porId.get(i)).filter((x): x is EntradaIndice => !!x);
 
+  /*
+   * Ventanas del mapa (ventanas.tsx). La leyenda se esconde a su pastilla y en el teléfono arranca
+   * escondida: con seis capas llenaba la franja entera. El índice abierto ocupa el mismo sitio: la
+   * aparta mientras está abierto, y si otra ventana lo aparta a él (tocar una concesión), se cierra.
+   */
+  const leyenda = useVentana('leyenda', {
+    nombre: 'la leyenda',
+    etiqueta: `Leyenda · ${encendidas.length}`,
+    activa: !abierto && encendidas.length > 0,
+    prioridad: 5,
+    rincon: 'izq',
+    escondidaAlEmpezar: { movil: true, compu: false },
+  });
+  const indice = useVentana('indice', { nombre: 'el índice de capas', etiqueta: 'Índice de capas', activa: abierto, prioridad: -1, rincon: 'izq', sinPastilla: true });
+  useEffect(() => {
+    if (abierto && indice.plegada) setAbierto(false);
+  }, [abierto, indice.plegada]);
+  const modo = leyenda.modo;
+  /** Lo que queda libre abajo para la fila de «Índice de capas» y las pastillas. */
+  const sobreFila = 'bottom-[52px] pointer-coarse:bottom-[60px]';
+
   return (
     <>
-      {/* La pestaña, siempre a la vista en el costado izquierdo del mapa. */}
-      <button
-        type="button"
-        onClick={() => setAbierto((a) => !a)}
-        data-tour="capas"
-        aria-expanded={abierto}
-        className="absolute left-3 bottom-3 z-20 flex items-center gap-2 rounded-full border border-white/15 bg-black/80 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-[#DCE5EA] shadow-lg backdrop-blur-md hover:border-white/30 cursor-pointer"
-      >
-        <span aria-hidden>▤</span> Índice de capas{encendidas.length ? ` · ${encendidas.length}` : ''}
-      </button>
+      {/*
+        La fila de abajo a la izquierda: la pestaña del índice, siempre a la vista, y a su lado las
+        pastillas de las ventanas escondidas (la leyenda, la ficha, la herramienta…). Un solo sitio
+        fijo donde buscar lo que se escondió.
+      */}
+      <div className="absolute left-3 bottom-3 z-20 flex w-max max-w-[calc(100%-68px)] items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+        <button
+          type="button"
+          onClick={() => setAbierto((a) => !a)}
+          data-tour="capas"
+          aria-expanded={abierto}
+          aria-label={`Índice de capas${encendidas.length ? ` · ${encendidas.length} encendidas` : ''}`}
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-white/15 bg-black/80 px-2.5 font-mono text-[11px] tracking-[0.08em] uppercase sm:gap-2 sm:px-3 sm:tracking-[0.14em] text-[#DCE5EA] shadow-lg backdrop-blur-md hover:border-white/30 pointer-coarse:h-10 cursor-pointer"
+          style={abierto ? { borderColor: `${AMBAR}99`, color: AMBAR } : undefined}
+        >
+          <span aria-hidden>▤</span>
+          <span className="max-sm:hidden">Índice de capas</span>
+          <span className="sm:hidden">Capas</span>
+          {encendidas.length ? <span>· {encendidas.length}</span> : null}
+        </button>
+        <BandejaVentanas />
+      </div>
 
-      {/* La leyenda: solo de lo encendido, y solo con el índice cerrado. */}
-      {!abierto && encendidas.length > 0 && (
-        <div className="pointer-events-none absolute left-3 bottom-12 z-10 max-h-[45vh] max-w-[280px] overflow-hidden rounded-lg border border-white/10 bg-black/70 px-2.5 py-1.5 text-[10.5px] text-[#DCE5EA] backdrop-blur-md">
-          {encendidas.slice(-6).reverse().map((e) => {
-            const ley = leyendaDe(e as EntradaCatalogo, on.get(e.id)?.filtros);
-            return (
-              <div key={e.id} className="mb-0.5">
-                <div className="flex items-center gap-1.5 truncate">
-                  {ley.length <= 1 && <span className="h-2 w-2.5 shrink-0 rounded-sm" style={{ background: ley[0]?.color || colorDe(e) }} />}
-                  <span className="truncate font-medium">{e.nombre}</span>
-                  {hayFiltro(on.get(e.id)?.filtros) && <span style={{ color: AMBAR }}>·filtro</span>}
-                </div>
-                {ley.length > 1 && (
-                  <div className="ml-1 flex flex-wrap gap-x-2">
-                    {ley.slice(0, 12).map((l) => (
-                      <span key={l.texto + l.color} className="flex items-center gap-1 truncate text-[10px] text-[#C9D5DB]">
-                        <span className="h-2 w-2 shrink-0 rounded-sm border border-black/40" style={{ background: l.color }} />
-                        {l.texto}
-                      </span>
-                    ))}
-                    {ley.length > 12 && <span className="text-[10px] text-[#7F939D]">+{ley.length - 12}</span>}
+      {/* La leyenda: solo de lo encendido, solo con el índice cerrado, y escondible. */}
+      {leyenda.plegada || abierto || !encendidas.length ? null : (
+        <section
+          aria-label="Leyenda de las capas encendidas"
+          data-ventana
+          data-ventana-clave="leyenda"
+          className={`absolute z-10 flex flex-col overflow-hidden rounded-lg border border-white/10 bg-black/75 text-[10.5px] text-[#DCE5EA] shadow-lg backdrop-blur-md ${
+            modo === 'franja'
+              ? `left-2 right-[56px] ${sobreFila} max-h-[42%]`
+              : modo === 'baja'
+                ? // Angosta para no meterse debajo de la barra de arriba al centro (Tablero · 3D · Recorrido).
+                  'right-[52px] top-2 bottom-2 w-[max(180px,min(280px,calc(50%-190px)))]'
+                : `left-3 ${sobreFila} w-[290px] max-h-[min(45%,calc(100%-210px))]`
+          }`}
+        >
+          <header className="flex shrink-0 items-center gap-2 border-b border-white/[0.08] pl-2.5 pr-0.5">
+            <span className="min-w-0 flex-1 truncate font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
+              Leyenda · {encendidas.length}
+            </span>
+            <BotonEsconder nombre="la leyenda" onClick={leyenda.esconder} />
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 py-1.5">
+            {[...encendidas].reverse().map((e) => {
+              const ley = leyendaDe(e as EntradaCatalogo, on.get(e.id)?.filtros);
+              const tope = modo === 'amplia' ? 12 : 8;
+              return (
+                <div key={e.id} className="mb-1">
+                  <div className="flex items-center gap-1.5 truncate">
+                    {ley.length <= 1 && <span className="h-2 w-2.5 shrink-0 rounded-sm" style={{ background: ley[0]?.color || colorDe(e) }} />}
+                    <span className="truncate font-medium">{e.nombre}</span>
+                    {hayFiltro(on.get(e.id)?.filtros) && <span style={{ color: AMBAR }}>·filtro</span>}
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  {ley.length > 1 && (
+                    <div className="ml-1 flex flex-wrap gap-x-2">
+                      {ley.slice(0, tope).map((l) => (
+                        <span key={l.texto + l.color} className="flex items-center gap-1 truncate text-[10px] text-[#C9D5DB]">
+                          <span className="h-2 w-2 shrink-0 rounded-sm border border-black/40" style={{ background: l.color }} />
+                          {l.texto}
+                        </span>
+                      ))}
+                      {ley.length > tope && <span className="text-[10px] text-[#7F939D]">+{ley.length - tope}</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       {abierto && (
         <aside
-          className="absolute inset-x-2 bottom-12 top-2 z-30 flex flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0A0C0E]/95 text-[12.5px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl md:inset-x-auto md:left-3 md:w-[360px]"
+          className={`absolute z-30 flex flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0A0C0E]/95 text-[12.5px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl ${
+            // En el teléfono deja arriba un tercio del mapa a la vista: se ve lo que se va encendiendo.
+            modo === 'franja' ? `left-2 right-[56px] top-[30%] ${sobreFila}` : modo === 'baja' ? 'left-2 top-2 bottom-2 w-[min(360px,50%)]' : `left-3 top-2 ${sobreFila} w-[360px]`
+          }`}
           aria-label="Índice de capas"
+          data-ventana
+          data-ventana-clave="indice"
         >
-          <header className="flex items-center justify-between gap-2 border-b border-white/[0.08] px-3 py-2">
+          <header className="flex items-center justify-between gap-2 border-b border-white/[0.08] py-1 pl-3 pr-1">
             <span className="font-mono text-[11px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
               Índice de capas
             </span>
-            <button type="button" onClick={() => setAbierto(false)} aria-label="Cerrar el índice" className="rounded px-2 text-[15px] text-[#B9C7CE] hover:text-white cursor-pointer">
+            <button type="button" onClick={() => setAbierto(false)} aria-label="Cerrar el índice" className="flex h-7 min-w-7 items-center justify-center rounded px-2 text-[15px] text-[#B9C7CE] hover:text-white pointer-coarse:h-10 pointer-coarse:min-w-10 cursor-pointer">
               ✕
             </button>
           </header>
@@ -709,7 +769,7 @@ export function IndiceCapas({
               </div>
             )}
           </div>
-          <footer className="border-t border-white/[0.08] px-3 py-1.5 text-[10.5px] leading-snug text-[#8FA3B0]">
+          <footer className={`border-t border-white/[0.08] px-3 py-1.5 text-[10.5px] leading-snug text-[#8FA3B0] ${modo === 'amplia' ? '' : 'hidden'}`}>
             Nada se baja hasta que lo enciende. También de palabra: «muéstrame los ríos», «esconde la geología», «deja solo el catastro».
           </footer>
         </aside>
