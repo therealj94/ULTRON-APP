@@ -14,6 +14,7 @@
  * Sin React Native: se prueba en Node (tests/burbuja-v2.test.ts).
  */
 import type { FaceState } from '../caraTipos';
+import type { ExpresionAvatar } from '../avatar3d/tipos';
 import { normalizarEmocion, type Emocion } from '../lib/emocion';
 
 export const EXPRESIONES = ['alegria', 'ternura', 'sorpresa', 'duda', 'preocupacion', 'entusiasmo', 'calma'] as const;
@@ -134,6 +135,35 @@ export function expresionDeCara(face: FaceState | null | undefined): ExpresionOr
     case 'YAWNING':
     case 'SLEEPING':
     case 'PRAY':
+      return 'calma';
+    default:
+      return null;
+  }
+}
+
+/**
+ * La cara del ALMA (avatar3d/tipos.ts `ExpresionAvatar`: la que comparten la compañera que camina, el acople de los chats y
+ * la pantalla completa) → la expresión del orbe (José, 11-oct: «cuando se hace pequeño aura en chat se vea igual cuando es
+ * avatar»). Es la MISMA tabla que sigue la mesa: la mesa pasa su cara por avatar3d/contrato.ts (HAPPY → contenta, LAUGH →
+ * encantada, CONCERNED → uy, ANGRY → enojada, SAD → triste, SURPRISED → sorprendida, TIRED → dormida) y el orbe grande
+ * pinta `expresionDeCara` de esa misma cara; aquí se deshace ese paso para que la AU-RA chiquita tome el mismo color.
+ * Las caras que ya son estados del orbe (tranquila, escucha, piensa) → ninguna: el orbe las hace con su estado.
+ */
+export function expresionDeAvatar(e: ExpresionAvatar | null | undefined): ExpresionOrbe | null {
+  switch (e) {
+    case 'contenta':
+    case 'encantada':
+      return 'alegria';
+    case 'triste':
+    case 'timida':
+      return 'ternura';
+    case 'sorprendida':
+    case 'levantada':
+      return 'sorpresa';
+    case 'uy':
+    case 'enojada':
+      return 'preocupacion';
+    case 'dormida':
       return 'calma';
     default:
       return null;

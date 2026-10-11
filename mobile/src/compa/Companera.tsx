@@ -62,7 +62,7 @@ import { ecoVisible, vozSonando } from '../avatar3d/sonando';
 import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
 import { haciaMarco, transicionMesa, type ModoVisible } from '../avatar3d/presencia';
 import { AvatarVivo } from '../avatar3d/AvatarVivo';
-import { OrbeMini } from '../avatar3d/OrbeMini';
+import { OrbeAuraChica } from '../avatar3d/OrbeAuraChica';
 import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
 import { hayVideo } from '../avatares/video/clips';
 
@@ -776,9 +776,11 @@ export function Companera() {
           accessibilityHint={tr('Toca para saludarla; dile «llámame» y te llama; mantén para moverla', 'Tap to say hi; say "call me" and she calls you; hold to move her')}
         >
           {avatar === 'aura' ? (
-            // AU-RA: su orbe, como en la mesa (antes el robot 3D o la figurita dorada).
-            <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: 'transparent' }]}>
-              <OrbeMini lado={lado} estado={estadoCuerpo} activo={!oculta && !apartada} />
+            // AU-RA: su orbe, como en la mesa (antes el robot 3D o la figurita dorada). El MISMO orbe de partículas, con
+            // su estado y su emoción (José, 11-oct: «cuando se hace pequeño aura en chat se vea igual cuando es avatar»);
+            // sin recorte en círculo, para que su halo respire por fuera como en la burbuja.
+            <View pointerEvents="none" style={{ position: 'absolute', width: lado, height: lado, left: M.cx - lado / 2, top: M.cy - lado / 2 }}>
+              <OrbeAuraChica lado={lado} estado={estadoCuerpo} activo={!oculta && !apartada} halo />
             </View>
           ) : hayVideo(avatar) && !sinVideo ? (
             <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: estilo.cuerpo }]}>

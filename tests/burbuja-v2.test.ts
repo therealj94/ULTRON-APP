@@ -8,12 +8,18 @@
  *  · el micrófono de la mesa al cerrar la burbuja: vuelve EXACTAMENTE como estaba (la máquina de estados entera);
  *  · la sesión (revisión F06/§9): un solo turno vivo, la segunda pulsación corta, lo tardío se tira, estados con
  *    palabra, el indicador del micrófono que dice la verdad y las marcas de tiempo con p50/p95.
+ *  · la AU-RA chiquita igual que la grande (José, 11-oct: «cuando se hace pequeño aura en chat se vea igual cuando es
+ *    avatar»): el acople de los chats, la pantalla completa y la que camina son el MISMO orbe de partículas (este de la
+ *    burbuja), con el estado y la emoción de la mesa, y un solo orbe vivo a la vez (la mesa se pausa sin verse).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { EXPRESIONES, EXPRESION_PARAMS, expresionDeCara, expresionDeEmocion, mensajeExpresion, nombreExpresion, temperatura, tinteExpresion } from '../mobile/src/orbe/expresiones';
+import { EXPRESIONES, EXPRESION_PARAMS, expresionDeAvatar, expresionDeCara, expresionDeEmocion, mensajeExpresion, nombreExpresion, temperatura, tinteExpresion } from '../mobile/src/orbe/expresiones';
+import { CAIDAS_MAX_CHICO, DUENO_MESA, LIENZO_AJUSTADO, _reiniciarCaidasChico, anotarCaidaChico, chicoPuedeIntentar, estadoOrbeChico, geometriaOrbeChico, orbeVivo, puedeTomar, soltarOrbeVivo, tomarOrbeVivo } from '../mobile/src/avatar3d/orbeVivo';
+import { estadoDesdeMesa } from '../mobile/src/avatar3d/contrato';
+import { EXPRESIONES_AVATAR, ESTADO_INICIAL } from '../mobile/src/avatar3d/tipos';
 import { orbeConOpciones } from '../mobile/src/orbe/opciones';
 import { ORBE_HTML } from '../mobile/src/orbe/orbeHtml';
 import { CASCARA_SOBRE_DISCO, FRACCION_ORBE, LIENZO_SOBRE_DISCO, ORBE_MIN, TOQUE_MIN, medidasBurbuja } from '../mobile/src/burbuja/medidas';
@@ -499,4 +505,192 @@ test('controles grandes y accesibles: escribir, cámara, micrófono, detener; su
   assert.match(b, /accessibilityLabel=\{etiqueta\}/);
   // Sin «hablarle encima» en la burbuja: mientras piensa y habla el micrófono se pausa.
   assert.match(b, /pauseMicForTts\(true\);/);
+});
+
+/* ── la AU-RA chiquita, igual que la grande (José, 11-oct) ─────────────────────────────────── */
+
+const sinComentariosTs = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+test('AU-RA chiquita: el acople, la pantalla completa y la que camina son el MISMO orbe de partículas de la mesa (no la foto)', () => {
+  const elegido = sinComentariosTs(leer('src/avatar3d/CuerpoElegido.tsx'));
+  assert.match(elegido, /if \(avatar === 'aura'\) return <OrbeAuraChica /);
+  assert.doesNotMatch(elegido, /<OrbeMini /, 'la foto sola ya no es AU-RA en el acople ni en la pantalla completa');
+  const compa = sinComentariosTs(leer('src/compa/Companera.tsx'));
+  assert.match(compa, /<OrbeAuraChica lado=\{lado\} estado=\{estadoCuerpo\} activo=\{!oculta && !apartada\} halo \/>/);
+  assert.doesNotMatch(compa, /<OrbeMini /);
+  // El acople y la pantalla completa pasan por CuerpoElegido.
+  assert.match(leer('src/avatar3d/DockAura.tsx'), /<CuerpoElegido/);
+  assert.match(leer('src/avatar3d/EscenarioAura.tsx'), /<CuerpoElegido/);
+  // Es el componente de la burbuja: el mismo ORBE_HTML de la mesa, con el estado y la emoción.
+  const chica = sinComentariosTs(leer('src/avatar3d/OrbeAuraChica.tsx'));
+  assert.match(chica, /<OrbeBurbuja/);
+  assert.match(chica, /const estadoOrbe = estadoOrbeChico\(estado\);/);
+  assert.match(chica, /estado=\{estadoOrbe\}/);
+  assert.match(chica, /expresionDeAvatar\(estado\?\.expresion\)/);
+  assert.match(chica, /vivo=\{vivo\}/);
+  const burbuja = leer('src/burbuja/OrbeBurbuja.tsx');
+  assert.match(burbuja, /orbeConOpciones\(ORBE_HTML, \{ sonidos: false, centro:/);
+  assert.match(burbuja, /mensajeExpresion\(/);
+  assert.match(burbuja, /\{conWeb && \(\s*<WebView/, 'sin turno, sin WebView');
+  assert.match(leer('src/components/OrbeAura.tsx'), /orbeConOpciones\(ORBE_HTML,/, 'la mesa dibuja la misma página');
+});
+
+test('AU-RA chiquita: la emoción del alma toma el MISMO color que la mesa le daría a esa cara', () => {
+  // Cada cara del alma tiene su lugar (las que son estados del orbe → ninguna).
+  for (const e of EXPRESIONES_AVATAR) {
+    const x = expresionDeAvatar(e);
+    assert.ok(x === null || EXPRESIONES.includes(x), e);
+  }
+  for (const e of ['tranquila', 'escucha', 'piensa'] as const) assert.equal(expresionDeAvatar(e), null, `${e}: lo hace el estado del orbe`);
+  // La mesa: cara → alma (contrato.ts) → orbe chico, igual que cara → orbe grande (expresionDeCara).
+  for (const cara of ['HAPPY', 'WINK', 'LAUGH', 'SAD', 'SURPRISED', 'STARTLE', 'CONCERNED', 'ANGRY', 'TIRED', 'YAWNING', 'SLEEPING'] as const) {
+    const alma = estadoDesdeMesa(cara, '').expresion;
+    assert.equal(expresionDeAvatar(alma), expresionDeCara(cara), `${cara} → ${alma}`);
+  }
+  assert.equal(expresionDeAvatar(undefined), null);
+});
+
+test('AU-RA chiquita: el mismo estado que la mesa (habla, piensa, escucha, dormida)', () => {
+  const e = (x: Partial<typeof ESTADO_INICIAL>) => ({ ...ESTADO_INICIAL, ...x });
+  assert.equal(estadoOrbeChico(undefined), 'reposo');
+  assert.equal(estadoOrbeChico(e({})), 'reposo');
+  assert.equal(estadoOrbeChico(e({ escuchando: true })), 'escucha');
+  assert.equal(estadoOrbeChico(e({ escuchando: true, pensando: true })), 'piensa');
+  assert.equal(estadoOrbeChico(e({ escuchando: true, pensando: true, hablando: true })), 'habla');
+  assert.equal(estadoOrbeChico(e({ hablando: true, silenciado: true })), 'apagado', 'en silencio se duerme');
+  // La cara de escuchar (la «oreja» del teléfono) también es «escucha», pero silenciada, hablando o pensando mandan.
+  assert.equal(estadoOrbeChico(e({ expresion: 'escucha' })), 'escucha');
+  assert.equal(estadoOrbeChico(e({ expresion: 'escucha', silenciado: true })), 'apagado');
+  assert.equal(estadoOrbeChico(e({ expresion: 'escucha', hablando: true })), 'habla');
+  assert.equal(estadoOrbeChico(e({ expresion: 'escucha', pensando: true })), 'piensa');
+  assert.equal(estadoOrbeChico(e({ expresion: 'contenta' })), 'reposo');
+});
+
+test('AU-RA chiquita: el encuadre cabe en lo que acepta el orbe y no se corta', () => {
+  for (const lado of [24, 56, 72, 120, 300]) {
+    for (const halo of [false, true]) {
+      const g = geometriaOrbeChico(lado, halo);
+      assert.ok(g.radioOrbe >= 0.1 && g.radioOrbe <= 0.45, `radio ${g.radioOrbe}`);
+      assert.ok(g.radioDisco > g.radioOrbe && g.radioDisco <= 0.5, `disco ${g.radioDisco}`);
+      if (halo) {
+        assert.equal(g.disco, lado, 'con halo, el disco es el cuadro (la foto del primer cuadro no cambia de tamaño)');
+        assert.equal(g.lienzo, Math.round(lado * LIENZO_SOBRE_DISCO));
+      } else {
+        assert.equal(g.lienzo, lado, 'sin halo, todo cabe en el cuadro (el acople recorta)');
+        assert.equal(g.disco, Math.round(lado / LIENZO_AJUSTADO));
+      }
+      assert.ok(Math.abs(g.radioOrbe / g.radioDisco - CASCARA_SOBRE_DISCO) < 1e-9, 'la cáscara llena el disco como en la burbuja');
+    }
+  }
+});
+
+test('un solo orbe vivo: la mesa pausada suelta el turno, un chico lo toma, la mesa lo recupera a la fuerza', () => {
+  orbeVivo.emitir(null);
+  assert.equal(puedeTomar(null, 'a'), true);
+  assert.equal(puedeTomar('a', 'a'), true);
+  assert.equal(puedeTomar('mesa', 'a'), false);
+  assert.equal(puedeTomar('a', 'mesa', true), true);
+
+  // La mesa se ve: es suya. El chico que aparece (el acople montándose) se queda con la foto.
+  assert.equal(tomarOrbeVivo(DUENO_MESA, { forzar: true }), true);
+  assert.equal(tomarOrbeVivo('chica-1'), false);
+  // La mesa deja de verse (los chats encima): se pausa y lo suelta; el chico, que escuchaba, lo pide y queda suyo.
+  const vistos: (string | null)[] = [];
+  const fuera = orbeVivo.escuchar((d) => {
+    vistos.push(d);
+    if (d === null) tomarOrbeVivo('chica-1');
+  });
+  soltarOrbeVivo(DUENO_MESA);
+  assert.equal(orbeVivo.ultimo(), 'chica-1');
+  // Un segundo chico no se lo quita; la mesa pausada que «suelta» otra vez no le quita el turno a quien lo tiene.
+  assert.equal(tomarOrbeVivo('chica-2'), false);
+  soltarOrbeVivo(DUENO_MESA);
+  assert.equal(orbeVivo.ultimo(), 'chica-1');
+  // La mesa vuelve a verse: lo toma a la fuerza y el chico se entera en el acto (vuelve a su foto).
+  tomarOrbeVivo(DUENO_MESA, { forzar: true });
+  assert.equal(orbeVivo.ultimo(), DUENO_MESA);
+  assert.deepEqual(vistos, [null, 'chica-1', DUENO_MESA]);
+  fuera();
+  soltarOrbeVivo(DUENO_MESA);
+  assert.equal(orbeVivo.ultimo(), null);
+});
+
+test('un solo orbe vivo: la mesa se pausa de verdad (el bucle se corta) y nace pausada si se monta sin verse', () => {
+  const desk = leer('src/screens/DeskScreen.tsx');
+  assert.match(desk, /<OrbeAura[\s\S]*?activo=\{mesaActiva && !burbuja && !\(llamadaActiva\(voz\.ciclo\) && !voz\.llamada\.minimizada\)\}/);
+  const aura = sinComentariosTs(leer('src/components/OrbeAura.tsx'));
+  assert.match(aura, /soltarOrbeVivo\(DUENO_MESA\);\s*inyectar\(\{ tipo: 'callar' \}\);\s*inyectar\(\{ tipo: 'pausa', activa: true \}\);/);
+  assert.match(aura, /tomarOrbeVivo\(DUENO_MESA, \{ forzar: true \}\)/);
+  assert.match(aura, /if \(activoRef\.current\) inyectar\(m\)/, 'pausada no se le manda nada (ni suena detrás de los chats)');
+  // La página: la pausa corta el bucle (sin dos bucles al pausar y seguir rápido) y la opción de nacer pausada.
+  assert.match(ORBE_HTML, /case 'pausa': pausarApp\(d\.activa === true\)/);
+  assert.match(ORBE_HTML, /function detener\(\)\{ running = false; cancelAnimationFrame\(rafId\); \}/);
+  assert.match(ORBE_HTML, /let PAUSA_APP = OPC\.pausado === true\b/);
+  assert.match(ORBE_HTML, /if \(PAUSA_APP \|\| document\.hidden\) running = false;/);
+  assert.match(orbeConOpciones('<html><head></head></html>', { sonidos: false, pausado: true }), /"pausado":true/);
+  assert.doesNotMatch(orbeConOpciones('<html><head></head></html>', { sonidos: false }), /pausado/);
+});
+
+test('AU-RA chiquita: si la WebView no da en este teléfono, a la segunda caída queda la foto sin reintentar', () => {
+  _reiniciarCaidasChico();
+  assert.equal(chicoPuedeIntentar(), true);
+  for (let i = 0; i < CAIDAS_MAX_CHICO; i++) anotarCaidaChico();
+  assert.equal(chicoPuedeIntentar(), false);
+  _reiniciarCaidasChico();
+  const burbuja = leer('src/burbuja/OrbeBurbuja.tsx');
+  assert.match(burbuja, /alCaerRef\.current\?\.\(motivo\)/);
+  assert.match(burbuja, /activo=\{activo && \(!conWeb \|\| !pintada\)\}/, 'la foto respira mientras no hay orbe vivo');
+});
+
+test('contexto WebGL perdido: la página avisa con {tipo:"fallo"} (el que escuchan la mesa y la burbuja para su respaldo)', () => {
+  const perdido = ORBE_HTML.slice(ORBE_HTML.indexOf("addEventListener('webglcontextlost'"), ORBE_HTML.indexOf("addEventListener('webglcontextrestored'"));
+  assert.ok(perdido.length > 0);
+  assert.match(perdido, /notify\(\{tipo:'fallo', motivo:'contexto WebGL perdido'\}\)/);
+  assert.match(perdido, /running = false/);
+  // Los dos lados escuchan ese mismo aviso.
+  assert.match(leer('src/burbuja/OrbeBurbuja.tsx'), /m\.tipo === 'fallo'/);
+  assert.match(leer('src/components/OrbeAura.tsx'), /case 'fallo':/);
+});
+
+test('tope de cuadros: la AU-RA chiquita va a 30 (15 dormida) y la burbuja sigue sin tope', () => {
+  // La opción entra en la página y se puede cambiar por el puente sin recargar.
+  assert.match(orbeConOpciones('<html><head></head></html>', { sonidos: false, fpsMax: 30 }), /"fpsMax":30/);
+  assert.doesNotMatch(orbeConOpciones('<html><head></head></html>', { sonidos: false }), /fpsMax/);
+  assert.match(ORBE_HTML, /let FPS_MAX = Math\.max\(0, \+OPC\.fpsMax \|\| 0\);/);
+  assert.match(ORBE_HTML, /case 'fps': FPS_MAX = /);
+  // En el bucle: el cuadro se salta si no toca (con 1,5 ms de holgura), y seguir() vuelve a contar desde cero.
+  assert.match(ORBE_HTML, /if \(FPS_MAX && lastDraw && now - lastDraw < 1000\/FPS_MAX - 1\.5\) return;/);
+  assert.match(ORBE_HTML, /function seguir\(\)\{[\s\S]*?lastDraw = 0;[\s\S]*?\}/);
+  // Ir a 30 porque se pidió no es ir lento: la escalera de calidad mide contra el tope.
+  assert.match(ORBE_HTML, /fpsShown < metaFps\(\)\*0\.82/);
+  // La burbuja lo pasa si se lo dan; la chiquita pide 30 y 15 dormida.
+  const burbuja = sinComentariosTs(leer('src/burbuja/OrbeBurbuja.tsx'));
+  assert.match(burbuja, /fpsMax\?: number;/);
+  assert.match(burbuja, /enviar\(\{ tipo: 'fps', max: fpsMax \?\? 0 \}\)/);
+  const chica = sinComentariosTs(leer('src/avatar3d/OrbeAuraChica.tsx'));
+  assert.match(chica, /export const FPS_CHICA = 30;/);
+  assert.match(chica, /export const FPS_CHICA_DORMIDA = 15;/);
+  assert.match(chica, /fpsMax=\{dormida \? FPS_CHICA_DORMIDA : FPS_CHICA\}/);
+  // La burbuja del botón lateral (Burbuja.tsx) no pasa tope: queda como estaba.
+  assert.doesNotMatch(leer('src/burbuja/Burbuja.tsx'), /fpsMax/);
+});
+
+test('la burbuja del botón lateral abierta: la mesa se pausa y la AU-RA chiquita no pide el orbe vivo', () => {
+  const desk = sinComentariosTs(leer('src/screens/DeskScreen.tsx'));
+  assert.match(desk, /const burbuja = useSyncExternalStore\(burbujaAbierta\.suscribir, burbujaAbierta\.abierta, burbujaAbierta\.abierta\);/);
+  assert.match(desk, /activo=\{mesaActiva && !burbuja && /);
+  const chica = sinComentariosTs(leer('src/avatar3d/OrbeAuraChica.tsx'));
+  assert.match(chica, /import \{ burbujaAbierta \} from '\.\.\/burbuja\/logica';/);
+  assert.match(chica, /useSyncExternalStore\(burbujaAbierta\.suscribir, burbujaAbierta\.abierta, burbujaAbierta\.abierta\)/);
+  assert.match(chica, /useTurnoOrbe\(activo && !caida && !burbuja\)/);
+  // El aviso que escuchan: al abrirse avisa, y al cerrarse también.
+  const aviso = new AvisoBurbuja();
+  let avisos = 0;
+  const fuera = aviso.suscribir(() => avisos++);
+  aviso.fijar(true);
+  assert.equal(aviso.abierta(), true);
+  aviso.fijar(false);
+  assert.equal(aviso.abierta(), false);
+  assert.equal(avisos, 2);
+  fuera();
 });
