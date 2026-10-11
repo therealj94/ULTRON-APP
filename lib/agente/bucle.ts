@@ -235,7 +235,7 @@ export async function correrAgente(opts: {
       const previa = hechas.get(huella);
       if (previa) {
         // Repetir la misma llamada es el bucle infinito más común. Se le devuelve lo de antes.
-        mensajes.push({ role: 'tool', tool_name: l.nombre, content: `Esa llamada ya la hiciste en este turno y dio: ${previa.resultado.texto}` });
+        mensajes.push({ role: 'tool', tool_name: l.nombre, content: `Esa llamada ya la hiciste en este turno y dio: ${recortarParaModelo(previa.resultado.texto)}` });
         continue;
       }
 

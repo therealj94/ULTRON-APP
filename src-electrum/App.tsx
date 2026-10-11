@@ -219,6 +219,10 @@ export default function App() {
       if (Date.now() >= fin) cerrar();
     };
     const t = setTimeout(cerrar, Math.min(fin - Date.now(), 2_147_000_000));
+    // La conversación del servidor se borra ANTES de vencer, mientras el token todavía vale: al vencer,
+    // el servidor ya rechaza ese DELETE y el hilo quedaría guardado hasta su caducidad.
+    const borrarHilo = () => void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum(), keepalive: true }).catch(() => {});
+    const previo = setTimeout(borrarHilo, Math.max(0, Math.min(fin - Date.now() - 20_000, 2_147_000_000)));
     const tic = setInterval(() => {
       setTic((n) => n + 1);
       mirar();
@@ -227,6 +231,7 @@ export default function App() {
     window.addEventListener('focus', mirar);
     return () => {
       clearTimeout(t);
+      clearTimeout(previo);
       clearInterval(tic);
       document.removeEventListener('visibilitychange', mirar);
       window.removeEventListener('focus', mirar);

@@ -652,6 +652,8 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
       // Con un código temporal se mira en el visor de la app, sin ofrecer guardarlo.
       if (esInvitadoAhora()) {
         window.dispatchEvent(new CustomEvent('electrum:visor', { detail: { tipo: 'pdf', nombre: j.nombre || 'area-solicitada.pdf', url, titulo: j.nombre || 'Área solicitada' } }));
+        // El visor la lee al abrir y guarda lo suyo; esta URL se suelta después para no retener el PDF.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
         return;
       }
       const a = document.createElement('a');
