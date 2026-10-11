@@ -15,9 +15,10 @@
  */
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { almacenEnMemoria, _usarAlmacenDurable, type AlmacenDurable, type Escrito } from '../lib/durable';
+import { almacenEnMemoria, claveDe, _usarAlmacenDurable, type AlmacenDurable, type Escrito } from '../lib/durable';
 import { crearObjetivo, leerObjetivo, pedirDecision } from '../lib/objetivos';
-import { leerAgenda } from '../lib/agenda';
+import { leerAgenda, leerDespertaresPendientes, llaveAgenda, MAX_AGENDA } from '../lib/agenda';
+import { repararDespertares } from '../lib/tareas-durables';
 import { avisarDecisionesPendientes, pedirDecisionObjetivo } from '../server/objetivos';
 import { vueltaPlanificador } from '../server/planificador';
 import { encolarAvisoDecision, idAviso, leerAvisoDecision } from '../lib/avisos-decision';
@@ -189,4 +190,35 @@ test('EX-01-5: dos réplicas a la vez (y vueltas seguidas) después del fallo �
   assert.equal(llamadas, 1, 'una sola entrega entre las dos réplicas');
   const l = await leerObjetivo(yo, id, a);
   assert.ok(l.ok && l.objetivo?.estado === 'esperando-decision', 'la decisión sigue esperando a la persona');
+});
+
+test('EX-01-6: agenda LLENA al pedir la decisión → el objetivo queda en los despertares pendientes y, al hacerse sitio, la vuelta lo avisa', async () => {
+  const a = almacenEnMemoria();
+  _usarAlmacenDurable(a);
+  const yo = correo();
+  const id = await nuevoObjetivo(yo, a);
+  // La agenda llena (de otros, para mañana): ni la transición, ni el aviso, ni el reintento caben.
+  const CLAVE_AGENDA = claveDe('planificador', 'aura-planificador', 'agenda');
+  const llenas = Array.from({ length: MAX_AGENDA }, (_, i) => ({ k: llaveAgenda('tarea', 'otro@ejemplo.com', `tk_relleno${i}`), tipo: 'tarea', dueno: 'otro@ejemplo.com', id: `tk_relleno${i}`, cuando: T0 + 86_400_000, t: 1 }));
+  a.objetos.set(CLAVE_AGENDA, JSON.stringify({ v: 1, entradas: llenas }));
+  const p = await pedirDecisionObjetivo(yo, id, pregunta, { almacen: a, ahora: T0, avisarDecision: async () => FALLA_PASAJERA });
+  assert.ok(p.ok, 'la decisión quedó escrita');
+  assert.equal((await entradas(a, 'objetivo')).filter((e) => e.id === id).length, 0, 'no cupo en la agenda');
+  // Antes: `agendarReintentoAvisos` devolvía false y nadie lo apuntaba: aviso guardado y jamás agendado.
+  const pend = await leerDespertaresPendientes(a);
+  assert.ok(pend.ok && pend.entradas.some((e) => e.tipo === 'objetivo' && e.id === id && e.motivo === 'agenda-llena'), JSON.stringify(pend));
+  // Con la agenda todavía llena, la reparación no lo pierde.
+  const r1 = await repararDespertares({ almacen: a, ahora: T0 + MIN });
+  assert.ok(r1.llena);
+  assert.ok((await leerDespertaresPendientes(a)).ok);
+  // Se hace sitio: la vuelta (que repara antes de leer la agenda) lo vuelve a agendar y el aviso sale, una vez.
+  a.objetos.set(CLAVE_AGENDA, JSON.stringify({ v: 1, entradas: llenas.slice(10) }));
+  const enviados: PushDecision[] = [];
+  const ok = async (_c: string, x: PushDecision) => (enviados.push(x), ACEPTADO);
+  await vuelta(a, T0 + 2 * MIN, ok);
+  const pend2 = await leerDespertaresPendientes(a);
+  assert.ok(pend2.ok && !pend2.entradas.some((e) => e.id === id), 'fuera de pendientes');
+  for (let i = 1; i <= 4; i++) await vuelta(a, T0 + (2 + i * 10) * MIN, ok);
+  assert.equal(enviados.length, 1, 'el aviso sale una sola vez');
+  assert.equal(enviados[0].objetivoId, id);
 });

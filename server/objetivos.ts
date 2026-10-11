@@ -47,7 +47,7 @@ import {
 } from '../lib/objetivos';
 import { claveManifiesto, type ManifiestoArchivo } from '../lib/oficina/almacen';
 import { bloqueObjetivosTurno, objetivosAlCaso, type ObjetivoParaTurno } from '../lib/objetivos-turno';
-import { agendar } from '../lib/agenda';
+import { agendarDetallado, anotarDespertarPendiente, type ResultadoAgendar } from '../lib/agenda';
 import { encolarAvisoDecision, entregarAviso, TERMINALES_AVISO, type EstadoAviso, type RefAviso } from '../lib/avisos-decision';
 import { datosPushDecision, enviarPush, pedirDecisionPorPush, type PushDecision } from '../lib/push';
 import { autorizarEjecucion, cambiarTarea, crearTarea, esTerminal, leerTarea, vistaTarea, type EstadoTarea, type RegistroTarea, type Vinculo } from '../lib/tareas-durables';
@@ -130,10 +130,23 @@ export async function avisarDecisionesPendientes(
   return { completo: resultados.every((x) => x.estado === 'agendado' || x.estado === 'terminado'), resultados };
 }
 
-/** EX-01: el objetivo vuelve a la agenda para que el planificador reintente sus avisos (idempotente; nunca lanza). */
+/**
+ * EX-01: el objetivo vuelve a la agenda para que el planificador reintente sus avisos (idempotente; nunca lanza). Si no
+ * cabe (agenda llena) o no se pudo escribir, queda en los despertares pendientes (lib/agenda.ts, otra clave) y la vuelta
+ * del planificador (`repararDespertares`) lo agenda en cuanto haya sitio: antes, el `false` se ignoraba y el aviso quedaba
+ * guardado sin nadie que lo trabajara. true solo si quedó en la agenda.
+ */
 async function agendarReintentoAvisos(dueno: string, objetivoId: string, a: AlmacenDurable | undefined, ahora?: number): Promise<boolean> {
   const t = ahora ?? Date.now();
-  return agendar('objetivo', dueno, objetivoId, t + REINTENTO_AVISOS_MS, { almacen: a, ahora: t }).catch(() => false);
+  return agendarObjetivo(dueno, objetivoId, t + REINTENTO_AVISOS_MS, a, t);
+}
+
+/** El objetivo a la agenda para `cuando`; si no se pudo, a los despertares pendientes (ver arriba). Nunca lanza. */
+async function agendarObjetivo(dueno: string, objetivoId: string, cuando: number, a: AlmacenDurable | undefined, ahora: number): Promise<boolean> {
+  const r = await agendarDetallado('objetivo', dueno, objetivoId, cuando, { almacen: a, ahora }).catch((): ResultadoAgendar => ({ ok: false, motivo: 'almacen' }));
+  if (r.ok === true) return true;
+  if (r.motivo !== 'invalida') await anotarDespertarPendiente('objetivo', dueno, objetivoId, r.motivo === 'lleno' ? 'agenda-llena' : 'almacen', { almacen: a, ahora }).catch(() => false);
+  return false;
 }
 
 /**
@@ -697,8 +710,9 @@ export async function pedirDecisionObjetivo(
   const dueno = conCorreo(correo);
   if (!dueno) return { ok: false, error: new ErrorObjetivo('invalido', 'Sin cuenta no hay objetivos.') };
   // F04: la intención de avisar va ANTES del cambio (la agenda del planificador): si el proceso muere entre la decisión
-  // y su aviso, la próxima vuelta encola el aviso; si el cambio no llegó a escribirse, no hay nada que avisar.
-  await agendar('objetivo', dueno, objetivoId, o.ahora ?? Date.now(), { almacen: o.almacen, ahora: o.ahora }).catch(() => false);
+  // y su aviso, la próxima vuelta encola el aviso; si el cambio no llegó a escribirse, no hay nada que avisar. Si la
+  // agenda está llena (o no se pudo escribir), la intención queda en los despertares pendientes (EX-01).
+  await agendarObjetivo(dueno, objetivoId, o.ahora ?? Date.now(), o.almacen, o.ahora ?? Date.now());
   const r = await pedirDecision(dueno, objetivoId, d, { almacen: o.almacen, ahora: o.ahora, revisionEsperada: o.revisionEsperada });
   if (r.ok === false) return r;
   olvidarObjetivosDelTurno(dueno);

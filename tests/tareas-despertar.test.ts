@@ -283,3 +283,136 @@ test('con todo sano: agendada a la primera y sin marca', async () => {
   const c = await crearTarea(yo, { ...enCola('desp-sano-2'), entorno: { kind: 'chat' as const, id: 'conv', displayName: 'Chat' }, origen: { kind: 'chat' as const } }, { almacen: a, ahora: T0 });
   assert.equal(c.ok && c.despertar, 'no-aplica');
 });
+
+/* ------------------------------------------------------------------ revisión adversaria de EX-02 */
+
+const esClaveTarea = (k: string) => /^tareas\/[0-9a-f]{40}\/tk_/.test(k);
+const idsDeTareas = (a: { objetos: Map<string, string> }) => [...a.objetos.keys()].filter(esClaveTarea).map((x) => x.split('/').pop()!.replace(/\.json$/, ''));
+
+test('se cae entre el objeto y la agenda: la vuelta del planificador (sin dueño) la encuentra y la arranca', async () => {
+  const { a, f, revivir } = almacenConFallos();
+  const yo = correo();
+  f.morirTrasTarea = true;
+  await crearTarea(yo, enCola('desp-global-1'), { almacen: a, ahora: T0 }).catch(() => null); // el proceso «murió» a mitad
+  revivir();
+  const [id] = idsDeTareas(a);
+  assert.ok((await registro(a, yo, id)).despertar, 'la marca quedó con el objeto');
+  // Antes: la lista global no la tenía (se anotaba solo cuando la agenda FALLABA) y la vuelta no la veía nunca.
+  const p = await leerDespertaresPendientes(a);
+  assert.ok(p.ok && p.entradas.some((e) => e.tipo === 'tarea' && e.id === id), 'anotada ANTES de escribir la tarea');
+  let veces = 0;
+  const ejecutar: DepsPlanificador['ejecutar'] = async (dueno, reg) => {
+    veces++;
+    await cambiarTarea(dueno, reg.id, (t) => (t.estado === 'queued' ? { estado: 'running', pasoActual: 'Trabajando' } : null), { almacen: a });
+    return 'empezada';
+  };
+  await vueltaPlanificador({ ejecutar, almacen: a, ahora: () => T0 + 60_000, titular: 'replica-A' });
+  assert.equal(veces, 1, 'la vuelta la reparó y la arrancó sin que nadie repita la petición ni abra la lista');
+  assert.equal((await registro(a, yo, id)).despertar, undefined);
+  const p2 = await leerDespertaresPendientes(a);
+  assert.ok(p2.ok && !p2.entradas.some((e) => e.id === id), 'fuera de pendientes');
+});
+
+test('autorizar y morir antes de la agenda: la reparación global (sin dueño) también la encuentra', async () => {
+  const { a, f, revivir } = almacenConFallos();
+  const yo = correo();
+  const r = await crearTarea(yo, enCola('desp-global-2', false), { almacen: a, ahora: T0 });
+  assert.ok(r.ok);
+  const id = r.ok ? r.tarea.id : '';
+  a.objetos.set(CLAVE_AGENDA, JSON.stringify({ v: 1, entradas: [] }));
+  f.morirTrasTarea = true;
+  await autorizarEjecucion(yo, id, { almacen: a, ahora: T0 + 1 }).catch(() => null); // el proceso «murió» a mitad
+  revivir();
+  assert.ok((await registro(a, yo, id)).despertar);
+  const rep = await repararDespertares({ almacen: a, ahora: T0 + 2 });
+  assert.equal(rep.reparadas, 1, 'la lista global la tenía');
+  assert.equal((await entradasDe(a, id)).length, 1);
+});
+
+test('anotada antes de que exista el objeto: la vuelta no la suelta durante la gracia; pasada la gracia, sí', async () => {
+  const { a, f, revivir } = almacenConFallos();
+  const yo = correo();
+  // Muere justo al ir a escribir el objeto: la anotación ya está, la tarea todavía no.
+  const crearBase = a.crear.bind(a);
+  let morirAntes = true;
+  a.crear = async (clave: string, valor: unknown) => {
+    if (morirAntes && esClaveTarea(clave)) throw new Error('proceso muerto antes del objeto (prueba)');
+    return crearBase(clave, valor);
+  };
+  await crearTarea(yo, enCola('desp-gracia-1'), { almacen: a, ahora: T0 }).catch(() => null);
+  morirAntes = false;
+  const p0 = await leerDespertaresPendientes(a);
+  assert.ok(p0.ok && p0.entradas.length === 1, 'anotada aunque el objeto no llegó a escribirse');
+  // Una vuelta (de otra réplica) mientras tanto: sin tarea todavía, pero dentro de la gracia → no la suelta.
+  await repararDespertares({ almacen: a, ahora: T0 + 1_000 });
+  const p1 = await leerDespertaresPendientes(a);
+  assert.ok(p1.ok && p1.entradas.length === 1, 'dentro de la gracia la entrada se queda');
+  // El reintento escribe el objeto con la marca y vuelve a morir antes de la agenda: la vuelta la repara.
+  f.morirTrasTarea = true;
+  await crearTarea(yo, enCola('desp-gracia-1'), { almacen: a, ahora: T0 + 2_000 }).catch(() => null);
+  revivir();
+  const [id] = idsDeTareas(a);
+  const rep = await repararDespertares({ almacen: a, ahora: T0 + 3_000 });
+  assert.equal(rep.reparadas, 1);
+  assert.equal((await entradasDe(a, id)).length, 1);
+  // Otra que nunca llega a escribirse: pasada la gracia, la entrada se suelta (la lista no crece sin fin).
+  morirAntes = true;
+  await crearTarea(yo, enCola('desp-gracia-2'), { almacen: a, ahora: T0 }).catch(() => null);
+  morirAntes = false;
+  await repararDespertares({ almacen: a, ahora: T0 + 60_000 });
+  const p2 = await leerDespertaresPendientes(a);
+  assert.ok(p2.ok && p2.entradas.length === 1, 'todavía en gracia');
+  await repararDespertares({ almacen: a, ahora: T0 + 6 * 60_000 });
+  const p3 = await leerDespertaresPendientes(a);
+  assert.ok(p3.ok && p3.entradas.length === 0, 'pasada la gracia, sin tarea, se suelta');
+});
+
+test('con todo sano, crear y autorizar no dejan nada en los despertares pendientes', async () => {
+  const { a } = almacenConFallos();
+  const yo = correo();
+  const r = await crearTarea(yo, enCola('desp-limpio-1'), { almacen: a, ahora: T0 });
+  assert.equal(r.ok && r.despertar, 'agendada');
+  const r2 = await crearTarea(yo, enCola('desp-limpio-2', false), { almacen: a, ahora: T0 });
+  assert.ok(r2.ok);
+  a.objetos.set(CLAVE_AGENDA, JSON.stringify({ v: 1, entradas: [] }));
+  const au = await autorizarEjecucion(yo, r2.ok ? r2.tarea.id : '', { almacen: a, ahora: T0 + 1 });
+  assert.equal(au.ok && au.despertar, 'agendada');
+  // Repetir una que ya terminó su despertar tampoco deja rastro.
+  await crearTarea(yo, enCola('desp-limpio-1'), { almacen: a, ahora: T0 + 2 });
+  const p = await leerDespertaresPendientes(a);
+  assert.ok(p.ok && p.entradas.length === 0, JSON.stringify(p));
+});
+
+test('dos creaciones a la vez con el mismo requestId: ninguna devuelve «agendada» con wakeUp pendiente', async () => {
+  const base = almacenEnMemoria();
+  // La primera que va a borrar la marca (CAS sobre el objeto) espera a que la otra creación haya leído la tarea con ella.
+  let lecturasTarea = 0;
+  let soltar: () => void = () => {};
+  const leida = new Promise<void>((r) => (soltar = r));
+  let retenida = false;
+  const a: AlmacenDurable & { objetos: Map<string, string> } = {
+    ...base,
+    objetos: base.objetos,
+    async leer(clave: string) {
+      const l = await base.leer(clave);
+      if (esClaveTarea(clave) && l.ok && l.valor && ++lecturasTarea >= 2) soltar();
+      return l as any;
+    },
+    async cas(clave: string, valor: unknown, etag: string) {
+      if (esClaveTarea(clave) && !retenida) {
+        retenida = true;
+        await Promise.race([leida, new Promise((r) => setTimeout(r, 200))]);
+      }
+      return base.cas(clave, valor, etag);
+    },
+  };
+  const yo = correo();
+  const [r1, r2] = await Promise.all([crearTarea(yo, enCola('desp-doble-1'), { almacen: a, ahora: T0 }), crearTarea(yo, enCola('desp-doble-1'), { almacen: a, ahora: T0 })]);
+  for (const r of [r1, r2]) {
+    assert.ok(r.ok);
+    if (!r.ok) continue;
+    assert.equal(r.despertar, 'agendada');
+    assert.equal(r.tarea.despertar, undefined, 'la tarea devuelta no trae la marca vieja');
+    assert.equal((vistaTarea(r.tarea, T0) as any).wakeUp, undefined, 'la vista no dice «pendiente» de algo agendado');
+  }
+});
