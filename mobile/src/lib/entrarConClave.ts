@@ -117,7 +117,7 @@ export function errorDeWallet(error: string): { codigo: string; mensaje: string 
     case 'sin-gid':
       return {
         codigo: 'SIN_GID',
-        mensaje: tr('Tu wallet todavía no tiene un Genesis ID. Crealo y volvé a entrar.', 'Your wallet doesn’t have a Genesis ID yet. Create one and sign in again.'),
+        mensaje: tr('Tu wallet todavía no tiene un Genesis ID. Créalo y vuelve a entrar.', 'Your wallet doesn’t have a Genesis ID yet. Create one and sign in again.'),
       };
     case 'gid-pendiente':
       return {
@@ -131,7 +131,7 @@ export function errorDeWallet(error: string): { codigo: string; mensaje: string 
       return {
         codigo: 'NO_VINCULADA',
         mensaje: tr(
-          'Tu cuenta de la wallet no está vinculada a un Genesis ID. Abrí la app Orden Global, vinculá tu Genesis ID a esta cuenta y volvé a tocar «Entrar con Genesis ID».',
+          'Tu cuenta de la wallet no está vinculada a un Genesis ID. Abre la app Orden Global, vincula tu Genesis ID a esta cuenta y vuelve a intentar.',
           'Your wallet account isn’t linked to a Genesis ID. Open the Orden Global app, link your Genesis ID to this account and tap “Sign in with Genesis ID” again.'
         ),
       };
@@ -139,25 +139,25 @@ export function errorDeWallet(error: string): { codigo: string; mensaje: string 
       return {
         codigo: 'CORREO_SIN_CONFIRMAR',
         mensaje: tr(
-          'Tu correo todavía no está confirmado en la wallet. Abrí el enlace que te mandó Orden Global y volvé a intentar.',
+          'Tu correo todavía no está confirmado en la wallet. Abre el enlace que te mandó Orden Global y vuelve a intentar.',
           'Your email isn’t confirmed in the wallet yet. Open the link Orden Global sent you and try again.'
         ),
       };
     case 'limite':
       return {
         codigo: 'LIMITE',
-        mensaje: tr('Hubo demasiados intentos seguidos. Esperá unos minutos y volvé a intentar.', 'Too many attempts in a row. Wait a few minutes and try again.'),
+        mensaje: tr('Hubo demasiados intentos seguidos. Espera unos minutos y vuelve a intentar.', 'Too many attempts in a row. Wait a few minutes and try again.'),
       };
     case 'red':
       return {
         codigo: 'RED',
         mensaje: tr(
-          'Tu wallet no pudo comunicarse con Genesis ID. Revisá tu conexión y volvé a intentar.',
+          'Tu wallet no pudo comunicarse con Genesis ID. Revisa tu conexión y vuelve a intentar.',
           'Your wallet couldn’t reach Genesis ID. Check your connection and try again.'
         ),
       };
     default:
-      return { codigo: 'FALLO', mensaje: tr('La wallet no pudo darte el pase. Probá de nuevo.', 'The wallet couldn’t give you the pass. Try again.') };
+      return { codigo: 'FALLO', mensaje: tr('La wallet no pudo darte el pase. Prueba de nuevo.', 'The wallet couldn’t give you the pass. Try again.') };
   }
 }
 

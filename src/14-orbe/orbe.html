@@ -77,7 +77,7 @@
    - HDR + bloom (2 niveles) + tonemap ACES + tramado anti-bandas.
    API: window.AuraFace {setState, say, setLevel, setVoz, listen, silence, state, stats}
         postMessage {type:'aura', state, level, text, dur}
-        window.__aura({tipo:'estado'|'boca'|'decir', ...})  (puente de la app)
+        window.__aura({tipo:'estado'|'boca'|'decir'|'pausa'|'fps', ...})  (puente de la app)
    ===================================================================================== */
 const params = new URLSearchParams(location.search);
 // La app (WebView con html propio, sin ?query) pasa sus opciones antes de cargar: window.__orbeOpciones.
@@ -116,6 +116,11 @@ const POOL = COARSE ? 9000 : 16000;          // partículas que pueden salir a f
 let qi = Math.min(LADDER.length - 1, Math.max(0, parseInt(params.get('q') || '0', 10) || 0));
 const LOCKQ = params.has('q');
 const TARGET_FPS = COARSE ? 30 : 60;
+/* TOPE DE CUADROS (la AU-RA chiquita de los chats, por la batería): `__orbeOpciones.fpsMax` o {tipo:'fps', max} por el
+   puente. Un orbe de 80 px no necesita 60 cuadros por segundo; dormida le bastan 15. Sin tope (0), los de la pantalla.
+   La escalera de calidad mide contra el tope: ir a 30 porque así se pidió no es ir lento. */
+let FPS_MAX = Math.max(0, +OPC.fpsMax || 0);
+function metaFps(){ return FPS_MAX ? Math.min(TARGET_FPS, FPS_MAX) : TARGET_FPS; }
 
 /* ---------- shaders (GLSL ES 3.00 / 1.00 con macros) ---------- */
 const HDR_V = GL2
@@ -743,6 +748,8 @@ const SFX = (() => {
     toque(){ nota(880, 0, 0.25, 0.05, 'sine', 440); soplo(0, 0.25, 0.012, 3000, 1200, 3); },
     activar(v){ on = !!v; if (on) listo(); else if (ctx) ctx.suspend().catch(() => {}); },
     despertar(){ if (on) listo(); },
+    // La mesa pausada (detrás de los chats): el AudioContext también se suspende; el próximo sonido lo despierta solo.
+    dormir(){ if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {}); },
     get activo(){ return on; },
   };
 })();
@@ -1026,6 +1033,8 @@ function handle(d){
     case 'expresion': setExpresion(d); break;
     case 'movimiento': REDUCED = d.reducido === true || matchMedia('(prefers-reduced-motion: reduce)').matches; break;
     case 'callar': silence(); break;
+    case 'pausa': pausarApp(d.activa === true); break;
+    case 'fps': FPS_MAX = Math.max(0, +d.max || 0); lastDraw = 0; break;
     case 'sonido': SFX.activar(d.activo !== false); break;
     case 'margen': {
       const a = Math.max(0, +d.arriba || 0), b = Math.max(0, +d.abajo || 0);
@@ -1061,10 +1070,13 @@ addEventListener('pointerup', e => {
 }, {passive:true});
 
 /* ---------- bucle ---------- */
-let last = 0, running = true, fpsAcc = 0, fpsFrames = 0, fpsShown = 0, slowWin = 0, goodWin = 0, upgraded = false, settle = 0;
+let last = 0, lastDraw = 0, running = true, rafId = 0, fpsAcc = 0, fpsFrames = 0, fpsShown = 0, slowWin = 0, goodWin = 0, upgraded = false, settle = 0;
 function frame(now){
   if (!running) return;
-  requestAnimationFrame(frame);
+  rafId = requestAnimationFrame(frame);
+  // Con tope: se salta el cuadro si no toca todavía (1,5 ms de holgura para no perder uno por el temblor del vsync).
+  if (FPS_MAX && lastDraw && now - lastDraw < 1000/FPS_MAX - 1.5) return;
+  lastDraw = now;
   let dt = last ? (now - last)/1000 : 1/60; last = now;
   if (dt > 0.25) dt = 0.25;   // todo es función del tiempo: un equipo lento no se queda atrás
   clock += dt;
@@ -1073,9 +1085,9 @@ function frame(now){
   if (fpsAcc >= 1.5){
     fpsShown = fpsFrames/fpsAcc; fpsAcc = 0; fpsFrames = 0;
     if (!LOCKQ && settle-- <= 0){
-      if (fpsShown < TARGET_FPS*0.82 && qi < LADDER.length-1){ if (++slowWin >= 2){ qi++; slowWin = 0; settle = 2; resize(); } }
+      if (fpsShown < metaFps()*0.82 && qi < LADDER.length-1){ if (++slowWin >= 2){ qi++; slowWin = 0; settle = 2; resize(); } }
       else slowWin = 0;
-      if (fpsShown > TARGET_FPS*0.97 && qi > 0 && !upgraded){ if (++goodWin >= 4){ qi--; goodWin = 0; upgraded = true; settle = 2; resize(); } }
+      if (fpsShown > metaFps()*0.97 && qi > 0 && !upgraded){ if (++goodWin >= 4){ qi--; goodWin = 0; upgraded = true; settle = 2; resize(); } }
       else goodWin = 0;
     }
     if (!CLEAN || document.body.classList.contains('hud')) drawHud();
@@ -1224,16 +1236,39 @@ function blur(a, b, spread){
 }
 
 /* ---------- ciclo de vida ---------- */
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden){ running = false; }
-  else if (!running){ running = true; last = 0; requestAnimationFrame(frame); }
+/* LA PAUSA DE LA APP (José, 11-oct: «cuando se hace pequeño aura en chat se vea igual cuando es avatar»). En el teléfono
+   la mesa sigue montada debajo de los chats, y una WebView tapada por otras vistas no se entera (`document.hidden` sigue
+   en falso): el orbe grande seguía dibujando a ciegas. Ahora la app lo pausa ({tipo:'pausa', activa:true}) mientras la
+   mesa no se ve, y así el orbe chico de los chats puede ser el MISMO orbe de partículas sin dos escenas WebGL vivas a la
+   vez. Con `__orbeOpciones.pausado` nace pausado (la mesa montada sin verse). El bucle se corta del todo
+   (cancelAnimationFrame): pausar y seguir rápido no deja dos bucles corriendo. */
+let PAUSA_APP = OPC.pausado === true, rzPend = false;
+function seguir(){
+  if (running || PAUSA_APP || document.hidden) return;
+  if (rzPend){ rzPend = false; resize(); }
+  running = true; last = 0; lastDraw = 0; rafId = requestAnimationFrame(frame);
+}
+function detener(){ running = false; cancelAnimationFrame(rafId); }
+/* Pausada también calla: el AudioContext de los efectos se suspende (no queda despierto gastando detrás de los chats). */
+function pausarApp(p){ PAUSA_APP = !!p; if (PAUSA_APP){ detener(); SFX.dormir(); } else seguir(); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) detener(); else seguir(); });
+/* Contexto perdido: también el aviso de la app ({tipo:'fallo'}), que es el que escuchan la mesa y la burbuja para poner su
+   respaldo (anillos, la foto); el `aura-fallo` de siempre queda para la página de prueba. */
+canvas.addEventListener('webglcontextlost', e => {
+  e.preventDefault(); running = false;
+  notify({type:'aura-fallo', motivo:'contexto WebGL perdido'});
+  notify({tipo:'fallo', motivo:'contexto WebGL perdido'});
 });
-canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); running = false; notify({type:'aura-fallo', motivo:'contexto WebGL perdido'}); });
 canvas.addEventListener('webglcontextrestored', () => location.reload());
-let rzT = 0; addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(resize, 60); });
+/* Pausada no se redimensiona (rehacer los búferes sin dibujar no sirve): queda pendiente para cuando siga. */
+let rzT = 0; addEventListener('resize', () => {
+  clearTimeout(rzT);
+  rzT = setTimeout(() => { if (PAUSA_APP) rzPend = true; else resize(); }, 60);
+});
 resize();
 setState(state);
-requestAnimationFrame(frame);
+if (PAUSA_APP || document.hidden) running = false;
+else rafId = requestAnimationFrame(frame);
 
 /* ---------- panel de prueba ---------- */
 document.getElementById('f').onsubmit = e => { e.preventDefault(); const v = document.getElementById('t').value.trim(); if (v) say(v); };

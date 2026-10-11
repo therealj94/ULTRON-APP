@@ -3283,6 +3283,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onTocar={onTocarOrbe}
         onDeslizar={onDeslizarOrbe}
         onFallo={onFalloOrbe}
+        // Sin verse (los chats encima, la app atrás o la llamada a pantalla completa) se pausa y suelta el turno: así la
+        // AU-RA chiquita de los chats es el mismo orbe sin dos escenas WebGL vivas (José, 11-oct, avatar3d/orbeVivo.ts).
+        // Con la burbuja del botón lateral abierta también: su actividad es translúcida y la mesa queda detrás, «activa»
+        // para React, pero el orbe que se ve es el de la burbuja.
+        activo={mesaActiva && !burbuja && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
       />
     ) : vista === 'anillos' ? (
       <CaraSegura

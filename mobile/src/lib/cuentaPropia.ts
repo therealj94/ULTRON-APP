@@ -46,14 +46,17 @@ export function problemaDeClave(clave: string, correo = ''): string | null {
   return null;
 }
 
-/** El formulario de «Crear cuenta», antes de mandarlo. null = se puede mandar. */
-export function validarRegistro(d: { nombre: string; correo: string; clave: string; confirmar: string }): ErrorCuenta | null {
+/**
+ * El formulario de «Crear cuenta», antes de mandarlo. null = se puede mandar. `confirmar` es opcional: la pantalla del
+ * teléfono pide la contraseña una vez, con el ojito para verla (11-oct); si se manda, tiene que coincidir.
+ */
+export function validarRegistro(d: { nombre: string; correo: string; clave: string; confirmar?: string }): ErrorCuenta | null {
   const nombre = String(d.nombre || '').replace(/\s+/g, ' ').trim();
   if (nombre.length < 2 || nombre.length > 80) return { campo: 'nombre', mensaje: tr('Escribe tu nombre.', 'Enter your name.') };
   if (!correoConForma(d.correo)) return { campo: 'correo', mensaje: tr('Escribe un correo válido, como tu@correo.com.', 'Enter a valid email, like you@email.com.') };
   const p = problemaDeClave(d.clave, d.correo);
   if (p) return { campo: 'clave', mensaje: p };
-  if (d.clave !== d.confirmar) return { campo: 'confirmar', mensaje: tr('Las dos contraseñas no coinciden.', 'The two passwords don’t match.') };
+  if (d.confirmar !== undefined && d.clave !== d.confirmar) return { campo: 'confirmar', mensaje: tr('Las dos contraseñas no coinciden.', 'The two passwords don’t match.') };
   return null;
 }
 

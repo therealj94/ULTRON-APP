@@ -8,14 +8,28 @@
  * «Efectos de sonido» de Ajustes. Contesta con postMessage: listo, tocar, deslizar o fallo. Si la WebView
  * no tiene WebGL, se cae o no dice «listo» a tiempo, avisa con `onFallo` y la mesa pone los anillos:
  * nunca pantalla vacía.
+ *
+ * La pausa (José, 11-oct: «cuando se hace pequeño aura en chat se vea igual cuando es avatar»): la mesa sigue montada
+ * debajo de los chats y una WebView tapada no se entera (`document.hidden` sigue en falso), así que el orbe dibujaba a
+ * ciegas. Con `activo` en falso (la mesa no se ve, la app en segundo plano o la llamada encima) se pausa de verdad
+ * (`{tipo:'pausa'}`: el bucle se corta y la GPU queda libre), suelta el turno del orbe vivo (avatar3d/orbeVivo.ts) y deja
+ * de mandarle nada (ni estado ni sonidos: no suena desde detrás). Al volver a verse toma el turno a la fuerza (la AU-RA
+ * chiquita vuelve a su foto en ese instante), le pone al día lo que pasó mientras tanto, sin el sonido del cambio, y sigue.
+ * Así la AU-RA chiquita de los chats es el MISMO orbe de partículas sin dos escenas WebGL vivas a la vez.
+ *
+ * Un intento más (revisión del 11-oct): las WebView de la app comparten el proceso que dibuja, y ahora el orbe chico vive
+ * en otra; si ese proceso se cae (por el chico o por memoria), la mesa no se rinde a la primera: suelta el turno, vuelve a
+ * crear su WebView de cero (otra `generacion`) y solo si se cae otra vez pone los anillos.
  */
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { FaceState } from '../config';
 import { ORBE_HTML } from '../orbe/orbeHtml';
 import { orbeConOpciones } from '../orbe/opciones';
 import { expresionDeCara, mensajeExpresion } from '../orbe/expresiones';
+import { DUENO_MESA, soltarOrbeVivo, tomarOrbeVivo } from '../avatar3d/orbeVivo';
+import { miga } from '../lib/reporte';
 
 type Props = {
   face: FaceState;
@@ -35,10 +49,14 @@ type Props = {
   onTocar: () => void;
   onDeslizar: (dir: 'arriba' | 'abajo') => void;
   onFallo: (motivo: string) => void;
+  /** La mesa se ve (y la app está delante): si no, el orbe se pausa y suelta el turno del orbe vivo. */
+  activo?: boolean;
 };
 
 /** Lo que tarda de sobra un teléfono modesto en compilar los shaders del orbe. */
 const ESPERA_LISTO_MS = 10_000;
+/** Las veces que la mesa vuelve a crear su WebView si se cae el proceso que dibuja, antes de poner los anillos. */
+export const REINTENTOS_MESA = 1;
 /** El orbe no necesita más de ~15 niveles por segundo, y cada envío cruza el puente. */
 const BOCA_CADA_MS = 66;
 const FONDO = '#05070C';
@@ -48,7 +66,7 @@ export const FONDO_ORBE = FONDO;
 /** El orbe con sus opciones ya puestas DENTRO de la página (orbe/opciones.ts; aquí sigue para quien lo importaba). */
 export { orbeConOpciones };
 
-export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSource, onTocar, onDeslizar, onFallo }: Props) {
+export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSource, onTocar, onDeslizar, onFallo, activo = true }: Props) {
   const web = useRef<WebView>(null);
   const lista = useRef(false);
   const caida = useRef(false);
@@ -56,24 +74,84 @@ export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSo
   ultimo.current = { face, hablando, sonidos, frase, margen };
   const cb = useRef({ onTocar, onDeslizar, onFallo });
   cb.current = { onTocar, onDeslizar, onFallo };
-  // Una sola vez: cambiar los sonidos después va por el puente («sonido»), sin recargar el orbe.
-  const html = useMemo(() => orbeConOpciones(ORBE_HTML, ultimo.current.sonidos, ultimo.current.margen), []);
+  /** Se ve: solo así se le manda algo (pausado no suena ni se mueve detrás de los chats). */
+  const activoRef = useRef(activo);
+  activoRef.current = activo;
+  /** Cada WebView nueva (al caerse el proceso) es otra generación: otra `key`, nace de cero. */
+  const [generacion, setGeneracion] = useState(0);
+  const reintentos = useRef(0);
+  // Una vez por WebView: cambiar los sonidos después va por el puente («sonido»), sin recargar el orbe. Montado sin verse
+  // (la app vuelve directo a los chats), nace pausado.
+  const html = useMemo(
+    () => orbeConOpciones(ORBE_HTML, { sonidos: ultimo.current.sonidos, ...(ultimo.current.margen ? { margen: ultimo.current.margen } : {}), ...(activoRef.current ? {} : { pausado: true }) }),
+    [generacion]
+  );
 
-  const enviar = useCallback((m: object) => {
+  const inyectar = useCallback((m: object) => {
     if (!lista.current || caida.current) return;
     web.current?.injectJavaScript(`window.__aura&&window.__aura(${JSON.stringify(m)});true;`);
   }, []);
+  const enviar = useCallback(
+    (m: object) => {
+      if (activoRef.current) inyectar(m);
+    },
+    [inyectar]
+  );
+
+  /** Todo lo que el orbe tiene que saber de golpe (al arrancar y al volver de la pausa). */
+  const ponerAlDia = useCallback(
+    (mudo: boolean) => {
+      const u = ultimo.current;
+      inyectar({ tipo: 'sonido', activo: u.sonidos });
+      if (u.margen) inyectar({ tipo: 'margen', arriba: Math.round(u.margen.arriba), abajo: Math.round(u.margen.abajo) });
+      inyectar({ tipo: 'estado', face: u.hablando ? 'SPEAKING' : u.face, ...(mudo ? { mudo: true } : {}) });
+      const ex = expresionDeCara(u.face);
+      if (ex) inyectar(mensajeExpresion(ex));
+      if (u.hablando && u.frase?.texto) inyectar({ tipo: 'decir', texto: u.frase.texto });
+    },
+    [inyectar]
+  );
 
   const fallar = useCallback((motivo: string) => {
     if (caida.current) return;
     caida.current = true;
+    soltarOrbeVivo(DUENO_MESA);
     cb.current.onFallo(motivo);
   }, []);
+
+  /** Se cayó el proceso que dibuja: una WebView nueva (soltando el turno) antes de rendirse. */
+  const procesoCaido = useCallback(() => {
+    if (caida.current) return;
+    if (reintentos.current >= REINTENTOS_MESA) return fallar('se cerró el proceso de la WebView');
+    reintentos.current++;
+    miga('mesa: se cerró el proceso de la WebView del orbe; se vuelve a crear');
+    lista.current = false;
+    soltarOrbeVivo(DUENO_MESA);
+    setGeneracion((g) => g + 1);
+  }, [fallar]);
+
+  // La pausa: el turno del orbe vivo va con lo que se ve. Al pausar, las palabras a medias se deshacen y el bucle se corta;
+  // al volver, primero el turno (la chiquita suelta su WebView), luego al día y a dibujar.
+  useEffect(() => {
+    if (!activo) {
+      soltarOrbeVivo(DUENO_MESA);
+      inyectar({ tipo: 'callar' });
+      inyectar({ tipo: 'pausa', activa: true });
+      return;
+    }
+    if (caida.current) return;
+    tomarOrbeVivo(DUENO_MESA, { forzar: true });
+    if (lista.current) {
+      ponerAlDia(true);
+      inyectar({ tipo: 'pausa', activa: false });
+    }
+  }, [activo, generacion, inyectar, ponerAlDia]);
+  useEffect(() => () => soltarOrbeVivo(DUENO_MESA), []);
 
   useEffect(() => {
     const t = setTimeout(() => !lista.current && fallar('el orbe no arrancó a tiempo'), ESPERA_LISTO_MS);
     return () => clearTimeout(t);
-  }, [fallar]);
+  }, [fallar, generacion]);
 
   // Mientras suena la voz, «habla»; si no, lo que diga la cara (escucha, piensa, busca, contenta…).
   useEffect(() => enviar({ tipo: 'estado', face: hablando ? 'SPEAKING' : face }), [enviar, face, hablando]);
@@ -124,13 +202,10 @@ export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSo
       switch (m.tipo) {
         case 'listo': {
           lista.current = true;
-          const u = ultimo.current;
-          enviar({ tipo: 'sonido', activo: u.sonidos });
-          if (u.margen) enviar({ tipo: 'margen', arriba: Math.round(u.margen.arriba), abajo: Math.round(u.margen.abajo) });
-          enviar({ tipo: 'estado', face: u.hablando ? 'SPEAKING' : u.face });
-          const ex = expresionDeCara(u.face);
-          if (ex) enviar(mensajeExpresion(ex));
-          if (u.hablando && u.frase?.texto) enviar({ tipo: 'decir', texto: u.frase.texto });
+          // Sin verse: que siga pausado (o se pause, si nació corriendo) y se ponga al día al volver.
+          if (!activoRef.current) return inyectar({ tipo: 'pausa', activa: true });
+          ponerAlDia(false);
+          inyectar({ tipo: 'pausa', activa: false });
           return;
         }
         case 'tocar':
@@ -141,19 +216,20 @@ export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSo
           return fallar(m.motivo || 'el orbe falló al arrancar');
       }
     },
-    [enviar, fallar]
+    [fallar, inyectar, ponerAlDia]
   );
 
   return (
     <View style={StyleSheet.absoluteFill}>
       <WebView
+        key={generacion}
         ref={web}
         source={{ html }}
         originWhitelist={['*']}
         onMessage={alMensaje}
         onError={(e) => fallar(`WebView: ${e.nativeEvent.description}`)}
-        onRenderProcessGone={() => fallar('se cerró el proceso de la WebView')}
-        onContentProcessDidTerminate={() => fallar('se cerró el proceso de la WebView')}
+        onRenderProcessGone={procesoCaido}
+        onContentProcessDidTerminate={procesoCaido}
         style={styles.web}
         containerStyle={styles.web}
         javaScriptEnabled

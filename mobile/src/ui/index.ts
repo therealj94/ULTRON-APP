@@ -22,6 +22,7 @@ export { BotonCheck, Palomita } from './BotonCheck';
 export { Tarjeta, sombraDe } from './Tarjeta';
 export { Chip } from './Chip';
 export { Campo } from './Campo';
+export { CampoCodigo, LARGO_CODIGO } from './CampoCodigo';
 export { PantallaConCabecera, BotonRedondo, ALTO_BARRA } from './Cabecera';
 export { Hoja } from './Hoja';
 export { Grupo, Fila, Segmentado, Interruptor, type OpcionSegmento } from './Lista';

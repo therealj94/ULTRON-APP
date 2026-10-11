@@ -33,6 +33,7 @@ import { MEDIDA, OSCURO as P } from '../nucleo/tema';
 import { de, tr, type Idioma } from '../i18n';
 import { avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
+import { OrbeAuraChica } from '../avatar3d/OrbeAuraChica';
 import { fotosRetrato } from '../avatares/ClaudioRetrato';
 import { Avatar, Boton, Deslizar, Icono, ROJO, RESORTE_SUAVE, tocar } from '../pulse/ui/llamadaPiezas';
 import { leyendaLlamada, llamadaActiva, llamadaTerminada, relojLlamada, type EstadoCiclo, type MotivoFin, type OrigenLlamada } from './llamadaCiclo';
@@ -198,7 +199,7 @@ export function LlamadaAvatar({ v, onContestar, onRechazar, onColgar, onSilencia
               <Pressable onPress={tocarCara} accessibilityRole={enLlamada ? 'button' : undefined} accessibilityLabel={enLlamada ? tr('Dos toques: silenciar o volver a escuchar', 'Double-tap: mute or listen again') : nombre}>
                 <Animated.View style={estiloCara}>
                   <Avatar tam={tamCara} late={v.estado === 'sonando'} quieto={quieto}>
-                    <CaraLlamada avatar={v.avatar} lado={tamCara - 6} habla={enLlamada && v.estado !== 'silenciado'} nivelVoz={nivelVoz} cuerpo3D={cuerpo3D} />
+                    <CaraLlamada avatar={v.avatar} lado={tamCara - 6} habla={enLlamada && v.estado !== 'silenciado'} nivelVoz={nivelVoz} cuerpo3D={cuerpo3D} activo={verGrande} />
                   </Avatar>
                 </Animated.View>
               </Pressable>
@@ -275,6 +276,11 @@ export function LlamadaAvatar({ v, onContestar, onRechazar, onColgar, onSilencia
  * sus anillos (su cara de la mesa), que laten con la voz. Con `cuerpo3D` (el VozProvider lo pasa: el
  * render 3D del avatar si el teléfono lo aguanta), la foto o los anillos son su respaldo mientras arranca
  * o si falla; el banco de capturas no lo pasa y enseña el 2D.
+ *
+ * AU-RA (José, 11-oct: «cuando se hace pequeño aura en chat se vea igual cuando es avatar»): ya no la foto del orbe
+ * (MiniAvatar) sino el MISMO orbe de partículas de la mesa (avatar3d/OrbeAuraChica), en la llamada grande y en la
+ * píldora: late con su voz y, si no le toca el turno del orbe vivo, queda la foto. `activo` en falso (la vista grande
+ * encogiéndose hacia la píldora) suelta el turno en el acto para que lo tome la píldora.
  */
 export function CaraLlamada({
   avatar,
@@ -282,12 +288,15 @@ export function CaraLlamada({
   habla,
   nivelVoz,
   cuerpo3D,
+  activo = true,
 }: {
   avatar: AvatarId;
   lado: number;
   habla: boolean;
   nivelVoz?: (cb: (nivel: number) => void) => () => void;
   cuerpo3D?: (lado: number, respaldo: ReactNode) => ReactNode;
+  /** Se ve (la grande, mientras no se encoge): solo así AU-RA pide el orbe vivo. */
+  activo?: boolean;
 }) {
   const fotos = fotosRetrato(avatar);
   const nivel = useSharedValue(0);
@@ -303,7 +312,9 @@ export function CaraLlamada({
   const tema = avatarPorId(avatar).tema;
   // La foto de cuerpo entero, acercada a la cara (como la compañera: figura.ts / Companera).
   const encuadre = { width: lado, height: lado, transform: [{ scale: 1.55 }, { translateY: lado * 0.12 }] };
-  const respaldo = fotos ? (
+  const respaldo = avatar === 'aura' ? (
+    <OrbeAuraChica lado={lado} activo={activo} estado={{ hablando: habla, pensando: false, escuchando: false, silenciado: false, expresion: 'tranquila' }} />
+  ) : fotos ? (
     <View style={{ width: lado, height: lado, backgroundColor: tema.fondo }}>
       <Image source={fotos.base} style={encuadre} resizeMode="cover" accessibilityIgnoresInvertColors />
       <Animated.Image source={fotos.habla[1]} style={[StyleSheet.absoluteFill, encuadre, boca]} resizeMode="cover" />

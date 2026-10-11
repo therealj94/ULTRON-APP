@@ -11,6 +11,14 @@
  *    nivel de la voz que suena), aviso/error; y la emoción del turno (orbe/expresiones.ts) encima, que vuelve sola.
  *  · «Reducir movimiento» del sistema: se le dice al orbe (menos giro, sin golpes) y la foto queda quieta.
  *  · No recibe toques (los toma el círculo de la burbuja): `pointerEvents="none"`.
+ *
+ * Revisión del 11-oct (José: «cuando se hace pequeño aura en chat se vea igual cuando es avatar»): este mismo componente es
+ * ahora la AU-RA chiquita de la app (avatar3d/OrbeAuraChica: el acople de los chats, la pantalla completa y la que camina).
+ * Para eso aprende dos cosas sin cambiar nada de la burbuja (las dos valen `true` por defecto):
+ *  · `vivo`: si le toca el turno del único orbe vivo (avatar3d/orbeVivo.ts). Sin turno no monta la WebView y queda la
+ *    foto; al volver el turno, la WebView nace de cero con la foto encima hasta que pinte;
+ *  · `activo`: tapada o en segundo plano, ni WebView ni animaciones.
+ * `alCaer` avisa una sola vez si la WebView no arrancó (para soltar el turno y no reintentar sin fin).
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, StyleSheet, View } from 'react-native';
@@ -36,6 +44,19 @@ type Props = {
   estado: EstadoOrbeBurbuja;
   /** La emoción del turno; `n` distinto = otra vez (aunque se repita). */
   expresion: { nombre: ExpresionOrbe; n: number } | null;
+  /** Le toca el turno del orbe vivo (avatar3d/orbeVivo.ts). Sin turno: la foto, sin WebView. */
+  vivo?: boolean;
+  /** Pausado (tapado, en segundo plano): sin WebView ni animaciones. */
+  activo?: boolean;
+  /** Quién es, para las migas (la burbuja o la AU-RA chiquita de la app). */
+  origen?: string;
+  /** La WebView no arrancó (una sola vez): queda la foto. */
+  alCaer?: (motivo: string) => void;
+  /**
+   * Tope de cuadros por segundo (orbe/opciones.ts `fpsMax`): la AU-RA chiquita pide 30, y 15 dormida, por la batería.
+   * Sin él (la burbuja), los de la pantalla. Cambiarlo no recarga el orbe: va por el puente (`{tipo:'fps'}`).
+   */
+  fpsMax?: number;
 };
 
 const ESPERA_LISTO_MS = 6_000;
@@ -50,44 +71,68 @@ const CARA: Record<EstadoOrbeBurbuja, string> = {
   apagado: 'SLEEPING',
 };
 
-function OrbeBurbujaBase({ lado, lienzo, radioOrbe, radioDisco, estado, expresion }: Props) {
+function OrbeBurbujaBase({ lado, lienzo, radioOrbe, radioDisco, estado, expresion, vivo = true, activo = true, origen = 'burbuja', alCaer, fpsMax }: Props) {
   const web = useRef<WebView>(null);
   const lista = useRef(false);
   const [caida, setCaida] = useState(false);
+  const caidaRef = useRef(false);
+  const alCaerRef = useRef(alCaer);
+  alCaerRef.current = alCaer;
+  /** Hay WebView: le toca el turno, se ve y no se cayó. */
+  const conWeb = vivo && activo && !caida;
   const [pintada, setPintada] = useState(false);
   const [quieto, setQuieto] = useState(false);
   const foto = useRef(new Animated.Value(1)).current;
-  const ultimo = useRef({ estado, expresion, quieto });
-  ultimo.current = { estado, expresion, quieto };
+  const ultimo = useRef({ estado, expresion, quieto, fpsMax });
+  ultimo.current = { estado, expresion, quieto, fpsMax };
 
-  // Una sola vez: el lienzo se mide en la página (resize), así que cambiar de tamaño no recarga el orbe.
-  const html = useMemo(() => orbeConOpciones(ORBE_HTML, { sonidos: false, centro: { radio: radioOrbe, disco: radioDisco } }), [radioOrbe, radioDisco]);
+  // Una sola vez: el lienzo se mide en la página (resize), así que cambiar de tamaño no recarga el orbe. El tope de cuadros
+  // nace con el que haya y después va por el puente.
+  const html = useMemo(
+    () => orbeConOpciones(ORBE_HTML, { sonidos: false, centro: { radio: radioOrbe, disco: radioDisco }, ...(ultimo.current.fpsMax ? { fpsMax: ultimo.current.fpsMax } : {}) }),
+    [radioOrbe, radioDisco]
+  );
 
   const enviar = useCallback((m: object) => {
     if (!lista.current) return;
     web.current?.injectJavaScript(`window.__aura&&window.__aura(${JSON.stringify(m)});true;`);
   }, []);
 
-  const fallar = useCallback((motivo: string) => {
-    setCaida((c) => {
-      if (!c) miga(`burbuja: el orbe de partículas no arrancó (${motivo}); queda la foto`);
-      return true;
-    });
-  }, []);
+  const fallar = useCallback(
+    (motivo: string) => {
+      if (caidaRef.current) return;
+      caidaRef.current = true;
+      miga(`${origen}: el orbe de partículas no arrancó (${motivo}); queda la foto`);
+      setCaida(true);
+      alCaerRef.current?.(motivo);
+    },
+    [origen]
+  );
 
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled()
       .then((q) => setQuieto(q))
       .catch(() => undefined);
     const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (q) => setQuieto(q));
+    return () => sub.remove();
+  }, []);
+
+  // Cada WebView que nace tiene su plazo para decir «listo».
+  useEffect(() => {
+    if (!conWeb) return;
     const t = setTimeout(() => !lista.current && fallar('no dijo «listo» a tiempo'), ESPERA_LISTO_MS);
-    return () => {
-      sub.remove();
-      clearTimeout(t);
-    };
-  }, [fallar]);
+    return () => clearTimeout(t);
+  }, [conWeb, fallar]);
+  // Sin WebView (sin turno, tapada): la próxima nace de cero, con la foto encima hasta que pinte.
+  useEffect(() => {
+    if (conWeb) return;
+    lista.current = false;
+    setPintada(false);
+    foto.setValue(1);
+  }, [conWeb, foto]);
 
   useEffect(() => enviar({ tipo: 'movimiento', reducido: quieto }), [enviar, quieto]);
+  useEffect(() => enviar({ tipo: 'fps', max: fpsMax ?? 0 }), [enviar, fpsMax]);
   useEffect(() => enviar({ tipo: 'estado', face: CARA[estado], mudo: true }), [enviar, estado]);
   useEffect(() => {
     if (expresion) enviar(mensajeExpresion(expresion.nombre, { quieto: ultimo.current.quieto }));
@@ -138,6 +183,7 @@ function OrbeBurbujaBase({ lado, lienzo, radioOrbe, radioDisco, estado, expresio
         lista.current = true;
         const u = ultimo.current;
         enviar({ tipo: 'movimiento', reducido: u.quieto });
+        enviar({ tipo: 'fps', max: u.fpsMax ?? 0 });
         enviar({ tipo: 'estado', face: CARA[u.estado], mudo: true });
         if (u.expresion) enviar(mensajeExpresion(u.expresion.nombre, { quieto: u.quieto }));
       } else if (m.tipo === 'pintado') setPintada(true);
@@ -150,15 +196,17 @@ function OrbeBurbujaBase({ lado, lienzo, radioOrbe, radioDisco, estado, expresio
   const silenciado = estado === 'apagado';
   return (
     <View pointerEvents="none" style={{ width: lienzo, height: lienzo }}>
-      <Animated.View style={{ position: 'absolute', left: off, top: off, width: lado, height: lado, opacity: foto }}>
+      {/* Sin WebView, la foto entera en ESTE mismo render: el efecto que la vuelve a 1 llega un cuadro tarde y se veía un
+          parpadeo (la foto a medio desvanecer) al soltar el turno. */}
+      <Animated.View style={{ position: 'absolute', left: off, top: off, width: lado, height: lado, opacity: conWeb ? foto : 1 }}>
         <OrbeMini
           lado={lado}
-          activo={caida || !pintada}
+          activo={activo && (!conWeb || !pintada)}
           expresion={expresion?.nombre ?? null}
           estado={{ escuchando: estado === 'escucha', pensando: estado === 'piensa', silenciado }}
         />
       </Animated.View>
-      {!caida && (
+      {conWeb && (
         <WebView
           ref={web}
           source={{ html }}

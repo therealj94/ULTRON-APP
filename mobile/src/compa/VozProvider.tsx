@@ -1020,7 +1020,8 @@ class LimiteCuerpo extends Component<{ children: ReactNode; respaldo: ReactNode 
   }
 }
 function cuerpo3DLlamada(avatar: AvatarId): ((lado: number, respaldo: ReactNode) => ReactNode) | undefined {
-  // AU-RA: su orbe (el MiniAvatar de la llamada ya lo es, y late con su voz); nada de robot 3D encima.
+  // AU-RA: su orbe (la cara de la llamada ya lo es: el mismo de la mesa, OrbeAuraChica, que late con su voz); nada de
+  // robot 3D encima.
   if (avatar === 'aura') return undefined;
   if (moduloCuerpoLlamada === undefined) {
     try {

@@ -18,6 +18,12 @@
  * `StyleSheet.absoluteFill` y sin ancho ni alto: Image toma de la fuente su tamaño propio (512 × 512 dp del recurso) y
  * con ancho explícito Yoga ignora `right`/`bottom`, así que la foto quedaba de 512 dp pegada arriba a la izquierda y el
  * círculo (~190 dp) solo mostraba su esquina. Ahora la imagen mide exactamente el disco.
+ *
+ * Revisión del 11-oct (José: «cuando se hace pequeño aura en chat se vea igual cuando es avatar»): en el acople de los
+ * chats, la pantalla completa y la que camina ya no se ve esta foto sola, sino el MISMO orbe de partículas de la mesa
+ * (avatar3d/OrbeAuraChica.tsx, con burbuja/OrbeBurbuja.tsx). La regla de una sola escena viva sigue: la mesa pausa su orbe
+ * cuando no se ve y el turno es uno (avatar3d/orbeVivo.ts). Esta foto queda como primer cuadro mientras arranca la WebView,
+ * cuando no le toca el turno o si en ese teléfono la WebView no da; y en las escenas del recorrido.
  */
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Easing, StyleSheet, View } from 'react-native';
