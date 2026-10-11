@@ -27,18 +27,42 @@ const fold = (s: string) =>
     .toLowerCase();
 const escapar = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/*
+ * Alias que también son frases de todos los días: «¿qué minas de oro hay en Honduras?» no es el
+ * proyecto Minas de Oro, ni «la aldea Buena Vista» es Buenavista Monarca. Estos solo cuentan con
+ * una señal de proyecto: «proyecto»/«carpeta» justo antes, o escritos con mayúscula a media frase.
+ */
+const PALABRAS_COMUNES = new Set(['mina', 'minas', 'de', 'del', 'el', 'la', 'los', 'las', 'oro', 'plata', 'buena', 'vista', 'buenavista', 'chaparro']);
+const esComun = (alias: string) => fold(alias).split(/\s+/).every((w) => PALABRAS_COMUNES.has(w));
+
+function conSenal(original: string, i: number, largo: number): boolean {
+  const antes = fold(original.slice(Math.max(0, i - 24), i));
+  if (/(proyecto|carpeta)( de| del)?\s*$/.test(antes)) return true;
+  // Con mayúscula y no al empezar la oración: es un nombre propio.
+  const trozo = original.slice(i, i + largo);
+  const aMitad = i > 0 && !/[.!?¿¡]\s*$/.test(original.slice(0, i).trimEnd() + ' ');
+  return aMitad && /^\p{Lu}/u.test(trozo.trim()) && trozo.split(/\s+/).filter((w) => w.length > 3).every((w) => /^\p{Lu}/u.test(w));
+}
+
 /** Los proyectos que nombra un texto, en el orden en que aparecen (sin repetir). */
 export function proyectosEn(texto: string, proyectos: Proyecto[]): Proyecto[] {
-  const t = fold(texto);
+  // Sin acentos y en minúsculas, pero con el mismo largo que el original (los índices coinciden).
+  const t = texto.split('').map((c) => (fold(c) || c).slice(0, 1)).join('');
   const hallados: Array<{ p: Proyecto; i: number }> = [];
   for (const p of proyectos) {
     let primero = -1;
     for (const a of p.alias) {
       const al = fold(a).trim();
-      // Siglas de dos o tres letras («mdo») solo como palabra suelta; todo alias, como palabras enteras.
+      // Todo alias, como palabras enteras. Una sigla de tres letras («MDO»), solo escrita en mayúsculas.
       if (al.length < 3) continue;
-      const m = new RegExp(`(^|[^\\p{L}\\p{N}])${escapar(al)}(?=$|[^\\p{L}\\p{N}])`, 'u').exec(t);
-      if (m && (primero < 0 || m.index < primero)) primero = m.index;
+      const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${escapar(al)})(?=$|[^\\p{L}\\p{N}])`, 'gu');
+      for (let m = re.exec(t); m; m = re.exec(t)) {
+        const i = m.index + m[1].length;
+        if (esComun(al) && !conSenal(texto, i, al.length)) continue;
+        if (al.length === 3 && texto.slice(i, i + 3) !== texto.slice(i, i + 3).toUpperCase()) continue;
+        if (primero < 0 || i < primero) primero = i;
+        break;
+      }
     }
     if (primero >= 0) hallados.push({ p, i: primero });
   }
@@ -74,6 +98,34 @@ export function proyectoEnFoco(mensaje: string, historial: MsgHilo[], proyectos:
   if (aqui.length > 1) return { actual: null, anterior: null, varios: aqui, sigue: false };
   if (aqui.length === 1) return { actual: aqui[0], anterior: previo && previo.id !== aqui[0].id ? previo : null, varios: [], sigue: false };
   return { actual: previo, anterior: null, varios: [], sigue: !!previo };
+}
+
+/**
+ * Lo que se puede usar de las preguntas anteriores (para resolver «el informe», «ese documento»):
+ * solo las que vinieron después de que se nombró el proyecto en foco, nunca las de otro proyecto.
+ */
+export function previasDelFoco(historial: MsgHilo[], foco: Foco, proyectos: Proyecto[], n = 2): string[] {
+  const usuario = (ms: MsgHilo[]) => ms.filter((m) => m.role === 'user').map((m) => String(m.content || ''));
+  if (foco.anterior) return []; // recién se cambió: todo lo de antes es del otro proyecto
+  const enJuego = foco.actual ? [foco.actual] : foco.varios;
+  if (!enJuego.length) {
+    // Sin proyecto en la pregunta ni en foco: lo de siempre, pero sin cruzar a una conversación de proyecto.
+    const sin: string[] = [];
+    for (const m of [...historial].reverse()) {
+      if (proyectosEn(String(m.content || ''), proyectos).length) break;
+      if (m.role === 'user') sin.unshift(String(m.content || ''));
+    }
+    return sin.slice(-n);
+  }
+  const ids = new Set(enJuego.map((p) => p.id));
+  // Desde el último mensaje que nombró al proyecto en foco; y se corta si antes aparece otro.
+  let desde = -1;
+  for (let k = historial.length - 1; k >= 0; k--) {
+    const ps = proyectosEn(String(historial[k].content || ''), proyectos);
+    if (ps.some((p) => !ids.has(p.id))) break;
+    if (ps.length) desde = k;
+  }
+  return desde < 0 ? [] : usuario(historial.slice(desde)).slice(-n);
 }
 
 /** La nota que va pegada a la pregunta. null: no hay proyecto en juego. */

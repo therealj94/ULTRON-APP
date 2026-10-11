@@ -244,14 +244,23 @@ export async function capaDelIndice(id: number): Promise<{ geojson: FeatureColle
        * no les cambia nada. El análisis de áreas usa la geometría completa de la base, no esta ruta.
        */
       const n = (e.num_entidades || 0) > 4000 ? 0.0005 : 0.0003;
-      filas = await consultaConTope<Fila>(
-        `SELECT e.id::text, ${nombreDe(rol)} AS nombre,
-                (SELECT jsonb_object_agg(a.k, a.v) FROM jsonb_each_text(e.atributos) a(k, v) WHERE a.k = ANY($2::text[])) AS props,
-                ST_AsGeoJSON(CASE WHEN $3::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $3::float8) ELSE e.geom END, 5)::text AS g
-           FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS + 1}`,
-        [f.capa, campos, n],
+      /*
+       * El tope de peso se mide EN LA BASE: si la geometría de la capa pasa lo que queda del tope,
+       * llega una sola fila con el total (y la respuesta es 413), no la capa entera a la memoria.
+       */
+      const crudas = await consultaConTope<Fila & { peso: string }>(
+        `SELECT * FROM (
+           SELECT t.*, sum(length(t.g)) OVER ()::text AS peso, row_number() OVER () AS rn FROM (
+             SELECT e.id::text, ${nombreDe(rol)} AS nombre,
+                    (SELECT jsonb_object_agg(a.k, a.v) FROM jsonb_each_text(e.atributos) a(k, v) WHERE a.k = ANY($2::text[])) AS props,
+                    ST_AsGeoJSON(CASE WHEN $3::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $3::float8) ELSE e.geom END, 5)::text AS g
+               FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS + 1}) t) x
+          WHERE x.peso::bigint <= $4 OR x.rn = 1`,
+        [f.capa, campos, n, MAX_PESO_GEOJSON - peso],
         20000
-      ).then(conTextoReparado);
+      );
+      if (crudas.length && Number(crudas[0].peso) > MAX_PESO_GEOJSON - peso) return { error: 'Esa capa es demasiado pesada para pintarla entera: acercá el mapa o filtrala.', status: 413 };
+      filas = conTextoReparado(crudas);
     } else if (f.cartera) {
       filas = await consultaConTope<Fila>(
         `SELECT c.id::text, c.nombre, jsonb_build_object('estado', c.estado, 'titular', c.titular) AS props, ST_AsGeoJSON(c.geom, 6)::text AS g

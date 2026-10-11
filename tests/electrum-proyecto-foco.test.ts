@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { bloqueProyecto, proyectoEnFoco, proyectosDelIndice, proyectosEn } from '../server/electrum/proyecto-foco';
+import { bloqueProyecto, previasDelFoco, proyectoEnFoco, proyectosDelIndice, proyectosEn } from '../server/electrum/proyecto-foco';
 
 const P = proyectosDelIndice(JSON.parse(fs.readFileSync('scripts/indice-capas/manifest.json', 'utf8')).capas);
 const u = (content: string) => ({ role: 'user' as const, content });
@@ -45,4 +45,32 @@ test('comparar dos proyectos: separados; y sin proyecto, sin nota', () => {
   assert.equal(f.actual, null);
   assert.match(bloqueProyecto(f)!, /^PROYECTOS: la pregunta compara Pantaleona y Cimarrón/);
   assert.equal(bloqueProyecto(proyectoEnFoco('¿qué dice la ley de minería?', [], P)), null);
+});
+
+test('alias que son frases comunes: solo con señal de proyecto', () => {
+  assert.deepEqual(proyectosEn('¿qué minas de oro hay en Honduras?', P), []);
+  assert.deepEqual(proyectosEn('la aldea tiene buena vista al valle', P), []);
+  assert.deepEqual(proyectosEn('dame el proyecto minas de oro', P).map((p) => p.id), [304000]);
+  assert.deepEqual(proyectosEn('¿qué hay en Minas de Oro?', P).map((p) => p.id), [304000]);
+  assert.deepEqual(proyectosEn('el informe de Buena Vista', P).map((p) => p.id), [302000]);
+  assert.deepEqual(proyectosEn('el plan de MDO', P).map((p) => p.id), [304000]);
+  assert.deepEqual(proyectosEn('mdo', P), []);
+  // Un nombre propio de verdad no necesita señal.
+  assert.deepEqual(proyectosEn('¿y pantaleona?', P).map((p) => p.id), [301000]);
+});
+
+test('las preguntas de antes no cruzan la frontera del proyecto', () => {
+  const h = [u('¿qué dice el informe de muestreo de Pantaleona?'), a('Pantaleona…'), u('¿y el anexo?'), a('…'), u('pasemos a Monarka'), a('Buenavista Monarca…')];
+  const f = proyectoEnFoco('¿qué concluye el informe?', h, P);
+  assert.equal(f.actual?.id, 302000);
+  assert.deepEqual(previasDelFoco(h, f, P), ['pasemos a Monarka'], 'nada de Pantaleona');
+  // Al cambiar, nada de antes.
+  const g = proyectoEnFoco('pasemos a Monarka', h.slice(0, 4), P);
+  assert.deepEqual(previasDelFoco(h.slice(0, 4), g, P), []);
+  // Dentro del mismo proyecto, las dos últimas.
+  const k = proyectoEnFoco('¿y el tercero?', h.slice(0, 4), P);
+  assert.deepEqual(previasDelFoco(h.slice(0, 4), k, P), ['¿qué dice el informe de muestreo de Pantaleona?', '¿y el anexo?']);
+  // Sin proyecto: no se mete en una conversación de proyecto.
+  const sin = [u('Pantaleona'), a('…'), u('¿cuántas concesiones hay?'), a('…')];
+  assert.deepEqual(previasDelFoco(sin, { actual: null, anterior: null, varios: [], sigue: false }, P), ['¿cuántas concesiones hay?']);
 });
