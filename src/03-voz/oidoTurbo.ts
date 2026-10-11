@@ -9,7 +9,7 @@
  * Antes la web oía con el reconocimiento del navegador (Google en Chrome; nada en Firefox). Ese queda
  * de respaldo en useOido.ts si este micrófono no abre.
  */
-import { MotorTurbo, type CallbacksTurbo, type DepsTurbo, type TrozoAudio, type WsTurbo } from '../../mobile/src/lib/turboMotor';
+import { MotorTurbo, oidoDelServidor, type CallbacksTurbo, type DepsTurbo, type OidoServidor, type TrozoAudio, type WsTurbo } from '../../mobile/src/lib/turboMotor';
 import { aBase64 } from '../../mobile/src/lib/turboLogica';
 import { headersMesa } from '../10-infra/sesionCliente';
 
@@ -155,7 +155,8 @@ async function permisoWeb(): Promise<{ url: string } | null> {
   }
 }
 
-async function transcribirWavWeb(wav: string, confirmar: boolean): Promise<string> {
+/** VOZ-02: con la marca de verificación del servidor; el motor (turboMotor.ts) marca lo que no se pudo corroborar. */
+async function transcribirWavWeb(wav: string, confirmar: boolean): Promise<OidoServidor> {
   const r = await fetch('/api/stt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headersMesa() },
@@ -164,7 +165,7 @@ async function transcribirWavWeb(wav: string, confirmar: boolean): Promise<strin
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const j = await r.json().catch(() => ({}));
-  return String(j?.text || '').trim();
+  return oidoDelServidor(j);
 }
 
 /**

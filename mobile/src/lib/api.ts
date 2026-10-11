@@ -26,6 +26,7 @@ import { campoQuienHabla, type QuienHablaTurno } from '../voces/voces';
 import { campoParaTurno, type CampoDecisionVista } from './decisionVista';
 import { eventoProgresoValido, type EventoProgreso } from '../compa/narrador';
 import { capacidadesDelTurno, type SuperficieApp } from '../telefono/capacidades';
+import { oidoDelServidor, textoConMarca, type OidoServidor } from './turboMotor';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -922,8 +923,12 @@ export async function listCanciones(): Promise<Cancion[]> {
   }
 }
 
+/**
+ * El oído de siempre (speechCloud.ts, sin micrófono crudo). VOZ-02: si el servidor no pudo corroborar el dinero de la
+ * frase (`verificado: false`), sale marcada igual que en el oído Turbo (`fraseSinVerificar`: confirmar monto y a quién).
+ */
 export async function transcribe(opts: { base64: string; mime: string }): Promise<string> {
-  const data = await api<{ text?: string }>(
+  const data = await api<{ text?: string; verificado?: boolean }>(
     '/api/stt',
     {
       method: 'POST',
@@ -932,15 +937,16 @@ export async function transcribe(opts: { base64: string; mime: string }): Promis
     },
     16_000
   );
-  return String(data.text || '').trim();
+  return textoConMarca(oidoDelServidor(data));
 }
 
 /**
  * Un WAV (base64) al oído del servidor. `confirmar`: frase de dinero que Turbo ya oyó en vivo; el
- * servidor la vuelve a oír directo con Scribe v2 (sin pasar otra vez por Turbo).
+ * servidor la vuelve a oír directo con Scribe v2 (sin pasar otra vez por Turbo). Devuelve el texto con la marca de
+ * verificación del servidor (VOZ-02): el oído Turbo (turboMotor.ts) decide con ella.
  */
-export async function transcribirWav(wavB64: string, confirmar = false, timeoutMs = 16_000): Promise<string> {
-  const data = await api<{ text?: string }>(
+export async function transcribirWav(wavB64: string, confirmar = false, timeoutMs = 16_000): Promise<OidoServidor> {
+  const data = await api<{ text?: string; verificado?: boolean }>(
     '/api/stt',
     {
       method: 'POST',
@@ -948,7 +954,7 @@ export async function transcribirWav(wavB64: string, confirmar = false, timeoutM
     },
     timeoutMs
   );
-  return String(data.text || '').trim();
+  return oidoDelServidor(data);
 }
 
 /**

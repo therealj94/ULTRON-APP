@@ -196,7 +196,7 @@ import { hechoCaras, preguntaPorVer as preguntaPorVerCamara } from './lib/caras-
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, PRESUPUESTO_VISION_TURNO_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
-import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
+import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM, verificacionParaCliente } from './lib/oido';
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
 import { cerebroRapidoActivo, estadoCerebroRapido, fraseDeEsperaLenta, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
 // Que no repita lo que ya dijo (José, 7-oct): lib/repeticion.ts.
@@ -2979,13 +2979,16 @@ app.post('/api/stt', exigirMesa, limitar(60), async (req, res) => {
   // `confirmar`: frase de dinero que el teléfono ya oyó en vivo con Turbo; se vuelve a oír con Scribe v2.
   const confirmar = req.body?.confirmar === true;
   const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es'), presupuesto: reloj, ...(confirmar ? { proveedores: PROVEEDORES_OIDO_CONFIRMAR() } : {}) });
+  // VOZ-02: `verificado` (y, si es false, `motivo` y `camposInciertos`): una frase de dinero que nadie corroboró no es
+  // autoridad para mover dinero. `text` sigue igual para los clientes anteriores.
+  const marca = verificacionParaCliente(oido);
   if (oido.texto) {
-    return res.json({ text: oido.texto, via: oido.via, ms: Date.now() - t0, bytes: buffer.length, honesto: true });
+    return res.json({ text: oido.texto, via: oido.via, ...marca, ms: Date.now() - t0, bytes: buffer.length, honesto: true });
   }
   if (oido.via === 'ninguno' || oido.via === 'vacio') {
-    return res.status(oido.via === 'ninguno' ? 503 : 200).json({ text: '', error: oido.detalle, via: oido.via, honesto: true });
+    return res.status(oido.via === 'ninguno' ? 503 : 200).json({ text: '', error: oido.detalle, via: oido.via, ...marca, honesto: true });
   }
-  return res.json({ text: '', via: oido.via, detalle: oido.detalle, ms: Date.now() - t0, honesto: true });
+  return res.json({ text: '', via: oido.via, ...marca, detalle: oido.detalle, ms: Date.now() - t0, honesto: true });
 });
 
 /**

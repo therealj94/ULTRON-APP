@@ -10,8 +10,35 @@ import { presupuesto, MINIMO_UTIL_MS, type Presupuesto } from './presupuesto';
 import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
 import { gastarCupoDiario, reservarPermisoAnticipado, segundosDeAudio, SEGUNDOS_POR_PERMISO_TURBO, soltarPermisoAnticipado } from './freno-gasto';
 
-/** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
-export type Oido = { texto: string; via: string; detalle: string; idioma?: IdiomaTurno };
+/**
+ * Por qué lo oído NO está verificado (VOZ-02, auditoría externa del 11-oct): la frase lleva dinero (monto, moneda o a
+ * quién) y nadie la corroboró.
+ *  · `corroboracion_fallida`: Scribe v2 se cayó (error, red cortada).
+ *  · `corroboracion_sin_respuesta`: Scribe v2 no contestó a tiempo.
+ *  · `corroboracion_vacia`: Scribe v2 contestó sin la frase. Un vacío no confirma nada.
+ *  · `sin_tiempo`: no quedaba tiempo para la segunda escucha.
+ *  · `sin_corroborar`: la oyó solo un respaldo (Whisper o Gemini), sin Scribe v2.
+ */
+export type MotivoSinVerificar = 'corroboracion_fallida' | 'corroboracion_sin_respuesta' | 'corroboracion_vacia' | 'sin_tiempo' | 'sin_corroborar';
+/** Lo que hay que volver a preguntar antes de mover dinero. */
+export type CampoIncierto = 'monto' | 'moneda' | 'destinatario';
+
+/**
+ * `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`.
+ * `proveedor`: quién lo oyó (lo mismo que `via`). `verificado`: false cuando la frase lleva dinero y nadie la
+ * corroboró; entonces `motivo` dice por qué y `camposInciertos` qué confirmar. Con `verificado: false` lo oído NO es
+ * autoridad para mover dinero: se pregunta el monto, la moneda y a quién (VOZ-02).
+ */
+export type Oido = {
+  texto: string;
+  via: string;
+  detalle: string;
+  idioma?: IdiomaTurno;
+  proveedor: string;
+  verificado: boolean;
+  motivo?: MotivoSinVerificar;
+  camposInciertos?: CampoIncierto[];
+};
 
 /**
  * Lo que contesta un proveedor. `null`: no está configurado o se cayó, que pruebe el siguiente.
@@ -19,7 +46,18 @@ export type Oido = { texto: string; via: string; detalle: string; idioma?: Idiom
  * igual que un fallo y el mismo silencio se le mandaba a cada proveedor de la cadena — una factura
  * por proveedor por un bolsillo que rozó el micrófono.
  */
-export type Escucha = { texto: string; via: string; /** Código tal como lo dio el proveedor, si lo dio. */ idioma?: string } | null;
+export type Escucha = {
+  texto: string;
+  via: string;
+  /** Código tal como lo dio el proveedor, si lo dio. */
+  idioma?: string;
+  /**
+   * true: la oyó Scribe v2 (por lotes o como segunda escucha de Turbo). false: frase de dinero que no se pudo
+   * corroborar, con su `motivo`. Sin decir (Whisper, Gemini): una frase de dinero cuenta como sin corroborar.
+   */
+  verificado?: boolean;
+  motivo?: MotivoSinVerificar;
+} | null;
 
 export type ProveedorOido = {
   nombre: string;
@@ -227,7 +265,7 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   }
   const texto = j.text.trim();
   if (texto.length < 2 || STT_BASURA.test(texto)) return { texto: '', via: 'elevenlabs:scribe' };
-  return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe', idioma: typeof j.language_code === 'string' ? j.language_code : undefined };
+  return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe', idioma: typeof j.language_code === 'string' ? j.language_code : undefined, verificado: true };
 }
 
 /**
@@ -269,6 +307,43 @@ export const FRASE_DE_DINERO =
   /\b(auka|agka|veta|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|money|balance|dollars?|pag[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*)\b|\$|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b[^.?!]*\d|(\d|\b(un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|cien|mil|mis|tus|sus))\s+origen\b|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|cu[aá]nt[oa]s?)\b[^.?!]*\borigen\b|\borigen\b[^.?!]*\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|tengo|quedan?)\b|\b(cu[aá]nt\w*|how\s+much|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|tengo\s+en|hay\s+en|quedan?\s+en)\b[^.?!]*\b(wallet|cartera|billetera)\b|\b(wallet|cartera|billetera)\b[^.?!]*(\d|\b(cu[aá]nt\w*|how\s+much|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|hay|quedan?)\b)/i;
 export function esFraseDeDinero(texto: string): boolean {
   return FRASE_DE_DINERO.test(texto);
+}
+
+/**
+ * VOZ-02 (auditoría externa del 11-oct): «envía cien a Ana» no es frase de dinero para FRASE_DE_DINERO (no hay cifra
+ * escrita ni moneda), y Turbo a veces escribe «cien» y a veces «100». Mandar, pagar o transferir con una cantidad dicha
+ * con palabras también se vuelve a oír. «un/una» no cuentan: «mándale un mensaje a mi mamá» no es dinero (VOZ-05).
+ * La misma expresión que mobile/src/lib/turboMotor.ts (tests/oido-verificado-movil.test.ts lo comprueba).
+ */
+export const ENVIO_CON_CANTIDAD =
+  /\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|p[aá]g[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*)\b[^.?!]*\b(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieci\w+|veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w+cientos|quinientos|mil|mill[oó]n|millones|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|hundred|thousand|million)\b/i;
+
+/** ¿Esta frase se vuelve a oír con Scribe v2 antes de darla por buena? Dinero, o un envío con cantidad. */
+export function necesitaCorroborar(texto: string): boolean {
+  return esFraseDeDinero(texto) || ENVIO_CON_CANTIDAD.test(texto);
+}
+
+const MONTO = /\d|\b(un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieci\w+|veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w+cientos|quinientos|mil|mill[oó]n|millones|medio|media|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|hundred|thousand|million)\b/i;
+const MONEDA = /\$|\b(auka|agka|veta|origen|d[oó]lar\w*|lempira\w*|usd|hnl|pesos?|dollars?|euros?)\b/i;
+const A_QUIEN = /\b(p[aá]g\w*|pay\w*|transfi?er\w*|deposit\w*|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b/i;
+
+/**
+ * Qué hay que confirmar de una frase de dinero sin verificar: el monto (cifra o número dicho), la moneda (si hay
+ * monto: dicha, pudo oírse mal —«dólares» por «lempiras»—; sin decir, falta) y a quién va (mandar, pagar…).
+ */
+export function camposInciertosDe(texto: string): CampoIncierto[] {
+  const campos: CampoIncierto[] = [];
+  const monto = MONTO.test(texto);
+  if (monto) campos.push('monto');
+  if (monto || MONEDA.test(texto)) campos.push('moneda');
+  if (A_QUIEN.test(texto)) campos.push('destinatario');
+  return campos;
+}
+
+/** Por qué falló la segunda escucha: un corte por tiempo no es lo mismo que una caída. */
+function motivoDelFallo(e: any): MotivoSinVerificar {
+  const nombre = String(e?.name || '');
+  return nombre === 'TimeoutError' || nombre === 'AbortError' ? 'corroboracion_sin_respuesta' : 'corroboracion_fallida';
 }
 
 /**
@@ -335,12 +410,22 @@ async function transcribirTurbo(audio: Buffer, mime: string, language: string, r
   const turbo = await oirTurbo(wav.pcm, wav.frecuencia, language, terminos, Math.min(8000, Math.max(MINIMO_UTIL_MS, Math.floor(topeScribe(reloj) / 2))), key);
   if (!turbo) return null;
   if (turbo.texto.length < 2 || STT_BASURA.test(turbo.texto)) return { texto: '', via: 'elevenlabs:scribe-turbo' };
-  if (esFraseDeDinero(turbo.texto) && reloj.alcanza()) {
-    const confirmada = await transcribirEleven(audio, mime, language, reloj, terminos).catch(() => null);
-    if (confirmada?.texto) return { ...confirmada, via: 'elevenlabs:scribe-turbo+confirmado' };
-    console.warn('[stt turbo] frase de dinero sin confirmar con Scribe v2: se usa la de Turbo');
+  const deTurbo = { texto: turbo.texto.slice(0, 4000), via: 'elevenlabs:scribe-turbo', idioma: turbo.idioma };
+  if (!necesitaCorroborar(turbo.texto)) return { ...deTurbo, verificado: true };
+  // VOZ-02: sin la segunda escucha, lo de Turbo sale, pero marcado: nunca como si estuviera verificado.
+  if (!reloj.alcanza()) {
+    console.warn('[stt turbo] frase de dinero sin tiempo para confirmarla con Scribe v2: sale sin verificar');
+    return { ...deTurbo, verificado: false, motivo: 'sin_tiempo' };
   }
-  return { texto: turbo.texto.slice(0, 4000), via: 'elevenlabs:scribe-turbo', idioma: turbo.idioma };
+  let motivo: MotivoSinVerificar = 'corroboracion_fallida';
+  const confirmada = await transcribirEleven(audio, mime, language, reloj, terminos).catch((e) => {
+    motivo = motivoDelFallo(e);
+    return null;
+  });
+  if (confirmada?.texto) return { ...confirmada, via: 'elevenlabs:scribe-turbo+confirmado', verificado: true };
+  if (confirmada) motivo = 'corroboracion_vacia';
+  console.warn(`[stt turbo] frase de dinero sin confirmar con Scribe v2 (${motivo}): sale la de Turbo sin verificar`);
+  return { ...deTurbo, verificado: false, motivo };
 }
 
 /**
@@ -451,6 +536,36 @@ export async function oirEnCadena(
   return { escucha: null, intentados, motivo: reloj.alcanza() ? 'fallo' : 'tiempo' };
 }
 
+/** Sin texto no hay nada que verificar (ni nada sobre lo que actuar). */
+function sinTexto(proveedor: string): Pick<Oido, 'proveedor' | 'verificado'> {
+  return { proveedor, verificado: true };
+}
+
+/**
+ * VOZ-02: lo que se dice de lo oído. Una frase sin dinero no tiene nada que verificar. Una de dinero queda verificada
+ * solo si la oyó Scribe v2 (`verificado: true` del proveedor); si no, sin verificar con su motivo y los campos dudosos.
+ */
+function verificacionDe(escucha: NonNullable<Escucha>): Pick<Oido, 'proveedor' | 'verificado' | 'motivo' | 'camposInciertos'> {
+  const proveedor = escucha.via;
+  if (escucha.verificado === true || !necesitaCorroborar(escucha.texto)) return { proveedor, verificado: true };
+  const motivo = escucha.verificado === false && escucha.motivo ? escucha.motivo : 'sin_corroborar';
+  return { proveedor, verificado: false, motivo, camposInciertos: camposInciertosDe(escucha.texto) };
+}
+
+/**
+ * Lo que /api/stt agrega a su respuesta (los campos viejos —`text`, `via`— siguen igual: un cliente anterior no se
+ * rompe). `motivo` y `camposInciertos` solo cuando NO está verificado.
+ */
+export function verificacionParaCliente(o: Pick<Oido, 'proveedor' | 'verificado' | 'motivo' | 'camposInciertos'>): {
+  proveedor: string;
+  verificado: boolean;
+  motivo?: MotivoSinVerificar;
+  camposInciertos?: CampoIncierto[];
+} {
+  if (o.verificado) return { proveedor: o.proveedor, verificado: true };
+  return { proveedor: o.proveedor, verificado: false, ...(o.motivo ? { motivo: o.motivo } : {}), ...(o.camposInciertos?.length ? { camposInciertos: o.camposInciertos } : {}) };
+}
+
 export async function transcribirAudio(opts: {
   audio: Buffer;
   mime?: string;
@@ -467,14 +582,14 @@ export async function transcribirAudio(opts: {
   const mime = String(opts.mime || 'audio/ogg').split(';')[0].trim() || 'audio/ogg';
   const language = opts.language === 'auto' ? 'auto' : (opts.language || 'es').slice(0, 2);
   if (buf.length < 80) {
-    return { texto: '', via: 'vacio', detalle: 'Audio vacío. No pude oír nada. Escríbeme.' };
+    return { texto: '', via: 'vacio', detalle: 'Audio vacío. No pude oír nada. Escríbeme.', ...sinTexto('vacio') };
   }
   if (buf.length > MAX_BYTES) {
-    return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
+    return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.`, ...sinTexto('grande') };
   }
   // El freno de gasto diario (lib/freno-gasto.ts), por los segundos de este audio. Pasado el tope, no se oye.
   if (!gastarCupoDiario('stt', segundosDeAudio(buf, mime))) {
-    return { texto: '', via: 'tope', detalle: 'Por hoy ya no puedo oír más audios. Escríbeme.' };
+    return { texto: '', via: 'tope', detalle: 'Por hoy ya no puedo oír más audios. Escríbeme.', ...sinTexto('tope') };
   }
   const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
   const proveedores = opts.proveedores || (opts.plataforma === 'electrum' ? PROVEEDORES_OIDO_ELECTRUM : PROVEEDORES_OIDO);
@@ -493,19 +608,19 @@ export async function transcribirAudio(opts: {
     }
   }
   if (escucha?.texto) {
-    return { texto: escucha.texto, via: escucha.via, detalle: `Oí ${escucha.texto.length} caracteres.`, ...(idioma ? { idioma } : {}) };
+    return { texto: escucha.texto, via: escucha.via, detalle: `Oí ${escucha.texto.length} caracteres.`, ...(idioma ? { idioma } : {}), ...verificacionDe(escucha) };
   }
   if (escucha) {
-    return { texto: '', via: escucha.via, detalle: 'Oí el archivo pero no había voz. Escríbeme o vuelve a hablar.' };
+    return { texto: '', via: escucha.via, detalle: 'Oí el archivo pero no había voz. Escríbeme o vuelve a hablar.', ...sinTexto(escucha.via) };
   }
   if (motivo === 'tiempo') {
-    return { texto: '', via: 'tiempo', detalle: 'Tardé demasiado en oírte. Vuelve a intentarlo o escríbeme.' };
+    return { texto: '', via: 'tiempo', detalle: 'Tardé demasiado en oírte. Vuelve a intentarlo o escríbeme.', ...sinTexto('tiempo') };
   }
   if (motivo === 'ninguno') {
     // Los nombres de las variables van al registro, no a quien habla: a él no le sirven de nada.
     console.warn('[oido] sin proveedor de oído: falta ELEVENLABS_API_KEY (o VOICEBOX_URL + VOICEBOX_CLAVE, o GEMINI_API_KEY)');
-    return { texto: '', via: 'ninguno', detalle: 'Ahora mismo no puedo oír audios. Escríbeme.' };
+    return { texto: '', via: 'ninguno', detalle: 'Ahora mismo no puedo oír audios. Escríbeme.', ...sinTexto('ninguno') };
   }
   console.warn(`[oido] ningún proveedor contestó (probados: ${intentados.join(', ')})`);
-  return { texto: '', via: 'error', detalle: 'No pude oír el audio ahora mismo. Escríbeme o vuelve a intentarlo.' };
+  return { texto: '', via: 'error', detalle: 'No pude oír el audio ahora mismo. Escríbeme o vuelve a intentarlo.', ...sinTexto('error') };
 }

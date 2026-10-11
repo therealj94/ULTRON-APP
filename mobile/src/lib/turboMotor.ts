@@ -16,7 +16,8 @@
  *
  * Si algo falla, nunca se pierde la frase: sin token, sin red al WebSocket o sin respuesta a tiempo,
  * la frase entera (que el teléfono guardó) se manda en WAV a /api/stt, que la oye con Turbo o Scribe v2.
- * Tres fallos seguidos del en vivo y se usa solo ese camino durante 5 minutos.
+ * Tres fallos seguidos del en vivo y se usa solo ese camino durante 5 minutos. Si el servidor no pudo corroborar
+ * el dinero (`verificado: false`, VOZ-02), esa frase sale marcada igual que en el camino normal (`fraseSinVerificar`).
  *
  * Sin dependencias de React Native: el micrófono, la red y el reloj se inyectan (pruebas en Node).
  */
@@ -41,6 +42,43 @@ import { CIERRE_MS, SONDEO_MS, cierreDe, finDeTurno, sePuedeEspecular, type FinD
 
 /** Por dónde salió una frase: en vivo, por la segunda escucha de dinero (con su resultado) o por el respaldo. */
 export type ViaFrase = 'vivo' | Corroboracion | 'respaldo';
+
+/**
+ * Lo que contesta el oído del servidor (/api/stt). `verificado: false` (VOZ-02, auditoría externa del 11-oct): la frase
+ * lleva dinero y el servidor no la pudo corroborar con Scribe v2 (se cayó, no contestó a tiempo, vino vacía o la oyó
+ * solo un respaldo); `motivo` dice por qué y `camposInciertos` qué confirmar. Sin `verificado` (un servidor anterior,
+ * o un oído que solo da texto, como el de Dr Electrum): lo de siempre.
+ */
+export type OidoServidor = { texto: string; verificado?: boolean; motivo?: string; camposInciertos?: string[] };
+
+const CAMPOS_INCIERTOS = new Set(['monto', 'moneda', 'destinatario']);
+
+/** El JSON de /api/stt → OidoServidor (`text` es el campo de siempre; la marca, si vino). */
+export function oidoDelServidor(data: any): OidoServidor {
+  const texto = String(data?.text || '').trim();
+  if (typeof data?.verificado !== 'boolean') return { texto };
+  if (data.verificado) return { texto, verificado: true };
+  const campos = Array.isArray(data.camposInciertos) ? data.camposInciertos.filter((c: unknown) => typeof c === 'string' && CAMPOS_INCIERTOS.has(c)) : [];
+  return { texto, verificado: false, ...(typeof data.motivo === 'string' ? { motivo: data.motivo.slice(0, 40) } : {}), ...(campos.length ? { camposInciertos: campos } : {}) };
+}
+
+/**
+ * El texto que se entrega de lo que oyó el servidor: sin verificar y con monto o destinatario, `fraseSinVerificar` (pide
+ * confirmar monto y a quién antes de hacer nada), igual que una frase de dinero que la segunda escucha no corroboró.
+ */
+export function textoConMarca(o: OidoServidor): string {
+  return o.verificado === false && datoSensibleDeDinero(o.texto) ? fraseSinVerificar(o.texto) : o.texto;
+}
+
+const deRespuesta = (r: string | OidoServidor): OidoServidor => (typeof r === 'string' ? { texto: r } : r);
+
+/**
+ * VOZ-02: mandar, pagar o transferir con una cantidad dicha con palabras («envía cien a Ana») también se vuelve a oír,
+ * aunque no nombre moneda: Turbo a veces escribe «cien» y a veces «100». La misma expresión que lib/oido.ts del servidor
+ * (tests/oido-verificado-movil.test.ts lo comprueba). «un/una» no cuentan: «mándale un mensaje a mi mamá» no es dinero.
+ */
+export const ENVIO_CON_CANTIDAD =
+  /\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|p[aá]g[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*)\b[^.?!]*\b(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieci\w+|veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w+cientos|quinientos|mil|mill[oó]n|millones|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|hundred|thousand|million)\b/i;
 
 export type TrozoAudio = { audio: string; db: number };
 
@@ -72,7 +110,8 @@ export type DepsTurbo = {
    * del tope diario del oído hasta que se usa. `usado`: el id del anticipado que se acaba de usar (ahí se cobra).
    */
   permiso(o?: { anticipado?: boolean; usado?: string }): Promise<{ url: string; id?: string } | null>;
-  transcribirWav(wavB64: string, confirmar: boolean): Promise<string>;
+  /** El texto, o lo que contestó el servidor con su marca de verificación (OidoServidor, VOZ-02). */
+  transcribirWav(wavB64: string, confirmar: boolean): Promise<string | OidoServidor>;
   crearWs(url: string): WsTurbo;
   ahora?: () => number;
   tiempos?: Partial<typeof TIEMPOS>;
@@ -1275,18 +1314,19 @@ export class MotorTurbo {
         if (!texto || g !== this.gen) return;
         let via: ViaFrase = 'vivo';
         const segunda = this.deps.segundaEscucha;
-        if ((segunda ? segunda.confirmar(texto) : esFraseDeDinero(texto)) && trozos.length) {
+        if ((segunda ? segunda.confirmar(texto) : esFraseDeDinero(texto) || ENVIO_CON_CANTIDAD.test(texto)) && trozos.length) {
           // null: no contestó a tiempo o falló. '' (o basura): contestó sin la frase. Ninguno corrobora lo
-          // que oyó Turbo (VOICE04): un monto o un destinatario dudosos salen pidiendo confirmación.
-          const confirmado = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), true), this.t.confirmarMs);
-          const limpio = limpiarFinal(confirmado || '');
+          // que oyó Turbo (VOICE04): un monto o un destinatario dudosos salen pidiendo confirmación. Tampoco una
+          // respuesta que el servidor marca sin verificar (VOZ-02: la dio un respaldo, no Scribe v2).
+          const r = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), true), this.t.confirmarMs);
+          const confirmado = r === null ? null : deRespuesta(r);
+          const limpio = confirmado && confirmado.verificado !== false ? limpiarFinal(confirmado.texto) : '';
           if (limpio) {
             texto = limpio;
             via = 'corroborada';
           } else {
             via = confirmado === null ? 'timeout' : 'no_corroborada';
-            if (segunda) texto = segunda.sinCorroborar ? segunda.sinCorroborar(texto) : texto;
-            else if (datoSensibleDeDinero(texto)) texto = fraseSinVerificar(texto);
+            texto = this.sinCorroborar(texto);
           }
         }
         if (g === this.gen && this.quiere && !this.pausado) {
@@ -1305,7 +1345,11 @@ export class MotorTurbo {
     this.cadena = this.cadena
       .then(async () => {
         if (g !== this.gen) return;
-        const texto = limpiarFinal((await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), false), 16_000)) || '');
+        const r = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), false), 16_000);
+        const oido = r === null ? null : deRespuesta(r);
+        let texto = limpiarFinal(oido?.texto || '');
+        // VOZ-02: el servidor no pudo corroborar el dinero de esta frase: sale marcada, igual que en el camino normal.
+        if (texto && oido?.verificado === false) texto = this.sinCorroborar(texto);
         if (texto && g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, 'respaldo');
           this.darAudio(trozos, texto, id);
@@ -1313,6 +1357,16 @@ export class MotorTurbo {
         }
       })
       .catch(() => {});
+  }
+
+  /**
+   * Una frase que nadie corroboró: con la regla de quien oye (Dr Electrum la deja como está) o la de AU-RA, que pide
+   * confirmar el monto y a quién si los lleva. Nada aquí autoriza un pago.
+   */
+  private sinCorroborar(texto: string): string {
+    const segunda = this.deps.segundaEscucha;
+    if (segunda) return segunda.sinCorroborar ? segunda.sinCorroborar(texto) : texto;
+    return textoConMarca({ texto, verificado: false });
   }
 
   private medir(m: Medida | undefined, via: ViaFrase) {
