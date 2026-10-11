@@ -188,6 +188,7 @@ export async function saludEleven(timeoutMs = 2500): Promise<{ ok: boolean; stat
 export function _reiniciarFrenoEleven() {
   pausaHasta = 0;
   ultimoFallo = '';
+  rechazos.clear();
 }
 
 export function pausaPorFallo(status: number, cuerpo: string): number {
@@ -341,7 +342,138 @@ type PedidoEleven = {
    * la app (PCM crudo de 16 bits mono, que el teléfono suena con el primer trozo: server/voz-pcm.ts).
    */
   formato?: string;
+  /**
+   * Quien pidió la frase ya no la espera (el teléfono colgó, se canceló la generación, se pasó el plazo del turno;
+   * auditoría del 11-oct, VOZ-03): corta el pedido EN CURSO (cabeceras y cuerpo) y no se reintenta nada.
+   */
+  senal?: AbortSignal;
 };
+
+/* ---------------- El plazo de UNA frase, con su reintento dentro (11-oct, VOZ-07) ---------------- */
+
+/**
+ * Cada frase tiene UN plazo total (`timeoutMs`, o 15/30 s) y como mucho DOS pedidos: el de verdad y, si ElevenLabs
+ * rechazó un parámetro (los ids del enlace, los tiempos), uno sin él. Antes cada reintento arrancaba otro reloj entero
+ * (una frase podía tardar 30 s en vez de 15) y la cadena tiempos → audio → sin ids llegaba a tres pedidos.
+ */
+type Intento = { fin: number; usados: number };
+const MAX_PEDIDOS_FRASE = 2;
+/** Por debajo de esto no se reintenta: no le da tiempo a ElevenLabs a contestar y se paga igual. */
+export const MINIMO_REINTENTO_MS = 1000;
+
+function intentoDe(opts: PedidoEleven): Intento {
+  return { fin: Date.now() + (opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000)), usados: 0 };
+}
+
+/** ¿Se puede salir otro pedido de esta frase? El primero, siempre que quede plazo; un reintento, solo con tiempo útil. */
+function cabeOtroPedido(opts: PedidoEleven, it: Intento): boolean {
+  if (opts.senal?.aborted || it.usados >= MAX_PEDIDOS_FRASE) return false;
+  const queda = it.fin - Date.now();
+  return it.usados === 0 ? queda > 0 : queda >= MINIMO_REINTENTO_MS && (!opts.reloj || opts.reloj.alcanza(MINIMO_REINTENTO_MS));
+}
+
+/** La señal del pedido: lo que quede del plazo de la frase, el reloj del turno y quien pidió, lo que llegue antes. */
+function senalPedido(opts: PedidoEleven, it: Intento): AbortSignal {
+  const queda = Math.max(1, it.fin - Date.now());
+  return opts.reloj ? opts.reloj.senalCon(opts.senal, queda) : opts.senal ? AbortSignal.any([opts.senal, AbortSignal.timeout(queda)]) : AbortSignal.timeout(queda);
+}
+
+/* ---------------- Los rechazos: qué parámetro, y si es del modelo (11-oct, VOZ-07) ---------------- */
+
+/**
+ * Lo que dice un error de ElevenLabs, sea como sea que venga: `{"detail":{"status","message","param"}}`, la validación
+ * de FastAPI (`{"detail":[{"loc":["body","campo"],"msg","type"}]}`), un `detail` de texto o un cuerpo que no es JSON.
+ */
+export type RechazoEleven = { codigos: string[]; campos: string[]; mensajes: string[] };
+
+export function leerRechazo(cuerpo: string): RechazoEleven {
+  const r: RechazoEleven = { codigos: [], campos: [], mensajes: [] };
+  let j: unknown = null;
+  try {
+    j = JSON.parse(cuerpo);
+  } catch {
+    if (String(cuerpo || '').trim()) r.mensajes.push(String(cuerpo).slice(0, 400));
+    return r;
+  }
+  const mirar = (d: any, hondo = 0): void => {
+    if (d == null || hondo > 4) return;
+    if (typeof d === 'string') return void r.mensajes.push(d);
+    if (Array.isArray(d)) return d.forEach((x) => mirar(x, hondo + 1));
+    if (typeof d !== 'object') return;
+    for (const k of ['status', 'code', 'type']) if (typeof d[k] === 'string') r.codigos.push(d[k]);
+    if (typeof d.error === 'string') r.codigos.push(d.error);
+    for (const k of ['message', 'msg']) if (typeof d[k] === 'string') r.mensajes.push(d[k]);
+    for (const k of ['param', 'field', 'parameter']) if (typeof d[k] === 'string') r.campos.push(d[k]);
+    if (Array.isArray(d.loc)) for (const x of d.loc) if (typeof x === 'string' && !/^(body|query|path|header)$/.test(x)) r.campos.push(x);
+    if (d.detail !== undefined) mirar(d.detail, hondo + 1);
+    if (d.error && typeof d.error === 'object') mirar(d.error, hondo + 1);
+  };
+  mirar(j);
+  return r;
+}
+
+/** El parámetro que se puede perder sin perder la voz: los ids del enlace, o los tiempos por letra (/with-timestamps). */
+export type ParametroEleven = 'previous_request_ids' | 'timestamps';
+/**
+ * `pausa`: llave, cupo o freno (401/402/429): se frena todo, nunca se reintenta. `no-soportado`: ElevenLabs dice sin
+ * duda que el modelo no acepta ESE parámetro (se recuerda). `parametro`: el rechazo es de ese parámetro pero no del
+ * modelo (un id vencido): se reintenta sin él y no se recuerda. `otro`: es de otra cosa (la voz no existe, la
+ * estabilidad fuera de rango): sin él fallaría igual. `ambiguo`: no se puede leer: un reintento sin él, sin recordar.
+ * `transitorio`: 5xx o 408.
+ */
+export type ClaseRechazo = 'pausa' | 'no-soportado' | 'parametro' | 'otro' | 'ambiguo' | 'transitorio';
+
+const NOMBRA: Record<ParametroEleven, RegExp> = {
+  previous_request_ids: /previous[_ ]request[_ ]ids|request[_ ]stitching/i,
+  timestamps: /timestamps?|alignment/i,
+};
+const NO_SOPORTA = /not[_ ]supported|unsupported|not[_ ]available|does ?n[o']t support|not[_ ]allowed|no se soporta|no soporta/i;
+/** Códigos que no dicen de qué es el error (no bastan para decir «es de otra cosa»). */
+const GENERICO = /^(invalid[_ ]request|bad[_ ]request|validation[_ ]error|unprocessable[_ ]entity|invalid[_ ]parameters?|value[_ ]error|missing|error|not[_ ]found)$/i;
+
+export function clasificarRechazo(status: number, cuerpo: string, parametro: ParametroEleven): ClaseRechazo {
+  if (pausaPorFallo(status, cuerpo)) return 'pausa';
+  if (status >= 500 || status === 408) return 'transitorio';
+  const r = leerRechazo(cuerpo);
+  const texto = [...r.codigos, ...r.mensajes].join(' ');
+  if (r.campos.some((c) => NOMBRA[parametro].test(c)) || NOMBRA[parametro].test(texto)) return NO_SOPORTA.test(texto) ? 'no-soportado' : 'parametro';
+  // En /with-timestamps el «parámetro» es el endpoint entero: «model_not_supported» que llega de ahí habla de él (la
+  // voz y el texto son los mismos que /stream acepta).
+  if (parametro === 'timestamps' && r.codigos.some((c) => /model/i.test(c) && NO_SOPORTA.test(c))) return 'no-soportado';
+  if (r.campos.length || r.codigos.some((c) => !GENERICO.test(c.trim()))) return 'otro';
+  return 'ambiguo';
+}
+
+/** Telemetría de los rechazos (para mirar en /api/health o en los registros): cuántos de cada clase, y qué se apagó. */
+const rechazos = new Map<string, number>();
+const motivoApagado = new Map<string, { status: number; codigo: string; desde: number }>();
+
+function anotarRechazo(donde: string, parametro: ParametroEleven, clase: ClaseRechazo, status: number) {
+  const k = `${donde}|${parametro}|${clase}|${status}`;
+  rechazos.set(k, (rechazos.get(k) || 0) + 1);
+}
+
+function motivoDe(capacidad: ParametroEleven, clave: string, status: number, cuerpo: string) {
+  const r = leerRechazo(cuerpo);
+  motivoApagado.set(`${capacidad}|${clave}`, { status, codigo: (r.codigos[0] || r.mensajes[0] || '').slice(0, 80), desde: Date.now() });
+}
+
+export function telemetriaEleven(ahora = Date.now()): {
+  rechazos: Record<string, number>;
+  capacidadesApagadas: Array<{ capacidad: ParametroEleven; clave: string; hasta: number; status: number; codigo: string }>;
+} {
+  const capacidadesApagadas: Array<{ capacidad: ParametroEleven; clave: string; hasta: number; status: number; codigo: string }> = [];
+  for (const [capacidad, mapa] of [
+    ['previous_request_ids', sinEnlace],
+    ['timestamps', sinTiempos],
+  ] as const)
+    for (const [clave, hasta] of mapa) {
+      if (hasta <= ahora) continue;
+      const m = motivoApagado.get(`${capacidad}|${clave}`);
+      capacidadesApagadas.push({ capacidad, clave, hasta, status: m?.status ?? 0, codigo: m?.codigo ?? '' });
+    }
+  return { rechazos: Object.fromEntries(rechazos), capacidadesApagadas };
+}
 
 /** Frecuencias de PCM que todos los planes de ElevenLabs dan por /stream (44,1 kHz pide plan Pro). */
 export const HZ_PCM_ELEVEN = [16000, 22050, 24000] as const;
@@ -372,8 +504,11 @@ export function estabilidadDe(emocion: string | undefined): number {
  * no se pudo. Es lo que usa la ruta de la web para pasarle el audio al navegador a medida que
  * ElevenLabs lo genera, en vez de esperar al final.
  */
-/** El cuerpo de la síntesis: el mismo con tiempos o sin ellos (misma voz, modelo y ajustes). */
-export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
+/**
+ * El cuerpo de la síntesis: el mismo con tiempos o sin ellos (misma voz, modelo y ajustes). `donde` (endpoint|formato,
+ * p. ej. «stream|pcm_22050») decide si los ids del enlace van: se apagan por modelo + endpoint + formato.
+ */
+export function cuerpoEleven(opts: PedidoEleven, donde?: string): Record<string, unknown> {
   const cuerpo: Record<string, unknown> = {
     text: opts.texto,
     model_id: opts.modelo || modeloEleven(),
@@ -387,7 +522,7 @@ export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
   const siguiente = textoVecino(opts.siguiente, 'siguiente');
   if (previo) cuerpo.previous_text = previo;
   if (siguiente) cuerpo.next_text = siguiente;
-  const ids = idsParaEnlazar(String(cuerpo.model_id), opts.previosIds);
+  const ids = idsParaEnlazar(String(cuerpo.model_id), opts.previosIds, donde);
   if (ids) cuerpo.previous_request_ids = ids;
   return cuerpo;
 }
@@ -395,39 +530,54 @@ export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
 /* ---------------- El enlace de audio entre frases (request stitching) ---------------- */
 
 /**
- * ElevenLabs no enlaza el audio con eleven_v3 (lo dice su guía de request stitching) y la de v4 Turbo no lo confirma:
- * si un modelo rechaza `previous_request_ids` (400/422), se anota y por seis horas se manda solo `previous_text`. Nunca
- * se queda una frase muda por esto: se reintenta en el acto sin los ids.
+ * ElevenLabs no enlaza el audio con eleven_v3 (lo dice su guía de request stitching) y la de v4 Turbo no lo confirma.
+ * Si ElevenLabs dice SIN DUDA que el modelo no acepta `previous_request_ids` (clasificarRechazo: «no-soportado»), se
+ * anota por modelo + endpoint + formato y por seis horas se manda solo `previous_text`. Un rechazo de los ids que no es
+ * del modelo (un id vencido) o que no se puede leer no se recuerda (auditoría del 11-oct, VOZ-07: antes cualquier
+ * 400/422 lo apagaba). Nunca se queda una frase muda por esto: se reintenta UNA vez sin los ids, dentro del plazo.
  */
 const sinEnlace = new Map<string, number>();
 export const SIN_ENLACE_MS = 6 * 60 * 60_000;
-/** ELEVENLABS_ENLAZAR=no apaga el enlace por ids (queda el de texto). */
-export function enlaceActivo(modelo: string, ahora = Date.now()): boolean {
+/**
+ * ELEVENLABS_ENLAZAR=no apaga el enlace por ids (queda el de texto). Con `donde` (endpoint|formato) mira ese camino; sin
+ * él, si el modelo está apagado en alguno (lo prudente para quien no sabe por dónde va a pedir).
+ */
+export function enlaceActivo(modelo: string, ahora = Date.now(), donde?: string): boolean {
   if (String(process.env.ELEVENLABS_ENLAZAR || '').trim() === 'no') return false;
   if (/^eleven_v3(_|$)/i.test(modelo)) return false;
-  return (sinEnlace.get(modelo) || 0) <= ahora;
+  if (donde) return (sinEnlace.get(`${modelo}|${donde}`) || 0) <= ahora;
+  for (const [k, hasta] of sinEnlace) if (k.startsWith(`${modelo}|`) && hasta > ahora) return false;
+  return true;
 }
 /** Solo para pruebas. */
 export function _olvidarSinEnlace() {
   sinEnlace.clear();
+  for (const k of [...motivoApagado.keys()]) if (k.startsWith('previous_request_ids|')) motivoApagado.delete(k);
 }
-function idsParaEnlazar(modelo: string, ids?: string[]): string[] | null {
+function idsParaEnlazar(modelo: string, ids?: string[], donde?: string): string[] | null {
   const v = (ids || []).filter((x) => typeof x === 'string' && /^[\w-]{6,80}$/.test(x)).slice(-3);
-  return v.length && enlaceActivo(modelo) ? v : null;
+  return v.length && enlaceActivo(modelo, Date.now(), donde) ? v : null;
 }
 /** El `request-id` de una respuesta de ElevenLabs (para enlazar la frase siguiente), o undefined. */
 export function idDePedido(r: { headers: { get(n: string): string | null } } | null | undefined): string | undefined {
   const v = String(r?.headers?.get('request-id') || '').trim();
   return /^[\w-]{6,80}$/.test(v) ? v : undefined;
 }
-/** ¿Este rechazo es por los ids? Entonces se anota el modelo y se reintenta sin ellos. */
-function rechazoDeEnlace(opts: PedidoEleven, status: number, ahora = Date.now()): boolean {
-  if (!(status === 400 || status === 422)) return false;
-  const modelo = opts.modelo || modeloEleven();
-  if (!idsParaEnlazar(modelo, opts.previosIds)) return false;
-  sinEnlace.set(modelo, ahora + SIN_ENLACE_MS);
-  console.warn('[voz eleven]', status, `${modelo} no enlaza por request-id: solo previous_text por 6 h`);
-  return true;
+/**
+ * ¿Este rechazo (de un pedido que llevaba ids) es por los ids? Entonces se reintenta sin ellos; y solo si ElevenLabs
+ * dice que el modelo no los acepta, se anota ese camino (modelo|endpoint|formato) por seis horas. `ambiguo` cuenta como
+ * de los ids para el reintento (es lo único que se puede quitar sin perder la voz), nunca para recordarlo.
+ */
+function rechazoDeEnlace(modelo: string, donde: string, status: number, cuerpo: string): boolean {
+  const clase = clasificarRechazo(status, cuerpo, 'previous_request_ids');
+  anotarRechazo(donde, 'previous_request_ids', clase, status);
+  if (clase === 'no-soportado') {
+    const clave = `${modelo}|${donde}`;
+    sinEnlace.set(clave, Date.now() + SIN_ENLACE_MS);
+    motivoDe('previous_request_ids', clave, status, cuerpo);
+    console.warn('[voz eleven]', status, `${clave} no enlaza por request-id: solo previous_text por 6 h`);
+  }
+  return clase === 'no-soportado' || clase === 'parametro' || clase === 'ambiguo';
 }
 
 /**
@@ -441,27 +591,35 @@ function cobrarEleven(opts: PedidoEleven): boolean {
 }
 
 export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
-  if (!cobrarEleven(opts)) return null;
-  return abrirSinCobrar(opts);
+  if (opts.senal?.aborted || !cobrarEleven(opts)) return null;
+  return abrirSinCobrar(opts, intentoDe(opts));
 }
 
-async function abrirSinCobrar(opts: PedidoEleven): Promise<Response | null> {
+/** Un pedido cortado por quien llamó (no por ElevenLabs ni por el plazo): no es un fallo de la voz. */
+const cortadoPorQuienPide = (opts: PedidoEleven) => !!opts.senal?.aborted;
+
+async function abrirSinCobrar(opts: PedidoEleven, it: Intento): Promise<Response | null> {
   const key = clave('elevenlabs');
   if (!key || !elevenListo()) return null;
   if (opts.reloj && !opts.reloj.alcanza()) return null;
-  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
-  const cuerpo = cuerpoEleven(opts);
+  if (!cabeOtroPedido(opts, it)) return null;
   const formato = opts.formato && (/^(mp3|pcm)_\d{4,5}(_\d{2,3})?$/.test(opts.formato) || FORMATOS_OPUS.test(opts.formato)) ? opts.formato : FORMATO;
+  const donde = `stream|${formato}`;
+  const modelo = opts.modelo || modeloEleven();
+  const cuerpo = cuerpoEleven(opts, donde);
+  it.usados++;
   try {
     const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/stream?output_format=${formato}`, {
       method: 'POST',
       headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: formato.startsWith('pcm') ? 'audio/pcm' : formato.startsWith('opus') ? 'audio/ogg' : 'audio/mpeg' },
       body: JSON.stringify(cuerpo),
-      signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
+      // El plazo es el de la FRASE (con su reintento dentro), no uno nuevo por pedido; y quien pide lo puede cortar.
+      signal: senalPedido(opts, it),
     });
     if (!r.ok || !r.body) {
-      const txt = (await r.text().catch(() => '')).slice(0, 240);
-      if (rechazoDeEnlace(opts, r.status)) return abrirSinCobrar({ ...opts, previosIds: undefined });
+      const txt = (await r.text().catch(() => '')).slice(0, 400);
+      // Nunca un reintento para nadie, ni uno que multiplique un 429/401/402 (esos frenan abajo).
+      if (cuerpo.previous_request_ids && !cortadoPorQuienPide(opts) && rechazoDeEnlace(modelo, donde, r.status, txt)) return abrirSinCobrar({ ...opts, previosIds: undefined }, it);
       const pausa = pausaPorFallo(r.status, txt);
       if (pausa) pausaHasta = Date.now() + pausa;
       ultimoFallo = `${r.status} ${txt.slice(0, 120)}`;
@@ -470,6 +628,7 @@ async function abrirSinCobrar(opts: PedidoEleven): Promise<Response | null> {
     }
     return r;
   } catch (e: any) {
+    if (cortadoPorQuienPide(opts)) return null;
     ultimoFallo = String(e?.message || e).slice(0, 120);
     console.warn('[voz eleven]', ultimoFallo);
     return null;
@@ -529,58 +688,82 @@ export async function notaDeVozEleven(texto: string, o: { avatar?: AvatarVoz; id
 /**
  * La misma síntesis pidiendo TAMBIÉN los tiempos por letra (/text-to-speech/{voz}/with-timestamps):
  * misma voz, mismo modelo, mismos ajustes; solo cambia que la respuesta trae el audio en base64 y la
- * alineación. La documentación de ElevenLabs (30-sep-2026) no dice si v4 la acepta por HTTP: si el
- * modelo configurado la rechaza (400/404/422), se anota y durante seis horas se pide el audio solo
- * (la boca sigue con el nivel del audio). Nunca se reintenta en bucle ni se cambia de modelo.
+ * alineación. La documentación de ElevenLabs (30-sep-2026) no dice si v4 la acepta por HTTP: si
+ * ElevenLabs dice SIN DUDA que el modelo no da tiempos (clasificarRechazo: «no-soportado»), se anota por
+ * modelo + endpoint + formato y durante seis horas se pide el audio solo (la boca sigue con el nivel del
+ * audio). Antes cualquier 400/404/422 lo apagaba: una voz que no existe dejaba sin tiempos a todos
+ * (auditoría del 11-oct, VOZ-07). Nunca se reintenta en bucle ni se cambia de modelo.
  */
 const sinTiempos = new Map<string, number>();
 export const SIN_TIEMPOS_MS = 6 * 60 * 60_000;
+const claveTiempos = (modelo: string) => `${modelo}|with-timestamps|${FORMATO}`;
 
 export function tiemposDisponibles(modelo = modeloEleven(), ahora = Date.now()): boolean {
-  return (sinTiempos.get(modelo) || 0) <= ahora;
+  return (sinTiempos.get(claveTiempos(modelo)) || 0) <= ahora;
 }
 
 /** Solo para pruebas. */
 export function _olvidarSinTiempos() {
   sinTiempos.clear();
+  for (const k of [...motivoApagado.keys()]) if (k.startsWith('timestamps|')) motivoApagado.delete(k);
 }
 
 type ConTiempos = { audio: Buffer; contentType: string; alineacion: AlineacionEleven | null; requestId?: string };
 
 /** null: no hubo voz (sin clave, cupo, red); 'sin-tiempos': que se pida el audio solo. */
 export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
-  if (!cobrarEleven(opts)) return null;
-  return conTiemposSinCobrar(opts, ahora);
+  if (opts.senal?.aborted || !cobrarEleven(opts)) return null;
+  return conTiemposSinCobrar(opts, ahora, intentoDe(opts));
 }
 
-async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
+async function conTiemposSinCobrar(opts: PedidoEleven, ahora: number, it: Intento): Promise<ConTiempos | null | 'sin-tiempos'> {
   const key = clave('elevenlabs');
   if (!key || !elevenListo()) return null;
   if (opts.reloj && !opts.reloj.alcanza()) return null;
   const modelo = opts.modelo || modeloEleven();
   if (!tiemposDisponibles(modelo, ahora)) return 'sin-tiempos';
-  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+  if (!cabeOtroPedido(opts, it)) return null;
+  const donde = `with-timestamps|${FORMATO}`;
+  const cuerpo = cuerpoEleven(opts, donde);
+  it.usados++;
   try {
     const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/with-timestamps?output_format=${FORMATO}`, {
       method: 'POST',
       headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(cuerpoEleven(opts)),
-      signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify(cuerpo),
+      signal: senalPedido(opts, it),
     });
     if (!r.ok) {
-      const txt = (await r.text().catch(() => '')).slice(0, 240);
-      if (rechazoDeEnlace(opts, r.status)) return conTiemposSinCobrar({ ...opts, previosIds: undefined }, ahora);
-      const pausa = pausaPorFallo(r.status, txt);
-      if (pausa) {
+      const txt = (await r.text().catch(() => '')).slice(0, 400);
+      if (cortadoPorQuienPide(opts)) return null;
+      // Los ids primero, pero solo si el rechazo los nombra: si no se sabe de qué es, deciden los tiempos (abajo).
+      if (cuerpo.previous_request_ids) {
+        const clase = clasificarRechazo(r.status, txt, 'previous_request_ids');
+        if ((clase === 'no-soportado' || clase === 'parametro') && rechazoDeEnlace(modelo, donde, r.status, txt)) return conTiemposSinCobrar({ ...opts, previosIds: undefined }, ahora, it);
+      }
+      const clase = clasificarRechazo(r.status, txt, 'timestamps');
+      anotarRechazo(donde, 'timestamps', clase, r.status);
+      if (clase === 'pausa') {
+        const pausa = pausaPorFallo(r.status, txt);
         pausaHasta = Date.now() + pausa;
         ultimoFallo = `${r.status} ${txt.slice(0, 120)}`;
         console.warn('[voz eleven tiempos]', r.status, `(pausa ${Math.round(pausa / 1000)} s)`);
         return null;
       }
-      if (r.status === 400 || r.status === 404 || r.status === 422) {
-        sinTiempos.set(modelo, ahora + SIN_TIEMPOS_MS);
-        console.warn('[voz eleven tiempos]', r.status, `${modelo} no da tiempos: audio solo por 6 h`);
+      if (clase === 'no-soportado') {
+        const k = claveTiempos(modelo);
+        sinTiempos.set(k, ahora + SIN_TIEMPOS_MS);
+        motivoDe('timestamps', k, r.status, txt);
+        console.warn('[voz eleven tiempos]', r.status, `${k} no da tiempos: audio solo por 6 h`);
+        return 'sin-tiempos';
       }
+      // De otra cosa (la voz no existe, un ajuste fuera de rango): el audio solo fallaría igual. No se gasta otro pedido.
+      if (clase === 'otro') {
+        ultimoFallo = `${r.status} ${txt.slice(0, 120)}`;
+        console.warn('[voz eleven tiempos]', r.status, txt.slice(0, 160));
+        return null;
+      }
+      // Del parámetro sin ser del modelo, ambiguo o pasajero: el audio solo, una vez y sin recordar nada.
       return 'sin-tiempos';
     }
     const j: any = await r.json();
@@ -589,8 +772,10 @@ async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Prom
     const alineacion = (j?.normalized_alignment || j?.alignment || null) as AlineacionEleven | null;
     return { audio, contentType: 'audio/mpeg', alineacion, requestId: idDePedido(r) };
   } catch (e: any) {
+    if (cortadoPorQuienPide(opts)) return null;
     ultimoFallo = String(e?.message || e).slice(0, 120);
     console.warn('[voz eleven tiempos]', ultimoFallo);
+    // El audio solo, si todavía cabe en el plazo de la frase (abrirSinCobrar lo mira).
     return 'sin-tiempos';
   }
 }
@@ -600,14 +785,16 @@ async function conTiemposSinCobrar(opts: PedidoEleven, ahora = Date.now()): Prom
  * `tiempos`, pide también los tiempos por letra; si no los dan, el audio solo, como siempre.
  */
 export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): Promise<{ audio: Buffer; contentType: string; alineacion?: AlineacionEleven | null; requestId?: string } | null> {
-  // Una sola frase, un solo cobro: si los tiempos no vienen y se pide el audio solo, no cuenta dos veces.
-  if (!cobrarEleven(opts)) return null;
+  // Una sola frase, un solo cobro: si los tiempos no vienen y se pide el audio solo, no cuenta dos veces. Y un solo
+  // plazo: el audio solo cabe en lo que quedó del de la frase (como mucho dos pedidos).
+  if (opts.senal?.aborted || !cobrarEleven(opts)) return null;
+  const it = intentoDe(opts);
   if (opts.tiempos) {
-    const t = await conTiemposSinCobrar(opts);
+    const t = await conTiemposSinCobrar(opts, Date.now(), it);
     if (t === null) return null;
     if (t !== 'sin-tiempos') return t;
   }
-  const r = await abrirSinCobrar(opts);
+  const r = await abrirSinCobrar(opts, it);
   if (!r) return null;
   try {
     const audio = Buffer.from(await r.arrayBuffer());

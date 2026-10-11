@@ -7,11 +7,15 @@
  * manzanas con manzanas. NADA de contenido: ni lo que dijo la persona ni lo que contestó AURA, ni su
  * correo; solo tiempos, banderas y categorías (por dónde contestó el cerebro).
  *
- *  · primerTextoMs: desde que llegó el turno hasta que el primer texto salió hacia la voz (la frase de
- *    espera cuenta: es lo primero que se oye). Es lo que el servidor puede medir del «primer audio»; el
- *    tiempo de red y de voz de ElevenLabs se mira en sus métricas por turno (scripts/voz-comparar-eleven.ts).
+ *  · primerTextoServidorMs (guardado también como `primerTextoMs`, su nombre de antes): desde que llegó el
+ *    turno hasta que el primer TEXTO salió del servidor hacia la voz (la frase de espera cuenta: es lo primero
+ *    que se dirá). NO es audio (auditoría del 11-oct, VOZ-04: las razones lo llamaban «primer audio»): la voz
+ *    de ElevenLabs y la red vienen después y se miran en sus métricas por turno (scripts/voz-comparar-eleven.ts).
+ *  · primerByteAudioMs y primerCuadroSonadoMs: el primer byte de audio y el primer cuadro que de verdad sonó.
+ *    El servidor no los ve: quedan en null hasta que alguien los mida (nunca un valor inventado ni copiado
+ *    del texto).
  *  · cerebroMs: hasta lo primero del cerebro (sin la frase de espera ni su muletilla): la respuesta de
- *    verdad. La regla lo exige además del primer audio: una frase de espera rápida no tapa un cerebro lento.
+ *    verdad. La regla lo exige además del primer texto: una frase de espera rápida no tapa un cerebro lento.
  *  · interrupcion: 'nativa' si el camino lo supo por un evento suyo (Speech Engine: llegó un turno con
  *    `event_id` mayor mientras el anterior seguía saliendo), 'inferida' si se dedujo (el corte de la
  *    conexión o la respuesta recortada en el historial). null: este turno no cortó a ninguno.
@@ -21,7 +25,7 @@
  *  · respaldo: contestó el cerebro de respaldo (la vía o el proveedor lo dicen).
  *
  * LA COMPARACIÓN ES HONESTA (claseTurno, veredicto): solo las respuestas completas del cerebro principal
- * cuentan como respuestas y alimentan los percentiles del primer audio; asentimientos, cortados, solo la
+ * cuentan como respuestas y alimentan los percentiles del primer texto del servidor; asentimientos, cortados, solo la
  * frase de espera, vacíos, errores, respaldos, tardes y repetidos se cuentan aparte, y los fallos (también
  * los cortados) cuentan EN CONTRA. La respuesta de verdad (cerebroMs) no puede empeorar, y los cortados
  * entran en ella con lo que llevaban esperando. Sin la evidencia mínima por camino y por red (turnos,
@@ -43,7 +47,21 @@ export type MedidaTurnoVoz = {
   t: number;
   /** Huella corta de la conversación (para contar llamadas), no su id. */
   conv: string;
+  /**
+   * Cuándo salió el primer TEXTO del servidor hacia la voz (ms desde el turno). No es audio. Opcional en el tipo solo
+   * para quien todavía arma medidas con el nombre viejo (server/voz-motor.ts); normalizarMedida lo escribe siempre.
+   */
+  primerTextoServidorMs?: number | null;
+  /**
+   * El mismo número con su nombre de antes: así se guardó en S3 y así lo escriben las rutas (server/voz-agente.ts,
+   * server/voz-motor.ts). Se lee el que venga y se escriben los dos.
+   * @deprecated usar primerTextoServidorMs.
+   */
   primerTextoMs: number | null;
+  /** El primer byte de AUDIO que salió hacia quien escucha. Sin medir: null (el servidor de hoy no lo ve). */
+  primerByteAudioMs?: number | null;
+  /** El primer cuadro de audio que de verdad SONÓ en el dispositivo. Sin medir: null. */
+  primerCuadroSonadoMs?: number | null;
   cerebroMs: number | null;
   totalMs: number;
   /** Se dijo una frase de espera (el cerebro tardó). */
@@ -61,8 +79,12 @@ export type MedidaTurnoVoz = {
   red: string;
 };
 
+/** Los tiempos que se pueden traer con cualquiera de sus nombres (el viejo, el nuevo) o sin traer (los de audio). */
+type TiemposEntrada = { primerTextoMs?: number | null; primerTextoServidorMs?: number | null; primerByteAudioMs?: number | null; primerCuadroSonadoMs?: number | null };
+type SinTiempos = Omit<MedidaTurnoVoz, 'primerTextoMs' | 'primerTextoServidorMs' | 'primerByteAudioMs' | 'primerCuadroSonadoMs'>;
+
 /** Lo que mide la ruta del LLM propio (server/voz-agente.ts); el motor y la red los pone quien la llama. */
-export type MedidaRuta = Omit<MedidaTurnoVoz, 'motor' | 'red' | 't' | 'asentimiento'> & { t?: number; asentimiento?: boolean };
+export type MedidaRuta = Omit<SinTiempos, 'motor' | 'red' | 't' | 'asentimiento'> & TiemposEntrada & { t?: number; asentimiento?: boolean };
 
 export const MAX_MEDIDAS = 5_000;
 export const GUARDAR_MS = 30_000;
@@ -98,7 +120,8 @@ function cargar(): Promise<void> {
   if (!cargando)
     cargando = s3GetJson(CLAVE_S3)
       .then((r) => {
-        if (r.ok && Array.isArray(r.json?.medidas)) medidas = [...r.json.medidas.filter(valida), ...medidas].slice(-MAX_MEDIDAS);
+        // Las guardadas antes del 11-oct solo traen `primerTextoMs`: se normalizan (los dos nombres, el audio en null).
+        if (r.ok && Array.isArray(r.json?.medidas)) medidas = [...r.json.medidas.filter((m: any) => Number.isFinite(m?.t)).map(normalizarMedida).filter((m: MedidaTurnoVoz | null): m is MedidaTurnoVoz => !!m), ...medidas].slice(-MAX_MEDIDAS);
         if (r.ok && Array.isArray(r.json?.ejercicios)) ejercicios = [...r.json.ejercicios.filter(ejercicioValido), ...ejercicios].slice(-MAX_EJERCICIOS);
         if (r.ok && typeof r.json?.red === 'string' && !red) red = r.json.red;
       })
@@ -108,10 +131,6 @@ function cargar(): Promise<void> {
         cargando = null;
       });
   return cargando;
-}
-
-function valida(m: any): m is MedidaTurnoVoz {
-  return !!m && (m.motor === 'agente' || m.motor === 'speech-engine') && Number.isFinite(m.t) && Number.isFinite(m.totalMs);
 }
 
 function programarGuardado() {
@@ -128,13 +147,22 @@ function programarGuardado() {
   reloj.unref?.();
 }
 
-export function anotarTurnoVoz(m: Omit<MedidaTurnoVoz, 'red'> & { red?: string }) {
-  void cargar();
-  const limpia: MedidaTurnoVoz = {
-    motor: m.motor === 'speech-engine' ? 'speech-engine' : 'agente',
+/**
+ * Una medida limpia, venga de una ruta o de lo guardado (con el nombre viejo `primerTextoMs` o el nuevo
+ * `primerTextoServidorMs`): se escriben los dos. El primer byte de audio y el primer cuadro sonado solo si alguien
+ * los midió de verdad; si no, null. null si no es una medida (sin motor conocido, sin tiempos).
+ */
+export function normalizarMedida(m: any): MedidaTurnoVoz | null {
+  if (!m || (m.motor !== 'agente' && m.motor !== 'speech-engine') || !Number.isFinite(m.totalMs)) return null;
+  const primerTexto = numeroONulo(m.primerTextoServidorMs ?? m.primerTextoMs);
+  return {
+    motor: m.motor,
     t: Number.isFinite(m.t) ? m.t : Date.now(),
     conv: String(m.conv || '').slice(0, 12),
-    primerTextoMs: numeroONulo(m.primerTextoMs),
+    primerTextoServidorMs: primerTexto,
+    primerTextoMs: primerTexto,
+    primerByteAudioMs: numeroONulo(m.primerByteAudioMs),
+    primerCuadroSonadoMs: numeroONulo(m.primerCuadroSonadoMs),
     cerebroMs: numeroONulo(m.cerebroMs),
     totalMs: Math.max(0, Math.round(Number(m.totalMs) || 0)),
     puente: !!m.puente,
@@ -147,6 +175,12 @@ export function anotarTurnoVoz(m: Omit<MedidaTurnoVoz, 'red'> & { red?: string }
     cortado: !!m.cortado,
     red: String(m.red ?? red).slice(0, 24),
   };
+}
+
+export function anotarTurnoVoz(m: Omit<SinTiempos, 'red'> & TiemposEntrada & { red?: string }) {
+  void cargar();
+  const limpia = normalizarMedida({ ...m, motor: m.motor === 'speech-engine' ? 'speech-engine' : 'agente', totalMs: Number.isFinite(m.totalMs) ? m.totalMs : 0 });
+  if (!limpia) return;
   medidas.push(limpia);
   if (medidas.length > MAX_MEDIDAS) medidas = medidas.slice(-MAX_MEDIDAS);
   programarGuardado();
@@ -212,6 +246,9 @@ export function percentil(xs: number[], p: number): number | null {
  * Lo demás se cuenta aparte; y lo que es un fallo del camino (error, respaldo, repetido, tarde, vacío, solo
  * la frase de espera, sin cerebro) cuenta EN CONTRA de ese camino (las regresiones del veredicto).
  */
+/** El primer texto del servidor de una medida, con cualquiera de sus dos nombres. */
+const primerTextoDe = (m: Partial<MedidaTurnoVoz>): number | null => m.primerTextoServidorMs ?? m.primerTextoMs ?? null;
+
 export type ClaseTurno = 'completo' | 'repetido' | 'asentimiento' | 'error' | 'respaldo' | 'tarde' | 'cortado' | 'vacio' | 'soloEspera' | 'sinCerebro';
 
 export function claseTurno(m: MedidaTurnoVoz): ClaseTurno {
@@ -222,7 +259,7 @@ export function claseTurno(m: MedidaTurnoVoz): ClaseTurno {
   if (m.tarde) return 'tarde';
   if (m.cortado) return 'cortado';
   // Nada salió hacia la voz.
-  if (m.primerTextoMs === null) return 'vacio';
+  if (primerTextoDe(m) === null) return 'vacio';
   // Salió algo, pero no del cerebro: solo la frase de espera, o una frase nuestra («se me fue el hilo»).
   if (m.cerebroMs === null) return m.puente ? 'soloEspera' : 'sinCerebro';
   return 'completo';
@@ -309,8 +346,13 @@ export type ResumenCamino = {
   conversaciones: number;
   /** Las conversaciones con al menos una respuesta comparable: las que cuentan para MIN_CONVERSACIONES. */
   conversacionesComparables: number;
-  /** El primer audio y el cerebro, SOLO de las respuestas comparables. */
+  /** El primer TEXTO del servidor (no audio) y el cerebro, SOLO de las respuestas comparables. */
+  primerTextoServidor: { p50: number | null; p95: number | null };
+  /** @deprecated el mismo objeto que primerTextoServidor, con su nombre de antes (quien ya lo lee no se rompe). */
   primerTexto: { p50: number | null; p95: number | null };
+  /** El primer byte de audio y el primer cuadro sonado: solo de las medidas que de verdad los traen (hoy, ninguna). */
+  primerByteAudio: { p50: number | null; p95: number | null; medidas: number };
+  primerCuadroSonado: { p50: number | null; p95: number | null; medidas: number };
   cerebro: { p50: number | null; p95: number | null };
   /**
    * La respuesta de verdad (cerebroMs, sin la frase de espera) de las comparables MÁS los cortados: un
@@ -339,7 +381,12 @@ export function resumir(ms: MedidaTurnoVoz[], ej: EjercicioVoz[] = []): ResumenC
     if (c === 'completo') completos.push(m);
     else excluidos[CLAVE_EXCLUIDO[c]]++;
   }
-  const pt = completos.map((m) => m.primerTextoMs).filter((x): x is number => x !== null);
+  const pt = completos.map(primerTextoDe).filter((x): x is number => x !== null);
+  const deAudio = (k: 'primerByteAudioMs' | 'primerCuadroSonadoMs') => {
+    const xs = completos.map((m) => m[k] ?? null).filter((x): x is number => x !== null);
+    return { p50: percentil(xs, 50), p95: percentil(xs, 95), medidas: xs.length };
+  };
+  const primerTexto = { p50: percentil(pt, 50), p95: percentil(pt, 95) };
   const cb = completos.map((m) => m.cerebroMs).filter((x): x is number => x !== null);
   // Los cortados no desaparecen de la latencia: con su cerebro si llegó a hablar, si no con lo que esperaron.
   const cortados = ms.filter((m) => claseTurno(m) === 'cortado');
@@ -356,7 +403,10 @@ export function resumir(ms: MedidaTurnoVoz[], ej: EjercicioVoz[] = []): ResumenC
     completos: completos.length,
     conversaciones: new Set(ms.map((m) => m.conv).filter(Boolean)).size,
     conversacionesComparables: new Set(completos.map((m) => m.conv).filter(Boolean)).size,
-    primerTexto: { p50: percentil(pt, 50), p95: percentil(pt, 95) },
+    primerTextoServidor: primerTexto,
+    primerTexto,
+    primerByteAudio: deAudio('primerByteAudioMs'),
+    primerCuadroSonado: deAudio('primerCuadroSonadoMs'),
     cerebro: { p50: percentil(cb, 50), p95: percentil(cb, 95) },
     cerebroConCortados: { p50: percentil(cbc, 50), p95: percentil(cbc, 95), censurados },
     excluidos,
@@ -408,11 +458,11 @@ export type ParesBloques = { total: number; ganaSE: number };
  * respuestas de cada camino deja que el reparto de las horas decida: con 40 del agente y 5 de Speech Engine en la
  * hora mala, y 5 del agente y 100 de Speech Engine en la buena, Speech Engine «ganaba» junto aunque perdiera en las
  * dos horas. Cada par (A/B seguidos, la misma hora) pesa uno, tenga los turnos que tenga: Speech Engine gana el par
- * si el p50 de su primer audio es menor que el del agente en ese par. Un bloque suelto al final no tiene par.
+ * si el p50 de su primer texto del servidor es menor que el del agente en ese par. Un bloque suelto al final no tiene par.
  */
 export function paresDeBloques(ms: MedidaTurnoVoz[]): ParesBloques {
   const b = bloquesAlternos(ms);
-  const p50 = (xs: MedidaTurnoVoz[]) => percentil(xs.map((m) => m.primerTextoMs).filter((x): x is number => x !== null), 50);
+  const p50 = (xs: MedidaTurnoVoz[]) => percentil(xs.map(primerTextoDe).filter((x): x is number => x !== null), 50);
   let total = 0;
   let ganaSE = 0;
   for (let i = 0; i + 1 < b.length; i += 2) {
@@ -455,7 +505,12 @@ export type Veredicto = {
   faltan: string[];
   /** Por qué no se adopta, con evidencia (vacío si se adopta o si falta evidencia). */
   motivos: string[];
+  /** El primer TEXTO del servidor (no audio) mejora en p50 / p95 por más que el margen. */
+  primerTextoServidorP50Mejor: boolean;
+  primerTextoServidorP95Mejor: boolean;
+  /** @deprecated alias de primerTextoServidorP50Mejor (nombre de antes). */
   primerTextoP50Mejor: boolean;
+  /** @deprecated alias de primerTextoServidorP95Mejor (nombre de antes). */
   primerTextoP95Mejor: boolean;
   /** La respuesta de verdad (sin la frase de espera, con los cortados) no empeora más que el margen. */
   cerebroP50NoPeor: boolean;
@@ -476,7 +531,7 @@ const cuantos = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? un
  * respuestas comparables de ≥ MIN_CONVERSACIONES llamadas distintas, ≥ MIN_INTERRUPCIONES interrupciones y
  * ≥ MIN_ASENTIMIENTOS asentimientos a propósito, parejos entre caminos: EJERCICIOS_PAREJOS) y en ≥ MIN_BLOQUES
  * bloques alternos de ≥ MIN_TURNOS_BLOQUE; sin eso, «insuficiente» y qué falta. Con evidencia, se adopta SOLO si
- * el primer audio de las respuestas comparables es mejor en p50 Y en p95 por más que el margen, Speech Engine
+ * el primer texto del servidor de las respuestas comparables es mejor en p50 Y en p95 por más que el margen, Speech Engine
  * gana en la mayoría de los pares de bloques vecinos (`pares`, R16-4: que el reparto de las horas no decida), la
  * respuesta de verdad (cerebro, sin la frase de espera y con los cortados censurados) no es peor en p50 NI en p95
  * más que el margen, atiende las interrupciones a propósito y aguanta los asentimientos al menos como el agente
@@ -505,7 +560,7 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number,
   if (bloques < MIN_BLOQUES) faltan.push(`faltan bloques alternos A-B-A-B de ≥${MIN_TURNOS_BLOQUE} turnos comparables (hay ${bloques} de ${MIN_BLOQUES}): que la hora no sesgue`);
   const p50 = mejorClaro(ag.primerTexto.p50, se.primerTexto.p50);
   const p95 = mejorClaro(ag.primerTexto.p95, se.primerTexto.p95);
-  // El primer audio puede ser la frase de espera: la respuesta de verdad tampoco puede empeorar.
+  // El primer texto puede ser la frase de espera: la respuesta de verdad tampoco puede empeorar.
   const cb50 = noPeor(ag.cerebroConCortados.p50, se.cerebroConCortados.p50);
   const cb95 = noPeor(ag.cerebroConCortados.p95, se.cerebroConCortados.p95);
   const tasaEj = (r: ResumenCamino, k: 'interrupciones' | 'asentimientos') => tasa(r.ejercicios[k].bien, r.ejercicios[k].hechas);
@@ -525,8 +580,9 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number,
   const suficientes = !faltan.length;
   const motivos: string[] = [];
   if (suficientes) {
-    if (!p50) motivos.push(`primer audio p50 sin mejora clara (agente ${ag.primerTexto.p50} ms, speech-engine ${se.primerTexto.p50} ms)`);
-    if (!p95) motivos.push(`primer audio p95 sin mejora clara (agente ${ag.primerTexto.p95} ms, speech-engine ${se.primerTexto.p95} ms)`);
+    // Es el primer TEXTO que salió del servidor, no el primer audio que se oyó (VOZ-04): así lo dice la razón.
+    if (!p50) motivos.push(`primer texto del servidor p50 sin mejora clara (agente ${ag.primerTextoServidor.p50} ms, speech-engine ${se.primerTextoServidor.p50} ms)`);
+    if (!p95) motivos.push(`primer texto del servidor p95 sin mejora clara (agente ${ag.primerTextoServidor.p95} ms, speech-engine ${se.primerTextoServidor.p95} ms)`);
     if (!mayoria) motivos.push(`no gana en la mayoría de los pares de bloques A/B (gana ${pares!.ganaSE} de ${pares!.total}): lo junto lo decide el reparto de las horas`);
     if (!cb50) motivos.push(`respuesta de verdad p50 peor (agente ${ag.cerebroConCortados.p50} ms, speech-engine ${se.cerebroConCortados.p50} ms; sin la frase de espera, con los cortados)`);
     if (!cb95) motivos.push(`respuesta de verdad p95 peor (agente ${ag.cerebroConCortados.p95} ms, speech-engine ${se.cerebroConCortados.p95} ms; sin la frase de espera, con los cortados)`);
@@ -541,6 +597,8 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number,
     suficientes,
     faltan,
     motivos,
+    primerTextoServidorP50Mejor: p50,
+    primerTextoServidorP95Mejor: p95,
     primerTextoP50Mejor: p50,
     primerTextoP95Mejor: p95,
     cerebroP50NoPeor: cb50,
@@ -567,8 +625,10 @@ export function combinarVeredictos(porRed: Record<string, Veredicto>): Veredicto
     suficientes: !faltan.length,
     faltan,
     motivos,
-    primerTextoP50Mejor: todas((v) => v.primerTextoP50Mejor),
-    primerTextoP95Mejor: todas((v) => v.primerTextoP95Mejor),
+    primerTextoServidorP50Mejor: todas((v) => v.primerTextoServidorP50Mejor),
+    primerTextoServidorP95Mejor: todas((v) => v.primerTextoServidorP95Mejor),
+    primerTextoP50Mejor: todas((v) => v.primerTextoServidorP50Mejor),
+    primerTextoP95Mejor: todas((v) => v.primerTextoServidorP95Mejor),
     cerebroP50NoPeor: todas((v) => v.cerebroP50NoPeor),
     cerebroP95NoPeor: todas((v) => v.cerebroP95NoPeor),
     interrupcionesIgualOMas: todas((v) => v.interrupcionesIgualOMas),

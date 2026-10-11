@@ -1,6 +1,6 @@
 #!/usr/bin/env -S npx tsx
 /**
- * CUÁNTO TARDA LA PRIMERA PALABRA DE LA VOZ, con un cerebro falso (nada sale de la máquina).
+ * CUÁNTO TARDA EL PRIMER TEXTO DEL SERVIDOR HACIA LA VOZ, con un cerebro falso (nada sale de la máquina).
  *
  *   npx tsx scripts/medir-latencia-voz.ts [--raiz <carpeta con server.ts>] [--n 9]
  *
@@ -11,6 +11,10 @@
  *   · pregunta: la contesta el 27B, en streaming.
  * Sirve para comparar dos versiones: sacar la otra con `git archive <commit> | tar -x -C <carpeta>`,
  * enlazar su node_modules y correr este script con `--raiz <carpeta>`. Imprime solo cifras.
+ *
+ * Lo que mide es TEXTO, y sintético (auditoría del 11-oct, VOZ-04): el primer delta de texto que el servidor
+ * manda (SSE), con cerebros falsos. No es el primer audio: ni ElevenLabs ni la red ni el reproductor entran aquí.
+ * El primer byte de audio y el primer cuadro sonado se miden en el teléfono (server/voz-medidas.ts los deja en null).
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -106,7 +110,7 @@ async function main() {
       return typeof p === 'string' ? p : p.pase;
     };
 
-    /** Primera palabra y respuesta entera, en ms, leyendo el stream a medida que llega. */
+    /** Primer texto del servidor y respuesta entera, en ms, leyendo el stream a medida que llega. */
     async function medir(url: string, init: RequestInit, esTexto: (bloque: string) => boolean) {
       const t0 = performance.now();
       const r = await fetch(url, init);
@@ -153,7 +157,7 @@ async function main() {
         p.push(r.primera);
         t.push(r.total);
       }
-      console.log(`${nombre}: primera palabra ${mediana(p)} ms · entera ${mediana(t)} ms (mediana de ${N})`);
+      console.log(`${nombre}: primer texto del servidor (sintético) ${mediana(p)} ms · texto entero ${mediana(t)} ms (mediana de ${N}; no es audio)`);
     }
   } finally {
     cerrar();

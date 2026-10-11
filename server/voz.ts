@@ -259,15 +259,24 @@ function persistible(guion: string, texto: string, privado?: boolean): boolean {
   return !privado && guion.length > 0 && guion.length <= PERSISTIR_MAX_CARACTERES && esFraseConocida(texto) && s3Voz.listo();
 }
 
-async function leerVozDeS3(claveAudio: string): Promise<Omit<AudioHit, 'at'> | null> {
+/** `senal`: quien pidió se fue mientras S3 contestaba: no se le espera (lo que llegue tarde no sirve a nadie). */
+async function leerVozDeS3(claveAudio: string, senal?: AbortSignal): Promise<Omit<AudioHit, 'at'> | null> {
   const visto = faltanEnS3.get(claveAudio);
   if (visto && Date.now() - visto < FALTA_TTL_MS) return null;
+  if (senal?.aborted) return null;
   let reloj: NodeJS.Timeout | undefined;
+  let soltar: (() => void) | undefined;
   const r = await Promise.race([
     s3Voz.get(`${PREFIJO_S3_VOZ}${claveAudio}.json`).catch(() => null),
     new Promise<null>((ok) => (reloj = setTimeout(() => ok(null), S3_VOZ_MS))),
+    new Promise<null>((ok) => {
+      soltar = () => ok(null);
+      senal?.addEventListener('abort', soltar, { once: true });
+    }),
   ]);
   clearTimeout(reloj);
+  if (soltar) senal?.removeEventListener('abort', soltar);
+  if (senal?.aborted) return null;
   if (r?.missing) {
     if (faltanEnS3.size > 5_000) faltanEnS3.clear();
     faltanEnS3.set(claveAudio, Date.now());
@@ -298,9 +307,11 @@ function guardarVozEnS3(claveAudio: string, hit: Omit<AudioHit, 'at'>) {
 const TOPE_MS = 20_000;
 const TOPE_LARGO_MS = 45_000;
 
-async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number; reloj?: Presupuesto; idioma?: Idioma }): Promise<{ audio: Buffer; contentType: string } | null> {
+/** `senal`: quien pidió la frase se fue (VOZ-03): ni se empieza, y lo que está en curso se corta. */
+async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number; reloj?: Presupuesto; idioma?: Idioma; senal?: AbortSignal }): Promise<{ audio: Buffer; contentType: string } | null> {
   const { url, llave } = configVoicebox();
   if (!url || !llave) return null;
+  if (opts.senal?.aborted) return null;
   if (opts.reloj && !opts.reloj.alcanza()) {
     console.warn('[voz voicebox] sin tiempo: el cliente ya no espera esta respuesta');
     return null;
@@ -310,7 +321,7 @@ async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'audio/wav', 'X-Voz-Clave': llave },
       body: JSON.stringify({ profile_id: opts.perfil, text: opts.texto, language: opts.idioma === 'en' ? 'en' : 'es', engine: 'kokoro' }),
-      signal: opts.reloj ? opts.reloj.senal(opts.timeoutMs) : AbortSignal.timeout(opts.timeoutMs),
+      signal: opts.reloj ? opts.reloj.senalCon(opts.senal, opts.timeoutMs) : opts.senal ? AbortSignal.any([opts.senal, AbortSignal.timeout(opts.timeoutMs)]) : AbortSignal.timeout(opts.timeoutMs),
     });
     if (!r.ok) {
       console.warn('[voz voicebox]', r.status, (await r.text().catch(() => '')).slice(0, 160));
@@ -329,7 +340,7 @@ async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number
     }
     return { audio, contentType: !tipo || /wav|octet/.test(tipo) ? 'audio/wav' : tipo };
   } catch (e: any) {
-    console.warn('[voz voicebox]', String(e?.message || e).slice(0, 120));
+    if (!opts.senal?.aborted) console.warn('[voz voicebox]', String(e?.message || e).slice(0, 120));
     return null;
   }
 }
@@ -391,7 +402,7 @@ function partesDe(texto: string, plataforma: 'ultron' | 'electrum', emocion: Emo
  * Voicebox devolviera algo que no es PCM de 16 bits no hay cómo empalmar: se dice el texto de una
  * vez, sin expresiones.
  */
-async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Presupuesto): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
+async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Presupuesto, senal?: AbortSignal): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
   // Una detrás de otra: Voicebox contesta 500 a pedidos simultáneos (medido: dos de tres a la vez fallaron).
   const hablados: Array<{ audio: Buffer; contentType: string } | null> = [];
   for (const p of partes) {
@@ -399,7 +410,7 @@ async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Pre
       hablados.push(null);
       continue;
     }
-    const h = await voicebox({ texto: p.texto, perfil, timeoutMs: p.texto.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj });
+    const h = await voicebox({ texto: p.texto, perfil, timeoutMs: p.texto.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj, senal });
     if (!h) return null;
     hablados.push(h);
   }
@@ -410,7 +421,7 @@ async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Pre
       .filter((p): p is Extract<Parte, { tipo: 'habla' }> => p.tipo === 'habla')
       .map((p) => p.texto)
       .join(' ');
-    return voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj }).then((o) => (o ? { ...o, motor: 'voicebox:kokoro' } : null));
+    return voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj, senal }).then((o) => (o ? { ...o, motor: 'voicebox:kokoro' } : null));
   }
   // El formato manda la voz: el de su primer trozo (o 24 kHz mono, el de las grabaciones, si solo hay expresiones).
   const base = pcms.find(Boolean) || { hz: 24000, canales: 1 };
@@ -602,7 +613,14 @@ export async function abrirVozEnVivo(opts: {
 }
 
 /** Lo que `pasarVozEnVivo` usa de la respuesta HTTP (express.Response lo cumple; las pruebas lo fingen). */
-type SalidaVoz = { write: (b: Buffer) => unknown; end: () => unknown; on: (evento: 'close', fn: () => void) => unknown; readonly writableEnded: boolean; destroy?: (e?: Error) => unknown };
+type SalidaVoz = {
+  write: (b: Buffer) => unknown;
+  end: () => unknown;
+  on: (evento: 'close', fn: () => void) => unknown;
+  off?: (evento: 'close', fn: () => void) => unknown;
+  readonly writableEnded: boolean;
+  destroy?: (e?: Error) => unknown;
+};
 
 /**
  * Pasa la voz en vivo a la respuesta trozo a trozo y SOLO la guarda en la caché si ElevenLabs la
@@ -618,35 +636,46 @@ export async function pasarVozEnVivo(
    * `romperSiFalla`: si ElevenLabs se corta a media frase, la conexión se ROMPE (destroy) en vez de cerrarse bien. Lo
    * pide el PCM del teléfono (server/voz-pcm.ts): un PCM crudo no tiene cabecera ni largo, y un final limpio diría
    * «esta frase era así de corta». Con la conexión rota el reproductor sabe que se cortó.
+   * `senal`: el corte del pedido (server/voz-pcm.ts: el teléfono se fue o se canceló la generación; VOZ-03): también
+   * deja de leer, y la frase cuenta como cortada (no se guarda).
    */
-  o: { romperSiFalla?: boolean } = {}
+  o: { romperSiFalla?: boolean; senal?: AbortSignal } = {}
 ): Promise<boolean> {
   const lector = vivo.cuerpo.getReader();
   let cortada = false;
   // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
-  res.on('close', () => {
+  const alCerrar = () => {
     if (res.writableEnded) return;
     cortada = true;
     lector.cancel().catch(() => undefined);
-  });
+  };
+  const alCortar = () => {
+    cortada = true;
+    lector.cancel().catch(() => undefined);
+  };
+  res.on('close', alCerrar);
+  if (o.senal?.aborted) alCortar();
+  else o.senal?.addEventListener('abort', alCortar, { once: true });
   const trozos: Buffer[] = [];
   let entero = true;
   try {
     for (;;) {
       const { done, value } = await lector.read();
-      if (done) break;
+      if (done || cortada) break;
       const b = Buffer.from(value);
       trozos.push(b);
       res.write(b);
     }
   } catch (e: any) {
     entero = false;
-    console.warn(`${etiqueta} voz en vivo cortada`, String(e?.message || e).slice(0, 120));
+    if (!cortada) console.warn(`${etiqueta} voz en vivo cortada`, String(e?.message || e).slice(0, 120));
   }
+  res.off?.('close', alCerrar);
+  o.senal?.removeEventListener('abort', alCortar);
   // Con `romperSiFalla`, un final limpio SIN audio tampoco es un final: las cabeceras ya salieron y un 200 vacío diría
   // «esta frase no tiene voz». Se rompe y no se guarda (server/voz-pcm.ts ya espera el primer audio antes de las cabeceras).
   if (entero && o.romperSiFalla && !trozos.some((b) => b.length)) entero = false;
-  if (!entero && o.romperSiFalla && res.destroy) res.destroy(new Error('voz cortada'));
+  if ((!entero || cortada) && o.romperSiFalla && res.destroy) res.destroy(new Error('voz cortada'));
   else res.end();
   if (!entero || cortada) return false;
   vivo.guardar(Buffer.concat(trozos));
@@ -713,7 +742,16 @@ export async function abrirVozPcm(opts: {
   vozPropia?: string;
   /** Dr Electrum: la primera frase de la respuesta (modelo rápido). */
   primera?: boolean;
+  /**
+   * El corte del pedido (server/voz-pcm.ts; auditoría del 11-oct, VOZ-03): el teléfono colgó, se canceló la generación
+   * o se pasó el plazo del primer audio. Llega a S3, a ElevenLabs y a Voicebox; cortado, null y SIN respaldo: nadie
+   * espera esta frase (ni se gasta cupo ni se arranca Voicebox para nadie).
+   */
+  senal?: AbortSignal;
 }): Promise<VozPcm | null> {
+  const senal = opts.senal;
+  const sinNadie = () => !!senal?.aborted;
+  if (sinNadie()) return null;
   const emocion = normalizarEmocion(opts.emocion);
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const avatar = normalizarAvatar(opts.avatar);
@@ -735,7 +773,9 @@ export async function abrirVozPcm(opts: {
       }
     }
     const guardable = persistible(p.guion, opts.texto, opts.privado);
-    const deS3 = guardable ? await leerVozDeS3(clave) : null;
+    const deS3 = guardable ? await leerVozDeS3(clave, senal) : null;
+    // S3 tardó y la persona se fue mientras tanto: ni ElevenLabs ni Voicebox.
+    if (sinNadie()) return null;
     if (deS3 && deS3.contentType === tipo) {
       cacheSet(clave, deS3);
       if (!opts.soloCache) hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
@@ -744,7 +784,12 @@ export async function abrirVozPcm(opts: {
     if (opts.soloCache) return null;
     if (entrada) Object.assign(entrada, { modo: modoDeModelo(modelo), modelo });
     else entrada = hilo.anotar(turno.hablante, opts.texto, modoDeModelo(modelo), modelo, turno.previa);
-    const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, formato: `pcm_${hz}`, previosIds: hilo.idsPara(turno.previa, modelo) });
+    const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, formato: `pcm_${hz}`, previosIds: hilo.idsPara(turno.previa, modelo), senal });
+    if (sinNadie()) {
+      // Se fue justo cuando ElevenLabs contestó: se suelta su cuerpo (deja de generar) y no se prueba otro modelo.
+      r?.body?.cancel().catch(() => undefined);
+      return null;
+    }
     if (r?.body) {
       const fila = entrada;
       return {
@@ -764,12 +809,12 @@ export async function abrirVozPcm(opts: {
     }
     if (!elevenListo()) break;
   }
-  if (opts.soloCache) return null;
+  if (opts.soloCache || sinNadie()) return null;
   // Voicebox de aquí al final del turno (y sin tomas pegadas si el turno empezó en vivo: `hablar` lo mira).
   if (turno.modelos.length) anotarRespaldo(turno, opts.texto, entrada);
   // Respaldo: Voicebox (WAV de 16 bits), pasado a PCM. Sin ElevenLabs de por medio (ya se intentó o no toca).
-  const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, plataforma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
-  if (!out || !/wav/i.test(out.contentType)) return null;
+  const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, plataforma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, senal, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
+  if (!out || !/wav/i.test(out.contentType) || sinNadie()) return null;
   const crudo = pcmDeWav(out.audio);
   return crudo ? { tipo: 'entero', pcm: crudo.pcm, hz: crudo.hz, motor: out.motor } : null;
 }
@@ -808,6 +853,8 @@ export async function hablar(opts: {
   soloCache?: boolean;
   /** Otra voz de ElevenLabs (la mesa de Dr Electrum: Don Chema, la Ing. Tatiana). Sin ella, la de la plataforma. */
   vozPropia?: string;
+  /** Quien pidió la frase se fue (VOZ-03): se corta lo que esté en curso (ElevenLabs, Voicebox) y no se sigue. */
+  senal?: AbortSignal;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
@@ -840,7 +887,8 @@ export async function hablar(opts: {
     }
     const guardable = persistible(xiPedido.guion, String(opts.texto || ''), opts.privado);
     if (guardable && !opts.sinCache) {
-      const deS3 = await leerVozDeS3(xiPedido.clave);
+      const deS3 = await leerVozDeS3(xiPedido.clave, opts.senal);
+      if (opts.senal?.aborted) return null;
       if (deS3 && (!opts.tiempos || deS3.alineacion !== undefined || opts.soloCache)) {
         cacheSet(xiPedido.clave, deS3);
         if (!opts.soloCache) hilo.anotar(turno.hablante, String(opts.texto || ''), modoDeModelo(modelo), modelo, turno.previa);
@@ -850,7 +898,7 @@ export async function hablar(opts: {
     if (opts.soloCache) return null;
     if (entrada) Object.assign(entrada, { modo: modoDeModelo(modelo), modelo });
     else entrada = hilo.anotar(turno.hablante, String(opts.texto || ''), modoDeModelo(modelo), modelo, turno.previa);
-    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos, modelo: xiPedido.modelo, previosIds: hilo.idsPara(turno.previa, modelo) });
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos, modelo: xiPedido.modelo, previosIds: hilo.idsPara(turno.previa, modelo), senal: opts.senal });
     if (xi) {
       entrada.id = xi.requestId;
       const { requestId: _id, ...audio } = xi;
@@ -860,6 +908,8 @@ export async function hablar(opts: {
       if (guardable) guardarVozEnS3(xiPedido.clave, out);
       return { ...out, cache: false, ms: Date.now() - t0 };
     }
+    // Nadie espera ya la frase: ni el modelo rápido ni Voicebox.
+    if (opts.senal?.aborted) return null;
     // Sin cupo, sin llave o sin tiempo del cliente, el modelo rápido tampoco: directo al respaldo.
     if (!elevenListo() || (opts.presupuesto && !opts.presupuesto.alcanza())) break;
   }
@@ -880,13 +930,13 @@ export async function hablar(opts: {
     const hit = cacheGet(key);
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
   }
-  if (opts.soloCache) return null;
+  if (opts.soloCache || opts.senal?.aborted) return null;
   anotarRespaldo(turno, String(opts.texto || ''), entrada);
   let out: { audio: Buffer; contentType: string; motor: string } | null;
-  if (partes.some((p) => p.tipo === 'expresion')) out = await hablarConExpresiones(partes, perfil, opts.presupuesto);
+  if (partes.some((p) => p.tipo === 'expresion')) out = await hablarConExpresiones(partes, perfil, opts.presupuesto, opts.senal);
   else {
     const guion = partes.map((p) => (p.tipo === 'habla' ? p.texto : '')).join(' ');
-    const v = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto, idioma });
+    const v = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto, idioma, senal: opts.senal });
     out = v ? { ...v, motor: 'voicebox:kokoro' } : null;
   }
   if (!out) return null;
