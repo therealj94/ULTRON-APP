@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS cuentas.codigo (
 );
 CREATE INDEX IF NOT EXISTS codigo_vence ON cuentas.codigo (plataforma, vence DESC);
 ALTER TABLE cuentas.cuenta ADD COLUMN IF NOT EXISTS correo_confirmado timestamptz;
+ALTER TABLE cuentas.enlace ADD COLUMN IF NOT EXISTS revision text;
 `;
 
 function conexion(): Pool {
@@ -304,16 +305,25 @@ export async function cuentaDe(correo: string): Promise<Cuenta | null> {
  *                   registrar el correo de otro no se queda con la cuenta cuando el dueño la confirme;
  *   · 'existe'    — cualquier otra fila (confirmada, de Genesis, de Veta, del padrón aprobado): no se toca nada.
  * El correo ya llega normalizado.
+ *
+ * SEC01: poner la clave y dejar sin valor los códigos vivos de ese correo es UNA sentencia. Cada código va atado a
+ * la revisión de la clave con que se emitió (`revisionDeClave`), así que uno de antes no confirma la clave nueva; la
+ * ruta manda enseguida otro, ya atado a esta.
  */
 export async function crearCuentaPropia(correo: string, nombre: string, clave: string): Promise<'creada' | 'reabierta' | 'existe'> {
   const hash = await cifrarClave(clave);
   const desde = Date.now();
   const [f] = await q<{ nueva: boolean }>(
-    `INSERT INTO cuentas.cuenta (correo, nombre, clave_hash, clave_desde, aprobada_por) VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (correo) DO UPDATE SET clave_hash = EXCLUDED.clave_hash, clave_desde = EXCLUDED.clave_desde, nombre = EXCLUDED.nombre
-       WHERE cuentas.cuenta.aprobada_por = $5 AND cuentas.cuenta.correo_confirmado IS NULL
-     RETURNING (xmax = 0) AS nueva`,
-    [correo, String(nombre || '').slice(0, 120), hash, desde, ORIGEN_REGISTRO]
+    `WITH c AS (
+       INSERT INTO cuentas.cuenta (correo, nombre, clave_hash, clave_desde, aprobada_por) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (correo) DO UPDATE SET clave_hash = EXCLUDED.clave_hash, clave_desde = EXCLUDED.clave_desde, nombre = EXCLUDED.nombre
+         WHERE cuentas.cuenta.aprobada_por = $5 AND cuentas.cuenta.correo_confirmado IS NULL
+       RETURNING correo, (xmax = 0) AS nueva
+     ), viejos AS (
+       UPDATE cuentas.enlace SET usado = now() WHERE correo IN (SELECT correo FROM c) AND tipo = $6 AND usado IS NULL
+     )
+     SELECT nueva FROM c`,
+    [correo, String(nombre || '').slice(0, 120), hash, desde, ORIGEN_REGISTRO, TIPO_CODIGO]
   );
   if (!f) return 'existe';
   claveDesdePorCorreo.set(correo, desde);
@@ -497,8 +507,17 @@ export async function enlaceVigente(token: string): Promise<{ correo: string; ti
 const huellaCodigo = (correo: string, codigo: string) => huella(`${TIPO_CODIGO}:${correo}:${codigo}`);
 
 /**
+ * La revisión de una clave guardada (SEC01): la huella de su `clave_hash`. Cada cifrado lleva sal nueva, así que
+ * cada vez que se pone una clave (crear, reabrir, olvidé mi contraseña) la revisión cambia, aunque la frase sea la
+ * misma. Un código de confirmación solo sirve para la revisión con que se emitió.
+ */
+export const revisionDeClave = (claveHash: string) => huella(`revision:${claveHash}`).slice(0, 32);
+
+/**
  * Un código nuevo de 6 cifras (vale `minutos`) e invalida los anteriores de ese correo. null si ya se mandó
  * uno hace menos de `esperaMs` (para que «Reenviar» no sirva para inundar un buzón). Mismo candado que los enlaces.
+ * Queda atado a la revisión de la clave que la cuenta tiene AHORA (la fila se lee con FOR SHARE: /crear no la cambia
+ * a mitad). La transacción se cierra antes de devolver el código: el correo sale después, nunca con ella abierta.
  */
 export async function crearCodigoCorreo(correo: string, minutos = 30, esperaMs = 60_000): Promise<string | null> {
   await asegurarEsquema();
@@ -506,6 +525,8 @@ export async function crearCodigoCorreo(correo: string, minutos = 30, esperaMs =
   try {
     await c.query('BEGIN');
     await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`cuentas.enlace:${TIPO_CODIGO}:${correo}`]);
+    const cuenta = await c.query(`SELECT clave_hash FROM cuentas.cuenta WHERE correo = $1 FOR SHARE`, [correo]);
+    const hashActual: string | null = cuenta.rows[0]?.clave_hash || null;
     if (esperaMs > 0) {
       const r = await c.query(
         `SELECT 1 FROM cuentas.enlace WHERE correo = $1 AND tipo = $2 AND usado IS NULL AND creado > now() - ($3::float8 * interval '1 millisecond') LIMIT 1`,
@@ -518,12 +539,11 @@ export async function crearCodigoCorreo(correo: string, minutos = 30, esperaMs =
     }
     await c.query(`UPDATE cuentas.enlace SET usado = now() WHERE correo = $1 AND tipo = $2 AND usado IS NULL`, [correo, TIPO_CODIGO]);
     const codigo = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
-    await c.query(`INSERT INTO cuentas.enlace (huella, correo, tipo, vence) VALUES ($1, $2, $3, now() + ($4::float8 * interval '1 minute'))`, [
-      huellaCodigo(correo, codigo),
-      correo,
-      TIPO_CODIGO,
-      minutos,
-    ]);
+    // Sin clave puesta, la revisión queda vacía: ese código no confirma nada (usarCodigoCorreo exige revisión igual).
+    await c.query(
+      `INSERT INTO cuentas.enlace (huella, correo, tipo, vence, revision) VALUES ($1, $2, $3, now() + ($4::float8 * interval '1 minute'), $5)`,
+      [huellaCodigo(correo, codigo), correo, TIPO_CODIGO, minutos, hashActual ? revisionDeClave(hashActual) : null]
+    );
     await c.query('COMMIT');
     return codigo;
   } catch (e) {
@@ -534,17 +554,54 @@ export async function crearCodigoCorreo(correo: string, minutos = 30, esperaMs =
   }
 }
 
-/** Gasta el código (una vez, sin vencer) y deja el correo confirmado. false si no es el de ese correo. */
-export async function usarCodigoCorreo(correo: string, codigo: string): Promise<boolean> {
+/**
+ * Gasta el código (una vez, sin vencer) y deja el correo confirmado. false si no es el de ese correo.
+ *
+ * SEC01: con `clave` (la ruta /cuentas/confirmar siempre la pasa), la confirmación queda atada a la clave que se
+ * comprobó. Primero el scrypt contra la clave guardada, FUERA de toda transacción (no se tiene la fila tomada
+ * mientras se calcula); después UNA transacción que toma la fila de la cuenta (FOR UPDATE: /crear, «olvidé mi
+ * contraseña» o Genesis esperan) y vuelve a mirar que la clave sigue siendo la que se comprobó, que la cuenta sigue
+ * activa y sin confirmar, y que el código es de la revisión de ESA clave; solo entonces gasta el código y confirma,
+ * juntos. Si algo cambió, no se gasta ni se confirma nada; si algo falla en medio, ROLLBACK: el código sigue vivo.
+ * Sin `clave`, igual de atómico y el código tiene que ser de la revisión de la clave que la cuenta tiene ahora.
+ */
+export async function usarCodigoCorreo(correo: string, codigo: string, clave?: string): Promise<boolean> {
   const k = String(codigo || '').replace(/\D/g, '');
   if (k.length !== 6) return false;
-  const [f] = await q(
-    `UPDATE cuentas.enlace SET usado = now() WHERE huella = $1 AND correo = $2 AND tipo = $3 AND usado IS NULL AND vence > now() RETURNING correo`,
-    [huellaCodigo(correo, k), correo, TIPO_CODIGO]
-  );
-  if (!f) return false;
-  await confirmarCorreoCuenta(correo);
-  return true;
+  let hashComprobado: string | null = null;
+  if (clave !== undefined) {
+    const [f] = await q<{ clave_hash: string | null }>(`SELECT clave_hash FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+    if (!f?.clave_hash || !(await claveCoincide(String(clave), f.clave_hash))) return false;
+    hashComprobado = f.clave_hash;
+  }
+  await asegurarEsquema();
+  const c = await conexion().connect();
+  try {
+    await c.query('BEGIN');
+    const { rows } = await c.query(`SELECT clave_hash, estado, correo_confirmado FROM cuentas.cuenta WHERE correo = $1 FOR UPDATE`, [correo]);
+    const cuenta = rows[0];
+    const vale =
+      !!cuenta?.clave_hash && cuenta.estado !== 'suspendida' && !cuenta.correo_confirmado && (hashComprobado === null || cuenta.clave_hash === hashComprobado);
+    const gastado = vale
+      ? await c.query(
+          `UPDATE cuentas.enlace SET usado = now()
+            WHERE huella = $1 AND correo = $2 AND tipo = $3 AND usado IS NULL AND vence > now() AND revision = $4 RETURNING correo`,
+          [huellaCodigo(correo, k), correo, TIPO_CODIGO, revisionDeClave(cuenta.clave_hash)]
+        )
+      : null;
+    if (!gastado?.rowCount) {
+      await c.query('ROLLBACK');
+      return false;
+    }
+    await c.query(`UPDATE cuentas.cuenta SET correo_confirmado = now() WHERE correo = $1`, [correo]);
+    await c.query('COMMIT');
+    return true;
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    c.release();
+  }
 }
 
 /* ------------------------------------------------------------------ solicitudes */
