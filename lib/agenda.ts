@@ -12,7 +12,9 @@
  *  · agendar es idempotente: la misma cosa (tipo + dueño + id) tiene UNA entrada; si ya estaba, se queda la hora más
  *    temprana (lo que ya tocaba no se atrasa) y su marca `t` sube (otra réplica la volvió a pedir);
  *  · quitar es condicional a la marca: si alguien la volvió a agendar mientras el planificador la trabajaba, se queda;
- *  · un fallo del almacén no es «no hay nada»: `ok: false`.
+ *  · un fallo del almacén no es «no hay nada»: `ok: false`;
+ *  · EX-02: no poder agendar no es un silencio. `agendarDetallado` dice por qué (`lleno` o `almacen`) y quien agenda una
+ *    tarea lo anota en los «despertares pendientes» (otra lista, otra clave) y en el propio objeto, para repararlo.
  */
 import { almacenDurable, claveDe, huellaDueno, modificarDurable, type AlmacenDurable } from './durable';
 
@@ -38,10 +40,20 @@ function avisar(que: string) {
   console.warn(`[agenda] ${que}`);
 }
 
-/** Agenda (o adelanta) algo para `cuando`. true si quedó en la agenda. Nunca lanza. */
-export async function agendar(tipo: TipoAgenda, dueno: string, id: string, cuando: number, o: { almacen?: AlmacenDurable; ahora?: number } = {}): Promise<boolean> {
+/**
+ * Por qué no quedó en la agenda (EX-02): `lleno` (la agenda llegó a MAX_AGENDA: un estado visible y recuperable, no un
+ * silencio), `almacen` (no se pudo leer o escribir) o `invalida` (sin dueño o sin id).
+ */
+export type ResultadoAgendar = { ok: true } | { ok: false; motivo: 'lleno' | 'almacen' | 'invalida'; detalle?: string };
+
+/**
+ * Agenda (o adelanta) algo para `cuando` y dice por qué no, si no pudo. Nunca lanza. `soloSiFalta`: si ya hay una entrada
+ * para eso, no se toca (ni su hora ni su marca `t` ni sus `intentos`): lo usan las reparaciones, que solo quieren que
+ * EXISTA el despertar sin mover lo que el planificador ya decidió (un «mañana» por el tope diario, un reintento).
+ */
+export async function agendarDetallado(tipo: TipoAgenda, dueno: string, id: string, cuando: number, o: { almacen?: AlmacenDurable; ahora?: number; soloSiFalta?: boolean } = {}): Promise<ResultadoAgendar> {
   const d = String(dueno || '').trim().toLowerCase();
-  if (!d || !id) return false;
+  if (!d || !id) return { ok: false, motivo: 'invalida' };
   const k = llaveAgenda(tipo, d, id);
   const t = o.ahora ?? Date.now();
   let lleno = false;
@@ -52,6 +64,7 @@ export async function agendar(tipo: TipoAgenda, dueno: string, id: string, cuand
       const entradas = ag?.entradas || [];
       const i = entradas.findIndex((e) => e.k === k);
       if (i >= 0) {
+        if (o.soloSiFalta) return undefined;
         const e = entradas[i];
         entradas[i] = { ...e, cuando: Math.min(e.cuando, cuando), t: Math.max(t, e.t + 1) };
         return { v: 1, entradas };
@@ -64,9 +77,20 @@ export async function agendar(tipo: TipoAgenda, dueno: string, id: string, cuand
     },
     o.almacen || almacenDurable()
   ).catch((e) => ({ ok: false as const, conflicto: false, detalle: String(e?.message || e) }));
-  if (lleno) avisar('la agenda del planificador está llena: no agendé más');
-  if (r.ok === false) avisar(`no pude agendar (${r.detalle.slice(0, 100)})`);
-  return r.ok === true && !lleno;
+  if (r.ok === false) {
+    avisar(`no pude agendar (${r.detalle.slice(0, 100)})`);
+    return { ok: false, motivo: 'almacen', detalle: r.detalle };
+  }
+  if (lleno) {
+    avisar('la agenda del planificador está llena: no agendé más (queda en los despertares pendientes)');
+    return { ok: false, motivo: 'lleno' };
+  }
+  return { ok: true };
+}
+
+/** Agenda (o adelanta) algo para `cuando`. true si quedó en la agenda. Nunca lanza. */
+export async function agendar(tipo: TipoAgenda, dueno: string, id: string, cuando: number, o: { almacen?: AlmacenDurable; ahora?: number } = {}): Promise<boolean> {
+  return (await agendarDetallado(tipo, dueno, id, cuando, o)).ok;
 }
 
 /** La agenda entera (ordenada por hora). `ok: false` si el almacén no contestó. */
@@ -91,6 +115,74 @@ export async function cerrarEntrada(k: string, t: number, siguiente: { quitar: t
       if ('quitar' in siguiente) return { v: 1, entradas: entradas.filter((_, j) => j !== i) };
       entradas[i] = { ...entradas[i], cuando: siguiente.cuando, ...(siguiente.intentos !== undefined ? { intentos: siguiente.intentos } : {}) };
       return { v: 1, entradas };
+    },
+    a
+  ).catch(() => null);
+  return !!r && r.ok === true && r.cambiado;
+}
+
+/* ------------------------------------------------------------------ despertares pendientes (EX-02) */
+
+/**
+ * Lo que se quiso agendar y no se pudo (la agenda llena o el almacén caído): una lista durable APARTE (otra clave: si la
+ * agenda está llena o su escritura falla, esta sigue escribiéndose) para que `repararDespertares`
+ * (lib/tareas-durables.ts), que llama el planificador en cada vuelta, la encuentre sin saber de quién es cada tarea.
+ * Igual que la agenda: lo mínimo (tipo, id, dueño y por qué), nada del contenido. La verdad sigue en el objeto (su marca
+ * `despertar`): esta lista solo dice dónde mirar; una entrada cuya tarea ya no tiene marca se quita sin más.
+ */
+export type MotivoPendiente = 'agenda-llena' | 'almacen' | 'sin-confirmar';
+export type DespertarPendiente = { k: string; tipo: TipoAgenda; dueno: string; id: string; motivo: MotivoPendiente; t: number };
+type Pendientes = { v: 1; entradas: DespertarPendiente[] };
+/** Cuántos despertares pendientes como mucho (con la agenda llena, lo que no cabe aquí aún tiene su marca en el objeto). */
+export const MAX_PENDIENTES = 5000;
+const clavePendientes = () => claveDe('planificador', DUENO_AGENDA, 'despertares');
+
+/** Anota (o refresca) un despertar pendiente. true si quedó anotado. Nunca lanza. */
+export async function anotarDespertarPendiente(tipo: TipoAgenda, dueno: string, id: string, motivo: MotivoPendiente, o: { almacen?: AlmacenDurable; ahora?: number } = {}): Promise<boolean> {
+  const d = String(dueno || '').trim().toLowerCase();
+  if (!d || !id) return false;
+  const k = llaveAgenda(tipo, d, id);
+  const t = o.ahora ?? Date.now();
+  let lleno = false;
+  const r = await modificarDurable<Pendientes>(
+    clavePendientes(),
+    (p) => {
+      lleno = false;
+      const entradas = p?.entradas || [];
+      const i = entradas.findIndex((e) => e.k === k);
+      if (i >= 0) {
+        entradas[i] = { ...entradas[i], motivo, t: Math.max(t, entradas[i].t + 1) };
+        return { v: 1, entradas };
+      }
+      if (entradas.length >= MAX_PENDIENTES) {
+        lleno = true;
+        return undefined;
+      }
+      return { v: 1, entradas: [...entradas, { k, tipo, dueno: d, id, motivo, t }] };
+    },
+    o.almacen || almacenDurable()
+  ).catch((e) => ({ ok: false as const, conflicto: false, detalle: String(e?.message || e) }));
+  if (lleno) avisar('la lista de despertares pendientes está llena: la marca queda solo en el objeto');
+  return r.ok === true && !lleno;
+}
+
+/** Los despertares pendientes (el más viejo primero). `ok: false` si el almacén no contestó. */
+export async function leerDespertaresPendientes(a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; entradas: DespertarPendiente[] } | { ok: false; detalle: string }> {
+  const l = await a.leer<Pendientes>(clavePendientes()).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (l.ok === false) return { ok: false, detalle: l.detalle };
+  const entradas = (l.valor?.entradas || []).filter((e) => e && typeof e.k === 'string' && typeof e.dueno === 'string' && typeof e.id === 'string');
+  return { ok: true, entradas: entradas.sort((x, y) => x.t - y.t) };
+}
+
+/** Quita un despertar pendiente, solo si sigue con la marca `t` que se vio (si otro lo volvió a anotar, se queda). */
+export async function quitarDespertarPendiente(k: string, t: number, a: AlmacenDurable = almacenDurable()): Promise<boolean> {
+  const r = await modificarDurable<Pendientes>(
+    clavePendientes(),
+    (p) => {
+      const entradas = p?.entradas || [];
+      const i = entradas.findIndex((e) => e.k === k);
+      if (i < 0 || entradas[i].t !== t) return undefined;
+      return { v: 1, entradas: entradas.filter((_, j) => j !== i) };
     },
     a
   ).catch(() => null);

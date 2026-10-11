@@ -29,7 +29,7 @@ import { cerrarEntrada, leerAgenda, type EntradaAgenda } from '../lib/agenda';
 import { almacenDurable, claveDe, conLease, ejecutarUnaVez, hashArgumentos, leerDurable, modificarDurable, PROCESO_DURABLE, type AlmacenDurable, type Lease } from '../lib/durable';
 import { entregarAviso } from '../lib/avisos-decision';
 import { cambiarObjetivo, esTerminalObjetivo, leerObjetivo, type Objetivo } from '../lib/objetivos';
-import { cambiarTarea, esDelPlanificador, esTerminal, leerTarea, type RegistroTarea } from '../lib/tareas-durables';
+import { cambiarTarea, esDelPlanificador, esTerminal, leerTarea, repararDespertares, type RegistroTarea } from '../lib/tareas-durables';
 import { reconciliarObjetivoConTareas, reconciliarYAvisar, REINTENTO_AVISOS_MS, type DepsObjetivos } from './objetivos';
 import { claveLeaseTarea } from './trabajos';
 
@@ -128,6 +128,9 @@ export async function vueltaPlanificador(d: DepsPlanificador): Promise<ResumenVu
   const reloj = d.ahora || Date.now;
   const titular = d.titular || PROCESO_DURABLE;
   const r: ResumenVuelta = { ok: true, vistas: 0, arrancadas: 0, revisadas: 0, objetivos: 0, ocupadas: 0, inciertas: 0 };
+  // EX-02: las tareas aceptadas cuyo despertar no quedó en la agenda (fallo o agenda llena) se vuelven a agendar
+  // aquí, sin esperar a que la persona repita la petición o abra su lista. Sin duplicar: entrada por id de tarea.
+  await repararDespertares({ almacen: a, ahora: reloj() }).catch(() => null);
   const ag = await leerAgenda(a);
   if (ag.ok === false) return { ...r, ok: false, detalle: ag.detalle };
   const t0 = reloj();
