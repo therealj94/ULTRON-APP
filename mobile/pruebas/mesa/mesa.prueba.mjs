@@ -6,7 +6,9 @@
  *     el «sí» de la persona presentada (con plazo) y el permiso por persona (src/caras/caras.ts);
  *   · el recorrido de primera vez: solo capacidades que existen (cada paso nombra archivos reales) y
  *     «no volver a mostrar» por persona (src/tutorial/pasos.ts; el recorrido en sí: src/recorrido);
- *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo;
+ *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo; la palomita sobre la
+ *     salvia ≥ 3:1 y el aviso como letra chica ≥ 4,5:1 (UX-02, 11-oct);
+ *   · la letra grande en la mesa (UX-01, 11-oct): ni tope ni achicarse donde se trabaja; lista y riel ancho al 200 %;
  *   · costuras leídas del código: «olvidar» también en el servidor, el puntito del Chat, salir con
  *     confirmación y la red de seguridad de cada pantalla (app/LimitePantalla.tsx).
  *
@@ -14,6 +16,7 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ControlCamara, TEMPORAL_MS, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara } from '../../src/lib/camaraModo.ts';
@@ -289,6 +292,128 @@ prueba('contraste (UI01, 3-oct): la letra sobre el oro (botón, burbuja mía, et
   };
   recorrer(path.join(RAIZ, 'mobile/src'));
   assert.deepEqual(sospechosas, []);
+});
+
+prueba('contraste (UX-02, 11-oct): la palomita del permiso ≥ 3:1 sobre la salvia, en claro y en oscuro; el aro que se toca también', () => {
+  // Antes ListaPermisos pintaba la marca blanca a mano: de noche, blanco sobre #8FA58A = 2,65:1 (un indicador pide 3:1).
+  const filas = [];
+  for (const [nombre, p] of [['claro', CLARO], ['oscuro', OSCURO]]) {
+    assert.match(p.sobreExito || '', /^#[0-9A-F]{6}$/i, `${nombre} tiene sobreExito`);
+    filas.push([`${nombre}.sobreExito/exito (la marca)`, contraste(p.sobreExito, p.exito)]);
+    // El círculo lleno contra la tarjeta (Tarjeta = superficie) y el fondo: también es lo que dice «permitido».
+    for (const fondo of ['superficie', 'fondo']) filas.push([`${nombre}.exito/${fondo} (el círculo)`, contraste(p.exito, p[fondo])]);
+    // El aro vacío del check que se toca (BotonCheck con onPress: texto3) contra la tarjeta.
+    for (const fondo of ['superficie', 'superficie2', 'fondo']) filas.push([`${nombre}.texto3/${fondo} (el aro)`, contraste(p.texto3, p[fondo])]);
+  }
+  const malas = filas.filter(([, c]) => c < 3).map(([k, c]) => `${k} ${c.toFixed(2)}`);
+  assert.deepEqual(malas, []);
+  const marcas = filas.filter(([k]) => /la marca/.test(k)).map(([k, c]) => `${k.split(' ')[0]} ${c.toFixed(2)}:1`);
+  console.log(`      (${marcas.join('; ')})`);
+  // La costura: ListaPermisos usa el token (nada de blanco a mano) y BotonCheck pinta el aro con texto3 cuando se toca.
+  const lista = fs.readFileSync(path.join(RAIZ, 'mobile/src/primeravez/ListaPermisos.tsx'), 'utf8');
+  assert.doesNotMatch(lista, /colorMarca="#(fff|FFF|ffffff|FFFFFF)"/, 'sin marca blanca a mano');
+  const checks = lista.match(/<BotonCheck[\s\S]*?\/>/g) || [];
+  assert.ok(checks.length >= 2, 'los dos BotonCheck de la lista');
+  for (const c of checks) {
+    assert.match(c, /color=\{tema\.exito\}/);
+    assert.match(c, /colorMarca=\{tema\.sobreExito\}/);
+    // TalkBack: nombre del permiso + su estado en la etiqueta (y «casilla marcada» por accessibilityState).
+    assert.match(c, /etiqueta=\{`\$\{[^`]+\}: \$\{[^`]*tr\('permitido', 'allowed'\)/);
+  }
+  const check = fs.readFileSync(path.join(RAIZ, 'mobile/src/ui/BotonCheck.tsx'), 'utf8');
+  assert.match(check, /color=\{onPress \? tema\.texto3 : tema\.borde\}/, 'el aro que se toca se ve (≥ 3:1)');
+  assert.match(check, /accessibilityRole="checkbox"\s+accessibilityState=\{\{ checked: hecho/, 'TalkBack lee casilla y si está marcada');
+});
+
+prueba('contraste (UX-02, 11-oct): el aviso como letra chica («No se envió», errores) ≥ 4,5:1 en claro y en oscuro', () => {
+  // Antes, de día: #B95E3C sobre blanco = 4,44:1 y sobre avisoFondo 3,53:1; de noche 4,48:1 sobre avisoFondo.
+  const filas = [];
+  for (const [nombre, p] of [['claro', CLARO], ['oscuro', OSCURO]])
+    for (const fondo of ['superficie', 'superficie2', 'fondo', 'fondo2', 'avisoFondo']) filas.push([`${nombre}.aviso/${fondo}`, contraste(p.aviso, p[fondo])]);
+  // En la mesa (siempre de noche) el aviso va sobre su fondo y sus paneles (ChatMesa: «No se envió»).
+  for (const fondo of ['fondo', 'fondo2', 'panel']) filas.push([`mesa.aviso/${fondo}`, contraste(T.aviso, T[fondo])]);
+  const malas = filas.filter(([, c]) => c < 4.5).map(([k, c]) => `${k} ${c.toFixed(2)}`);
+  assert.deepEqual(malas, []);
+  const peor = filas.reduce((m, f) => (f[1] < m[1] ? f : m));
+  console.log(`      (${filas.length} combinaciones; la más baja: ${peor[0]} ${peor[1].toFixed(2)}:1)`);
+});
+
+/* ── la letra grande en la mesa (UX-01, 11-oct) ──────────────────────────────────────────── */
+
+const OPERATIVOS = ['components/EscribeleMesa.tsx', 'components/BarraMesa.tsx', 'components/ChatMesa.tsx'];
+
+/** Funciones puras sacadas del código (los archivos cargan React Native): se pasan de TS a JS con esbuild. */
+function puras(archivo, desde, hasta, nombres) {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');
+  const i = src.indexOf(desde);
+  const j = src.indexOf(hasta, i);
+  assert.ok(i >= 0 && j > i, `${archivo}: no encuentro «${desde}»…«${hasta}»`);
+  const req = createRequire(path.join(RAIZ, 'mobile/package.json'));
+  const esbuild = req(fs.existsSync(path.join(RAIZ, 'node_modules/esbuild')) ? path.join(RAIZ, 'node_modules/esbuild') : 'esbuild');
+  // Hasta el cierre de la función (`\n}\n`), con su llave; hasta un comentario, sin él.
+  const trozo = src.slice(i, hasta.trim() === '}' ? j + 2 : j);
+  const js = esbuild.transformSync(trozo.replace(/^export /gm, ''), { loader: 'ts' }).code;
+  return new Function(`${js}\nreturn { ${nombres.join(', ')} };`)();
+}
+
+prueba('letra grande (UX-01): donde se trabaja en la mesa no hay tope de letra < 2 ni texto que se achica para caber', () => {
+  for (const archivo of OPERATIVOS) {
+    const src = fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');
+    const topes = [...src.matchAll(/maxFontSizeMultiplier=\{([^}]+)\}/g)].map((m) => m[1].trim());
+    for (const t of topes) assert.ok(Number(t) >= 2, `${archivo}: maxFontSizeMultiplier=${t} (la letra al 200 % no llega)`);
+    assert.doesNotMatch(src, /adjustsFontSizeToFit/, `${archivo}: nada se achica para caber`);
+    assert.doesNotMatch(src, /minimumFontScale/, archivo);
+    // Lo que se corta con «…» con la letra normal, con la grande parte en renglones (renglones(n) o `lista ? undefined`).
+    for (const m of src.matchAll(/numberOfLines=\{([^}]+)\}/g)) assert.match(m[1], /renglones\(|undefined/, `${archivo}: numberOfLines={${m[1]}} corta con la letra grande`);
+  }
+  // «Escríbele…» es de varios renglones y crece hasta altoMaxEntrada; el chat del modo trabajo usa la misma medida.
+  const escribe = fs.readFileSync(path.join(RAIZ, 'mobile/src/components/EscribeleMesa.tsx'), 'utf8');
+  const caja = /<TextInput\n[\s\S]*?\n\s*\/>/.exec(escribe)?.[0] || '';
+  assert.match(caja, /\n\s+multiline\n/);
+  assert.match(caja, /maxHeight: altoMaxEntrada\(altoVentana, fontScale\)/);
+  assert.match(caja, /blurOnSubmit/, '«Enter» sigue mandando');
+  assert.match(fs.readFileSync(path.join(RAIZ, 'mobile/src/components/ChatMesa.tsx'), 'utf8'), /maxHeight: Math\.max\(110, altoMaxEntrada\(altoVentana, fontScale\)\)/);
+});
+
+prueba('letra grande (UX-01): al 200 % y 320 dp la barra va en lista, el riel se ensancha y la caja de escribir crece sin tapar todo', () => {
+  const B = puras('components/BarraMesa.tsx', 'export const ANCHO_RIEL', '/** Lo que el riel le quita', ['ANCHO_RIEL', 'LETRA_GRANDE', 'enLista', 'anchoTarjetaRiel']);
+  const E = puras('components/EscribeleMesa.tsx', 'export function altoMaxEntrada', '\n}\n', ['altoMaxEntrada']);
+  assert.equal(B.enLista(1), false);
+  assert.equal(B.enLista(1.5), false);
+  assert.equal(B.enLista(2), true, 'al 200 %: lista');
+  assert.equal(B.anchoTarjetaRiel(1, 800), B.ANCHO_RIEL, 'con la letra normal, el riel de siempre');
+  assert.equal(B.anchoTarjetaRiel(0.85, 800), B.ANCHO_RIEL, 'con la letra chica no se encoge');
+  // Hasta 1,6 el riel crece con la letra: la etiqueta de una palabra más larga («Conectando…», ~6 em) cabe en un renglón.
+  const letra = 12.5;
+  for (const e of [1.15, 1.3, 1.5]) assert.ok(B.anchoTarjetaRiel(e, 800) - 12 >= letra * e * 6, `riel a ${e}`);
+  // En lista (acostado; 320 dp es el lado corto, el largo ~640): botón (68) + 10 + etiqueta + 16, sin pasar del 40 %.
+  for (const [e, ancho] of [[1.6, 640], [2, 640], [2, 800], [3.1, 640]]) {
+    const t = B.anchoTarjetaRiel(e, ancho);
+    assert.ok(t <= Math.round(ancho * 0.4), `a ${e} en ${ancho}: el avatar se queda con el 60 %`);
+    assert.ok(t - 68 - 10 - 16 >= letra * Math.min(e, 2) * 4.5, `a ${e} en ${ancho}: «Mensajes» entera al lado del botón (${t} dp)`);
+  }
+  // La caja: cinco renglones de su letra, nunca más de un tercio de la ventana ni menos de 48.
+  assert.equal(E.altoMaxEntrada(800, 1), Math.round(16 * 1.35 * 5 + 24));
+  const de200 = E.altoMaxEntrada(640, 2);
+  assert.ok(de200 >= 16 * 2 * 1.35 * 3, 'al 200 % de pie: al menos tres renglones a la vista');
+  assert.ok(de200 <= 640 / 3);
+  // Acostado con el teclado abierto la ventana se queda en ~150 dp: la caja no se come la pantalla (lo demás se desliza).
+  assert.equal(E.altoMaxEntrada(150, 2), 50);
+  assert.equal(E.altoMaxEntrada(100, 2), 48, 'nunca menos de lo que se toca');
+  // La costura: la barra y el riel cambian a lista con la letra del sistema; el riel se desliza si no cabe a lo alto;
+  // la mesa sigue llamando anchoRiel/filaRiel como antes (traen la letra solos) y descuenta ese ancho del avatar.
+  const barra = fs.readFileSync(path.join(RAIZ, 'mobile/src/components/BarraMesa.tsx'), 'utf8');
+  assert.match(barra, /const \{ width: anchoVentana, fontScale \} = useWindowDimensions\(\);\s+const lista = enLista\(fontScale\);/);
+  assert.match(barra, /<ScrollView style=\{s\.rielDeslizable\}/);
+  assert.match(barra, /<View style=\{\[s\.barra, lista && s\.barraLista\]\}>/);
+  assert.match(barra, /export function anchoRiel\(insetDerecho: number, escala = PixelRatio\.getFontScale\(\)/);
+  const desk = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  assert.match(desk, /const anchoR = riel \? anchoRiel\(ins\.right\) : 0;/);
+  assert.match(desk, /riel \? \{ w: anchoPantalla - anchoR, h: altoPantalla \}/, 'el avatar cede el ancho del riel');
+  // ChatMesa: con la letra grande la cabecera parte en dos filas (el nombre y el estado a lo ancho).
+  const chat = fs.readFileSync(path.join(RAIZ, 'mobile/src/components/ChatMesa.tsx'), 'utf8');
+  assert.match(chat, /const grande = enLista\(fontScale\);/);
+  assert.match(chat, /style=\{\[s\.cabeza, grande && s\.cabezaGrande\]\}/);
 });
 
 /* ── costuras de la mesa (leídas del código: estos módulos cargan React Native) ───────────── */

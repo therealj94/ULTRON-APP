@@ -28,6 +28,8 @@ export type Paleta = {
   sobreAcento: string;
   exito: string;
   exitoFondo: string;
+  /** La marca encima de la salvia (la palomita ✔ del BotonCheck): ≥ 3:1 sobre `exito` (UX-02, 11-oct). */
+  sobreExito: string;
   aviso: string;
   avisoFondo: string;
   burbujaMia: string;
@@ -54,7 +56,10 @@ export const OSCURO: Paleta = {
   sobreAcento: '#1C1D20',
   exito: '#8FA58A',
   exitoFondo: '#2F3A30',
-  aviso: '#D9825F',
+  // La palomita sobre la salvia clara de noche: la tinta del tema (6,35:1). Blanco daba 2,65:1 (UX-02, 11-oct).
+  sobreExito: '#1C1D20',
+  // Letra chica de aviso: ≥ 4,5:1 sobre los cuatro fondos y avisoFondo (UX-02; antes #D9825F: 4,48:1 sobre avisoFondo).
+  aviso: '#DB8A69',
   avisoFondo: '#3F2E28',
   burbujaMia: '#D6B56C',
   textoMia: '#1C1D20',
@@ -81,7 +86,11 @@ export const CLARO: Paleta = {
   sobreAcento: '#23211E',
   exito: '#5E7D58',
   exitoFondo: '#E3EEDF',
-  aviso: '#B95E3C',
+  // De día la salvia es honda: blanco encima se lee (4,62:1).
+  sobreExito: '#FFFFFF',
+  // La terracota también es letra chica («No se envió», los errores de Correo y de la cuenta): ≥ 4,5:1 sobre
+  // superficie, los fondos y avisoFondo (UX-02, 11-oct; antes #B95E3C: 4,44:1 sobre blanco y 3,53:1 sobre avisoFondo).
+  aviso: '#9F5134',
   avisoFondo: '#F6E1D8',
   burbujaMia: '#B8913F',
   textoMia: '#23211E',

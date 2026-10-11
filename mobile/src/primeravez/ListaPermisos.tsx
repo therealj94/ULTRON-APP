@@ -4,6 +4,10 @@
  * completa al concederlo. Si quedó bloqueado («No volver a preguntar»), la fila ofrece abrir los
  * Ajustes del sistema; al volver a la app se revisa todo otra vez. Arriba, «Permitir todo».
  * Al final, «Alarmas y recordatorios» (Android 12+): no tiene diálogo, su botón abre los Ajustes.
+ *
+ * La palomita va con `sobreExito` (UX-02, 11-oct): de noche la salvia es clara y la marca blanca daba 2,65:1; ahora es
+ * la tinta del tema (≥ 3:1 en los dos temas, prueba en pruebas/mesa). TalkBack lee el nombre del permiso y su estado
+ * («Micrófono: permitido», casilla marcada).
  */
 import { useCallback, useEffect, useState } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
@@ -101,7 +105,7 @@ export function ListaPermisos({ conBotonTodo = true, solo }: { conBotonTodo?: bo
                   cargando={pidiendo === p.id}
                   etiqueta={`${p.titulo()}: ${ok ? tr('permitido', 'allowed') : e === 'bloqueado' ? tr('bloqueado, abrir ajustes', 'blocked, open settings') : tr('permitir', 'allow')}`}
                   color={tema.exito}
-                  colorMarca="#FFFFFF"
+                  colorMarca={tema.sobreExito}
                 />
               </View>
             </Tarjeta>
@@ -130,7 +134,7 @@ export function ListaPermisos({ conBotonTodo = true, solo }: { conBotonTodo?: bo
                 }}
                 etiqueta={`${tr('Alarmas y recordatorios', 'Alarms & reminders')}: ${alarma === 'concedido' ? tr('permitido', 'allowed') : tr('permitir, abrir ajustes', 'allow, open settings')}`}
                 color={tema.exito}
-                colorMarca="#FFFFFF"
+                colorMarca={tema.sobreExito}
               />
             </View>
           </Tarjeta>

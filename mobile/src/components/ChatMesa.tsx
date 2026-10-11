@@ -12,9 +12,14 @@
  *
  * Un mensaje que no llegó (A10): tu burbuja queda marcada («No se envió») con «Reintentar», que lo vuelve a mandar
  * por el mismo camino.
+ *
+ * LETRA GRANDE (UX-01, auditoría del 11-oct): sin tope de tamaño (antes 1,3 y 1,4 en la cabecera). Desde
+ * `LETRA_GRANDE` (1,6) la cabecera pasa a dos filas —el nombre y el estado a lo ancho; «En vivo» y el menú debajo— y
+ * el nombre, el estado, el progreso y «En vivo» parten en renglones en vez de cortarse con «…». La caja de escribir
+ * crece con la letra (altoMaxEntrada, la misma de «Escríbele…»).
  */
 import { useEffect, useRef, type RefObject } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { T } from '../tema';
 import type { Turn } from '../lib/api';
@@ -22,6 +27,8 @@ import { tr } from '../i18n';
 import { avatarPorId, type Accion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from './AccionesAvatar';
 import { Icono } from '../pulse/ui/Icono';
+import { enLista } from './BarraMesa';
+import { altoMaxEntrada } from './EscribeleMesa';
 
 type Props = {
   mensajes: Turn[];
@@ -64,6 +71,10 @@ export function ChatMesa(p: Props) {
   }, [p.mensajes.length, p.parcial, p.progreso]);
 
   const toque = () => void Haptics.selectionAsync().catch(() => {});
+  const { height: altoVentana, fontScale } = useWindowDimensions();
+  const grande = enLista(fontScale);
+  // Con la letra grande, nada se corta con «…»: parte en los renglones que haga falta.
+  const renglones = (normal: number) => (grande ? undefined : normal);
   const tema = avatarPorId(p.avatar).tema;
   // El que falló es TU último mensaje, si es el texto que no llegó (uno nuevo ya no se marca).
   let iFallido = -1;
@@ -77,23 +88,23 @@ export function ChatMesa(p: Props) {
 
   return (
     <View style={s.raiz}>
-      <View style={s.cabeza}>
+      <View style={[s.cabeza, grande && s.cabezaGrande]}>
         <Pressable
           onPress={() => {
             toque();
             p.onCambiarAvatar();
           }}
-          style={s.quien}
+          style={[s.quien, grande && s.quienGrande]}
           testID="mesa-avatar"
           accessibilityRole="button"
           accessibilityLabel={tr(`Hablando con ${p.nombreAvatar}. Tocar para cambiar de avatar`, `Talking to ${p.nombreAvatar}. Tap to switch avatar`)}
         >
           <View style={[s.punto, { backgroundColor: p.colorEstado }]} />
           <View style={s.quienTextos}>
-            <Text style={s.quienNombre} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+            <Text style={s.quienNombre} numberOfLines={renglones(1)}>
               {p.nombreAvatar}
             </Text>
-            <Text style={s.quienEstado} numberOfLines={2} maxFontSizeMultiplier={1.4} accessibilityLiveRegion="polite">
+            <Text style={s.quienEstado} numberOfLines={renglones(2)} accessibilityLiveRegion="polite">
               {p.estado}
             </Text>
           </View>
@@ -103,12 +114,12 @@ export function ChatMesa(p: Props) {
             toque();
             p.onConversar();
           }}
-          style={[s.conversar, p.conversando ? { backgroundColor: tema.acento } : { borderColor: tema.acento, borderWidth: 1.5 }]}
+          style={[s.conversar, grande && s.conversarGrande, p.conversando ? { backgroundColor: tema.acento } : { borderColor: tema.acento, borderWidth: 1.5 }]}
           accessibilityRole="button"
           accessibilityState={{ selected: p.conversando }}
           accessibilityLabel={p.conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
         >
-          <Text style={[s.conversarTexto, { color: p.conversando ? tema.sobreAcento : tema.acentoTexto }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          <Text style={[s.conversarTexto, { color: p.conversando ? tema.sobreAcento : tema.acentoTexto }]} numberOfLines={renglones(1)}>
             {p.conversando ? (p.conectando ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('En vivo', 'Live')}
           </Text>
         </Pressable>
@@ -167,7 +178,7 @@ export function ChatMesa(p: Props) {
         {!!p.progreso && (
           <View style={s.progreso} accessibilityLiveRegion="polite">
             <View style={[s.progresoPunto, { backgroundColor: tema.acento }]} />
-            <Text style={s.progresoTexto} numberOfLines={1}>
+            <Text style={s.progresoTexto} numberOfLines={renglones(1)}>
               {p.progreso}
             </Text>
           </View>
@@ -185,7 +196,7 @@ export function ChatMesa(p: Props) {
           onChangeText={p.onBorrador}
           placeholder={tr(`Escríbele a ${p.nombreAvatar}…`, `Write to ${p.nombreAvatar}…`)}
           placeholderTextColor={T.texto3}
-          style={s.entrada}
+          style={[s.entrada, { maxHeight: Math.max(110, altoMaxEntrada(altoVentana, fontScale)) }]}
           testID="mesa-entrada"
           multiline
           onSubmitEditing={p.onEnviar}
@@ -227,6 +238,10 @@ export function ChatMesa(p: Props) {
 const s = StyleSheet.create({
   raiz: { flex: 1, backgroundColor: T.fondo },
   cabeza: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6, gap: 10 },
+  // Letra grande: el nombre y el estado a lo ancho, en su fila; «En vivo» (que se estira) y el menú en la de abajo.
+  cabezaGrande: { flexWrap: 'wrap' },
+  quienGrande: { flexBasis: '100%', paddingVertical: 8 },
+  conversarGrande: { flexGrow: 1, flexShrink: 1, paddingVertical: 8 },
   quien: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: T.panel, borderRadius: 24, paddingHorizontal: 14, paddingVertical: 4, minHeight: 48 },
   punto: { width: 8, height: 8, borderRadius: 4 },
   quienTextos: { flex: 1, minWidth: 0 },
@@ -248,7 +263,7 @@ const s = StyleSheet.create({
   progresoPunto: { width: 6, height: 6, borderRadius: 3, opacity: 0.7 },
   progresoTexto: { color: T.texto2, fontSize: 13, fontStyle: 'italic', flexShrink: 1 },
   barra: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, margin: 10, marginTop: 4, padding: 6, paddingLeft: 16, backgroundColor: T.panel, borderRadius: 28, borderWidth: 1, borderColor: T.borde },
-  entrada: { flex: 1, color: T.texto, fontSize: 16, maxHeight: 110, paddingVertical: 10 },
+  entrada: { flex: 1, color: T.texto, fontSize: 16, paddingVertical: 10 },
   boton: { width: 48, height: 48, borderRadius: 24, backgroundColor: T.fondo2, alignItems: 'center', justifyContent: 'center' },
   micOyendo: { borderWidth: 3, borderColor: T.activo },
   filaFallida: { alignItems: 'flex-end', gap: 4 },

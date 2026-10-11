@@ -25,7 +25,7 @@ type Props = {
   tam?: number;
   /** Color del círculo lleno (por omisión, el acento del tema). */
   color?: string;
-  /** Color de la palomita sobre el círculo. */
+  /** Color de la palomita sobre el círculo: ≥ 3:1 contra `color` (con la salvia, `tema.sobreExito`; UX-02). */
   colorMarca?: string;
   etiqueta?: string;
   cargando?: boolean;
@@ -75,7 +75,9 @@ export function BotonCheck({ hecho: pedido, onPress, tam = 34, color, colorMarca
   const lienzo = (
     <Animated.View style={[{ width: tam, height: tam }, aPulso]}>
       <Canvas style={{ width: tam, height: tam }} pointerEvents="none">
-        <Circle cx={c} cy={c} r={c - 1.25} style="stroke" strokeWidth={1.5} color={tema.borde} />
+        {/* El aro dice «aquí se toca» (UX-02, 11-oct): con `borde` quedaba ~1,5:1 sobre la tarjeta; el que se toca va
+            con texto3 (≥ 4,5:1 sobre cada fondo, prueba A17). El que solo informa sigue fino y discreto. */}
+        <Circle cx={c} cy={c} r={c - 1.25} style="stroke" strokeWidth={1.5} color={onPress ? tema.texto3 : tema.borde} />
         <Circle cx={c} cy={c} r={radio} color={color || tema.acento} />
         {MARCA && (
           <Group transform={[{ scale: escalaMarca }]}>
@@ -91,7 +93,13 @@ export function BotonCheck({ hecho: pedido, onPress, tam = 34, color, colorMarca
     </Animated.View>
   );
 
-  if (!onPress) return <View style={style}>{lienzo}</View>;
+  // Sin toque (Palomita), con etiqueta: TalkBack la lee igual, con su nombre y si está hecha (marcada, de solo lectura).
+  if (!onPress)
+    return (
+      <View style={style} accessible={!!etiqueta} accessibilityRole={etiqueta ? 'checkbox' : undefined} accessibilityState={etiqueta ? { checked: hecho, disabled: true } : undefined} accessibilityLabel={etiqueta}>
+        {lienzo}
+      </View>
+    );
   return (
     <Pressable
       onPress={deshabilitado || cargando ? undefined : onPress}

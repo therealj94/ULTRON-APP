@@ -8,9 +8,15 @@
  *
  * Sin la etiqueta «Mensaje» ni el testID `mesa-entrada`: esos son del chat del modo trabajo (ChatMesa) y los flujos
  * del emulador los usan para saber que están en él.
+ *
+ * LETRA GRANDE (UX-01, auditoría del 11-oct): sin tope de tamaño. Antes la letra paraba en 1,4: quien la usa al 200 %
+ * no la tenía justo donde trabaja. Ahora la caja es de varios renglones y crece con lo escrito (hasta
+ * `altoMaxEntrada`: cinco renglones de esa letra, nunca más de un tercio de la ventana —con el teclado abierto acostado
+ * la ventana se encoge y la caja también, y lo de más se desliza adentro—). «Enter» sigue mandando (blurOnSubmit).
+ * El teclado, el ícono y el botón de enviar se quedan abajo, junto al último renglón.
  */
 import type { RefObject } from 'react';
-import { StyleSheet, TextInput, View } from 'react-native';
+import { StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
 import { tr } from '../i18n';
 import { T } from '../tema';
 import type { TemaAvatar } from '../avatares/catalogo';
@@ -26,25 +32,37 @@ type Props = {
   entradaRef?: RefObject<TextInput | null>;
 };
 
+/**
+ * Cuánto puede crecer una caja de escribir de la mesa: cinco renglones de su letra (16 por la escala del sistema),
+ * pero nunca más de un tercio de la ventana ni menos de 48 dp (lo que se toca). Lo usa también ChatMesa.
+ */
+export function altoMaxEntrada(altoVentana: number, escala: number, letra = 16): number {
+  const renglones = Math.round(letra * Math.max(1, escala) * 1.35 * 5 + 24);
+  return Math.max(48, Math.min(renglones, Math.round(altoVentana / 3)));
+}
+
 export function EscribeleMesa({ nombreAvatar, tema, valor, onCambiar, onEnviar, entradaRef }: Props) {
   const conTexto = !!valor.trim();
+  const { height: altoVentana, fontScale } = useWindowDimensions();
   return (
     <View style={[s.pildora, conTexto && { borderColor: tema.acento }]}>
-      <Icono nombre="teclado" tam={20} color={T.texto2} grosor={1.8} />
+      <View style={s.icono}>
+        <Icono nombre="teclado" tam={20} color={T.texto2} grosor={1.8} />
+      </View>
       <TextInput
         ref={entradaRef}
         value={valor}
         onChangeText={onCambiar}
         placeholder={tr(`Escríbele a ${nombreAvatar}…`, `Write to ${nombreAvatar}…`)}
         placeholderTextColor={T.texto2}
-        style={s.entrada}
+        style={[s.entrada, { maxHeight: altoMaxEntrada(altoVentana, fontScale) }]}
         testID="mesa-escribele"
         accessibilityLabel={tr(`Escríbele a ${nombreAvatar}`, `Write to ${nombreAvatar}`)}
+        multiline
         returnKeyType="send"
         enablesReturnKeyAutomatically
         blurOnSubmit
         onSubmitEditing={onEnviar}
-        maxFontSizeMultiplier={1.4}
       />
       {conTexto ? (
         <Tocable onPress={onEnviar} vibrar etiqueta={tr(`Enviar a ${nombreAvatar}`, `Send to ${nombreAvatar}`)} style={[s.enviar, { backgroundColor: tema.acento }]}>
@@ -58,9 +76,11 @@ export function EscribeleMesa({ nombreAvatar, tema, valor, onCambiar, onEnviar, 
 const s = StyleSheet.create({
   pildora: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // Abajo, no al centro: al crecer la caja, el ícono y «enviar» se quedan junto al último renglón.
+    alignItems: 'flex-end',
     gap: 10,
     minHeight: 52,
+    paddingVertical: 2,
     paddingLeft: 16,
     paddingRight: 4,
     borderRadius: 26,
@@ -68,6 +88,7 @@ const s = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.14)',
     backgroundColor: 'rgba(20,21,23,0.86)',
   },
-  entrada: { flex: 1, minWidth: 0, color: T.texto, fontSize: 16, paddingVertical: 12, minHeight: 48 },
+  icono: { height: 48, justifyContent: 'center' },
+  entrada: { flex: 1, minWidth: 0, color: T.texto, fontSize: 16, paddingTop: 12, paddingBottom: 12, minHeight: 48, textAlignVertical: 'center' },
   enviar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
 });
