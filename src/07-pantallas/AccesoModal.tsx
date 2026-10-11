@@ -4,6 +4,9 @@ import { ShieldCheck, ShieldAlert, X, Lock, Mail, KeyRound, Globe, Loader2, LogO
 import { playSfx } from '../03-voz/audio';
 import { enIconoInstalado, guardarTokenMesa, headersMesa } from '../10-infra/sesionCliente';
 import { iniciarEntradaGenesis } from '../10-infra/genesisWeb';
+
+/** La web de Veta Wallet, donde se crea la cuenta (se abre aparte; AU-RA no toca su registro). */
+const WALLET_WEB_CREAR = 'https://app.vetawallet.com';
 import { CambiarClave, CrearCuenta, OlvideClave, PanelSolicitudes, PonerClave, SolicitarAcceso, solicitudesPendientes, type EnlaceUrl, type Tema } from '../cuentas/Cuentas';
 
 /**
@@ -134,7 +137,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
         // Precisos: la contraseña, el freno o el servidor (nunca «contraseña mala» por un servidor caído).
         setError(
           res.status === 401 || res.status === 400 || res.status === 404
-            ? 'Correo o contraseña incorrectos. Si tu cuenta es de Veta Wallet, usa «Entrar con Veta Wallet».'
+            ? 'Correo o contraseña incorrectos. Si tu cuenta es de Veta Wallet, usa «Entrar con Genesis ID (Veta Wallet)».'
             : res.status === 429
               ? data.error || 'Demasiados intentos. Espera unos minutos.'
               : res.status === 403
@@ -303,7 +306,8 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
               ¿Olvidaste tu contraseña?
             </button>
 
-            {/* Las opciones: Veta Wallet (la web de la wallet con el pedido de AU-RA). */}
+            {/* Las opciones. En la web la wallet solo devuelve un pase de Genesis ID (su API no admite llamadas desde este
+                dominio, CORS): el botón se llama por lo que hace. Crear la cuenta de la wallet es su propia web. */}
             {conGenesis !== false && (
               <>
                 <div className="flex items-center gap-2.5 text-[12px] text-(--aura-tinta-3)" aria-hidden="true">
@@ -316,11 +320,11 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
                   className={`min-h-[48px] ${TEMA_AURA.secundario} flex items-center justify-center gap-2`}
                 >
                   {yendoAGenesis || conGenesis === null ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                  <span>{yendoAGenesis ? 'Abriendo Veta Wallet…' : 'Entrar con Veta Wallet'}</span>
+                  <span>{yendoAGenesis ? 'Abriendo tu wallet…' : 'Entrar con Genesis ID (Veta Wallet)'}</span>
                 </button>
-                <button type="button" onClick={() => void entrarConGenesis()} disabled={yendoAGenesis || conGenesis === null} className={`self-center min-h-[44px] px-3 py-1.5 rounded-full text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer disabled:opacity-50 ${FOCO}`}>
+                <a href={WALLET_WEB_CREAR} target="_blank" rel="noopener noreferrer" className={`self-center min-h-[44px] px-3 py-1.5 rounded-full text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer inline-flex items-center ${FOCO}`}>
                   Crear cuenta en Veta Wallet
-                </button>
+                </a>
               </>
             )}
             <button type="button" onClick={() => { setVista('solicitar'); setError(''); }} className={`self-center min-h-[44px] px-3 py-1.5 rounded-full text-[12px] text-(--aura-tinta-3) hover:text-(--aura-tinta) cursor-pointer ${FOCO}`}>

@@ -182,7 +182,8 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     await confirmarCorreoCuenta(e.correo).catch(() => {});
     // La clave queda guardada igual, pero la sesión solo se abre si esta plataforma le corresponde y la cuenta no
     // está suspendida (revisión 7, G3: alguien del padrón con la cuenta suspendida recuperaba la clave y entraba).
-    const s = cuenta?.estado !== 'suspendida' && puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }, { comunidad: esDeComunidad(e.correo, d.plataforma) }) : null;
+    // Igual que /api/ultron/entrar: quien está en el padrón, o un miembro de la comunidad de AU-RA (cuenta propia o de Genesis).
+    const s = cuenta?.estado !== 'suspendida' && (puedeEntrar(identificar({ correo: e.correo }), d.plataforma) || esDeComunidad(e.correo, d.plataforma)) ? emitirSesion({ correo: e.correo, nombre, rol }, { comunidad: esDeComunidad(e.correo, d.plataforma) }) : null;
     const aviso = plantilla({
       plataforma: d.plataforma,
       saludo: `Hola, ${nombre}:`,
