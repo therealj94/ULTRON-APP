@@ -7,15 +7,29 @@ name: Emulador Android (AU-RA FP)
 #
 # Cuándo: a mano (workflow_dispatch) y después de cada OTA publicada con éxito desde main. Nunca en cada push.
 #
+# Dos veredictos (veredicto.mjs; hallazgo REL01: una corrida salió verde con la OTA sin cargar y cinco escenarios
+# omitidos):
+#   HUMO: instalar, abrir, llegar al formulario de entrada, sin cierres. Si falla, el trabajo va en rojo siempre.
+#   ACEPTACIÓN DE LA OTA: la app corre la OTA esperada (updateId, runtime, canal; abrir → esperar → reabrir en ciclos)
+#     Y los escenarios con cuenta pasan. OTA sin cargar o escenarios OMITIDO = INCONCLUSA; otra OTA = FALLA; nunca PASA.
+#     Después de publicar una OTA (workflow_run) se exige: si no es PASA, el paso «Veredicto» va en rojo. A mano, se
+#     exige si hay OTA esperada, salvo que se pida `solo_humo`; entonces el resumen dice «solo humo».
+#
 # La cuenta: los secretos AURA_PRUEBA_CORREO y AURA_PRUEBA_CLAVE (una cuenta DEDICADA, nivel miembro, sin WhatsApp ni
 # correos conectados; cuenta-prueba.mjs lo comprueba antes: el nivel que le da el servidor, y que no esté en la lista de
 # la junta del secreto AURA_CORREOS_JUNTA, que no vive en el repositorio). Sin ellos, o si la cuenta no es segura, la prueba solo
-# instala y abre la app, y los escenarios que necesitan entrar salen como OMITIDO con el motivo en el resumen.
+# instala y abre la app, y los escenarios que necesitan entrar salen como OMITIDO con el motivo en el resumen: el humo
+# puede pasar, pero la aceptación de la OTA queda INCONCLUSA (y, después de una OTA, el trabajo en rojo).
 #
 # El repositorio es público y sus artefactos se pueden bajar: ni el correo ni la clave de prueba salen en la
 # evidencia (sin capturas ni grabación durante la entrada; logcat y datos enmascarados).
 on:
   workflow_dispatch:
+    inputs:
+      solo_humo:
+        description: "Solo humo: no exigir la aceptación de la OTA (el resumen lo dice)"
+        type: boolean
+        default: false
   workflow_run:
     workflows: ["OTA (EAS Update)"]
     types: [completed]
@@ -34,7 +48,7 @@ jobs:
     # Después de una OTA, solo si salió bien.
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 28
     env:
       EVIDENCIA: ${{ github.workspace }}/evidencia
       MAESTRO_VERSION: "2.11.0"
@@ -87,6 +101,8 @@ jobs:
         id: apk
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+          SOLO_HUMO: ${{ inputs.solo_humo }}
         run: |
           mkdir -p "$RUNNER_TEMP/apk"
           cd "$RUNNER_TEMP/apk"
@@ -99,13 +115,24 @@ jobs:
             OTA=$(jq -r --arg rt "$RT" '[.publicaciones[]? | select(.plataforma == "ultron" and .canal == "production" and .runtimeVersion == $rt and .tipo == "ota")][0].androidUpdateId // ""' ota-aura.json)
           fi
           TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          # Qué se exige: después de publicar una OTA, su aceptación; a mano, también si hay OTA esperada y no se
+          # pidió solo humo.
+          MODO=aceptacion
+          if [ "$EVENTO" != "workflow_run" ] && { [ "$SOLO_HUMO" = "true" ] || [ -z "$OTA" ]; }; then MODO=humo; fi
           echo "apk=$RUNNER_TEMP/apk/$APK" >> "$GITHUB_OUTPUT"
           echo "ota=$OTA" >> "$GITHUB_OUTPUT"
+          echo "runtime=$RT" >> "$GITHUB_OUTPUT"
+          echo "modo=$MODO" >> "$GITHUB_OUTPUT"
           {
             echo "## Emulador Android · AU-RA FP"
             echo ""
             echo "- APK: \`$APK\` (Release \`$TAG\`), runtime \`${RT:-?}\`"
             echo "- OTA de producción esperada para ese runtime: \`${OTA:-ninguna publicada}\`"
+            if [ "$MODO" = humo ]; then
+              echo "- Modo: **solo humo** (la aceptación de la OTA no se exige en esta corrida)"
+            else
+              echo "- Modo: **aceptación** de la OTA (se exige la OTA esperada cargada y los escenarios con cuenta en PASA)"
+            fi
             echo "- Servidor: https://aura-fp.onrender.com"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -135,6 +162,13 @@ jobs:
           "$BT/apksigner" sign --ks "$D/desechable.jks" --ks-pass pass:emulador --ks-key-alias emulador \
             --out "$D/AU-RA-FP-emulador.apk" "$D/alineada.apk"
           "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$D/AU-RA-FP-emulador.apk" | grep -i extractNativeLibs
+          # El canal que pide la APK (expo-updates: la cabecera expo-channel-name del manifiesto). Si no es el de la
+          # OTA, nunca la cargaría. Si no se puede leer, queda vacío y no decide nada.
+          CANAL=$("$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK" 2>/dev/null \
+            | grep -A3 'UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY' | sed -E 's/&quot;/"/g; s/\\"/"/g' \
+            | grep -oE '"expo-channel-name" *: *"[^"]+"' | head -n 1 | sed -E 's/.*: *"([^"]+)"/\1/' || true)
+          echo "Canal de la APK: ${CANAL:-?}"
+          echo "canal=$CANAL" >> "$GITHUB_OUTPUT"
           echo "apk=$D/AU-RA-FP-emulador.apk" >> "$GITHUB_OUTPUT"
           echo "- Emulador: copia de la APK con \`extractNativeLibs=true\` y firma desechable (el ARM de la APK se traduce en x86_64)." >> "$GITHUB_STEP_SUMMARY"
 
@@ -162,11 +196,13 @@ jobs:
       # lo traduce. Cámara trasera = la escena virtual del emulador; la delantera, la emulada.
       - name: Emulador y escenarios
         id: escenarios
-        timeout-minutes: 19
+        timeout-minutes: 22
         uses: reactivecircus/android-emulator-runner@v2
         env:
           APK_AURA: ${{ steps.copia.outputs.apk }}
           OTA_ESPERADA: ${{ steps.apk.outputs.ota }}
+          RUNTIME_ESPERADO: ${{ steps.apk.outputs.runtime }}
+          CANAL_APK: ${{ steps.copia.outputs.canal }}
           CUENTA_SEGURA: ${{ steps.cuenta.outputs.segura }}
           CUENTA_MOTIVO: ${{ steps.cuenta.outputs.motivo }}
           AURA_PRUEBA_CORREO: ${{ steps.cuenta.outputs.segura == 'true' && secrets.AURA_PRUEBA_CORREO || '' }}
@@ -186,26 +222,22 @@ jobs:
           # Una sola línea: la acción corre cada línea de `script` por separado.
           script: bash mobile/pruebas/emulador/correr.sh
 
+      # Humo y aceptación de la OTA por separado (veredicto.mjs), las dos fuentes de JS y cada escenario.
       - name: Resumen
         if: always()
+        env:
+          MODO: ${{ steps.apk.outputs.modo }}
+          OTA_ESPERADA: ${{ steps.apk.outputs.ota }}
+          RUNTIME_ESPERADO: ${{ steps.apk.outputs.runtime }}
+          CANAL_APK: ${{ steps.copia.outputs.canal }}
         run: |
-          RES="$EVIDENCIA/resultados.tsv"
+          node mobile/pruebas/emulador/veredicto.mjs "$EVIDENCIA/resultados.tsv" "$EVIDENCIA/datos/ota.json" --markdown >> "$GITHUB_STEP_SUMMARY"
+          node mobile/pruebas/emulador/veredicto.mjs "$EVIDENCIA/resultados.tsv" "$EVIDENCIA/datos/ota.json" > "$EVIDENCIA/datos/veredicto.json" || true
           {
-            echo ""
-            echo "| Escenario | Resultado | Detalle |"
-            echo "|---|---|---|"
-            if [ -s "$RES" ]; then
-              while IFS=$'\t' read -r esc estado detalle; do
-                case "$estado" in PASA) icono="✅ PASA" ;; FALLA) icono="❌ FALLA" ;; *) icono="⏭️ $estado" ;; esac
-                printf '| %s | %s | %s |\n' "$esc" "$icono" "$(printf '%s' "$detalle" | sed 's/|/\\|/g')"
-              done < "$RES"
-            else
-              echo "| (ninguno) | ❌ FALLA | El emulador no llegó a correr los escenarios: ver el registro del paso «Emulador y escenarios». |"
-            fi
             echo ""
             N_CAP=$(ls "$EVIDENCIA/capturas" 2>/dev/null | wc -l)
             N_VID=$(ls "$EVIDENCIA/video" 2>/dev/null | wc -l)
-            echo "Evidencia (artefacto \`emulador-evidencia\`): $N_CAP capturas, $N_VID trozo(s) de video, \`logcat-app.txt\` y \`datos/\`."
+            echo "Evidencia (artefacto \`emulador-evidencia\`): $N_CAP capturas, $N_VID trozo(s) de video, \`logcat-app.txt\` y \`datos/\` (\`ota.json\`, \`veredicto.json\`)."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Subir la evidencia
@@ -217,14 +249,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Rojo si un escenario falló o si los escenarios no llegaron a correr. OMITIDO (sin cuenta) no es un fallo.
+      # Rojo si el humo falla (siempre) o si, en modo aceptación, la OTA no queda aceptada: OTA sin cargar, otra OTA,
+      # escenarios OMITIDO (sin cuenta de prueba) o un escenario en FALLA. En modo «solo humo», verde con aviso.
       - name: Veredicto
         if: always()
-        run: |
-          RES="$EVIDENCIA/resultados.tsv"
-          if [ ! -s "$RES" ]; then echo "::error::No hay resultados de los escenarios."; exit 1; fi
-          if cut -f2 "$RES" | grep -qx FALLA; then
-            echo "::error::Falló al menos un escenario (ver el resumen)."
-            exit 1
-          fi
-          echo "Sin fallos."
+        env:
+          MODO: ${{ steps.apk.outputs.modo }}
+          OTA_ESPERADA: ${{ steps.apk.outputs.ota }}
+          RUNTIME_ESPERADO: ${{ steps.apk.outputs.runtime }}
+          CANAL_APK: ${{ steps.copia.outputs.canal }}
+        run: node mobile/pruebas/emulador/veredicto.mjs "$EVIDENCIA/resultados.tsv" "$EVIDENCIA/datos/ota.json" --salir
