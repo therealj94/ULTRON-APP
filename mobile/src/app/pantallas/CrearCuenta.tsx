@@ -20,7 +20,7 @@
  * guarda en ningún lado. Errores debajo del campo que hay que arreglar, o del formulario.
  */
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, type TextInput } from 'react-native';
+import { AppState, StyleSheet, View, type TextInput } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { crearCuenta, confirmarCodigoCorreo, reenviarCodigoCorreo } from '../../lib/api';
 import { errorDeCodigo, errorDeRegistro, normalizarCodigo, problemaDeClave, reglasClave, validarRegistro, type ErrorCuenta } from '../../lib/cuentaPropia';
@@ -83,8 +83,14 @@ export function CrearCuenta({ navigation, route }: Props) {
   const [error, setError] = useState<ErrorCuenta | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [yendo, setYendo] = useState<'' | 'crear' | 'confirmar' | 'reenviar'>('');
-  /** Segundos que faltan para poder pedir otro código (el que se acaba de mandar vale; el servidor pide un minuto). */
-  const [espera, setEspera] = useState(paso === 'codigo' ? ESPERA_REENVIO_S : 0);
+  /**
+   * Hasta cuándo no se puede pedir otro código (el servidor pide un minuto). Es una HORA, no un contador: mientras la
+   * persona sale a su correo la app se duerme y un contador se congelaría (Codex, PR #178); la hora sigue corriendo.
+   */
+  const [hasta, setHasta] = useState(() => (paso === 'codigo' ? Date.now() + ESPERA_REENVIO_S * 1000 : 0));
+  const [tic, setTic] = useState(0);
+  const espera = Math.max(0, Math.ceil((hasta - Date.now()) / 1000));
+  const esperarReenvio = () => setHasta(Date.now() + ESPERA_REENVIO_S * 1000);
   const intento = useRef<Intento | null>(null);
   const entro = useRef(false);
   const vivo = useRef(true);
@@ -101,12 +107,16 @@ export function CrearCuenta({ navigation, route }: Props) {
     []
   );
 
-  // La cuenta atrás de «Reenviar código».
+  // La cuenta atrás de «Reenviar código»: se redibuja cada segundo y al volver a la app.
   useEffect(() => {
     if (espera <= 0) return;
-    const t = setTimeout(() => setEspera((e) => Math.max(0, e - 1)), 1000);
+    const t = setTimeout(() => setTic((n) => n + 1), 1000);
     return () => clearTimeout(t);
-  }, [espera]);
+  }, [espera, tic]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (e) => e === 'active' && setTic((n) => n + 1));
+    return () => sub.remove();
+  }, []);
 
   const cambiar = (f: (t: string) => void) => (t: string) => {
     f(t);
@@ -130,7 +140,7 @@ export function CrearCuenta({ navigation, route }: Props) {
       // La cuenta queda sin confirmar: al código (la contraseña se queda en esta pantalla para confirmar).
       setCodigo('');
       setAviso(null);
-      setEspera(ESPERA_REENVIO_S);
+      esperarReenvio();
       setPaso('codigo');
     } catch (err: any) {
       if (!vivo.current) return;
@@ -185,12 +195,12 @@ export function CrearCuenta({ navigation, route }: Props) {
       await reenviarCodigoCorreo(correo, clave);
       if (!vivo.current) return;
       setCodigo('');
-      setEspera(ESPERA_REENVIO_S);
+      esperarReenvio();
       setAviso(tr('Te mandamos un código nuevo. Revisa también la carpeta de spam.', 'We sent you a new code. Check your spam folder too.'));
     } catch (err: any) {
       if (!vivo.current) return;
       const ec = errorDeCodigo(err);
-      if (ec.codigo === 'ESPERA') setEspera(ESPERA_REENVIO_S);
+      if (ec.codigo === 'ESPERA') esperarReenvio();
       setError(ec);
     } finally {
       if (vivo.current) setYendo((y) => (y === 'reenviar' ? '' : y));

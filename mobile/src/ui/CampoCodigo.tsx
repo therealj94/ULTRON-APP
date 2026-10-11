@@ -75,7 +75,8 @@ export const CampoCodigo = forwardRef<TextInput, Props>(function CampoCodigo({ v
           textContentType="oneTimeCode"
           autoComplete="one-time-code"
           importantForAutofill="yes"
-          maxLength={LARGO_CODIGO}
+          // Más que 6: un código pegado con espacios o guiones («123-456») llega entero y se limpia arriba (Codex, PR #178).
+          maxLength={24}
           editable={editable}
           autoFocus={autoFocus}
           caretHidden
