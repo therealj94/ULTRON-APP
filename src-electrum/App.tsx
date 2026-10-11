@@ -52,6 +52,7 @@ import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
 import { guardarSesion, hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
+import { AVISO_ENTRADA, fijarInvitado } from './sesion-invitado';
 import { PonerClave, enlaceEnLaUrl, faltaPara, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
 import { Cuenta, TEMA_ELECTRUM } from './Cuenta';
 import {
@@ -145,7 +146,16 @@ export default function App() {
   const [vence, setVence] = useState<string | null>(null);
   /** Quién entró: para saludarlo por su nombre y recordar sus preferencias de bienvenida. */
   const [usuario, setUsuario] = useState<{ nombre: string; correo: string; invitado: boolean } | null>(null);
-  const [avisoEntrada, setAvisoEntrada] = useState('');
+  // El aviso de «tu acceso temporal terminó» llega después de recargar la página (ver `cerrar`, abajo).
+  const [avisoEntrada, setAvisoEntrada] = useState(() => {
+    try {
+      const a = sessionStorage.getItem(AVISO_ENTRADA) || '';
+      sessionStorage.removeItem(AVISO_ENTRADA);
+      return a;
+    } catch {
+      return '';
+    }
+  });
   const [, setTic] = useState(0);
   useEffect(() => {
     if (puerta !== 'abierta') {
@@ -158,6 +168,7 @@ export default function App() {
       .then((j) => {
         if (!vivo) return;
         setVence(j?.user?.vence || null);
+        fijarInvitado(j?.user?.invitado === true);
         setUsuario(j?.user?.correo ? { nombre: String(j.user.nombre || ''), correo: String(j.user.correo), invitado: j.user.invitado === true } : null);
       })
       .catch(() => {});
@@ -168,18 +179,52 @@ export default function App() {
   useEffect(() => {
     if (!vence) return;
     const fin = new Date(vence).getTime();
+    let cerrado = false;
+    /*
+     * Al vencer, el acceso se termina del todo: el servidor ya rechaza el token (y el mismo código no
+     * vuelve a entrar), y aquí se borra lo que quedó en este aparato —la conversación, la credencial—
+     * y se recarga la página, para que no quede en memoria nada de lo que se vio (mapas, fichas,
+     * informes). El aviso se muestra en la entrada después de recargar.
+     */
     const cerrar = () => {
+      if (cerrado) return;
+      cerrado = true;
+      const aviso = 'Tu acceso temporal terminó y se cerró en este aparato. El mismo código ya no vale: para seguir, pida un código nuevo o solicite una cuenta.';
+      try {
+        sessionStorage.removeItem('electrum.hilo');
+        sessionStorage.setItem(AVISO_ENTRADA, aviso);
+      } catch {
+        /* sin almacenamiento no hay nada que quitar */
+      }
+      void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum(), keepalive: true }).catch(() => {});
       salir();
       setVence(null);
-      setAvisoEntrada('Tu acceso temporal terminó. Para seguir, pedí un código nuevo o solicitá una cuenta.');
+      setAvisoEntrada(aviso);
       setPuerta('cerrada');
+      try {
+        window.location.reload();
+      } catch {
+        /* sin recarga, al menos la puerta ya está cerrada */
+      }
     };
     if (fin <= Date.now()) return cerrar();
+    // Un temporizador se atrasa con la pestaña de fondo o el equipo dormido: se mira también el reloj
+    // cada 30 s y al volver a la pestaña.
+    const mirar = () => {
+      if (Date.now() >= fin) cerrar();
+    };
     const t = setTimeout(cerrar, Math.min(fin - Date.now(), 2_147_000_000));
-    const tic = setInterval(() => setTic((n) => n + 1), 30_000);
+    const tic = setInterval(() => {
+      setTic((n) => n + 1);
+      mirar();
+    }, 30_000);
+    document.addEventListener('visibilitychange', mirar);
+    window.addEventListener('focus', mirar);
     return () => {
       clearTimeout(t);
       clearInterval(tic);
+      document.removeEventListener('visibilitychange', mirar);
+      window.removeEventListener('focus', mirar);
     };
   }, [vence]);
   useEffect(() => {
@@ -248,6 +293,13 @@ export default function App() {
    * quitaría no poder.
    */
   const [caraPlegada, setCaraPlegada] = useState(() => leerPreferencia('caraPlegada', false, (v) => typeof v === 'boolean'));
+  /** El índice de capas abierto ocupa la esquina de la cara: mientras está abierto, la cara se aparta. */
+  const [indiceAbierto, setIndiceAbierto] = useState(false);
+  useEffect(() => {
+    const f = (e: Event) => setIndiceAbierto(Boolean((e as CustomEvent<boolean>).detail));
+    window.addEventListener('electrum:indice-abierto', f);
+    return () => window.removeEventListener('electrum:indice-abierto', f);
+  }, []);
   const plegarCara = useCallback((v: boolean) => {
     setCaraPlegada(v);
     guardarPreferencia('caraPlegada', v);
@@ -1030,7 +1082,7 @@ export default function App() {
                 texto: '3D',
                 activo: tresD && motor === 'maplibre',
                 alTocar: () => (motor === 'maplibre' ? setTresD((v) => !v) : setMotor('maplibre')),
-                titulo: motor === 'maplibre' ? 'Terreno real en tres dimensiones' : 'El 3D es del motor MapLibre: tocá para cambiar',
+                titulo: motor === 'maplibre' ? 'Terreno real en tres dimensiones' : 'El 3D es del motor MapLibre: toque para cambiar',
               },
               {
                 k: 'recorrido',
@@ -1144,15 +1196,15 @@ export default function App() {
          * Expedientes— su botón de plegar seguía siendo enfocable: quien navega con teclado se
          * topaba con un control de algo que no está en pantalla. Mismo caso que el panel oculto.
          */
-        inert={enTrabajo && (panel !== 'chat' || caraPlegada)}
+        inert={enTrabajo && (panel !== 'chat' || caraPlegada || indiceAbierto)}
         style={{
           /*
             En Expedientes el panel ocupa toda la altura y la cara se quedaba encima de la pestaña
             «Consulta», tapando justo el botón para volver. La cara se apoya en el mapa; cuando no
             hay mapa a la vista, no tiene dónde apoyarse y sobra. Se aparta en lugar de estorbar.
           */
-          opacity: enTrabajo && (panel !== 'chat' || caraPlegada) ? 0 : 1,
-          pointerEvents: enTrabajo && (panel !== 'chat' || caraPlegada) ? 'none' : 'auto',
+          opacity: enTrabajo && (panel !== 'chat' || caraPlegada || indiceAbierto) ? 0 : 1,
+          pointerEvents: enTrabajo && (panel !== 'chat' || caraPlegada || indiceAbierto) ? 'none' : 'auto',
           ...(enTrabajo
             ? /*
                * Arriba a la izquierda, SOBRE EL MAPA — no abajo.

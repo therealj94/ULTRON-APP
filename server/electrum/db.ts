@@ -44,6 +44,14 @@ function conexion(): Pool {
       connectionTimeoutMillis: 8_000,
     });
     /*
+     * Tope por defecto de cada sentencia: una consulta que se cuelga deja su conexión tomada aunque
+     * Node ya no la espere, y con ocho conexiones el pool se agota y todo Dr Electrum se queda
+     * esperando. Se fija al abrir cada conexión (un SET, no un parámetro de arranque: así sirve también
+     * detrás de un pooler). `consultaConTope` pone el suyo, más corto, dentro de su transacción.
+     */
+    const tope = topeSentenciaMs();
+    if (tope > 0) pool.on('connect', (c) => void c.query(`SET statement_timeout = ${tope}`).catch(() => undefined));
+    /*
      * Un cliente ocioso que pierde la conexión —la base se reinicia, el túnel se corta, el TLS se
      * renegocia— hace que el pool emita 'error'. Sin oyente, Node lo trata como una excepción sin
      * atrapar y TUMBA EL PROCESO: Dr Electrum entero, por una conexión que ni se estaba usando. Con
@@ -52,6 +60,12 @@ function conexion(): Pool {
     pool.on('error', (e) => console.error('[electrum] conexión con el catastro perdida:', String(e?.message || e).slice(0, 160)));
   }
   return pool;
+}
+
+/** El tope por defecto de una sentencia (ms): 2 minutos, o ELECTRUM_SQL_TOPE_MS (0 = sin tope). */
+export function topeSentenciaMs(env: NodeJS.ProcessEnv = process.env): number {
+  const v = Number(env.ELECTRUM_SQL_TOPE_MS);
+  return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 120_000;
 }
 
 export async function cerrarBase() {

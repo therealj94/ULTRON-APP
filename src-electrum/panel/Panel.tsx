@@ -26,6 +26,7 @@ import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
+import { TextoConFormato } from './Texto';
 import { ALTO_COMPACTO_PX, ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
 import { callar, crearLocucion, desbloquear, escucharMudo, estaMudo, hablar, hablarDialogo, nuevoTurnoVoz, prepararRelleno, rellenar, silenciar, suena, tomarCortada, type LineaDialogo, type Locucion } from './voz';
 import { FrasesDelTurno, fraseDeEvento, interrumpidoDelTurno, nuevoIdTurno } from './frasesTurno';
@@ -193,7 +194,7 @@ async function grabar(
         alTexto(j.texto);
       } else if (r.status === 401) alFallo(SIN_PUERTA);
       else if (!r.ok) alFallo(j?.error ? `No te pude oír: ${j.error}` : `No te pude oír: el servidor contestó ${r.status}.`);
-      else alFallo('No te entendí nada. Probá otra vez, más cerca del micrófono.');
+      else alFallo('No le entendí. Pruebe otra vez, más cerca del micrófono.');
     } catch {
       alFallo('No alcancé el servidor para pasar tu voz a texto. Revisá la conexión y volvé a dictármelo.');
     } finally {
@@ -310,11 +311,11 @@ function MapaDelTurno({
   );
 }
 
-const EJEMPLOS = [
-  '¿se traslapa algo en el catastro?',
-  'mostrame Cerro Partido',
-  '250.000 toneladas a 3,4 g/t, ¿cuántas onzas?',
-  '¿qué concesiones vencen este año?',
+const EJEMPLOS: Array<{ tipo: string; texto: string; icono: string }> = [
+  { tipo: 'Catastro', texto: '¿Qué concesiones vencen este año?', icono: 'M4 5h16v14H4z M4 10h16 M9 5v14' },
+  { tipo: 'Mapa', texto: 'Muéstreme las fichas de ocurrencia de oro', icono: 'M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z M12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5' },
+  { tipo: 'Proyecto', texto: 'Hágame el plan de exploración de Pantaleona', icono: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
+  { tipo: 'Cálculo', texto: '250.000 toneladas a 3,4 g/t, ¿cuántas onzas?', icono: 'M5 3h14v18H5z M8 7h8 M8 11h2 M12 11h2 M16 11h0 M8 15h2 M12 15h2 M8 19h8' },
 ];
 
 /**
@@ -324,6 +325,8 @@ const EJEMPLOS = [
  * y una pestaña cerrada tiene que llevarse el rastro. Sobrevive a recargar, no a irse.
  */
 const CAJON_HILO = 'electrum.hilo';
+/** Los mensajes que se dibujan de entrada (y los que suma «ver anteriores»). */
+const TURNOS_A_LA_VISTA = 60;
 
 
 /*
@@ -361,6 +364,11 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     return () => window.removeEventListener('electrum:visor', alPedir);
   }, []);
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
+  /*
+   * Cuántos mensajes se dibujan. Tras horas de trabajo el hilo tiene cientos, cada uno con sus mapas
+   * e imágenes: dibujarlos todos hacía pesada la pantalla. Se ven los últimos; los demás, a pedido.
+   */
+  const [visibles, setVisibles] = useState(TURNOS_A_LA_VISTA);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
    * cuelga— pero necesita el hilo del momento para mandarlo. Una ref siempre tiene el de ahora.
@@ -1343,26 +1351,46 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             className={`relative flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto ${compacto ? 'hidden' : ''}`}
           >
             {!turnos.length && (
-              <div className="space-y-3">
-                <p className="text-sm text-[#8FA3B0] leading-relaxed">
-                  Preguntame de minería, o del catastro que tengas cargado. Si nombrás una concesión, el mapa va sola.
-                </p>
-                <div className="flex flex-wrap gap-1.5">
+              <div className="space-y-3 py-1">
+                <div>
+                  <p className="font-display text-[18px] font-semibold leading-tight text-[#F3F6F8]">¿Qué analizamos hoy?</p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-[#8FA3B0]">
+                    Pregunte de minería, del catastro o de sus proyectos. Si nombra una concesión, el mapa la busca solo.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {EJEMPLOS.map((e) => (
                     <button
-                      key={e}
+                      key={e.texto}
                       type="button"
-                      onClick={() => preguntar(e)}
-                      className="px-2.5 py-1 rounded-full border border-white/12 text-[11px] text-[#9FB0B8] hover:text-white hover:border-white/25 transition-colors cursor-pointer text-left"
+                      onClick={() => preguntar(e.texto)}
+                      className="group flex min-h-[48px] items-start gap-2.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition-colors hover:border-[#FFAE3B]/50 hover:bg-[#FFAE3B]/[0.05] cursor-pointer"
                     >
-                      {e}
+                      <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke={AMBAR} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d={e.icono} />
+                      </svg>
+                      <span>
+                        <span className="block font-mono text-[10px] uppercase tracking-[0.14em] text-[#FFAE3B]/80">{e.tipo}</span>
+                        <span className="block text-[13px] leading-snug text-[#DCE5EA] group-hover:text-white">{e.texto}</span>
+                      </span>
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {turnos.map((t, i) => (
+            {turnos.length > visibles && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibles((v) => v + TURNOS_A_LA_VISTA)}
+                  className="rounded-full border border-white/12 px-3 py-1.5 font-mono text-[10.5px] tracking-[0.12em] uppercase text-[#9FB0B8] hover:border-white/30 hover:text-white cursor-pointer"
+                >
+                  Ver {Math.min(TURNOS_A_LA_VISTA, turnos.length - visibles)} mensajes anteriores
+                </button>
+              </div>
+            )}
+            {turnos.map((t, i) => i < turnos.length - visibles ? null : (
               <div key={i} className={t.de === 'persona' ? 'text-right' : ''}>
                 {t.de === 'electrum' && t.panel && (
                   <div className="font-mono text-[10px] tracking-[0.16em] uppercase mb-1" style={{ color: AMBAR }}>
@@ -1385,6 +1413,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                         </p>
                       ))}
                     </div>
+                  ) : t.de === 'electrum' ? (
+                    <TextoConFormato texto={t.texto} />
                   ) : (
                     t.texto
                   )}
@@ -1505,7 +1535,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               </div>
             ))}
 
-            {oyendo === 'grabando' && <div className="font-mono text-[11px] text-[#D9705A]">te escucho… tocá «Parar» cuando termines</div>}
+            {oyendo === 'grabando' && <div className="font-mono text-[11px] text-[#D9705A]">le escucho… toque «Parar» cuando termine</div>}
             {oyendo === 'oyendo' && <div className="font-mono text-[11px] text-[#6C7F89]">pasando a texto…</div>}
             {pensando && (
               <div className="space-y-1">
@@ -1526,7 +1556,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 {enVivo.texto ? (
                   <div>
                     <div className="inline-block max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed text-left whitespace-pre-line break-words bg-white/[0.045] text-[#DDE7EC]">
-                      {enVivo.texto}
+                      <TextoConFormato texto={enVivo.texto} />
                     </div>
                   </div>
                 ) : null}
@@ -1577,7 +1607,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               id="electrum-pregunta"
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
-              placeholder="Preguntale a Dr Electrum…"
+              placeholder="Pregúntele a Dr Electrum…"
               aria-label="Tu pregunta para Dr Electrum"
               data-tour="chat"
               autoComplete="off"
@@ -1614,7 +1644,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 }
               }}
               disabled={pensando || oyendo === 'oyendo'}
-              title={oyendo === 'grabando' ? 'Te escucho: cuando te calles lo mando solo (o tocá para mandarlo ya)' : 'Hablale: te contesta en voz alta'}
+              title={oyendo === 'grabando' ? 'Le escucho: cuando termine lo mando solo (o toque para mandarlo ya)' : 'Háblele: le contesta en voz alta'}
               aria-label={oyendo === 'grabando' ? 'Parar y mandarme lo que dijiste' : 'Dictarle la pregunta a Dr Electrum'}
               className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
               style={
@@ -1649,7 +1679,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               type="button"
               onClick={() => setInternet((v) => !v)}
               aria-pressed={internet}
-              title={internet ? 'Buscando en internet: la respuesta cita sus fuentes. Tocá para apagarlo.' : 'Contestar buscando en internet, con las fuentes citadas'}
+              title={internet ? 'Buscando en internet: la respuesta cita sus fuentes. Toque para apagarlo.' : 'Contestar buscando en internet, con las fuentes citadas'}
               aria-label={internet ? 'Apagar la búsqueda en internet' : 'Buscar en internet para contestar'}
               className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
               style={internet ? { borderColor: AMBAR, color: '#000', background: AMBAR } : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }}
@@ -1693,10 +1723,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               type="submit"
               aria-label="Preguntar"
               disabled={pensando || !texto.trim()}
-              className="px-3.5 rounded-lg text-black text-[12px] font-semibold disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+              className="flex min-w-[40px] items-center justify-center rounded-lg px-3 text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
               style={{ background: AMBAR }}
+              title="Preguntar (Enter)"
             >
-              Ir
+              {pensando ? (
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-black/30 border-t-black" aria-hidden />
+              ) : (
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M5 12h13M13 6l6 6-6 6" />
+                </svg>
+              )}
             </button>
           </form>
         </>
@@ -2088,7 +2125,7 @@ function Expedientes({ onUi }: { onUi: (datos: Array<Record<string, unknown>>) =
       <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed space-y-3" role="alert">
         <p>
           {fallo.codigo
-            ? `No alcancé el catastro: el servidor contestó ${fallo.codigo}. No es tu acceso; probá de nuevo en un momento.`
+            ? `No alcancé el catastro: el servidor contestó ${fallo.codigo}. No es su acceso; pruebe de nuevo en un momento.`
             : 'No alcancé el servidor. Revisá la conexión y volvé a intentarlo.'}
         </p>
         <button
@@ -2243,8 +2280,8 @@ function BotonVoz({
     <button
       type="button"
       onClick={() => setVozActiva((v) => !v)}
-      title={vozActiva ? 'Dr Electrum contesta en voz alta. Tocá para silenciarlo.' : 'Dr Electrum está en silencio. Tocá para que conteste en voz alta.'}
-      aria-label={vozActiva ? 'Voz encendida: tocá para silenciar' : 'Voz apagada: tocá para que hable'}
+      title={vozActiva ? 'Dr Electrum contesta en voz alta. Toque para silenciarlo.' : 'Dr Electrum está en silencio. Toque para que conteste en voz alta.'}
+      aria-label={vozActiva ? 'Voz encendida: toque para silenciar' : 'Voz apagada: toque para que hable'}
       aria-pressed={vozActiva}
       className="shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
       style={vozActiva ? { borderColor: AMBAR, color: AMBAR } : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }}
@@ -2349,7 +2386,7 @@ function Asa({
       tabIndex={0}
       onPointerDown={alBajar}
       onKeyDown={alTeclado}
-      title={`${comoSeLlama} · arrastrá para repartir, tocá para cambiar`}
+      title={`${comoSeLlama} · arrastre para repartir, toque para cambiar`}
       className="group absolute inset-x-0 -top-2 z-30 flex h-4 cursor-ns-resize touch-none items-center justify-center focus:outline-none"
     >
       <span

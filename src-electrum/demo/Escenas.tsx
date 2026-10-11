@@ -671,11 +671,11 @@ export function Flujo({ paso }: { paso: number | null }) {
                 <li key={p.n} className="relative flex items-center gap-2" aria-current={ahora ? 'step' : undefined}>
                   <span
                     className="relative z-[1] flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full text-[9.5px] font-bold transition-all duration-500"
-                    style={{ background: ahora ? ORO : hecho ? '#5A3E12' : '#1A2229', color: ahora ? '#000' : hecho ? '#FFD08A' : '#6E7F89', boxShadow: ahora ? `0 0 14px ${ORO}` : 'none' }}
+                    style={{ background: ahora ? ORO : hecho ? '#5A3E12' : '#1A2229', color: ahora ? '#000' : hecho ? '#FFD08A' : '#8496A1', boxShadow: ahora ? `0 0 14px ${ORO}` : 'none' }}
                   >
                     {hecho ? '✓' : p.n}
                   </span>
-                  <span className={`whitespace-nowrap text-[11.5px] transition-all duration-500 ${ahora ? 'font-semibold text-white' : hecho ? 'text-[#B9A27C]' : 'text-[#6E7F89]'}`}>{p.corto}</span>
+                  <span className={`whitespace-nowrap text-[11.5px] transition-all duration-500 ${ahora ? 'font-semibold text-white' : hecho ? 'text-[#B9A27C]' : 'text-[#8496A1]'}`}>{p.corto}</span>
                 </li>
               );
             })}

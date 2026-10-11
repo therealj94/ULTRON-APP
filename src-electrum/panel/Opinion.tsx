@@ -62,7 +62,7 @@ export function Opinion({ trazaId, valor, onValor }: { trazaId: string; valor?: 
         >
           👎
         </button>
-        {estado === 'fallo' && <span className="text-[10.5px] text-[#E98A7A]">No se guardó; probá otra vez.</span>}
+        {estado === 'fallo' && <span className="text-[10.5px] text-[#E98A7A]">No se guardó; pruebe otra vez.</span>}
       </div>
       {estado === 'pidiendo-nota' && (
         <form

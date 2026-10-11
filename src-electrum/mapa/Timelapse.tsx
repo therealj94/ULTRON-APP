@@ -171,7 +171,7 @@ export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombr
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-[10.5px] leading-snug text-[#61717A]">
+            <p className="mt-2 text-[10.5px] leading-snug text-[#7F939D]">
               Temporada seca (enero–abril) de cada año, la escena más limpia. {datos.faltan.length ? `Sin escena limpia: ${datos.faltan.join(', ')}. ` : ''}
               {datos.fuente}.
             </p>

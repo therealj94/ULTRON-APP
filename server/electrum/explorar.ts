@@ -361,20 +361,29 @@ export async function inventarioCapas(): Promise<Array<CapaVisible & { visible: 
  * rasgo —su id, nombre y, en la litología, la clase de roca para colorearla—. Los atributos enteros
  * se piden al tocar el rasgo.
  */
+/** Lo más que se pinta de una capa (texto GeoJSON). Más que eso traba el navegador y llena el servidor. */
+const PESO_MAX_CAPA = 25 * 1024 * 1024;
+
 export async function capaParaMapa(capaId: number): Promise<{ rol: RolCapa; geojson: FeatureCollection } | null> {
   const capa = (await capasVisibles()).find((c) => c.id === capaId);
   if (!capa) return null;
   const tolerancia = capa.rol === 'ocurrencia' ? 0 : capa.rol === 'municipio' || capa.rol === 'departamento' || capa.rol === 'placa' ? 0.002 : 0.0005;
-  const filas = await consultaConTope<{ id: string; nombre: string | null; texto: string | null; g: string }>(
+  // Con tope de peso medido EN LA BASE (como el índice de capas): si pasa, llega una sola fila y no se pinta.
+  const crudas = await consultaConTope<{ id: string; nombre: string | null; texto: string | null; g: string; peso: string }>(
     // El nombre como lo llama la gente: «entidad 7» no es un departamento, «Comayagua» sí.
-    `SELECT e.id::text, ${nombreDe(capa.rol)} AS nombre,
-            CASE WHEN $3::boolean THEN (SELECT string_agg(a.v, ' ') FROM jsonb_each_text(e.atributos) AS a(k, v)
-                                WHERE a.k ~* '(desc|lito|roca|unit|unidad|label|clase|type|tipo|name|nombre)') END AS texto,
-            ST_AsGeoJSON(CASE WHEN $2::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $2::float8) ELSE e.geom END, 5)::text AS g
-       FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS}`,
-    [capaId, tolerancia, capa.rol === 'litologia'],
+    `SELECT * FROM (
+       SELECT t.*, sum(length(t.g)) OVER ()::text AS peso, row_number() OVER () AS rn FROM (
+         SELECT e.id::text, ${nombreDe(capa.rol)} AS nombre,
+                CASE WHEN $3::boolean THEN (SELECT string_agg(a.v, ' ') FROM jsonb_each_text(e.atributos) AS a(k, v)
+                                    WHERE a.k ~* '(desc|lito|roca|unit|unidad|label|clase|type|tipo|name|nombre)') END AS texto,
+                ST_AsGeoJSON(CASE WHEN $2::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $2::float8) ELSE e.geom END, 5)::text AS g
+           FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS}) t) x
+      WHERE x.peso::bigint <= $4 OR x.rn = 1`,
+    [capaId, tolerancia, capa.rol === 'litologia', PESO_MAX_CAPA],
     15000
-  ).then(conTextoReparado);
+  );
+  if (crudas.length && Number(crudas[0].peso) > PESO_MAX_CAPA) return null;
+  const filas = conTextoReparado(crudas);
   return {
     rol: capa.rol,
     geojson: {

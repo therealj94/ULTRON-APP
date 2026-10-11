@@ -1855,7 +1855,7 @@ export function Recorrido({
           </span>
         </button>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-[#FFAE3B]/30 bg-black/82 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl">
+        <div className="overflow-hidden rounded-2xl border border-[#FFAE3B]/30 bg-black/82 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl max-md:max-h-[42vh] max-md:overflow-y-auto">
           {/* La barra de arriba es el asa: de ahí se arrastra. Doble toque, vuelve a su sitio. */}
           <div
             className="flex cursor-grab items-center gap-2 px-3.5 pt-2.5 active:cursor-grabbing touch-none select-none"

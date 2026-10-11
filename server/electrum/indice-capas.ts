@@ -378,6 +378,26 @@ export async function perimetro(): Promise<FeatureCollection | null> {
 
 const TIPO_PLANO: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
 
+/*
+ * A lo sumo dos capas armándose a la vez. Cada una tiene en memoria sus filas, la geometría parseada
+ * y la respuesta serializada; al recargar la página, el navegador pide de una todas las capas que
+ * tenía encendidas, y dos o tres personas haciéndolo juntas llenaban el proceso. Las demás esperan
+ * su turno (milisegundos con las capas simplificadas).
+ */
+const CAPAS_A_LA_VEZ = 2;
+let capasArmandose = 0;
+const esperandoCapa: Array<() => void> = [];
+export async function conTurnoDeCapa<T>(fn: () => Promise<T>): Promise<T> {
+  while (capasArmandose >= CAPAS_A_LA_VEZ) await new Promise<void>((r) => esperandoCapa.push(r));
+  capasArmandose++;
+  try {
+    return await fn();
+  } finally {
+    capasArmandose--;
+    esperandoCapa.shift()?.();
+  }
+}
+
 export function montarRutasIndice(app: Express, enviar: (req: Request, res: Response, cuerpo: unknown) => unknown) {
   const E = exigirPlataforma('electrum');
 
@@ -398,7 +418,7 @@ export function montarRutasIndice(app: Express, enviar: (req: Request, res: Resp
     if (!Number.isSafeInteger(id) || id < 1 || id > 999999) return res.status(400).json({ error: 'ID de capa inválido.', honesto: true });
     if (!hayBase()) return res.status(503).json({ error: 'No hay base conectada.', honesto: true });
     try {
-      const r = await capaDelIndice(id);
+      const r = await conTurnoDeCapa(() => capaDelIndice(id));
       if ('error' in r) return res.status(r.status).json({ error: r.error, honesto: true });
       res.setHeader('Cache-Control', 'private, max-age=300');
       return enviar(req, res, { id, nombre: r.entrada.nombre, geojson: r.geojson, honesto: true });

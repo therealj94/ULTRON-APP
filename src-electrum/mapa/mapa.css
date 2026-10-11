@@ -57,3 +57,19 @@
 .maplibregl-ctrl-attrib-button {
   filter: invert(1) brightness(0.8);
 }
+
+/*
+ * Foco de teclado visible en toda la herramienta (auditoría de diseño, 11-oct): la mayoría de los
+ * botones no tenía ninguno y quien navega con el tabulador no sabía dónde estaba. Solo con teclado
+ * (`:focus-visible`), no al tocar con el ratón.
+ */
+button:focus-visible,
+[role='button']:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #ffae3b;
+  outline-offset: 2px;
+}

@@ -309,11 +309,22 @@ export async function correrAgente(opts: {
       opts.alVivo?.(t, resultado.ui);
       trazaActual()?.paso({ herramienta: l.nombre, ok: t.ok, estado, ms, resumen: resultado.texto, args: l.argumentos, ronda });
 
-      mensajes.push({ role: 'tool', tool_name: l.nombre, tool_call_id: l.id, content: resultado.texto });
+      mensajes.push({ role: 'tool', tool_name: l.nombre, tool_call_id: l.id, content: recortarParaModelo(resultado.texto) });
     }
   }
 
   return { texto: (await redactarFinal()) || limpiarTexto(texto) || cierreForzado(traza), traza, ui, fin: 'sin rondas', rondas: p.rondas };
+}
+
+/**
+ * Lo que una herramienta le devuelve al modelo, con tope. Cada herramienta ya recorta lo suyo, pero
+ * una nueva (o un documento enorme) podía llenar el contexto de una sola vez y dejar al modelo sin
+ * lugar para la conversación. Se avisa que se cortó, para que no lo dé por completo.
+ */
+export const TOPE_RESULTADO = 16_000;
+export function recortarParaModelo(texto: string): string {
+  const t = String(texto ?? '');
+  return t.length <= TOPE_RESULTADO ? t : `${t.slice(0, TOPE_RESULTADO)}\n[…recortado: el resultado seguía ${t.length - TOPE_RESULTADO} caracteres más. No lo des por completo.]`;
 }
 
 /**
