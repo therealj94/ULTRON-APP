@@ -115,6 +115,144 @@ export function OlvideClave({ tema, correoInicial = '', onVolver }: { tema: Tema
   );
 }
 
+/* ------------------------------------------------------------------ crear cuenta (AU-RA) */
+
+export type MiembroNuevo = { nombre: string; rol: string; correo: string };
+
+/**
+ * «Crear cuenta» de la comunidad (server/registro-cuentas.ts, José 10-oct), con el correo PROBADO antes de entrar
+ * (revisión de seguridad del PR #176): «Crear cuenta» abre la cuenta SIN confirmar y manda un código de 6 cifras;
+ * solo el código (con el correo y la contraseña) abre la sesión. No hay «Confirmar después»: sin el código no se
+ * entra. `pendiente`: llega directo al código (entrar con una cuenta sin confirmar, AccesoModal). `onSesion` guarda el
+ * token y `onListo` entra a la mesa.
+ */
+export function CrearCuenta({
+  tema,
+  producto,
+  pendiente = null,
+  onSesion,
+  onListo,
+  onVolver,
+}: {
+  tema: Tema;
+  producto: string;
+  pendiente?: { correo: string; clave: string } | null;
+  onSesion: (token: string) => void;
+  onListo: (m: MiembroNuevo) => void;
+  onVolver: () => void;
+}) {
+  const [nombre, setNombre] = useState('');
+  const [correo, setCorreo] = useState(pendiente?.correo || '');
+  const [clave, setClave] = useState(pendiente?.clave || '');
+  const [otra, setOtra] = useState('');
+  const [codigo, setCodigo] = useState('');
+  const [enCodigo, setEnCodigo] = useState(!!pendiente);
+  const [yendo, setYendo] = useState(false);
+  const [fallo, setFallo] = useState('');
+  const [aviso, setAviso] = useState('');
+
+  async function crear(e: FormEvent) {
+    e.preventDefault();
+    if (clave !== otra) return setFallo('Las dos contraseñas no coinciden.');
+    setYendo(true);
+    setFallo('');
+    const r = await llamar('/api/ultron/cuentas/crear', { nombre: nombre.trim(), correo: correo.trim(), clave });
+    setYendo(false);
+    if (!r.ok) {
+      setClave('');
+      setOtra('');
+      if (!r.status) return setFallo('No alcancé el servidor de AU-RA. Revisa tu conexión e inténtalo otra vez.');
+      if (r.status === 429) return setFallo('Se crearon demasiadas cuentas desde esta conexión. Inténtalo más tarde.');
+      return setFallo(r.json?.error || 'No pude crear tu cuenta. Inténtalo otra vez.');
+    }
+    // Sin sesión todavía: al código (la contraseña se queda aquí para confirmar).
+    setOtra('');
+    setEnCodigo(true);
+  }
+
+  async function confirmar(e: FormEvent) {
+    e.preventDefault();
+    setYendo(true);
+    setFallo('');
+    setAviso('');
+    const r = await llamar('/api/ultron/cuentas/confirmar', { correo: correo.trim(), clave, codigo: codigo.replace(/\D/g, '') });
+    setYendo(false);
+    if (r.ok && r.json?.token) {
+      onSesion(String(r.json.token));
+      setClave('');
+      return onListo({ nombre: r.json.miembro?.nombre || correo.split('@')[0], rol: r.json.miembro?.rol || '', correo: r.json.miembro?.correo || correo.trim().toLowerCase() });
+    }
+    setFallo(!r.status ? 'No alcancé el servidor de AU-RA. Revisa tu conexión.' : r.json?.error || 'Ese código no es válido o ya venció.');
+  }
+
+  async function reenviar() {
+    setYendo(true);
+    setFallo('');
+    setAviso('');
+    const r = await llamar('/api/ultron/cuentas/reenviar', { correo: correo.trim(), clave });
+    setYendo(false);
+    if (r.ok) setAviso('Te mandamos un código nuevo. Revisa también la carpeta de spam.');
+    else setFallo(r.json?.error || 'No pude mandar el código. Inténtalo en un momento.');
+  }
+
+  if (enCodigo) {
+    return (
+      <div className="space-y-3">
+        <h2 className={tema.titulo}>Confirma tu correo</h2>
+        <form onSubmit={confirmar} className="space-y-3">
+          <p className={tema.texto}>Te mandamos un código de 6 cifras a {correo.trim().toLowerCase()}. Escríbelo aquí para entrar.</p>
+          <input className={tema.campo} inputMode="numeric" autoComplete="one-time-code" aria-label="Código de 6 cifras" placeholder="123456" maxLength={9} value={codigo} onChange={(e) => setCodigo(e.target.value)} disabled={yendo} required />
+          <button type="submit" className={tema.boton} style={tema.botonStyle} disabled={yendo || codigo.replace(/\D/g, '').length !== 6}>
+            {yendo ? 'Un momento…' : 'Confirmar'}
+          </button>
+        </form>
+        {fallo && (
+          <Aviso tema={tema} tipo="error">
+            {fallo}
+          </Aviso>
+        )}
+        {aviso && (
+          <Aviso tema={tema} tipo="ok">
+            {aviso}
+          </Aviso>
+        )}
+        <button type="button" className={tema.secundario} onClick={() => void reenviar()} disabled={yendo}>
+          Reenviar código
+        </button>
+        <p className={tema.texto}>Sin el código no puedes entrar con esta cuenta. Mientras tanto puedes entrar con Veta Wallet u Orden Global.</p>
+        <button type="button" className={tema.enlace} onClick={onVolver} disabled={yendo}>
+          Volver a entrar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <h2 className={tema.titulo}>Crear cuenta</h2>
+      <form onSubmit={crear} className="space-y-3">
+        <p className={tema.texto}>Tu cuenta de {producto}, como miembro de la comunidad. Te mandamos un código a tu correo para entrar.</p>
+        <input className={tema.campo} autoComplete="name" aria-label="Nombre" placeholder="tu nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} disabled={yendo} maxLength={80} required />
+        <input className={tema.campo} type="email" autoComplete="email" aria-label="Correo" placeholder="tu correo" value={correo} onChange={(e) => setCorreo(e.target.value)} disabled={yendo} required />
+        <input className={tema.campo} type="password" autoComplete="new-password" aria-label="Contraseña" placeholder="contraseña" value={clave} onChange={(e) => setClave(e.target.value)} disabled={yendo} minLength={10} required />
+        <input className={tema.campo} type="password" autoComplete="new-password" aria-label="Confirmar contraseña" placeholder="otra vez la contraseña" value={otra} onChange={(e) => setOtra(e.target.value)} disabled={yendo} minLength={10} required />
+        <p className={tema.texto}>{REGLAS}</p>
+        <button type="submit" className={tema.boton} style={tema.botonStyle} disabled={yendo || !nombre.trim() || !correo.trim() || clave.length < 10}>
+          {yendo ? 'Creando tu cuenta…' : 'Crear cuenta'}
+        </button>
+      </form>
+      {fallo && (
+        <Aviso tema={tema} tipo="error">
+          {fallo}
+        </Aviso>
+      )}
+      <button type="button" className={tema.enlace} onClick={onVolver}>
+        Ya tengo cuenta: entrar
+      </button>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ pedir acceso */
 
 export function SolicitarAcceso({ tema, producto, onVolver }: { tema: Tema; producto: string; onVolver: () => void }) {

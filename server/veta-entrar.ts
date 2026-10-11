@@ -31,6 +31,7 @@
  */
 import type { Express, RequestHandler } from 'express';
 import crypto from 'crypto';
+import { anotarDetalle, montarVigilancia } from './registro-entrada';
 
 export const WALLET_API_POR_OMISION = 'https://vetawallet-1a2e38ac52b1.herokuapp.com';
 /** El backend de Veta Wallet al que se le pregunta si el token vale. */
@@ -185,10 +186,12 @@ export async function comprobarSuspension(suspendida: (id: string) => Promise<bo
   }
 }
 
-type Salida = { status: number; body: Record<string, unknown> };
+type Salida = { status: number; body: Record<string, unknown>; detalle?: string; quien?: string };
 const fallo = (status: number, codigo: string, error: string): Salida => ({ status, body: { ok: false, codigo, error } });
 
 export function montarRutasVeta(app: Express, d: DepsVeta) {
+  // Una línea por intento en el registro (server/registro-entrada.ts), con la identidad como huella: nunca el token.
+  montarVigilancia(app, ['/api/veta/entrar']);
   app.post('/api/veta/entrar', d.limitar(MAX_ENTRADAS, VENTANA_MS, 'veta-entrar'), async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     let token = typeof req.body?.token === 'string' ? req.body.token : '';
@@ -200,6 +203,8 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     }
     const r = await entrar(token);
     token = '';
+    if (r.detalle) anotarDetalle(res, r.detalle);
+    if (r.quien) res.locals.quienEntrada = r.quien;
     return res.status(r.status).json(r.body);
   });
 
@@ -242,13 +247,13 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
       return fallo(503, 'WALLET_CAIDA', 'Veta Wallet no respondió. Vuelve a intentar en un momento.');
     }
     // 403: la wallet la tiene bloqueada (el bloqueo del ecosistema en Genesis). No es «vuelve a entrar».
-    if (r.status === 403) return fallo(403, 'BLOQUEADA', 'Tu cuenta de Veta Wallet no puede usarse para entrar ahora.');
+    if (r.status === 403) return { ...fallo(403, 'BLOQUEADA', 'Tu cuenta de Veta Wallet no puede usarse para entrar ahora.'), detalle: 'la wallet dice 403', quien: id };
     const j: any = r.ok ? await r.json().catch(() => null) : null;
     soltar();
     const correoWallet = typeof j?.email === 'string' ? j.email.trim() : '';
     if (!r.ok || !correoWallet.includes('@')) {
       if (r.status === 401 || r.status === 400 || r.ok) anotarRechazo(hTok);
-      return fallo(401, 'TOKEN_INVALIDO', 'Veta Wallet no confirmó tu sesión. Vuelve a entrar.');
+      return { ...fallo(401, 'TOKEN_INVALIDO', 'Veta Wallet no confirmó tu sesión. Vuelve a entrar.'), detalle: r.ok ? 'la wallet no dio correo' : `la wallet dice HTTP ${r.status}` };
     }
 
     // 3. Suspendida (por su identidad Y por el correo de la wallet: quien suspendieron con su cuenta de correo
@@ -287,6 +292,7 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     }
     return {
       status: 200,
+      quien: id,
       body: {
         ok: true,
         token: s.token,

@@ -6,7 +6,7 @@
  *   NavigationContainer     → native-stack: cada pantalla es una pantalla nativa de Android, con sus
  *                             transiciones del sistema (deslizar desde la derecha, fundido)
  *
- * Rutas: Intro → Bienvenida → Entrar ⇄ CrearGenesis / OtrasFormas → PrimeraVez → Mesa ⇄ Ajustes ⇄ Perfil,
+ * Rutas: Intro → Bienvenida → Entrar ⇄ CrearCuenta / CrearGenesis / OtrasFormas → PrimeraVez → Mesa ⇄ Ajustes ⇄ Perfil,
  * y Mesa ⇄ Chats ⇄ Conversacion.
  *
  * El chat (PulseProvider: cuenta, buzón, llamadas) y la voz de AURA (VozProvider: conversación con
@@ -55,6 +55,7 @@ import { ComputadoraEnVivo } from './ComputadoraEnVivo';
 import { HojasCartera } from '../cartera/HojasCartera';
 import { LimitePantalla } from './LimitePantalla';
 import { Bienvenida } from './pantallas/Bienvenida';
+import { CrearCuenta } from './pantallas/CrearCuenta';
 import { CrearGenesis } from './pantallas/CrearGenesis';
 import { Entrar } from './pantallas/Entrar';
 import { Intro } from './pantallas/Intro';
@@ -182,6 +183,7 @@ export function AppAura() {
             <Pila.Screen name="Intro" component={Intro} options={{ animation: 'none', gestureEnabled: false, contentStyle: { backgroundColor: '#0B0B0D' }, ...inmersiva }} />
             <Pila.Screen name="Bienvenida" component={Bienvenida} options={{ animation: 'fade', gestureEnabled: false }} />
             <Pila.Screen name="Entrar" component={Entrar} options={{ animation: 'fade', gestureEnabled: false }} />
+            <Pila.Screen name="CrearCuenta" component={CrearCuenta} />
             <Pila.Screen name="CrearGenesis" component={CrearGenesis} />
             <Pila.Screen name="OtrasFormas" component={OtrasFormas} />
             <Pila.Screen name="PrimeraVez" component={PrimeraVez} options={{ animation: 'fade', gestureEnabled: false }} />

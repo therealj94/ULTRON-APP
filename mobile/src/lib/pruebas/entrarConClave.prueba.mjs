@@ -383,6 +383,65 @@ prueba('AU-RA con el camino cerrado (VETA_CERRADO): se dice lo de Genesis, como 
   assert.equal(r2.codigo, 'SUSPENDIDA');
 });
 
+/* ── 10-oct: «pase no válido» al instante con correo y contraseña de la wallet ─────────────────────────── */
+
+/** Un canje que AU-RA rechaza con `codigo` (lo que devuelve genesis.ts `canjearPase` al fallar). */
+function canjeQueFalla(codigo) {
+  const llamadas = [];
+  const canjear = async (...args) => {
+    llamadas.push(args);
+    return { ok: false, codigo, mensaje: `AU-RA dice ${codigo}` };
+  };
+  return { canjear, llamadas };
+}
+
+for (const codigo of ['PASE_INVALIDO', 'GID_PENDIENTE', 'MAL_CONFIGURADO', 'SIN_GENESIS', 'GENESIS_CAIDO']) {
+  prueba(`la wallet dio el pase pero AU-RA lo rechaza (${codigo}): entra igual con la cuenta de la wallet, el token UNA vez`, async () => {
+    const s = sinGenesisFalso();
+    const c = canjeQueFalla(codigo);
+    const w = walletFalsa({ '/auth/login': LOGIN_OK, '/genesis/sso/token': PASE_OK });
+    const r = await entrarConClave({ correo: CORREO, clave: CLAVE }, { ...deps(w, c), entrarSinGenesis: s.entrarSinGenesis });
+    assert.equal(r.ok, true, 'entra como miembro de la wallet');
+    assert.equal(r.miembro.correo, 'veta:0xabc', 'la identidad es la de la wallet, nunca la de Genesis');
+    assert.equal(c.llamadas.length, 1, 'el canje de Genesis se intentó primero');
+    assert.equal(s.llamadas.length, 1, 'el token va una sola vez');
+    assert.deepEqual(s.llamadas[0].args, [TOKEN_WALLET]);
+    assert.ok(!JSON.stringify(s.llamadas).includes(CLAVE), 'la contraseña no va a AU-RA');
+  });
+}
+
+prueba('AU-RA rechaza el canje por la PERSONA (bloqueada, suspendida, padrón, sin comprobar, freno, sin conexión): NO hay otra puerta', async () => {
+  for (const codigo of ['BLOQUEADA', 'SUSPENDIDA', 'PENDIENTE', 'CUENTA_SIN_COMPROBAR', 'LIMITE', 'SIN_CONEXION', 'VENCIDO', 'FALLO']) {
+    const s = sinGenesisFalso();
+    const w = walletFalsa({ '/auth/login': LOGIN_OK, '/genesis/sso/token': PASE_OK });
+    const r = await entrarConClave({ correo: CORREO, clave: CLAVE }, { ...deps(w, canjeQueFalla(codigo)), entrarSinGenesis: s.entrarSinGenesis });
+    assert.deepEqual([r.ok, r.codigo], [false, codigo]);
+    assert.equal(s.llamadas.length, 0, codigo);
+  }
+});
+
+prueba('pase rechazado y AU-RA con el camino de la wallet cerrado (VETA_CERRADO): se dice lo del canje', async () => {
+  const s = sinGenesisFalso({ ok: false, codigo: 'VETA_CERRADO', mensaje: 'cerrado' });
+  const w = walletFalsa({ '/auth/login': LOGIN_OK, '/genesis/sso/token': PASE_OK });
+  const r = await entrarConClave({ correo: CORREO, clave: CLAVE }, { ...deps(w, canjeQueFalla('PASE_INVALIDO')), entrarSinGenesis: s.entrarSinGenesis });
+  assert.deepEqual([r.ok, r.codigo], [false, 'PASE_INVALIDO']);
+});
+
+prueba('backend de la wallet de antes: 403/400 SIN código al pedir el pase → entra igual sin Genesis; 401 no', async () => {
+  for (const [status, cuerpo] of [[403, { error: 'Todavía no hay una identidad verificada' }], [400, { error: 'Hacen falta un GID válido y la cuenta' }]]) {
+    const s = sinGenesisFalso();
+    const w = walletFalsa({ '/auth/login': LOGIN_OK, '/genesis/sso/token': respuesta(status, cuerpo) });
+    const r = await entrarConClave({ correo: CORREO, clave: CLAVE }, { ...deps(w, canjeFalso()), entrarSinGenesis: s.entrarSinGenesis });
+    assert.equal(r.ok, true, `${status}`);
+    assert.equal(s.llamadas.length, 1);
+  }
+  const s = sinGenesisFalso();
+  const w = walletFalsa({ '/auth/login': LOGIN_OK, '/genesis/sso/token': respuesta(401, { message: 'invalid token' }) });
+  const r = await entrarConClave({ correo: CORREO, clave: CLAVE }, { ...deps(w, canjeFalso()), entrarSinGenesis: s.entrarSinGenesis });
+  assert.equal(r.ok, false);
+  assert.equal(s.llamadas.length, 0);
+});
+
 let ok = 0;
 for (const [n, f] of pruebas) {
   try {

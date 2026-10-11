@@ -266,14 +266,29 @@ import {
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad, DOMINIO_CODIGO } from './server/seguridad';
-import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
+import {
+  asegurarCuentaMiembro,
+  crearCodigoCorreo,
+  borrarCuentaSinConfirmar,
+  crearCuentaPropia,
+  cuentaDe,
+  cuentasDisponibles,
+  crearSolicitud,
+  entrarConCuenta,
+  cuentaSuspendida,
+  mantenerCuentasAlDia,
+  reclamarCuentaSinConfirmar,
+  usarCodigoCorreo,
+} from './server/cuentas';
+import { montarRutasRegistro } from './server/registro-cuentas';
+import { anotarDetalle, montarVigilancia } from './server/registro-entrada';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
 import { gastarCupo, exigirAutoridadVigente, devolverCupoDeFrase, devolverLimite, autoridadSinSesion, claveCambiadaDe } from './server/seguridad';
 import { describirPoliticaAutoridad } from './server/autoridad-cuenta';
 import { montarEnlacesApp } from './server/enlaces-app';
-import { enviarCorreo } from './lib/correo-ses';
+import { correoListo, enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasIndice } from './server/electrum/indice-capas';
@@ -2122,6 +2137,8 @@ app.get('/api/ultron/salud', limitar(30), async (req, res) => {
  * La sesión es UNA entre las dos plataformas; a cuál te deja entrar lo decide el padrón del
  * servidor, no la dirección por la que llamaste.
  */
+// Una línea por intento en el registro (server/registro-entrada.ts): antes un fallo de la puerta no dejaba rastro.
+montarVigilancia(app, ['/api/electrum/entrar', '/api/ultron/entrar']);
 app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req, res) => {
   // `clave` o `password`: la web manda lo primero y la app de Dr Electrum lo segundo. Leer solo
   // `clave` hacía que la pantalla de entrada de la APK contestara siempre «Correo y clave
@@ -2153,12 +2170,32 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
    */
   if (cuentasDisponibles()) {
     const propia = await comprobarClavePropia(entrarConCuenta, correo, String(claveEntrada));
+    anotarDetalle(res, `clave propia: ${propia}`);
     if (propia === 'sin_comprobar') return res.status(503).json({ ...CLAVE_SIN_COMPROBAR, honesto: true });
     if (propia === 'mal') {
       anotarFalloEntrada(correo, ipEntrada);
       return res.status(401).json({ error: 'Correo o clave incorrectos.', codigo: 'NO_ENTRA' });
     }
     if (propia === 'suspendida') return res.status(403).json({ error: 'Esta cuenta está suspendida.', codigo: 'SUSPENDIDA' });
+    /*
+     * Cuenta propia con la clave buena pero el correo SIN confirmar (revisión de seguridad del PR #176): sin
+     * sesión. Se le manda el código y la app enseña la pantalla del código (server/registro-cuentas.ts). En Dr
+     * Electrum estas cuentas no entran nunca: SIN_ACCESO, como cualquiera fuera de su padrón.
+     */
+    if (propia === 'sin_confirmar') {
+      if (ES_ELECTRUM || !esDeComunidad(correo, PLATAFORMA)) return res.status(403).json({ error: `Tu cuenta no tiene acceso a ${ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP'}.`, codigo: 'SIN_ACCESO' });
+      const envio = await registroCuentas.mandarCodigo(correo, nombreYRolDe(correo, (await cuentaDe(correo).catch(() => null))?.nombre).nombre).catch(() => 'fallo' as const);
+      anotarDetalle(res, `correo sin confirmar; código ${envio}`);
+      return res.status(403).json({
+        codigo: 'CORREO_SIN_CONFIRMAR',
+        confirmacion: envio,
+        correo,
+        error:
+          envio === 'enviado' || envio === 'espera'
+            ? 'Confirma tu correo para entrar: te mandamos un código de 6 cifras.'
+            : 'Confirma tu correo para entrar, pero ahora no pudimos enviarte el código. Entra con Veta Wallet u Orden Global, o inténtalo más tarde.',
+      });
+    }
     if (propia === 'ok') {
       // Una cuenta propia solo abre la plataforma que tiene aprobada: una de Dr Electrum no entra a
       // AU-RA (donde cualquier sesión abre la mesa) aunque la clave sea la misma para las dos.
@@ -2181,6 +2218,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       signal: AbortSignal.timeout(10000),
     });
     const data: any = await remoteRes.json().catch(() => ({}));
+    anotarDetalle(res, `cerebro remoto: HTTP ${remoteRes.status}`);
     if (!remoteRes.ok) {
       // Solo cuenta como intento fallido una clave rechazada, no un cerebro caído.
       if (remoteRes.status === 401 || remoteRes.status === 403) anotarFalloEntrada(correo, ipEntrada);
@@ -2207,7 +2245,8 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
     return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Fallo al contactar el cerebro remoto', message: String(err?.message || err).slice(0, 160) });
+    anotarDetalle(res, `cerebro remoto sin respuesta: ${String(err?.name || 'error')}`);
+    return res.status(500).json({ error: 'Fallo al contactar el cerebro remoto', codigo: 'REMOTO_CAIDO', message: String(err?.message || err).slice(0, 160) });
   }
 });
 
@@ -2265,6 +2304,29 @@ montarRutasCuentas(app, {
 });
 
 /*
+ * «Crear cuenta» de la comunidad (solo AU-RA; en Dr Electrum las rutas contestan 404): la cuenta y la sesión de
+ * miembro en el acto, el correo se confirma después con un código (server/registro-cuentas.ts).
+ */
+const registroCuentas = montarRutasRegistro(app, {
+  plataforma: PLATAFORMA,
+  normalizarCorreo,
+  nombreYRol: nombreYRolDe,
+  enviarCorreo,
+  correoListo: () => correoListo() || !!String(process.env.CORREO_DESVIO_ARCHIVO || '').trim(),
+  limitar,
+  esJunta: (correo) => nivelDeCorreo(correo, PLATAFORMA) !== 'miembro',
+  almacen: {
+    disponible: cuentasDisponibles,
+    crearCuenta: crearCuentaPropia,
+    borrarSinConfirmar: borrarCuentaSinConfirmar,
+    comprobarClave: entrarConCuenta,
+    crearCodigo: (correo) => crearCodigoCorreo(correo),
+    usarCodigo: usarCodigoCorreo,
+    nombreDe: async (correo) => (await cuentaDe(correo))?.nombre || undefined,
+  },
+});
+
+/*
  * Entrar con Genesis ID (solo AU-RA: Dr Electrum tiene su propia puerta). Genesis prueba QUIÉN es
  * la persona; el padrón decide si es junta. Quien no está en el padrón entra como miembro y se le
  * abre su cuenta de miembro (AURA_GENESIS_ABIERTO=0 vuelve a la puerta cerrada). Ver server/genesis.ts
@@ -2281,6 +2343,10 @@ if (!ES_ELECTRUM) {
     suspendida: async (correo) => (cuentasDisponibles() ? cuentaSuspendida(correo) : false),
     nombreYRol: nombreYRolDe,
     emitirSesion,
+    // Genesis probó el correo: una cuenta propia sin confirmar con ese correo pierde la clave que le pusieron.
+    reclamarCorreo: async (correo) => {
+      if (cuentasDisponibles() && (await reclamarCuentaSinConfirmar(correo))) console.log('[genesis] una cuenta sin confirmar con este correo perdió su clave (Genesis probó al dueño)');
+    },
     sembrarPerfil: (correo, g) => sembrarDesdeGenesis(correo, { nombreGenesis: g.nombreGenesis, cumple: g.cumple || undefined, apodo: g.apodo }),
     registrarMiembro: async ({ correo, nombre, gid }) => {
       if (!cuentasDisponibles()) return;

@@ -36,7 +36,14 @@ export type Cuenta = {
   estado: 'activa' | 'suspendida';
   tieneClave: boolean;
   claveDesde: number | null;
+  /** La abrió la persona sola, con «Crear cuenta» (server/registro-cuentas.ts), y no José ni Genesis. */
+  propia: boolean;
+  /** Confirmó su correo (con el código, con un enlace del correo o porque Genesis lo probó). */
+  correoConfirmado: boolean;
 };
+
+/** Lo que va en `aprobada_por` de una cuenta que la persona abrió sola. */
+export const ORIGEN_REGISTRO = 'registro';
 
 export type Solicitud = {
   id: number;
@@ -116,6 +123,7 @@ CREATE TABLE IF NOT EXISTS cuentas.codigo (
   usos         integer NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS codigo_vence ON cuentas.codigo (plataforma, vence DESC);
+ALTER TABLE cuentas.cuenta ADD COLUMN IF NOT EXISTS correo_confirmado timestamptz;
 `;
 
 function conexion(): Pool {
@@ -220,6 +228,8 @@ function filaACuenta(f: any): Cuenta {
     estado: f.estado === 'suspendida' ? 'suspendida' : 'activa',
     tieneClave: !!f.clave_hash,
     claveDesde: f.clave_desde == null ? null : Number(f.clave_desde),
+    propia: f.aprobada_por === ORIGEN_REGISTRO,
+    correoConfirmado: !!f.correo_confirmado,
   };
 }
 
@@ -279,21 +289,84 @@ export function mantenerCuentasAlDia(cadaMs = 60_000) {
 /* ------------------------------------------------------------------ cuentas */
 
 export async function cuentaDe(correo: string): Promise<Cuenta | null> {
-  const [f] = await q(`SELECT correo, nombre, acceso, estado, clave_hash, clave_desde FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+  const [f] = await q(`SELECT correo, nombre, acceso, estado, clave_hash, clave_desde, aprobada_por, correo_confirmado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
   return f ? filaACuenta(f) : null;
+}
+
+/**
+ * «CREAR CUENTA» (server/registro-cuentas.ts): la cuenta propia de un miembro de la comunidad, con su clave,
+ * sin acceso en el padrón (sigue siendo miembro: recargarCuentas solo sube las que tienen acceso) y con el
+ * correo SIN confirmar. Sin el código del correo no abre ninguna sesión (revisión de seguridad del PR #176).
+ *
+ *   · 'creada'    — el correo no tenía fila;
+ *   · 'reabierta' — ya había una cuenta PROPIA SIN confirmar con ese correo: se le pone esta clave (y el código
+ *                   que llegue al buzón es el que la confirma junto con ESTA clave). Así quien se adelantó a
+ *                   registrar el correo de otro no se queda con la cuenta cuando el dueño la confirme;
+ *   · 'existe'    — cualquier otra fila (confirmada, de Genesis, de Veta, del padrón aprobado): no se toca nada.
+ * El correo ya llega normalizado.
+ */
+export async function crearCuentaPropia(correo: string, nombre: string, clave: string): Promise<'creada' | 'reabierta' | 'existe'> {
+  const hash = await cifrarClave(clave);
+  const desde = Date.now();
+  const [f] = await q<{ nueva: boolean }>(
+    `INSERT INTO cuentas.cuenta (correo, nombre, clave_hash, clave_desde, aprobada_por) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (correo) DO UPDATE SET clave_hash = EXCLUDED.clave_hash, clave_desde = EXCLUDED.clave_desde, nombre = EXCLUDED.nombre
+       WHERE cuentas.cuenta.aprobada_por = $5 AND cuentas.cuenta.correo_confirmado IS NULL
+     RETURNING (xmax = 0) AS nueva`,
+    [correo, String(nombre || '').slice(0, 120), hash, desde, ORIGEN_REGISTRO]
+  );
+  if (!f) return 'existe';
+  claveDesdePorCorreo.set(correo, desde);
+  return f.nueva ? 'creada' : 'reabierta';
+}
+
+/** Deshace una cuenta propia que nunca se confirmó (el código no salió): el correo queda libre para reintentar. */
+export async function borrarCuentaSinConfirmar(correo: string): Promise<boolean> {
+  const filas = await q(`DELETE FROM cuentas.cuenta WHERE correo = $1 AND aprobada_por = $2 AND correo_confirmado IS NULL RETURNING correo`, [correo, ORIGEN_REGISTRO]);
+  return filas.length > 0;
+}
+
+/** El correo quedó probado (código, enlace del correo o Genesis). No cambia nada más. */
+export async function confirmarCorreoCuenta(correo: string): Promise<void> {
+  await q(`UPDATE cuentas.cuenta SET correo_confirmado = COALESCE(correo_confirmado, now()) WHERE correo = $1`, [correo]);
+}
+
+/**
+ * Alguien probó por otro lado que es el dueño de este correo (Genesis ID verificado). Si había una cuenta
+ * PROPIA con ese correo y sin confirmar, su clave la puso quien sea —quizá otra persona que se adelantó a
+ * registrar ese correo—: la clave deja de valer y sus sesiones se cierran (clave_desde = ahora). El correo
+ * queda confirmado. Devuelve true si cortó algo.
+ */
+export async function reclamarCuentaSinConfirmar(correo: string): Promise<boolean> {
+  const desde = Date.now();
+  const filas = await q(
+    `UPDATE cuentas.cuenta SET clave_hash = NULL, clave_desde = $2, correo_confirmado = now()
+     WHERE correo = $1 AND aprobada_por = $3 AND correo_confirmado IS NULL AND clave_hash IS NOT NULL RETURNING correo`,
+    [correo, desde, ORIGEN_REGISTRO]
+  );
+  if (!filas.length) return false;
+  claveDesdePorCorreo.set(correo, desde);
+  return true;
 }
 
 /**
  * La entrada con clave propia. `sin_clave` quiere decir «esta persona todavía no se hizo clave
  * aquí»: quien llama prueba entonces con el cerebro remoto, como siempre.
+ *
+ * Una cuenta PROPIA con el correo SIN confirmar (server/registro-cuentas.ts) no abre sesión con su clave:
+ *   · clave buena → `sin_confirmar` (la puerta pide el código del correo, sin sesión);
+ *   · clave mala  → `sin_clave`: una clave que nadie probó dueña del correo no tapa la del cerebro remoto (si
+ *     alguien registró el correo de otro, el dueño sigue entrando con la suya de siempre).
  */
-export async function entrarConCuenta(correo: string, clave: string): Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave'> {
-  const [f] = await q(`SELECT clave_hash, estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+export async function entrarConCuenta(correo: string, clave: string): Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave' | 'sin_confirmar'> {
+  const [f] = await q(`SELECT clave_hash, estado, aprobada_por, correo_confirmado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
   // La suspensión va ANTES que «sin clave»: una cuenta suspendida que nunca se puso clave caía al
   // cerebro remoto, que la aceptaba, y volvía a entrar a AU-RA como miembro de la comunidad.
   if (f?.estado === 'suspendida') return 'suspendida';
   if (!f?.clave_hash) return 'sin_clave';
-  return (await claveCoincide(clave, f.clave_hash)) ? 'ok' : 'mal';
+  const coincide = await claveCoincide(clave, f.clave_hash);
+  if (f.aprobada_por === ORIGEN_REGISTRO && !f.correo_confirmado) return coincide ? 'sin_confirmar' : 'sin_clave';
+  return coincide ? 'ok' : 'mal';
 }
 
 /**
@@ -346,12 +419,17 @@ fijarRegistroSuspension(cuentaSuspendida, cuentasDisponibles);
 export async function puedeRecuperar(correo: string): Promise<boolean> {
   if (personaPorCorreoExacto(correo)) return true;
   const c = await cuentaDe(correo);
-  return !!c && c.estado === 'activa' && Object.keys(c.acceso).length > 0;
+  // También quien se abrió su cuenta sola o el miembro que entró con Genesis (sin acceso en el padrón): el enlace va
+  // a SU correo, así que solo lo usa el dueño, y la sesión que abre después la decide la plataforma (en Dr Electrum,
+  // ninguna). Las identidades de la wallet (`veta:…`) no son correos y no llegan aquí.
+  return !!c && c.estado === 'activa';
 }
 
 /* ------------------------------------------------------------------ enlaces */
 
 export type TipoEnlace = 'restablecer' | 'activar';
+/** El código de 6 cifras para confirmar el correo vive en la misma tabla, con su propio tipo. */
+const TIPO_CODIGO = 'confirmar';
 const huella = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
 
 /**
@@ -399,7 +477,7 @@ export async function usarEnlace(token: string): Promise<{ correo: string; tipo:
   const t = String(token || '').trim();
   if (!/^[A-Za-z0-9_-]{40,60}$/.test(t)) return null;
   const [f] = await q(
-    `UPDATE cuentas.enlace SET usado = now() WHERE huella = $1 AND usado IS NULL AND vence > now() RETURNING correo, tipo`,
+    `UPDATE cuentas.enlace SET usado = now() WHERE huella = $1 AND usado IS NULL AND vence > now() AND tipo <> '${TIPO_CODIGO}' RETURNING correo, tipo`,
     [huella(t)]
   );
   return f ? { correo: f.correo, tipo: f.tipo } : null;
@@ -409,8 +487,64 @@ export async function usarEnlace(token: string): Promise<{ correo: string; tipo:
 export async function enlaceVigente(token: string): Promise<{ correo: string; tipo: TipoEnlace } | null> {
   const t = String(token || '').trim();
   if (!/^[A-Za-z0-9_-]{40,60}$/.test(t)) return null;
-  const [f] = await q(`SELECT correo, tipo FROM cuentas.enlace WHERE huella = $1 AND usado IS NULL AND vence > now()`, [huella(t)]);
+  const [f] = await q(`SELECT correo, tipo FROM cuentas.enlace WHERE huella = $1 AND usado IS NULL AND vence > now() AND tipo <> '${TIPO_CODIGO}'`, [huella(t)]);
   return f ? { correo: f.correo, tipo: f.tipo } : null;
+}
+
+/* ------------------------------------------------------------------ código para confirmar el correo */
+
+/** La huella del código va atada al correo: 6 cifras se repiten entre personas, la huella no. */
+const huellaCodigo = (correo: string, codigo: string) => huella(`${TIPO_CODIGO}:${correo}:${codigo}`);
+
+/**
+ * Un código nuevo de 6 cifras (vale `minutos`) e invalida los anteriores de ese correo. null si ya se mandó
+ * uno hace menos de `esperaMs` (para que «Reenviar» no sirva para inundar un buzón). Mismo candado que los enlaces.
+ */
+export async function crearCodigoCorreo(correo: string, minutos = 30, esperaMs = 60_000): Promise<string | null> {
+  await asegurarEsquema();
+  const c = await conexion().connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`cuentas.enlace:${TIPO_CODIGO}:${correo}`]);
+    if (esperaMs > 0) {
+      const r = await c.query(
+        `SELECT 1 FROM cuentas.enlace WHERE correo = $1 AND tipo = $2 AND usado IS NULL AND creado > now() - ($3::float8 * interval '1 millisecond') LIMIT 1`,
+        [correo, TIPO_CODIGO, esperaMs]
+      );
+      if (r.rowCount) {
+        await c.query('COMMIT');
+        return null;
+      }
+    }
+    await c.query(`UPDATE cuentas.enlace SET usado = now() WHERE correo = $1 AND tipo = $2 AND usado IS NULL`, [correo, TIPO_CODIGO]);
+    const codigo = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+    await c.query(`INSERT INTO cuentas.enlace (huella, correo, tipo, vence) VALUES ($1, $2, $3, now() + ($4::float8 * interval '1 minute'))`, [
+      huellaCodigo(correo, codigo),
+      correo,
+      TIPO_CODIGO,
+      minutos,
+    ]);
+    await c.query('COMMIT');
+    return codigo;
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/** Gasta el código (una vez, sin vencer) y deja el correo confirmado. false si no es el de ese correo. */
+export async function usarCodigoCorreo(correo: string, codigo: string): Promise<boolean> {
+  const k = String(codigo || '').replace(/\D/g, '');
+  if (k.length !== 6) return false;
+  const [f] = await q(
+    `UPDATE cuentas.enlace SET usado = now() WHERE huella = $1 AND correo = $2 AND tipo = $3 AND usado IS NULL AND vence > now() RETURNING correo`,
+    [huellaCodigo(correo, k), correo, TIPO_CODIGO]
+  );
+  if (!f) return false;
+  await confirmarCorreoCuenta(correo);
+  return true;
 }
 
 /* ------------------------------------------------------------------ solicitudes */
